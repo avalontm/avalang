@@ -700,28 +700,43 @@ std::any AstBuilder::visitImportStatement(AvaLangParser::ImportStatementContext*
 
 std::any AstBuilder::visitSliceTrailer(AvaLangParser::SliceTrailerContext* ctx) {
     auto* slice_range = ctx->sliceRange();
-    
+
     std::shared_ptr<ExprNode> start = nullptr;
     std::shared_ptr<ExprNode> end = nullptr;
     std::shared_ptr<ExprNode> step = nullptr;
-    
+
     auto exprs = slice_range->expr();
-    
-    size_t colon_count = 0;
-    if (slice_range->start) colon_count++;
-    if (slice_range->stop) colon_count++;
-    
-    if (colon_count == 2) {
-        if (exprs.size() >= 1) step = exprFromAny(exprs[0]->accept(this));
-    } else if (colon_count == 3) {
-        if (exprs.size() >= 1) start = exprFromAny(exprs[0]->accept(this));
-        if (exprs.size() >= 2) end = exprFromAny(exprs[1]->accept(this));
-        if (exprs.size() >= 3) step = exprFromAny(exprs[2]->accept(this));
-    } else {
-        if (exprs.size() >= 1) start = exprFromAny(exprs[0]->accept(this));
-        if (exprs.size() >= 2) end = exprFromAny(exprs[1]->accept(this));
+
+    // NOTE: the grammar rule `sliceRange: expr? ':' expr? (':' expr?)?;`
+    // has no labeled subrules, so `slice_range->start`/`->stop` are just
+    // ANTLR's built-in ParserRuleContext::start/stop token pointers (the
+    // first/last token of the whole rule) -- NOT indicators of which colon
+    // slots are present. Those are always non-null, which previously made
+    // colon_count always evaluate to 2 and every parsed slice collapse its
+    // single expr into `step` while leaving start/end null (e.g. arr[:3]
+    // was parsed as slice(arr, nil, nil, 3) instead of slice(arr, nil, 3,
+    // nil)).
+    //
+    // ANTLR also flattens all the optional expr() matches from every slot
+    // into a single list, so we can't tell from exprs.size() alone which
+    // slot a given expr came from. Instead walk the actual children in
+    // source order, using real ':' terminal tokens to track which slot
+    // (start/end/step) we're currently in.
+    size_t slot = 0; // 0 = start, 1 = end, 2 = step
+    size_t expr_idx = 0;
+    for (auto* child : slice_range->children) {
+        if (child->getText() == ":") {
+            slot++;
+        } else if (expr_idx < exprs.size() &&
+                   static_cast<antlr4::tree::ParseTree*>(exprs[expr_idx]) == child) {
+            auto val = exprFromAny(exprs[expr_idx]->accept(this));
+            if (slot == 0) start = val;
+            else if (slot == 1) end = val;
+            else step = val;
+            expr_idx++;
+        }
     }
-    
+
     return std::make_shared<SliceExpr>(nullptr, start, end, step);
 }
 
