@@ -15,7 +15,8 @@ on it.
 - Dynamic typing: `nil`, `bool`, `number`, `string`, `list`, `dict`,
   `function`, `class`, `instance`, `coroutine`.
 - Functions, closures, and lambdas.
-- Classes with `__init__`, methods, and single inheritance via `base()`.
+- Classes with an `init` constructor, methods, and single inheritance
+  (`class Dog : Animal`, calling the parent constructor with `base(...)`).
 - Control flow: `if/elif/else`, `while`, `for`, `break`, `continue`.
 - List/string slicing (`arr[1:3]`, `arr[::2]`, ...).
 - F-string interpolation (`$"value: {x}"`).
@@ -30,13 +31,23 @@ for the language reference.
 ## Quick example
 
 ```lua
-class Dog(name)
-    __init__(self, name)
-        self.name = name
+class Animal
+    func init(name)
+        this.name = name
     end
 
-    bark(self)
-        print(self.name + " says Woof!")
+    func speak()
+        print("...")
+    end
+end
+
+class Dog : Animal
+    func init(name)
+        base(name)
+    end
+
+    func speak()
+        print(this.name + " says Woof!")
     end
 end
 
@@ -46,10 +57,10 @@ end
 
 greet("Ava")
 
-local d = Dog("Buddy")
-d.bark()
+d = Dog("Buddy")
+d.speak()
 
-local nums = [1, 2, 3, 4, 5]
+nums = [1, 2, 3, 4, 5]
 print(nums[1:3])   # [2, 3]
 print(nums[::2])   # [1, 3, 5]
 ```
