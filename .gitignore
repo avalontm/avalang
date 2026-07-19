@@ -1,0 +1,59 @@
+# Build outputs
+build/
+bin/
+dist/
+out/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+!.cmake/CMakeLists.txt
+CMakePresets.json
+compile_commands.json
+
+# Ninja
+.ninja/
+.ninja_deps
+.ninja_log
+
+# Compiled objects and libraries
+*.o
+*.obj
+*.so
+*.dll
+*.dylib
+*.a
+*.lib
+*.pdb
+
+# IDE and editor
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# OS files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# vcpkg (package manager - install separately)
+vcpkg/
+vcpkg.json
+
+# vcpkg installed libraries (generated)
+vcpkg/installed/
+vcpkg/buildtrees/
+
+# Windows reserved names (cannot delete these)
+nul
+aux
+prn
+con

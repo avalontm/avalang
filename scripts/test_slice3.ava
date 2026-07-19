@@ -1,0 +1,10 @@
+local arr = [1, 2, 3, 4, 5]
+
+# Direct call to slice function
+print("slice(arr, 0, nil, 2):", slice(arr, 0, nil, 2))
+print("slice(arr, nil, nil, 2):", slice(arr, nil, nil, 2))
+
+# Using slice syntax
+print("arr[0:5:2]:", arr[0:5:2])
+print("arr[:5:2]:", arr[:5:2])
+print("arr[::2]:", arr[::2])

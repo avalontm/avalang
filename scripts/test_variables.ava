@@ -1,0 +1,11 @@
+# Variables basicas
+x = 10
+y = 20
+name = "AvaLang"
+print(x)
+print(y)
+print(name)
+
+# Booleanos
+flag = true
+if flag then print("flag is true") end

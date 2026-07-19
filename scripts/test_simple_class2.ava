@@ -1,0 +1,8 @@
+class Perro
+    func init(n)
+        this.raza = n
+    end
+end
+
+p = Perro("Labrador")
+print(p.raza)

@@ -1,0 +1,24 @@
+# Test: paréntesis opcionales en if/while
+x = 5
+
+# Con paréntesis
+if (x > 3) then print("A") end
+
+# Sin paréntesis  
+if x > 3 then print("B") end
+
+# Con paréntesis y expresiones complejas
+if (x > 0) and (x < 10) then print("C") end
+
+# While con paréntesis
+i = 0
+while (i < 2) do i = i + 1 end
+print(i)
+
+# While sin paréntesis
+j = 0
+while j < 2 do j = j + 1 end
+print(j)
+
+# Combinación
+if (x == 5) then print("D") end

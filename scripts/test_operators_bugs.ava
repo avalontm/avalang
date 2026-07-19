@@ -1,0 +1,121 @@
+# Test para bugs de operadores encontrados
+
+print("=== Testing EQ/NE con strings ===")
+# Bug: EQ no compara strings correctamente
+a = "hello"
+b = "hello"
+c = "world"
+print("'hello' == 'hello':", a == b)
+print("'hello' == 'world':", a == c)
+print("'hello' != 'world':", a != c)
+print("'hello' != 'hello':", a != b)
+
+print("\n=== Testing comparaciones de strings ===")
+# Bug: < > <= >= no funcionan con strings
+print("'a' < 'b':", "a" < "b")
+print("'apple' < 'banana':", "apple" < "banana")
+print("'z' > 'a':", "z" > "a")
+print("'aaa' <= 'aaa':", "aaa" <= "aaa")
+print("'bbb' >= 'aaa':", "bbb" >= "aaa")
+
+# Simple method test - basic self access
+class Test
+    value = 123
+    
+    func get_value()
+        return self.value
+    end
+    
+    func set_value(v)
+        self.value = v
+    end
+    
+    func add_val(v)
+        self.value += v
+    end
+end
+
+t = Test()
+print("Direct access t.value:", t.value)
+print("Through method t.get_value():", t.get_value())
+t.set_value(456)
+print("After set_value(456):", t.get_value())
+t.add_val(10)
+print("After add_val(10):", t.get_value())
+
+# Test with explicit this
+class Test2
+    x = 999
+    
+    func read_this()
+        return this.x
+    end
+    
+    func write_this(v)
+        this.x = v
+    end
+end
+
+t2 = Test2()
+print("Direct access t2.x:", t2.x)
+print("Through method read_this():", t2.read_this())
+t2.write_this(111)
+print("After write_this(111):", t2.read_this())
+
+print("\n=== AugAssign test ===")
+class Counter
+    count = 0
+    
+    func increment()
+        self.count += 1
+    end
+    
+    func add_n(n)
+        self.count += n
+    end
+    
+    func get_count()
+        return self.count
+    end
+end
+
+c = Counter()
+print("Initial count:", c.get_count())
+c.increment()
+c.increment()
+c.increment()
+print("After 3 increments:", c.get_count())
+c.add_n(5)
+print("After add_n(5):", c.get_count())
+
+print("\n=== Testing not operator ===")
+# Bug: not puede tener problemas con precedence
+print("not true:", not true)
+print("not false:", not false)
+print("not 0:", not 0)
+print("not 1:", not 1)
+print("not nil:", not nil)
+print("not 'hello':", not "hello")
+
+print("\n=== Testing operadores mixtos ===")
+print("5 == '5':", 5 == "5")
+print("5 != '5':", 5 != "5")
+print("true == 1:", true == 1)
+print("false == 0:", false == 0)
+
+print("\n=== Test completo de operadores ===")
+x = 10
+y = 20
+print("x + y:", x + y)
+print("x - y:", x - y)
+print("x * y:", x * y)
+print("x / y:", x / y)
+print("x % y:", x % y)
+print("x ** 2:", x ** 2)
+print("-x:", -x)
+print("x == 10:", x == 10)
+print("x != y:", x != y)
+print("x < y:", x < y)
+print("x > 5:", x > 5)
+print("x <= 10:", x <= 10)
+print("x >= 10:", x >= 10)

@@ -1,0 +1,61 @@
+print("=== Test String Methods ===")
+
+var s = "Hello World"
+print("Original: " + s)
+print("Upper: " + s.upper())
+print("Lower: " + s.lower())
+print("Length: " + s.length())
+
+var parts = s.split(" ")
+print("Split: " + parts)
+
+var t = "  hello  "
+print("Trim test: '" + t.trim() + "'")
+
+var email = "test@example.com"
+print("Contains '@': " + email.contains("@"))
+print("IndexOf '@': " + email.indexOf("@"))
+print("Starts with 'test': " + email.startsWith("test"))
+print("Ends with '.com': " + email.endsWith(".com"))
+
+var replaced = "hello world".replace("world", "ava")
+print("Replace: " + replaced)
+print("Substring: " + "Hello".substring(1, 4))
+
+print("")
+print("=== Test List Methods ===")
+
+var lst = [1, 2, 3]
+print("List: " + lst)
+print("Length: " + lst.length())
+
+lst.append(4)
+print("After append: " + lst)
+
+var popped = lst.pop()
+print("Popped: " + popped)
+print("After pop: " + lst)
+
+lst.insert(1, 99)
+print("After insert at 1: " + lst)
+
+var removed = lst.remove(1)
+print("Removed: " + removed)
+print("After remove: " + lst)
+
+print("Contains 3: " + lst.contains(3))
+
+print("")
+print("=== Test Dict Methods ===")
+
+var d = {"name": "Alice", "age": 30, "city": "NYC"}
+print("Dict: " + d)
+print("Keys: " + d.keys())
+print("Values: " + d.values())
+print("Items: " + d.items())
+print("Length: " + d.length())
+print("Has 'name': " + d.containsKey("name"))
+print("Has 'email': " + d.containsKey("email"))
+
+print("")
+print("=== All tests passed! ===")

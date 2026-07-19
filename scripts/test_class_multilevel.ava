@@ -1,0 +1,16 @@
+# Test herencia multinivel
+
+class Vehiculo
+    func init(marca)
+        this.marca = marca
+    end
+end
+
+class Auto : Vehiculo
+    func init(marca, puertas)
+        base(marca)
+        this.puertas = puertas
+    end
+end
+
+print("OK")

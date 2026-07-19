@@ -1,0 +1,2 @@
+local arr = [10]
+print(arr)

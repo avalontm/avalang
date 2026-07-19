@@ -1,0 +1,13 @@
+# Control flow: while, if, break, continue
+total = 0
+i = 1
+while i <= 5 do total = total + i i = i + 1 end
+print(total)
+
+i = 0 result = 0
+while i < 10 do i = i + 1 if i == 3 then continue end if i == 8 then break end result = result + i end
+print(result)
+
+# If simple
+if true then print("yes") end
+if false then print("no") end

@@ -1,0 +1,59 @@
+# Test pass statement
+
+func do_nothing()
+    pass
+end
+
+result = do_nothing()
+print(result)  # nil
+
+func conditional_pass(x)
+    if x > 10 then
+        pass
+    else
+        print("x <= 10")
+    end
+end
+
+conditional_pass(5)   # x <= 10
+conditional_pass(15)  # (nothing printed, pass executed)
+
+func loop_with_pass()
+    i = 0
+    count = 0
+    while i < 5 do
+        i = i + 1
+        if i == 3 then
+            pass
+        end
+        count = count + 1
+    end
+    return count
+end
+
+result = loop_with_pass()
+print(result)  # 5 (pass just continues)
+
+func empty_body()
+    pass
+end
+
+empty_body()
+print("pass statement works!")
+
+# Test pass in if/elif/else
+func test_pass_if(flag)
+    if flag then
+        pass
+    elif flag == false then
+        print("false branch")
+    else
+        pass
+    end
+end
+
+test_pass_if(true)   # nothing
+test_pass_if(false)  # false branch
+test_pass_if(nil)    # nothing
+
+print("All pass tests passed!")

@@ -1,0 +1,22 @@
+# Test base() sin argumentos
+
+class Base
+    func init()
+        print("Base init")
+    end
+    
+    func saludar()
+        print("Hola desde Base")
+    end
+end
+
+class Derivada : Base
+    func init()
+        base()
+    end
+end
+
+b = Base()
+b.saludar()
+
+d = Derivada()

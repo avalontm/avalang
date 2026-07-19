@@ -1,0 +1,12 @@
+# Test slicing - simplified
+local arr = [1, 2, 3, 4, 5]
+
+print("arr[1:3]:", arr[1:3])
+print("arr[:3]:", arr[:3])
+print("arr[2:]:", arr[2:])
+print("arr[:]:", arr[:])
+
+# Test step - should be 1,3,5
+local result = arr[:]
+print("arr[:]:", result)
+print("len(arr):", len(arr))

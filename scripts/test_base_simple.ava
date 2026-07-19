@@ -1,0 +1,14 @@
+class Animal
+    func init(nombre)
+        this.nombre = nombre
+    end
+end
+
+class Perro : Animal
+    func init(nombre)
+        base(nombre)
+    end
+end
+
+p = Perro("Rex")
+print(p.nombre)

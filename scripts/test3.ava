@@ -1,0 +1,4 @@
+var t = "  hello  "
+var tr = t.trim()
+print("trim test:")
+print(tr)

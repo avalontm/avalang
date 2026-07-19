@@ -1,0 +1,3 @@
+print("test")
+var email = "test@example.com"
+print(email)

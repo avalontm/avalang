@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Asi se referencia la libreria desde CUALQUIER proyecto .NET -->
+    <ProjectReference Include="..\AvaLang.Interop\AvaLang.Interop.csproj" />
+  </ItemGroup>
+
+</Project>

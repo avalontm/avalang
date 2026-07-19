@@ -1,0 +1,19 @@
+name = "Ava"
+age = 25
+x = 10
+y = 3
+
+print("=== F-String Tests ===")
+
+print($"Hello {name}")
+print($"Age: {age}")
+print($"Sum: {x + y}")
+print($"Multiply: {x * y}")
+print($"Nested: {(1 + 2) * 3}")
+
+list = ["a", "b", "c"]
+print($"First: {list[0]}")
+
+print($"Braces: {{literal}}")
+
+print("=== All tests passed! ===")

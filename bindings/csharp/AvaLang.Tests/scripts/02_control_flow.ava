@@ -1,0 +1,15 @@
+# Variables, if/elif/else, while.
+total = 0
+i = 1
+while i <= 5:
+    total += i
+    i += 1
+
+if total == 15:
+    result = "ok"
+elif total > 15:
+    result = "too high"
+else:
+    result = "too low"
+
+result

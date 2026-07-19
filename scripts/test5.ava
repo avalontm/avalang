@@ -1,0 +1,4 @@
+var email = "test@example.com"
+print("email: " + email)
+var hasAt = email.contains("@")
+print("hasAt: " + hasAt)
