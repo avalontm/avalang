@@ -1,0 +1,20 @@
+func gen()
+    yield 1
+end
+
+result = coroutine(gen)
+print("Type of coroutine(gen):", type(result))
+
+is_coro = result == nil
+print("Is nil?:", is_coro)
+
+items = result[0]
+print("First item:", items)
+
+co = coroutine(gen)
+result2 = resume(co)
+print("Result type:", type(result2))
+print("Result:", result2)
+
+is_nil2 = result2 == nil
+print("Is nil2?:", is_nil2)

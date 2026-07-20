@@ -1,0 +1,18 @@
+print("Step 1: Define generator")
+func gen()
+    print("  gen: yielding 100")
+    yield 100
+    print("  gen: yielding 200")
+    yield 200
+end
+
+print("Step 2: Create coroutine")
+co = coroutine(gen)
+print("Step 3: Manual resume test")
+val1 = resume(co)
+print("  val1 =", val1)
+print("Step 4: for loop with debug")
+for x in co do
+    print("  loop body: x =", x)
+end
+print("Step 5: Done")

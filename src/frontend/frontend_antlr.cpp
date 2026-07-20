@@ -94,23 +94,31 @@ static std::string formatError(const std::string& source_name, const SourceError
 }
 
 std::shared_ptr<Proto> CompileSource(const std::string& source, const std::string& source_name) {
+    fprintf(stderr, "[C++] CompileSource: start\n");
     std::string normalized_source = source;
     if (normalized_source.empty() || normalized_source.back() != '\n') {
         normalized_source += '\n';
     }
-
+    
+    fprintf(stderr, "[C++] CompileSource: creating input stream\n");
     antlr4::ANTLRInputStream input(normalized_source);
+    fprintf(stderr, "[C++] CompileSource: creating lexer\n");
     AvaLangLexer lexer(&input);
     
     AvaLangErrorListener error_listener(source_name, normalized_source);
     lexer.addErrorListener(&error_listener);
     
+    fprintf(stderr, "[C++] CompileSource: creating token stream\n");
     antlr4::CommonTokenStream tokens(&lexer);
     
+    fprintf(stderr, "[C++] CompileSource: creating parser\n");
     AvaLangParser parser(&tokens);
     parser.addErrorListener(&error_listener);
     
+    fprintf(stderr, "[C++] CompileSource: parsing chunk\n");
     auto* tree = parser.chunk();
+    fprintf(stderr, "[C++] CompileSource: parsed chunk\n");
+    fprintf(stderr, "[C++] CompileSource: checking for errors, %zu errors\n", error_listener.errors.size());
 
     if (!error_listener.errors.empty()) {
         std::ostringstream err_out;
@@ -120,27 +128,37 @@ std::shared_ptr<Proto> CompileSource(const std::string& source, const std::strin
         throw CompileError(err_out.str());
     }
 
+    fprintf(stderr, "[C++] CompileSource: checking syntax errors\n");
     if (parser.getNumberOfSyntaxErrors() > 0) {
         throw CompileError("syntax error(s) in " + source_name);
     }
-
+    
+    fprintf(stderr, "[C++] CompileSource: creating AstBuilder\n");
     AstBuilder builder;
     try {
+        fprintf(stderr, "[C++] CompileSource: visiting parse tree\n");
         auto any_chunk = tree->accept(&builder);
+        fprintf(stderr, "[C++] CompileSource: visited, has_value=%d\n", any_chunk.has_value());
         if (!any_chunk.has_value()) {
             throw CompileError("AST building returned empty result");
         }
+        fprintf(stderr, "[C++] CompileSource: casting to Chunk\n");
         auto chunk = std::any_cast<std::shared_ptr<Chunk>>(any_chunk);
+        fprintf(stderr, "[C++] CompileSource: chunk=%p\n", chunk.get());
         if (!chunk) {
             throw CompileError("AST chunk is null");
         }
-
+        fprintf(stderr, "[C++] CompileSource: creating Compiler\n");
         Compiler compiler;
+        fprintf(stderr, "[C++] CompileSource: chunk has %zu statements\n", chunk->statements.size());
+        fprintf(stderr, "[C++] CompileSource: compiling chunk\n");
         auto proto = compiler.Compile(chunk);
+        fprintf(stderr, "[C++] CompileSource: compiled proto=%p\n", proto.get());
         return proto;
     } catch (const std::bad_any_cast& e) {
         throw CompileError("Bad any_cast during compilation: " + std::string(e.what()));
     } catch (const std::exception& e) {
+        fprintf(stderr, "[C++] CompileSource: exception: %s\n", e.what());
         throw CompileError("Compilation error: " + std::string(e.what()));
     }
 }

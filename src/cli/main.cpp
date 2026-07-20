@@ -123,10 +123,16 @@ static ava_value_t make_string(const std::string& s) {
 
 static ava_value_t native_type(AvaVM*, const ava_value_t* args, size_t count, void*) {
     if (count < 1) return make_nil();
-    const char* names[] = {"nil", "bool", "number", "string", "list", "dict", "function", "instance", "class", "native", "bound"};
+    const char* names[] = {
+        "nil", "bool", "number", "string", "list", "dict",
+        "function", "instance", "class", "coroutine",
+        "native", "bound", "exception"
+    };
     int idx = static_cast<int>(args[0].type);
-    if (idx < 0 || idx > 10) idx = 0;
+    if (idx < 0 || idx > 12) idx = 0;
+    fprintf(stderr, "[C++] native_type: arg0.type=%d (%s)\n", (int)args[0].type, names[idx]);
     ava_value_t str = ava_string_create(nullptr, names[idx], strlen(names[idx]));
+    fprintf(stderr, "[C++] native_type: returning type=%d, ref.id=%lu\n", (int)str.type, (unsigned long)str.as.ref.id);
     return str;
 }
 
@@ -624,8 +630,9 @@ int main(int argc, char** argv) {
     }
 
     DEBUG_PRINT("DEBUG: calling ava_run\n");
-    ava_value_t result = ava_run(vm, module, &error);
-    DEBUG_PRINT("DEBUG: ava_run returned, error=%p\n", error);
+    ava_value_t result{};
+    ava_run(vm, module, &result, &error);
+    DEBUG_PRINT("DEBUG: ava_run returned, error=%p, result.type=%d, result.n=%g\n", error, (int)result.type, result.as.n);
     if (error) {
         std::fprintf(stderr, "runtime error: %s\n", error);
         ava_string_free(error);

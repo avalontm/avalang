@@ -24,6 +24,7 @@ private:
     std::shared_ptr<Proto> proto_;
     uint16_t next_reg_ = 0;
     uint16_t max_reg_ = 0;
+    uint16_t result_reg_ = 0;
     std::unordered_map<std::string, uint16_t> locals_;
     std::unordered_map<std::string, ClassObj*> compiled_classes_;
     ClassObj* current_base_class_ = nullptr;
@@ -47,6 +48,7 @@ private:
     uint16_t CompileExpr(const std::shared_ptr<ExprNode>& expr);
     void CompileStmt(const std::shared_ptr<StmtNode>& stmt);
     void CompileChunk(const std::vector<std::shared_ptr<StmtNode>>& stmts);
+    uint16_t CompileExprToReg(const std::shared_ptr<StmtNode>& stmt);
 
     void PatchJump(size_t instr_idx);
 
@@ -60,6 +62,13 @@ private:
     void CompileRaise(const RaiseStmt* stmt);
     void CompileYield(const YieldStmt* stmt);
     uint16_t CompileFStringExpression(const std::string& expr_str);
+
+    enum class IteratorKind { List, Coroutine };
+    IteratorKind DetectIteratorKind(const std::shared_ptr<ExprNode>& iterable);
+    void CompileForIterator(const ForStmt* stmt);
+    void CompileForList(const ForStmt* stmt);
+    void CompileForCoroutine(const ForStmt* stmt);
+    void CompileForDynamic(const ForStmt* stmt);
 
     std::shared_ptr<ExprNode> ParseFStringExpr(const std::string& expr_str);
 

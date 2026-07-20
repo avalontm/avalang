@@ -1,0 +1,19 @@
+func gen()
+    yield 1
+end
+
+co = coroutine(gen)
+res = resume(co)
+print("res:", res, "type:", type(res))
+
+nil_const = nil
+print("nil_const:", nil_const, "type:", type(nil_const))
+
+result = res == nil_const
+print("res == nil_const:", result)
+
+if result then
+    print("EQ returned TRUE (they are equal)")
+else
+    print("EQ returned FALSE (they are not equal)")
+end

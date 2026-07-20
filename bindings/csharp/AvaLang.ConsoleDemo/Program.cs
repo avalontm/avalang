@@ -1,28 +1,46 @@
 using AvaLang;
 
-// Desde el punto de vista de este proyecto, AvaLang es una libreria
-// managed comun y corriente -- no hay P/Invoke a la vista.
-
-using var vm = new AvaVM();
-
-// Funcion host expuesta a los scripts AvaLang, ej: llamable como print(...)
-vm.RegisterNative("print", args =>
-{
-    foreach (var a in args)
-        Console.Write(a.Type == AvaValueType.Number ? a.As.Number.ToString() : a.Type.ToString());
-    Console.WriteLine();
-    return AvaValue.Nil;
-});
+Console.WriteLine("=== AvaLang C# Binding Test ===");
+Console.WriteLine();
 
 try
 {
-    using var module = vm.Compile("print(1 + 2)");
-    var result = vm.Run(module);
-    Console.WriteLine($"Resultado: {result.Type}");
+    using var vm = new AvaVM();
+
+    Console.WriteLine("=== Test 1: Simple expression ===");
+    var result = vm.Eval("5 * 3");
+    Console.WriteLine($"Result: {result.AsNumber()}");
+
+    Console.WriteLine("\n=== Test 2: Function definition and call ===");
+    vm.Eval("func add(a, b) return a + b end");
+    Console.WriteLine("Function add(a, b) defined");
+    
+    var fn = vm.GetGlobal("add");
+    Console.WriteLine($"Got function: Type={fn.Type}");
+    
+    result = vm.Call(fn, AvaValue.FromNumber(3), AvaValue.FromNumber(4));
+    Console.WriteLine($"add(3, 4) = {result.AsNumber()}");
+
+    Console.WriteLine("\n=== Test 3: List operations ===");
+    vm.Eval("x = [1, 2, 3]");
+    var list = vm.GetGlobal("x");
+    Console.WriteLine($"List type: {list.Type}");
+    Console.WriteLine($"List length: {vm.GetListLength(list)}");
+    var first = vm.GetListItem(list, 0);
+    Console.WriteLine($"First element: {first.AsNumber()}");
+
+    Console.WriteLine("\n=== Test 4: Dict operations ===");
+    vm.Eval("d = {\"key\": \"value\"}");
+    var dict = vm.GetGlobal("d");
+    Console.WriteLine($"Dict type: {dict.Type}");
+    Console.WriteLine($"Dict contains 'key': {vm.DictContains(dict, "key")}");
+    var val = vm.GetDictItem(dict, "key");
+    Console.WriteLine($"Value for 'key': {vm.GetStringData(val)}");
+
+    Console.WriteLine("\nAll tests passed!");
 }
-catch (AvaException ex)
+catch (Exception ex)
 {
-    // Hoy esto va a saltar con "AvaLang frontend not built: ..."
-    // porque el .dll se compilo con el frontend stub (sin antlr4-runtime).
-    Console.WriteLine($"Error esperado con el frontend stub: {ex.Message}");
+    Console.WriteLine($"Error: {ex.Message}");
+    Console.WriteLine(ex.StackTrace);
 }

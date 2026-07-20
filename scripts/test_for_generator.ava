@@ -1,0 +1,16 @@
+func numbers(max)
+    i = 0
+    while i < max do
+        yield i
+        i = i + 1
+    end
+end
+
+print("Testing for-in with generator:")
+for n in coroutine(numbers) do
+    print("  Got: " + str(n))
+    if n >= 3 then
+        break
+    end
+end
+print("Done!")

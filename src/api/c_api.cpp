@@ -37,13 +37,29 @@ AVA_API void ava_vm_register_native(AvaVM* vm, const char* name, AvaNativeFn fn,
 }
 
 AVA_API AvaModule* ava_compile(AvaVM*, const char* source, const char* source_name, char** out_error) {
+    fprintf(stderr, "[C++] ava_compile entered\n");
     try {
+        fprintf(stderr, "[C++] calling CompileSource...\n");
         auto proto = CompileSource(source, source_name ? source_name : "<script>");
+        fprintf(stderr, "[C++] CompileSource returned, proto=%p\n", proto.get());
+        fprintf(stderr, "[C++] Proto: num_registers=%d, num_params=%d, instructions=%zu, constants=%zu, child_protos=%zu\n",
+                proto->num_registers, proto->num_params, proto->instructions.size(), 
+                proto->constants.size(), proto->child_protos.size());
+        for (size_t i = 0; i < proto->instructions.size(); i++) {
+            auto& in = proto->instructions[i];
+            fprintf(stderr, "  [%2d] opcode=%2d a=%d b=%d c=%d\n", (int)i, (int)in.op, in.a, in.b, in.c);
+        }
         auto* module = new AvaModule();
         module->proto = proto;
+        fprintf(stderr, "[C++] module created\n");
         return module;
     } catch (const std::exception& e) {
+        fprintf(stderr, "[C++] exception: %s\n", e.what());
         if (out_error) *out_error = DupString(e.what());
+        return nullptr;
+    } catch (...) {
+        fprintf(stderr, "[C++] unknown exception\n");
+        if (out_error) *out_error = DupString("unknown error");
         return nullptr;
     }
 }
@@ -52,26 +68,26 @@ AVA_API void ava_module_destroy(AvaModule* module) {
     delete module;
 }
 
-AVA_API ava_value_t ava_run(AvaVM* vm, AvaModule* module, char** out_error) {
+AVA_API void ava_run(AvaVM* vm, AvaModule* module, ava_value_t* out_result, char** out_error) {
     try {
         Value result = reinterpret_cast<VM*>(vm)->Run(module->proto);
-        return ToC(result);
+        if (out_result) *out_result = ToC(result);
     } catch (const std::exception& e) {
         if (out_error) *out_error = DupString(e.what());
-        return ToC(Value::Nil());
+        if (out_result) out_result->type = AVA_NIL;
     }
 }
 
-AVA_API ava_value_t ava_call(AvaVM* vm, ava_value_t callable, const ava_value_t* args, size_t arg_count, char** out_error) {
+AVA_API void ava_call(AvaVM* vm, ava_value_t callable, const ava_value_t* args, size_t arg_count, ava_value_t* out_result, char** out_error) {
     try {
         std::vector<Value> vargs;
         vargs.reserve(arg_count);
         for (size_t i = 0; i < arg_count; ++i) vargs.push_back(FromC(args[i]));
         Value result = reinterpret_cast<VM*>(vm)->Call(FromC(callable), vargs);
-        return ToC(result);
+        if (out_result) *out_result = ToC(result);
     } catch (const std::exception& e) {
         if (out_error) *out_error = DupString(e.what());
-        return ToC(Value::Nil());
+        if (out_result) out_result->type = AVA_NIL;
     }
 }
 
@@ -206,6 +222,13 @@ AVA_API void ava_list_remove(AvaVM*, ava_value_t list, size_t index) {
     auto& items = static_cast<ListObj*>(v.obj)->items;
     if (index >= items.size()) return;
     items.erase(items.begin() + index);
+}
+
+AVA_API void ava_list_set(AvaVM*, ava_value_t list, size_t index, ava_value_t value) {
+    Value v = FromC(list);
+    auto& items = static_cast<ListObj*>(v.obj)->items;
+    if (index >= items.size()) return;
+    items[index] = FromC(value);
 }
 
 AVA_API ava_value_t ava_dict_create(AvaVM*) {

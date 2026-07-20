@@ -30,7 +30,7 @@ El proyecto AvaLang es un lenguaje de scripting embebible con sintaxis tipo Pyth
 ### Built-in Functions
 ```python
 # Conversión
-type(x)              # "nil", "bool", "number", "string", "list", "dict", "function", "instance", "class"
+type(x)              # "nil", "bool", "number", "string", "list", "dict", "function", "instance", "class", "coroutine", "native", "bound", "exception"
 str(x)              # Convierte a string
 int(x)              # Convierte a entero (trunca decimales)
 float(x)            # Convierte a decimal
@@ -177,6 +177,15 @@ end
 # For loop
 for item in [1, 2, 3] do
     print(item)
+end
+
+# For loop sobre coroutine
+func my_gen()
+    yield 10
+    yield 20
+end
+for x in coroutine(my_gen) do
+    print(x)
 end
 
 # Break y Continue
@@ -401,16 +410,38 @@ error at test.ava:2:8: extraneous input '+' expecting {...}
 - Coroutines: `yield` dentro de una función anidada (llamada desde la coroutine, no el cuerpo directo de la coroutine) no suspende hasta arriba — solo desenrolla un nivel, como un `return` normal. Ver `docs/coroutines.md`.
 - Coroutines: `resume()` sobre una coroutine ya `Dead` no lanza error, simplemente devuelve `nil` sin ejecutar nada (el opcode `RESUME` sí valida esto, pero no se usa; `resume()` se compila como `CALL` a la nativa, que pasa por `VM::Call` y ahí no se chequea `Dead`)
 
+### ✅ Nuevo: For Loop Dinámico sobre Coroutines
+
+El for loop ahora soporta iterar directamente sobre coroutines:
+
+```python
+func my_gen()
+    yield 10
+    yield 20
+    yield 30
+end
+
+# Itera sobre la coroutine automáticamente
+for item in coroutine(my_gen) do
+    print(item)
+end
+# Output: 10, 20, 30
+```
+
+El compilador genera código que determina el tipo en runtime y usa la implementación correcta (`CompileForCoroutine` o `CompileForList`).
+
+**Ver:** `docs/coroutines.md` → "For loop sobre Coroutines"
+
 ### ❌ Por Implementar
 - Generators con `yield` dentro de llamadas anidadas (propagación de yield a través del call stack)
 - Decorators
 
 ---
 
-**Fecha:** 2026-07-19
+**Fecha:** 2026-07-20
 **Estado:** Desarrollo activo - funcionalidades core completas
 **Highlights:**
-- **Comparaciones de strings corregidas**: EQ, NE, LT, LE, GT, GE ahora funcionan correctamente con strings
+- **For loop dinámico sobre coroutines**: El for loop ahora detecta el tipo en runtime y funciona con listas y coroutines automáticamente. `for x in coroutine(gen)` itera correctamente.
 - **AugAssign con atributos**: `self.attr += 1` ahora funciona (antes retornaba nil)
 - **Keyword `self`**: Ahora es reconocido como alias de `this` en el compilador
 - Documentación completa de Opcodes y Bytecode en `docs/opcodes.md`

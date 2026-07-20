@@ -128,14 +128,14 @@ AVA_API void ava_module_destroy(AvaModule* module);
 
 /* Runs the module's top-level code. Returns the last expression value
  * or AVA_NIL. */
-AVA_API ava_value_t ava_run(AvaVM* vm, AvaModule* module, char** out_error);
+AVA_API void ava_run(AvaVM* vm, AvaModule* module, ava_value_t* out_result, char** out_error);
 
-/* Looks up a top-level function/global by name and calls it. */
-AVA_API ava_value_t ava_call(
+AVA_API void ava_call(
     AvaVM* vm,
     ava_value_t callable,
     const ava_value_t* args,
     size_t arg_count,
+    ava_value_t* out_result,
     char** out_error
 );
 
@@ -180,6 +180,7 @@ AVA_API size_t       ava_list_length(AvaVM* vm, ava_value_t list);
 AVA_API ava_value_t  ava_list_get(AvaVM* vm, ava_value_t list, size_t index);
 AVA_API void         ava_list_insert(AvaVM* vm, ava_value_t list, size_t index, ava_value_t item);
 AVA_API void         ava_list_remove(AvaVM* vm, ava_value_t list, size_t index);
+AVA_API void         ava_list_set(AvaVM* vm, ava_value_t list, size_t index, ava_value_t value);
 
 AVA_API ava_value_t ava_dict_create(AvaVM* vm);
 AVA_API void         ava_dict_set(AvaVM* vm, ava_value_t dict, const char* key, ava_value_t value);

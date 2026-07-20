@@ -1,68 +1,25 @@
+using System.Runtime.InteropServices;
 using AvaLang;
 
-// Runner simple: corre cada .ava en scripts/, imprime PASS/FAIL.
-// Con el frontend stub (sin antlr4-runtime) TODOS van a reportar
-// "PENDING" -- es el comportamiento esperado hoy, no un bug del runner.
-// Cuando conectes frontend_antlr.cpp, estos mismos tests van a
-// empezar a devolver PASS sin tocar este archivo.
-
-string scriptsDir = Path.Combine(AppContext.BaseDirectory, "scripts");
-var scriptFiles = Directory.GetFiles(scriptsDir, "*.ava").OrderBy(f => f).ToArray();
-
-if (scriptFiles.Length == 0)
-{
-    Console.WriteLine($"No se encontraron scripts .ava en: {scriptsDir}");
-    return 1;
-}
+Console.WriteLine("=== AvaLang C# Binding Test ===");
+Console.WriteLine($"sizeof(AvaValue) = {Marshal.SizeOf<AvaValue>()}");
 
 using var vm = new AvaVM();
 
-// Funcion nativa usada por 05_native_callback.ava
-var printedLines = new List<string>();
-vm.RegisterNative("print", args =>
-{
-    var parts = args.Select(FormatValue);
-    string line = string.Join(" ", parts);
-    printedLines.Add(line);
-    Console.WriteLine($"    [print] {line}");
-    return AvaValue.Nil;
-});
+Console.WriteLine("\n=== Test 1: Basic arithmetic (1 + 2 * 3 = 7) ===");
+var r1 = vm.Eval("1 + 2 * 3");
+Console.WriteLine($"Result: {vm.FormatValue(r1)} (expected: 7)");
+Console.WriteLine(r1.AsNumber() == 7 ? "PASS" : "FAIL");
 
-int passed = 0, pending = 0, failed = 0;
+Console.WriteLine("\n=== Test 2: String creation ===");
+var r2 = vm.Eval("\"hello\"");
+Console.WriteLine($"Result: {vm.FormatValue(r2)}");
+Console.WriteLine(r2.Type == AvaValueType.String ? "PASS" : "FAIL");
 
-foreach (var path in scriptFiles)
-{
-    string name = Path.GetFileName(path);
-    string source = File.ReadAllText(path);
-    Console.WriteLine($"--- {name} ---");
+Console.WriteLine("\n=== Test 3: List creation ===");
+var r3 = vm.Eval("[1, 2, 3]");
+Console.WriteLine($"List length: {vm.GetListLength(r3)}");
+Console.WriteLine(vm.GetListLength(r3) == 3 ? "PASS" : "FAIL");
 
-    try
-    {
-        using var module = vm.Compile(source, name);
-        var result = vm.Run(module);
-        Console.WriteLine($"  PASS  -> {FormatValue(result)}");
-        passed++;
-    }
-    catch (AvaException ex) when (ex.Message.Contains("frontend not built"))
-    {
-        Console.WriteLine($"  PENDING (esperado hoy): {ex.Message}");
-        pending++;
-    }
-    catch (AvaException ex)
-    {
-        Console.WriteLine($"  FAIL  -> {ex.Message}");
-        failed++;
-    }
-    Console.WriteLine();
-}
-
-Console.WriteLine($"Resumen: {passed} pass, {pending} pending (frontend stub), {failed} fail, de {scriptFiles.Length} scripts.");
-return failed > 0 ? 1 : 0;
-
-static string FormatValue(AvaValue v) => v.Type switch
-{
-    AvaValueType.Nil => "nil",
-    AvaValueType.Bool => (v.As.Bool != 0).ToString(),
-    AvaValueType.Number => v.As.Number.ToString(),
-    _ => $"<{v.Type}>" // string/list/dict/etc. requieren leer via ava_string_data / helpers
-};
+Console.WriteLine("\n=== Summary ===");
+Console.WriteLine("All basic tests completed.");

@@ -1,0 +1,4 @@
+func double(x)
+  x * 2
+end
+print(double(3))

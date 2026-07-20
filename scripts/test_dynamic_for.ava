@@ -1,0 +1,19 @@
+# Test dynamic for loop (list)
+print("Testing for loop over list:")
+for x in [1, 2, 3] do
+    print("list item:", x)
+end
+
+# Test dynamic for loop (coroutine)
+print("Testing for loop over coroutine:")
+func my_gen()
+    yield 10
+    yield 20
+    yield 30
+end
+
+for y in coroutine(my_gen) do
+    print("coro item:", y)
+end
+
+print("Done!")

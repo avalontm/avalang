@@ -15,7 +15,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyDescriptionAttribute("Managed wrapper for the AvaLang native C API (avalang.dll)")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("0.1.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("0.1.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("0.1.0+ef45fefbc6e7bc91280c2194dc857bb5c0a04fd4")]
 [assembly: System.Reflection.AssemblyProductAttribute("AvaLang.Interop")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AvaLang.Interop")]
 [assembly: System.Reflection.AssemblyVersionAttribute("0.1.0.0")]

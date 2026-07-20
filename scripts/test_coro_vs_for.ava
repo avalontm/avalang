@@ -1,0 +1,18 @@
+func gen()
+    yield 100
+    yield 200
+end
+
+co = coroutine(gen)
+
+print("Manual resume:")
+r1 = resume(co)
+print("  r1:", r1, "type:", type(r1), "index0:", r1[0])
+r2 = resume(co)
+print("  r2:", r2, "type:", type(r2), "index0:", r2[0])
+
+print("Now test for loop with same coroutine:")
+for n in co do
+    print("  for got:", n, "type:", type(n))
+end
+print("Done")

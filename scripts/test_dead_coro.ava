@@ -1,0 +1,11 @@
+func counter()
+    yield 1
+end
+
+co = coroutine(counter)
+print("First resume")
+r1 = resume(co)
+print("  r1:", r1)
+print("Second resume (should error)")
+r2 = resume(co)
+print("  r2:", r2)

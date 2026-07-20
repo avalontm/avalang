@@ -385,7 +385,7 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
         }
 
         sub.CompileChunk(l->body);
-        sub.proto_->instructions.push_back({OpCode::RETURN, 0, 0});
+        sub.proto_->instructions.push_back({OpCode::RETURN, 0, 0, 0});
         sub.proto_->num_registers = std::max<uint16_t>(sub.max_reg_ + 1, sub.next_reg_);
 
         uint16_t child_idx = static_cast<uint16_t>(proto_->child_protos.size());
@@ -400,6 +400,7 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
 }
 
 void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
+    fprintf(stderr, "[C++] CompileStmt: stmt=%p\n", stmt.get());
     if (auto* e = dynamic_cast<ExprStmt*>(stmt.get())) {
         CompileExpr(e->expr);
         return;
@@ -659,10 +660,41 @@ void Compiler::CompileWhile(const WhileStmt* stmt) {
 }
 
 void Compiler::CompileFor(const ForStmt* stmt) {
+    CompileForIterator(stmt);
+}
+
+void Compiler::CompileForIterator(const ForStmt* stmt) {
+    IteratorKind kind = DetectIteratorKind(stmt->iterable);
+    switch (kind) {
+        case IteratorKind::List:
+            // Static AST shape doesn't prove this is a list — e.g. `for x in co do`
+            // where `co = coroutine(f)` looks identical to `for x in a_list do` at
+            // this level. Defer to a runtime type check instead of guessing.
+            CompileForDynamic(stmt);
+            break;
+        case IteratorKind::Coroutine:
+            CompileForCoroutine(stmt);
+            break;
+    }
+}
+
+Compiler::IteratorKind Compiler::DetectIteratorKind(const std::shared_ptr<ExprNode>& iterable) {
+    if (auto* call = dynamic_cast<CallExpr*>(iterable.get())) {
+        if (auto* name = dynamic_cast<NameExpr*>(call->callee.get())) {
+            if (name->name == "coroutine") {
+                return IteratorKind::Coroutine;
+            }
+        }
+    }
+    return IteratorKind::List;
+}
+
+void Compiler::CompileForList(const ForStmt* stmt) {
+    const auto& var_name = stmt->var_name;
     auto list_var = AddConstant(MakeString("__for_list"));
     auto len_var = AddConstant(MakeString("__for_len"));
     auto idx_var = AddConstant(MakeString("__for_idx"));
-    auto elem_var = AddConstant(MakeString(stmt->var_name));
+    auto elem_var = AddConstant(MakeString(var_name));
     
     auto list_reg = CompileExpr(stmt->iterable);
     Emit(OpCode::SETGLOBAL, list_reg, list_var);
@@ -688,8 +720,6 @@ void Compiler::CompileFor(const ForStmt* stmt) {
     auto cond_reg = AllocReg();
     auto one_c = AddConstant(Value::Number(1));
     auto add_reg = AllocReg();
-    
-    max_reg_ = std::max(max_reg_, static_cast<uint16_t>(206));
     
     Emit(OpCode::GETGLOBAL, list_get, list_var);
     Emit(OpCode::GETGLOBAL, idx_get, idx_var);
@@ -727,7 +757,103 @@ void Compiler::CompileFor(const ForStmt* stmt) {
     pending_continues_.clear();
 }
 
+void Compiler::CompileForCoroutine(const ForStmt* stmt) {
+    const auto& var_name = stmt->var_name;
+    auto iter_var = AddConstant(MakeString("__iter"));
+    auto resume_var = AddConstant(MakeString("__resume"));
+    auto val_var = AddConstant(MakeString("__val"));
+    auto elem_var = AddConstant(MakeString(var_name));
+    
+    auto iter_reg = CompileExpr(stmt->iterable);
+    Emit(OpCode::SETGLOBAL, iter_reg, iter_var);
+    
+    auto resume_func = AllocReg();
+    Emit(OpCode::GETGLOBAL, resume_func, AddConstant(MakeString("resume")));
+    Emit(OpCode::SETGLOBAL, resume_func, resume_var);
+    
+    size_t loop_start = proto_->instructions.size();
+    
+    auto resume_get = AllocReg();
+    Emit(OpCode::GETGLOBAL, resume_get, resume_var);
+    auto arg_get = AllocReg();
+    Emit(OpCode::GETGLOBAL, arg_get, iter_var);
+    
+    Emit(OpCode::CALL, resume_get, 1, 1);
+    
+    auto val_reg = AllocReg();
+    Emit(OpCode::MOVE, val_reg, resume_get);
+    Emit(OpCode::SETGLOBAL, val_reg, val_var);
+    
+    auto nil_k = AddConstant(Value::Nil());
+    auto nil_reg = AllocReg();
+    Emit(OpCode::LOADK, nil_reg, nil_k);
+    auto cond_reg = AllocReg();
+    Emit(OpCode::NE, cond_reg, val_reg, nil_reg);
+    Emit(OpCode::TEST, cond_reg, 0);
+    
+    size_t jmp_out = proto_->instructions.size();
+    Emit(OpCode::JMP, 0);
+    
+    auto zero_k = AddConstant(Value::Number(0));
+    auto elem_get = AllocReg();
+    Emit(OpCode::GETGLOBAL, elem_get, val_var);
+    auto idx_reg = AllocReg();
+    Emit(OpCode::LOADK, idx_reg, zero_k);
+    auto first_elem = AllocReg();
+    Emit(OpCode::GETINDEX, first_elem, elem_get, idx_reg);
+    Emit(OpCode::SETGLOBAL, first_elem, elem_var);
+    
+    CompileChunk(stmt->body);
+    
+    int32_t back_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(proto_->instructions.size()) - 1;
+    Emit(OpCode::JMP, 0, static_cast<uint16_t>(static_cast<int16_t>(back_offset)));
+    
+    PatchJump(jmp_out);
+    
+    for (auto& patch : pending_breaks_) {
+        PatchJump(patch.instr_idx);
+    }
+    pending_breaks_.clear();
+
+    for (auto& patch : pending_continues_) {
+        PatchJump(patch.instr_idx);
+    }
+    pending_continues_.clear();
+}
+
+void Compiler::CompileForDynamic(const ForStmt* stmt) {
+    auto iter_reg = CompileExpr(stmt->iterable);
+    
+    auto type_func = AllocReg();
+    Emit(OpCode::GETGLOBAL, type_func, AddConstant(MakeString("type")));
+    auto type_arg = AllocReg();
+    Emit(OpCode::MOVE, type_arg, iter_reg);
+    Emit(OpCode::CALL, type_func, 1, 1);
+    
+    auto coro_str_k = AddConstant(MakeString("coroutine"));
+    auto coro_str_reg = AllocReg();
+    Emit(OpCode::LOADK, coro_str_reg, coro_str_k);
+    auto cmp_reg = AllocReg();
+    Emit(OpCode::EQ, cmp_reg, type_func, coro_str_reg);
+    Emit(OpCode::TEST, cmp_reg, 1);
+    
+    size_t jmp_to_list = proto_->instructions.size();
+    Emit(OpCode::JMP, 0);
+    
+    CompileForCoroutine(stmt);
+    
+    size_t jmp_end = proto_->instructions.size();
+    Emit(OpCode::JMP, 0);
+    
+    PatchJump(jmp_to_list);
+    CompileForList(stmt);
+    
+    PatchJump(jmp_end);
+}
+
 void Compiler::CompileFunc(const FuncDef* func) {
+    fprintf(stderr, "[C++] CompileFunc: name=%s, params=%zu\n", func->name.c_str(), func->params.size());
+    fprintf(stderr, "[C++] CompileFunc: body size=%zu\n", func->body.size());
     Compiler sub;
     sub.proto_ = std::make_shared<Proto>();
     sub.proto_->debug_name = func->name;
@@ -740,9 +866,19 @@ void Compiler::CompileFunc(const FuncDef* func) {
         sub.locals_[pname] = sub.next_reg_;
         sub.next_reg_++;
     }
+    sub.max_reg_ = sub.next_reg_;
 
+    fprintf(stderr, "[C++] CompileFunc: compiling body\n");
     sub.CompileChunk(func->body);
-    sub.proto_->instructions.push_back({OpCode::RETURN, 0, 0});
+    fprintf(stderr, "[C++] CompileFunc: body compiled, result_reg_=%d\n", sub.result_reg_);
+    fprintf(stderr, "[C++] CompileFunc: child proto instructions:\n");
+    for (size_t i = 0; i < sub.proto_->instructions.size(); i++) {
+        auto& in = sub.proto_->instructions[i];
+        fprintf(stderr, "  [%2d] opcode=%2d a=%d b=%d c=%d\n", (int)i, (int)in.op, in.a, in.b, in.c);
+    }
+    uint8_t ret_a = sub.result_reg_ > 0 ? static_cast<uint8_t>(sub.result_reg_) : 0;
+    uint8_t ret_b = sub.result_reg_ > 0 ? 1 : 0;
+    sub.proto_->instructions.push_back({OpCode::RETURN, ret_a, static_cast<uint16_t>(ret_b), 0});
     sub.proto_->num_registers = sub.max_reg_ + 1;
 
     uint16_t child_idx = static_cast<uint16_t>(proto_->child_protos.size());
@@ -756,17 +892,209 @@ void Compiler::CompileFunc(const FuncDef* func) {
 }
 
 void Compiler::CompileChunk(const std::vector<std::shared_ptr<StmtNode>>& stmts) {
-    for (auto& stmt : stmts) {
-        CompileStmt(stmt);
+    for (size_t i = 0; i < stmts.size(); i++) {
+        if (i == stmts.size() - 1) {
+            result_reg_ = CompileExprToReg(stmts[i]);
+        } else {
+            CompileStmt(stmts[i]);
+        }
     }
 }
 
 std::shared_ptr<Proto> Compiler::Compile(const std::shared_ptr<Chunk>& chunk) {
+    fprintf(stderr, "[C++] Compiler::Compile: start\n");
+    fprintf(stderr, "[C++] Compiler::Compile: calling Reset\n");
     Reset();
+    fprintf(stderr, "[C++] Compiler::Compile: Reset done, proto_=%p\n", proto_.get());
+    fprintf(stderr, "[C++] Compiler::Compile: chunk=%p, statements=%zu\n", chunk.get(), chunk->statements.size());
+    fprintf(stderr, "[C++] Compiler::Compile: calling CompileChunk\n");
     CompileChunk(chunk->statements);
-    Emit(OpCode::RETURN, 0, 0);
+    fprintf(stderr, "[C++] Compiler::Compile: CompileChunk done, result_reg_=%d, next_reg_=%d, max_reg_=%d\n", result_reg_, next_reg_, max_reg_);
+    if (result_reg_ > 0 || next_reg_ > 0) {
+        Emit(OpCode::RETURN, result_reg_ > 0 ? result_reg_ : 0, result_reg_ > 0 ? 1 : 0);
+    } else {
+        Emit(OpCode::RETURN, 0, 0);
+    }
     proto_->num_registers = max_reg_ + 1;
+    fprintf(stderr, "[C++] Compiler::Compile: returning proto with %zu instructions\n", proto_->instructions.size());
     return proto_;
+}
+
+uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
+    fprintf(stderr, "[C++] CompileExprToReg: stmt=%p\n", stmt.get());
+    if (auto* e = dynamic_cast<ExprStmt*>(stmt.get())) {
+        fprintf(stderr, "[C++] CompileExprToReg: ExprStmt\n");
+        return CompileExpr(e->expr);
+    }
+    if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
+        if (!a->target) {
+            FreeRegs(1);
+            return 0;
+        }
+        if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
+            bool in_method = locals_.find("this") != locals_.end();
+            bool has_local = locals_.find(n->name) != locals_.end();
+            bool is_known_attr = instance_attrs_.find(n->name) != instance_attrs_.end();
+            auto val_reg = CompileExpr(a->value);
+            if (in_method && n->name != "this" && n->name != "self" && !has_local && is_known_attr) {
+                auto attr_idx = AddConstant(MakeString(n->name));
+                auto this_reg = locals_.at("this");
+                Emit(OpCode::SETATTR, this_reg, attr_idx, val_reg);
+                FreeRegs(1);
+                return 0;
+            }
+            auto idx = AddConstant(MakeString(n->name));
+            Emit(OpCode::SETGLOBAL, val_reg, idx);
+            FreeRegs(1);
+            return 0;
+        }
+        if (auto* i = dynamic_cast<IndexExpr*>(a->target.get())) {
+            auto val_reg = CompileExpr(a->value);
+            auto obj_reg = CompileExpr(i->obj);
+            auto idx_reg = CompileExpr(i->index);
+            auto saved_idx = AllocReg();
+            Emit(OpCode::MOVE, saved_idx, idx_reg);
+            auto saved_obj = AllocReg();
+            Emit(OpCode::MOVE, saved_obj, obj_reg);
+            Emit(OpCode::SETINDEX, saved_obj, saved_idx, val_reg);
+            FreeRegs(5);
+            return 0;
+        }
+        if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
+            bool is_self = false;
+            if (auto* name = dynamic_cast<NameExpr*>(a_expr->obj.get())) {
+                if (name->name == "this" || name->name == "self") {
+                    is_self = true;
+                }
+            }
+            
+            auto val_reg = CompileExpr(a->value);
+            
+            uint16_t obj_reg;
+            if (is_self && locals_.find("this") != locals_.end()) {
+                obj_reg = locals_.at("this");
+            } else {
+                obj_reg = CompileExpr(a_expr->obj);
+            }
+            
+            auto attr_idx = AddConstant(MakeString(a_expr->attr));
+            Emit(OpCode::SETATTR, obj_reg, attr_idx, val_reg);
+            
+            if (!is_self) {
+                FreeRegs(1);
+            }
+            FreeRegs(1);
+            return 0;
+        }
+        FreeRegs(1);
+        return 0;
+    }
+    if (auto* a = dynamic_cast<AugAssignStmt*>(stmt.get())) {
+        auto target_reg = CompileExpr(a->target);
+        auto val_reg = CompileExpr(a->value);
+        auto result_reg = AllocReg();
+        Emit(BinOpToOpcode(a->op), result_reg, target_reg, val_reg);
+        if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
+            auto idx = AddConstant(MakeString(n->name));
+            Emit(OpCode::SETGLOBAL, result_reg, idx);
+            FreeRegs(2);
+            return 0;
+        }
+        if (auto* i = dynamic_cast<IndexExpr*>(a->target.get())) {
+            auto obj_reg = CompileExpr(i->obj);
+            auto idx_reg = CompileExpr(i->index);
+            Emit(OpCode::SETINDEX, obj_reg, idx_reg, result_reg);
+            FreeRegs(3);
+            return 0;
+        }
+        if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
+            bool is_self = false;
+            if (auto* name = dynamic_cast<NameExpr*>(a_expr->obj.get())) {
+                if (name->name == "this" || name->name == "self") {
+                    is_self = true;
+                }
+            }
+            
+            uint16_t obj_reg;
+            if (is_self && locals_.find("this") != locals_.end()) {
+                obj_reg = locals_.at("this");
+            } else {
+                obj_reg = CompileExpr(a_expr->obj);
+            }
+            
+            auto attr_idx = AddConstant(MakeString(a_expr->attr));
+            Emit(OpCode::SETATTR, obj_reg, attr_idx, result_reg);
+            
+            if (!is_self) {
+                FreeRegs(1);
+            }
+            return 0;
+        }
+        FreeRegs(1);
+        return 0;
+    }
+    if (auto* r = dynamic_cast<ReturnStmt*>(stmt.get())) {
+        if (r->value) {
+            auto reg = CompileExpr(r->value);
+            Emit(OpCode::RETURN, reg, 1);
+            FreeRegs(1);
+        } else {
+            Emit(OpCode::RETURN, 0, 0);
+        }
+        return 0;
+    }
+    if (dynamic_cast<PassStmt*>(stmt.get())) {
+        return 0;
+    }
+    if (auto* b = dynamic_cast<BreakStmt*>(stmt.get())) {
+        (void)b;
+        pending_breaks_.push_back({proto_->instructions.size()});
+        Emit(OpCode::JMP, 0);
+        return 0;
+    }
+    if (auto* c = dynamic_cast<ContinueStmt*>(stmt.get())) {
+        (void)c;
+        pending_continues_.push_back({proto_->instructions.size()});
+        Emit(OpCode::JMP, 0);
+        return 0;
+    }
+    if (auto* if_stmt = dynamic_cast<IfStmt*>(stmt.get())) {
+        CompileIf(if_stmt);
+        return 0;
+    }
+    if (auto* while_stmt = dynamic_cast<WhileStmt*>(stmt.get())) {
+        CompileWhile(while_stmt);
+        return 0;
+    }
+    if (auto* for_stmt = dynamic_cast<ForStmt*>(stmt.get())) {
+        CompileFor(for_stmt);
+        return 0;
+    }
+    if (auto* func_def = dynamic_cast<FuncDef*>(stmt.get())) {
+        CompileFunc(func_def);
+        return 0;
+    }
+    if (auto* class_def = dynamic_cast<ClassDef*>(stmt.get())) {
+        CompileClass(class_def);
+        return 0;
+    }
+    if (auto* import_stmt = dynamic_cast<ImportStmt*>(stmt.get())) {
+        CompileImport(import_stmt);
+        return 0;
+    }
+    if (auto* try_stmt = dynamic_cast<TryStmt*>(stmt.get())) {
+        CompileTry(try_stmt);
+        return 0;
+    }
+    if (auto* raise_stmt = dynamic_cast<RaiseStmt*>(stmt.get())) {
+        CompileRaise(raise_stmt);
+        return 0;
+    }
+    if (auto* yield_stmt = dynamic_cast<YieldStmt*>(stmt.get())) {
+        CompileYield(yield_stmt);
+        return 0;
+    }
+    return 0;
 }
 
 void Compiler::CompileClass(const ClassDef* cls) {
@@ -832,7 +1160,7 @@ void Compiler::CompileClass(const ClassDef* cls) {
             }
             
             sub.CompileChunk(f->body);
-            sub.proto_->instructions.push_back({OpCode::RETURN, 0, 0});
+            sub.proto_->instructions.push_back({OpCode::RETURN, 0, 0, 0});
             
             uint16_t min_registers = static_cast<uint16_t>(f->params.size() + 1);
             sub.proto_->num_registers = std::max<uint16_t>(sub.max_reg_ + 1, min_registers);

@@ -17,3 +17,4 @@ D:\_CODE_\avalang\bindings\csharp\AvaLang.ConsoleDemo\obj\Debug\net8.0\refint\Av
 D:\_CODE_\avalang\bindings\csharp\AvaLang.ConsoleDemo\obj\Debug\net8.0\AvaLang.ConsoleDemo.pdb
 D:\_CODE_\avalang\bindings\csharp\AvaLang.ConsoleDemo\obj\Debug\net8.0\AvaLang.ConsoleDemo.genruntimeconfig.cache
 D:\_CODE_\avalang\bindings\csharp\AvaLang.ConsoleDemo\obj\Debug\net8.0\ref\AvaLang.ConsoleDemo.dll
+D:\_CODE_\avalang\bindings\csharp\AvaLang.ConsoleDemo\obj\Debug\net8.0\AvaLang.ConsoleDemo.sourcelink.json

@@ -1,0 +1,10 @@
+func simple()
+    print("  yielding 1")
+    yield 1
+end
+
+print("for with inline coroutine")
+for n in coroutine(simple) do
+    print("  Got:", n)
+end
+print("Done!")

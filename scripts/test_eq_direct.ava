@@ -1,0 +1,21 @@
+func gen()
+    yield 42
+end
+
+co = coroutine(gen)
+val = resume(co)
+print("val type:", type(val))
+
+nil_val = nil
+is_nil = val == nil_val
+print("Is nil?:", is_nil)
+
+if is_nil then
+    print("CORRECT: val is nil, should exit")
+else
+    print("ERROR: val is not nil but EQ says it is")
+end
+
+zero = 0
+item = val[zero]
+print("item:", item)

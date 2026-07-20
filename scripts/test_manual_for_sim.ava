@@ -1,0 +1,29 @@
+func gen()
+    yield 100
+end
+
+__iter = coroutine(gen)
+__resume = resume
+__val = nil
+
+print("Setup done")
+print("__iter type:", type(__iter))
+
+__val = __resume(__iter)
+print("After resume: __val =", __val)
+print("__val type:", type(__val))
+
+nil_const = nil
+is_nil = __val == nil_const
+print("Is nil?", is_nil)
+
+if is_nil then
+    print("Should exit loop")
+else
+    print("Should enter loop body")
+    zero = 0
+    elem = __val[zero]
+    print("elem:", elem)
+end
+
+print("Done")

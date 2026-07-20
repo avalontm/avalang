@@ -154,8 +154,11 @@ Value VM::Call(const Value& callable, const std::vector<Value>& args) {
         CallFrame frame;
         frame.proto = bound->proto;
         frame.registers.resize(bound->proto->num_registers);
-        for (size_t i = 0; i < all_args.size() && i < frame.registers.size(); ++i) {
-            frame.registers[i] = all_args[i];
+        for (auto& reg : frame.registers) {
+            reg = Value::Nil();
+        }
+        for (size_t i = 0; i < all_args.size() && i + 1 < frame.registers.size(); ++i) {
+            frame.registers[i + 1] = all_args[i];
         }
         frames_.push_back(frame);
         Value result = ExecuteFrame(frames_.size() - 1);
@@ -169,8 +172,11 @@ Value VM::Call(const Value& callable, const std::vector<Value>& args) {
         frame.proto = closure->proto;
         frame.closure = std::shared_ptr<Closure>(closure, [](Closure*) {});
         frame.registers.resize(closure->proto->num_registers);
-        for (size_t i = 0; i < args.size() && i < frame.registers.size(); ++i) {
-            frame.registers[i] = args[i];
+        for (auto& reg : frame.registers) {
+            reg = Value::Nil();
+        }
+        for (size_t i = 0; i < args.size() && i + 1 < frame.registers.size(); ++i) {
+            frame.registers[i + 1] = args[i];
         }
         frames_.push_back(frame);
         Value result = ExecuteFrame(frames_.size() - 1);
@@ -653,8 +659,8 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                     CallFrame callee_frame;
                     callee_frame.proto = bound->proto;
                     callee_frame.registers.resize(std::max<size_t>(callee_frame.registers.size(), bound->proto->num_registers));
-                    for (size_t i = 0; i < all_args.size() && i < callee_frame.registers.size(); ++i) {
-                        callee_frame.registers[i] = all_args[i];
+                    for (size_t i = 0; i < all_args.size() && i + 1 < callee_frame.registers.size(); ++i) {
+                        callee_frame.registers[i + 1] = all_args[i];
                     }
                     frames_.push_back(callee_frame);
                     Value result = ExecuteFrame(frames_.size() - 1);
@@ -716,7 +722,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                         native->user_data
                     );
                     frames_[frame_idx].registers[save_a] = FromC(c_result);
-                } else if (callee.type == ValueType::Function) {
+} else if (callee.type == ValueType::Function) {
                     auto* closure = static_cast<Closure*>(callee.obj);
                     CallFrame callee_frame;
                     callee_frame.proto = closure->proto;

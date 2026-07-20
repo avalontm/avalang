@@ -96,6 +96,45 @@ soportado.
   separado del stack del código que la llamó; `resume()` intercambia
   (`swap`) el stack activo de la VM al entrar y lo restaura al salir o pausar.
 
+## For loop sobre Coroutines
+
+El for loop dinámico (`for x in iter do ... end`) soporta automáticamente
+coroutines además de listas. El tipo se determina en tiempo de ejecución:
+
+```python
+func three_items()
+    yield "a"
+    yield "b"
+    yield "c"
+end
+
+# Itera sobre la coroutine como si fuera una lista
+for item in coroutine(three_items) do
+    print(item)
+end
+# Output:
+# a
+# b
+# c
+```
+
+**Implementación:** El compilador genera código que:
+1. Llama a `type(iterable)` para obtener el tipo como string
+2. Compara con `"coroutine"`
+3. Si es coroutine → usa `CompileForCoroutine`
+4. Si es lista → usa `CompileForList`
+
+```python
+# Ambos funcionan con el mismo for loop:
+for x in [1, 2, 3] do    # Lista
+    print(x)
+end
+
+for y in coroutine(gen) do  # Coroutine
+    print(y)
+end
+```
+
 ---
 
 Ver también: [Opcodes](opcodes.md#coroutines-implementado)
