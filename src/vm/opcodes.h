@@ -46,6 +46,10 @@ enum class OpCode : uint8_t {
     BASECALL,    // A, B, C  call base class method: R[A].method(K[B]) with args R[A+1..A+C]
     YIELD,       // A, B     suspend coroutine, yielding R[A..A+B-1]
     RESUME,      // A, B, C  resume coroutine R[B] with args, C results
+    TRY,         // sBx       push handler, jump target
+    TRY_END,     //           mark end of try block
+    CATCH,       // sBx       if exception active, jump
+    RAISE,       // A         raise exception from R[A]
 };
 
 // iABC-style fixed-width instruction, same family as Lua's own encoding.

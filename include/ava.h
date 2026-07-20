@@ -56,7 +56,8 @@ typedef enum AvaValueType {
     AVA_CLASS,
     AVA_COROUTINE,
     AVA_NATIVE,
-    AVA_BOUND
+    AVA_BOUND,
+    AVA_EXCEPTION
 } AvaValueType;
 
 typedef struct AvaRef { uint64_t id; } AvaRef;
@@ -67,6 +68,7 @@ typedef struct ava_value_t {
         int      b;      /* AVA_BOOL     */
         double   n;       /* AVA_NUMBER   */
         AvaRef   ref;      /* everything ref-counted (string/list/dict/...) */
+        AvaRef   err;     /* AVA_EXCEPTION */
     } as;
 } ava_value_t;
 
@@ -162,6 +164,8 @@ AVA_API AvaCoStatus ava_coroutine_resume(
     size_t out_capacity,
     size_t* out_count
 );
+
+AVA_API AvaCoStatus ava_coroutine_status(AvaVM* vm, AvaCoroutine* co);
 
 /* ---------------------------------------------------------------------
  * Value helpers (construction / inspection of ref-counted values)

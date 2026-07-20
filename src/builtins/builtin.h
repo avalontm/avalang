@@ -39,6 +39,9 @@ ava_value_t builtin_dict_items(AvaVM* vm, const ava_value_t* args, size_t count,
 ava_value_t builtin_dict_length(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_dict_containsKey(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 
+ava_value_t builtin_coroutine(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_resume(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+
 BUILTIN_API void RegisterBuiltinMethods(AvaVM* vm);
 
 #ifdef __cplusplus

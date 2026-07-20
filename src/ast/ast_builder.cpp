@@ -158,6 +158,18 @@ std::shared_ptr<StmtNode> AstBuilder::stmtFromAny(const std::any& a) {
         auto import_stmt = std::any_cast<std::shared_ptr<ImportStmt>>(a);
         return import_stmt;
     } catch (...) {}
+    try {
+        auto raise_stmt = std::any_cast<std::shared_ptr<RaiseStmt>>(a);
+        return raise_stmt;
+    } catch (...) {}
+    try {
+        auto try_stmt = std::any_cast<std::shared_ptr<TryStmt>>(a);
+        return try_stmt;
+    } catch (...) {}
+    try {
+        auto yield_stmt = std::any_cast<std::shared_ptr<YieldStmt>>(a);
+        return yield_stmt;
+    } catch (...) {}
     return nullptr;
 }
 
@@ -248,6 +260,8 @@ std::any AstBuilder::visitSmallStatement(AvaLangParser::SmallStatementContext* c
     if (ctx->passStatement())     return std::make_shared<PassStmt>();
     if (ctx->localStatement())    return visitLocalStatement(ctx->localStatement());
     if (ctx->importStatement())   return visitImportStatement(ctx->importStatement());
+    if (ctx->raiseStatement())    return visitRaiseStatement(ctx->raiseStatement());
+    if (ctx->yieldStatement())   return visitYieldStatement(ctx->yieldStatement());
     throw std::runtime_error("unsupported small statement");
 }
 
@@ -268,6 +282,7 @@ std::any AstBuilder::visitCompoundStatement(AvaLangParser::CompoundStatementCont
     if (ctx->forStatement())    return visitForStatement(ctx->forStatement());
     if (ctx->funcDeclaration()) return visitFuncDeclaration(ctx->funcDeclaration());
     if (ctx->classDeclaration()) return visitClassDeclaration(ctx->classDeclaration());
+    if (ctx->tryStatement())   return visitTryStatement(ctx->tryStatement());
     throw std::runtime_error("unsupported compound statement");
 }
 
@@ -366,6 +381,44 @@ std::any AstBuilder::visitClassDeclaration(AvaLangParser::ClassDeclarationContex
 
     auto body = stmtsFromAny(visitBlock(ctx->block()));
     return std::make_shared<ClassDef>(name, base_class, body);
+}
+
+std::any AstBuilder::visitTryStatement(AvaLangParser::TryStatementContext* ctx) {
+    auto try_body = stmtsFromAny(visitBlock(ctx->block()));
+    
+    std::vector<std::vector<std::shared_ptr<StmtNode>>> except_bodies;
+    std::vector<std::pair<std::string, std::string>> except_types;
+    std::vector<std::string> except_vars;
+    
+    for (auto* exc : ctx->exceptClause()) {
+        auto exc_body = stmtsFromAny(visitBlock(exc->block()));
+        except_bodies.push_back(exc_body);
+        
+        std::string type_name;
+        std::string var_name;
+        
+        if (exc->NAME().size() == 1) {
+            type_name = exc->NAME(0)->getText();
+            var_name = exc->NAME(0)->getText();
+        } else if (exc->NAME().size() == 2) {
+            type_name = exc->NAME(0)->getText();
+            var_name = exc->NAME(1)->getText();
+        } else {
+            type_name = "Exception";
+            var_name = "";
+        }
+        
+        except_types.push_back({type_name, ""});
+        except_vars.push_back(var_name);
+    }
+    
+    std::vector<std::shared_ptr<StmtNode>> finally_body;
+    auto* fin = ctx->finallyClause();
+    if (fin) {
+        finally_body = stmtsFromAny(visitBlock(fin->block()));
+    }
+    
+    return std::make_shared<TryStmt>(try_body, except_bodies, except_types, except_vars, finally_body);
 }
 
 std::any AstBuilder::visitExprList(AvaLangParser::ExprListContext* ctx) {
@@ -696,6 +749,21 @@ std::any AstBuilder::visitImportStatement(AvaLangParser::ImportStatementContext*
         }
         return std::make_shared<ImportStmt>(module_path, "");
     }
+}
+
+std::any AstBuilder::visitRaiseStatement(AvaLangParser::RaiseStatementContext* ctx) {
+    auto value = exprFromAny(ctx->expr()->accept(this));
+    return std::make_shared<RaiseStmt>(value);
+}
+
+std::any AstBuilder::visitYieldStatement(AvaLangParser::YieldStatementContext* ctx) {
+    std::vector<std::shared_ptr<ExprNode>> values;
+    if (ctx->exprList()) {
+        for (auto* e : ctx->exprList()->expr()) {
+            values.push_back(exprFromAny(e->accept(this)));
+        }
+    }
+    return std::make_shared<YieldStmt>(values);
 }
 
 std::any AstBuilder::visitSliceTrailer(AvaLangParser::SliceTrailerContext* ctx) {

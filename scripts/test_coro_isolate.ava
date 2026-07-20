@@ -1,0 +1,18 @@
+print("1: Before function definition")
+
+func inner()
+    yield 1
+    return 2
+end
+
+func outer()
+    print("2: Inside outer, before coroutine")
+    co = coroutine(inner)
+    print("3: Coroutine created")
+    r1 = resume(co)
+    print("4: First resume:", r1)
+end
+
+print("5: Before calling outer")
+outer()
+print("6: After calling outer")

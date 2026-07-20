@@ -1,0 +1,13 @@
+func gen()
+    print(1)
+    yield 10
+    print(2)
+    yield 20
+    print(3)
+end
+
+co = coroutine(gen)
+print(co)
+print(resume(co))
+print(resume(co))
+print(resume(co))

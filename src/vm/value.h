@@ -24,7 +24,8 @@ enum class ValueType : uint8_t {
     Class,
     Coroutine,
     Native,
-    Bound
+    Bound,
+    Exception
 };
 
 struct Object {
@@ -54,7 +55,6 @@ struct DictObj : Object {
 struct Proto;   // compiler/proto.h
 struct Closure;
 struct ClassObj;
-struct Coroutine;
 struct BoundMethod;
 
 // Native (host) function pointer, matches AvaNativeFn from ava.h.
@@ -93,6 +93,8 @@ struct Value {
     static Value Nil()                 { Value v; v.type = ValueType::Nil; return v; }
     static Value Bool(bool x)          { Value v; v.type = ValueType::Bool; v.b = x; return v; }
     static Value Number(double x)      { Value v; v.type = ValueType::Number; v.n = x; return v; }
+    static Value String(const std::string& s) { Value v; v.type = ValueType::String; v.obj = new StringObj(s); return v; }
+    static Value Coroutine(void* co) { Value v; v.type = ValueType::Coroutine; v.obj = static_cast<Object*>(co); return v; }
 
     bool IsTruthy() const {
         switch (type) {
@@ -111,9 +113,9 @@ struct Value {
             case ValueType::Function:
             case ValueType::Instance:
             case ValueType::Class:
-            case ValueType::Coroutine:
             case ValueType::Native:
             case ValueType::Bound:
+            case ValueType::Exception:
                 return true;
             default:
                 return false;
@@ -126,13 +128,18 @@ struct BoundMethod : Object {
     Value instance;
 };
 
+struct ExceptionObj : Object {
+    std::string type;
+    std::string message;
+};
+
 void Retain(const Value& v);
 void Release(const Value& v);
 
 // Conversions to/from the public C ABI struct (ava_value_t). These are the
 // only functions that should touch AvaRef.id <-> Object* directly.
-ava_value_t ToC(const Value& v);
-Value FromC(const ava_value_t& v);
+AVA_API ava_value_t ToC(const Value& v);
+AVA_API Value FromC(const ava_value_t& v);
 
 } // namespace ava
 

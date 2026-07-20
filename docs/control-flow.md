@@ -118,6 +118,57 @@ end
 
 ---
 
+## try / except / finally
+
+Manejo de excepciones.
+
+```python
+try
+    x = 1 / 0
+except as e
+    print("Error:", e)
+finally
+    print("Cleanup")
+end
+```
+
+### Captura de variables
+
+```python
+try
+    raise "custom error"
+except as err
+    print(err["message"])
+end
+```
+
+### Multiple except
+
+```python
+try
+    risky_operation()
+except Error as e
+    print("General error:", e)
+except ValueError as e
+    print("Value error:", e)
+finally
+    print("Always runs")
+end
+```
+
+### Re-raise
+
+```python
+try
+    something()
+except as e
+    log_error(e)
+    raise  # re-lanza la excepción
+end
+```
+
+---
+
 ## Return
 
 Sale de una función.
@@ -195,6 +246,7 @@ print_table(5)
 | else | `else ...` |
 | while | `while cond do ... end` |
 | for | `for var in expr do ... end` |
+| try/except/finally | `try ... except as e ... finally ... end` |
 | break | `break` |
 | continue | `continue` |
 | return | `return value` |

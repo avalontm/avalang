@@ -31,6 +31,8 @@ smallStatement
     | passStatement
     | importStatement
     | localStatement
+    | raiseStatement
+    | yieldStatement
     ;
 
 compoundStatement
@@ -39,6 +41,20 @@ compoundStatement
     | forStatement
     | funcDeclaration
     | classDeclaration
+    | tryStatement
+    ;
+
+tryStatement
+    : 'try' block (exceptClause)+ (finallyClause)? 'end'
+    | 'try' block (finallyClause) 'end'
+    ;
+
+exceptClause
+    : 'except' (NAME ('as' NAME)?)? block
+    ;
+
+finallyClause
+    : 'finally' block
     ;
 
 // --- simple statements -------------------------------------------------
@@ -77,6 +93,14 @@ importStatement
 
 localStatement
     : 'local' assignStatement
+    ;
+
+raiseStatement
+    : 'raise' expr
+    ;
+
+yieldStatement
+    : 'yield' exprList?
     ;
 
 // --- compound statements ------------------------------------------------

@@ -573,6 +573,21 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
         return;
     }
 
+    if (auto* t = dynamic_cast<TryStmt*>(stmt.get())) {
+        CompileTry(t);
+        return;
+    }
+
+    if (auto* r = dynamic_cast<RaiseStmt*>(stmt.get())) {
+        CompileRaise(r);
+        return;
+    }
+
+    if (auto* y = dynamic_cast<YieldStmt*>(stmt.get())) {
+        CompileYield(y);
+        return;
+    }
+
     (void)stmt;
 }
 
@@ -878,6 +893,110 @@ void Compiler::CompileImport(const ImportStmt* stmt) {
     Emit(OpCode::CALL, import_reg, 2, 1);
     
     FreeRegs(4);
+}
+
+void Compiler::CompileTry(const TryStmt* stmt) {
+    std::vector<size_t> except_jmps;
+    std::vector<size_t> except_end_jmps;
+
+    // TRY's operand is patched below to jump straight to the first CATCH
+    // instruction -- that's where the VM must resume if try_body raises.
+    // (It must be a compile-time-known target: by the time an exception
+    // actually happens there's no way to discover where CATCH lives, since
+    // nothing has executed that far yet.)
+    size_t try_instr_idx = proto_->instructions.size();
+    Emit(OpCode::TRY, 0);
+
+    CompileChunk(stmt->try_body);
+
+    // try_body finished with no exception: this handler is no longer
+    // needed for the rest of the construct (its own except/finally code
+    // shouldn't loop back into it), so pop it now.
+    Emit(OpCode::TRY_END);
+
+    // Skip straight past all the except handlers and the re-raise
+    // fallback below, whether or not there's a finally clause. (Without
+    // this jump, a successful try with no finally block would previously
+    // fall straight through into the except-matching code.)
+    size_t success_jmp = proto_->instructions.size();
+    Emit(OpCode::JMP, 0);
+
+    // First CATCH starts here -- this is TRY's jump target.
+    PatchJump(try_instr_idx);
+
+    for (size_t i = 0; i < stmt->except_bodies.size(); ++i) {
+        size_t catch_instr_idx = proto_->instructions.size();
+        Emit(OpCode::CATCH, 0);
+        except_jmps.push_back(catch_instr_idx);
+
+        if (!stmt->except_vars[i].empty()) {
+            auto exc_reg = AllocReg();
+            Emit(OpCode::GETGLOBAL, exc_reg, AddConstant(MakeString("__exception__")));
+            auto var_idx = AddConstant(MakeString(stmt->except_vars[i]));
+            Emit(OpCode::SETGLOBAL, exc_reg, var_idx);
+            FreeRegs(1);
+        }
+
+        CompileChunk(stmt->except_bodies[i]);
+
+        size_t end_jmp = proto_->instructions.size();
+        Emit(OpCode::JMP, 0);
+        except_end_jmps.push_back(end_jmp);
+
+        // If this except doesn't match (unreachable today since there's
+        // no exception-type filtering yet -- every CATCH matches), fall
+        // through to the next CATCH, or to the re-raise fallback below
+        // for the last one.
+        PatchJump(catch_instr_idx);
+    }
+
+    // Nothing matched: propagate outward. (The handler for this try was
+    // already popped in the VM's RAISE handling the moment it dispatched
+    // here, so this correctly reaches an outer handler instead of looping
+    // back into this same try.)
+    {
+        auto raise_reg = AllocReg();
+        Emit(OpCode::GETGLOBAL, raise_reg, AddConstant(MakeString("__exception__")));
+        Emit(OpCode::RAISE, raise_reg);
+        FreeRegs(1);
+    }
+
+    // Success path and handled-exception path converge here, right before
+    // finally (or the true end of the construct if there's no finally).
+    PatchJump(success_jmp);
+    for (size_t jmp : except_end_jmps) {
+        PatchJump(jmp);
+    }
+
+    if (!stmt->finally_body.empty()) {
+        CompileChunk(stmt->finally_body);
+    }
+}
+
+void Compiler::CompileRaise(const RaiseStmt* stmt) {
+    if (stmt->value) {
+        auto exc_reg = CompileExpr(stmt->value);
+        Emit(OpCode::RAISE, exc_reg);
+        FreeRegs(1);
+    } else {
+        auto raise_reg = AllocReg();
+        Emit(OpCode::GETGLOBAL, raise_reg, AddConstant(MakeString("__exception__")));
+        Emit(OpCode::RAISE, raise_reg);
+        FreeRegs(1);
+    }
+}
+
+void Compiler::CompileYield(const YieldStmt* stmt) {
+    uint8_t count = 0;
+    if (!stmt->values.empty()) {
+        for (size_t i = 0; i < stmt->values.size(); ++i) {
+            auto val_reg = CompileExpr(stmt->values[i]);
+            Emit(OpCode::MOVE, static_cast<uint16_t>(i), val_reg);
+            FreeRegs(1);
+            count++;
+        }
+    }
+    Emit(OpCode::YIELD, 0, count);
 }
 
 namespace {

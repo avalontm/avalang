@@ -1,9 +1,11 @@
 #include "vm.h"
 #include "module.h"
+#include "coroutine.h"
 #include "../frontend/frontend.h"
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <algorithm>
 
 #ifdef _WIN32
 #include <direct.h>
@@ -62,6 +64,9 @@ VM::VM() = default;
 VM::~VM() {
     for (auto& kv : globals_) {
         Release(kv.second);
+    }
+    for (auto* co : created_coroutines_) {
+        delete co;
     }
 }
 
@@ -170,6 +175,48 @@ Value VM::Call(const Value& callable, const std::vector<Value>& args) {
         frames_.push_back(frame);
         Value result = ExecuteFrame(frames_.size() - 1);
         frames_.pop_back();
+        return result;
+    }
+
+    if (callable.type == ValueType::Coroutine) {
+        auto* co = reinterpret_cast<Coroutine*>(callable.obj);
+        if (co->status == CoStatus::Running) {
+            throw std::runtime_error("attempt to call a running coroutine");
+        }
+
+        co->status = CoStatus::Running;
+        coroutine_resumers_.push_back(current_coroutine_);
+
+        saved_frames_ = frames_;
+        frames_ = co->frames;
+        current_coroutine_ = co;
+
+        if (frames_.empty() || !frames_[0].proto) {
+            auto* closure = static_cast<Closure*>(co->entry.obj);
+            CallFrame resume_frame;
+            resume_frame.proto = closure->proto;
+            resume_frame.closure = std::shared_ptr<Closure>(closure, [](Closure*) {});
+            resume_frame.registers.resize(closure->proto->num_registers);
+            for (size_t i = 0; i < args.size() && i < resume_frame.registers.size(); ++i) {
+                resume_frame.registers[i] = args[i];
+            }
+            frames_.push_back(resume_frame);
+        } else {
+            for (size_t i = 0; i < args.size() && i < frames_[0].registers.size(); ++i) {
+                frames_[0].registers[i] = args[i];
+            }
+        }
+
+        is_coroutine_suspended_ = false;
+        Value result = ExecuteFrame(0);
+
+        current_coroutine_ = coroutine_resumers_.back();
+        coroutine_resumers_.pop_back();
+
+        co->frames = frames_;
+        co->status = is_coroutine_suspended_ ? CoStatus::Suspended : CoStatus::Dead;
+        frames_ = saved_frames_;
+
         return result;
     }
 
@@ -775,8 +822,153 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 throw std::runtime_error("base() call failed - __base__ not found");
             }
 
+            case OpCode::SLICE: {
+                auto& obj = frames_[frame_idx].registers[in.b];
+                if (obj.type == ValueType::List) {
+                    auto* list = static_cast<ListObj*>(obj.obj);
+                    double start_val = frames_[frame_idx].registers[in.c].n;
+                    double end_val = (in.a < frames_[frame_idx].registers.size()) 
+                        ? frames_[frame_idx].registers[in.a].n : 0;
+                    size_t len = list->items.size();
+                    size_t start_idx = 0, end_idx = len;
+                    int step = 1;
+                    if (start_val < 0) start_idx = static_cast<size_t>((std::max)(0, static_cast<int>(len) + static_cast<int>(start_val)));
+                    else start_idx = (std::min)(static_cast<size_t>(start_val), len);
+                    if (end_val < 0) end_idx = static_cast<size_t>((std::max)(0, static_cast<int>(len) + static_cast<int>(end_val)));
+                    else end_idx = (std::min)(static_cast<size_t>(end_val), len);
+                    auto* result = new ListObj();
+                    for (size_t i = start_idx; i < end_idx && i < len; i += step) {
+                        result->items.push_back(list->items[i]);
+                    }
+                    Value v; v.type = ValueType::List; v.obj = result;
+                    frames_[frame_idx].registers[in.a] = v;
+                } else if (obj.type == ValueType::String) {
+                    auto* str = static_cast<StringObj*>(obj.obj);
+                    double start_val = frames_[frame_idx].registers[in.c].n;
+                    double end_val = (in.a < frames_[frame_idx].registers.size()) 
+                        ? frames_[frame_idx].registers[in.a].n : 0;
+                    size_t len = str->data.size();
+                    size_t start_idx = 0, end_idx = len;
+                    int step = 1;
+                    if (start_val < 0) start_idx = static_cast<size_t>((std::max)(0, static_cast<int>(len) + static_cast<int>(start_val)));
+                    else start_idx = (std::min)(static_cast<size_t>(start_val), len);
+                    if (end_val < 0) end_idx = static_cast<size_t>((std::max)(0, static_cast<int>(len) + static_cast<int>(end_val)));
+                    else end_idx = (std::min)(static_cast<size_t>(end_val), len);
+                    std::string result = str->data.substr(start_idx, end_idx - start_idx);
+                    Value v; v.type = ValueType::String; v.obj = new StringObj(result);
+                    frames_[frame_idx].registers[in.a] = v;
+                } else {
+                    frames_[frame_idx].registers[in.a] = Value::Nil();
+                }
+                break;
+            }
+
+            case OpCode::TRY: {
+                ExceptionHandler handler;
+                handler.catch_pc = frames_[frame_idx].pc + static_cast<int16_t>(in.b);
+                exception_handlers_.push_back(handler);
+                break;
+            }
+
+            case OpCode::TRY_END: {
+                if (!exception_handlers_.empty()) {
+                    exception_handlers_.pop_back();
+                }
+                break;
+            }
+
+            case OpCode::CATCH: {
+                if (HasException()) {
+                    frames_[frame_idx].pc = static_cast<uint32_t>(
+                        static_cast<int32_t>(frames_[frame_idx].pc) + static_cast<int16_t>(in.b));
+                }
+                break;
+            }
+
+            case OpCode::RAISE: {
+                if (!exception_handlers_.empty()) {
+                    auto& handler = exception_handlers_.back();
+                    frames_[frame_idx].pc = static_cast<uint32_t>(handler.catch_pc);
+                }
+                break;
+            }
+
             default:
                 throw std::runtime_error("opcode not yet implemented: " + std::to_string(static_cast<int>(in.op)));
+
+            case OpCode::YIELD: {
+                if (coroutine_resumers_.empty()) {
+                    throw std::runtime_error("attempt to yield outside of coroutine");
+                }
+
+                Value result = Value::Nil();
+                if (in.b > 0 && in.a < frames_[frame_idx].registers.size()) {
+                    std::vector<Value> yielded;
+                    for (uint8_t i = 0; i < in.b && (in.a + i) < frames_[frame_idx].registers.size(); ++i) {
+                        yielded.push_back(frames_[frame_idx].registers[in.a + i]);
+                    }
+                    auto* list = new ListObj();
+                    list->items = std::move(yielded);
+                    result.type = ValueType::List;
+                    result.obj = list;
+                }
+
+                is_coroutine_suspended_ = true;
+                return result;
+            }
+
+            case OpCode::RESUME: {
+                auto& co_val = frames_[frame_idx].registers[in.b];
+                if (co_val.type != ValueType::Coroutine) {
+                    throw std::runtime_error("attempt to resume a non-coroutine");
+                }
+                auto* co = reinterpret_cast<Coroutine*>(co_val.obj);
+                if (co->status == CoStatus::Dead) {
+                    throw std::runtime_error("attempt to resume a dead coroutine");
+                }
+                if (co->status == CoStatus::Running) {
+                    throw std::runtime_error("attempt to resume a running coroutine");
+                }
+
+                std::vector<Value> args(
+                    frames_[frame_idx].registers.begin() + in.b + 1,
+                    frames_[frame_idx].registers.begin() + in.b + 1 + in.c);
+
+                co->status = CoStatus::Running;
+                coroutine_resumers_.push_back(current_coroutine_);
+
+                saved_frames_ = frames_;
+                std::iter_swap(frames_.begin(), co->frames.begin());
+                frames_ = co->frames;
+                current_coroutine_ = co;
+
+                if (frames_.empty() || !frames_[0].proto) {
+                    auto* closure = static_cast<Closure*>(co->entry.obj);
+                    CallFrame resume_frame;
+                    resume_frame.proto = closure->proto;
+                    resume_frame.closure = std::shared_ptr<Closure>(closure, [](Closure*) {});
+                    resume_frame.registers.resize(closure->proto->num_registers);
+                    frames_.push_back(resume_frame);
+                }
+                if (frames_[0].registers.size() < args.size()) {
+                    frames_[0].registers.resize(args.size());
+                }
+                for (size_t i = 0; i < args.size() && i < frames_[0].registers.size(); ++i) {
+                    frames_[0].registers[i] = args[i];
+                }
+
+                Value result = ExecuteFrame(0);
+
+                current_coroutine_ = coroutine_resumers_.back();
+                coroutine_resumers_.pop_back();
+
+                co->frames = frames_;
+                co->status = result.type == ValueType::Nil ? CoStatus::Suspended : CoStatus::Dead;
+                frames_ = saved_frames_;
+
+                frames_[frame_idx].registers[in.a] = result;
+                break;
+            }
         }
     }
 
@@ -911,6 +1103,30 @@ frames_.pop_back();
     }
     
     return Value::Nil();
+}
+
+Coroutine* VM::CreateCoroutine(const Value& func) {
+    auto* co = new Coroutine();
+    co->entry = func;
+    co->status = CoStatus::Suspended;
+    created_coroutines_.push_back(co);
+    return co;
+}
+
+void VM::RaiseException(const Value& exc) {
+    Retain(exc);
+    Release(pending_exception_);
+    pending_exception_ = exc;
+}
+
+Value VM::GetAndClearException() {
+    Value exc = pending_exception_;
+    pending_exception_ = Value::Nil();
+    return exc;
+}
+
+bool VM::HasException() const {
+    return pending_exception_.type != ValueType::Nil;
 }
 
 } // namespace ava

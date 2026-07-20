@@ -2,22 +2,33 @@
 #define AVA_VM_COROUTINE_H
 
 #include <vector>
+#include <memory>
+#include <string>
+
 #include "value.h"
-#include "vm.h"
 
 namespace ava {
 
+struct Proto;
+struct Closure;
+
+struct CallFrame {
+    std::shared_ptr<Proto> proto;
+    std::shared_ptr<Closure> closure;
+    std::vector<Value> registers;
+    uint32_t pc = 0;
+    std::string module_dir;
+    int ret_slot = -1;  // Register in caller frame to write return value to; -1 = discard
+};
+
 enum class CoStatus { Suspended, Running, Dead };
 
-// A coroutine is just its own independent call-frame stack. Resuming it
-// means swapping this stack in as the VM's active stack and continuing the
-// same interpreter loop; yielding means saving pc/registers right where
-// they are and swapping back to the resumer. No OS threads, no native
-// recursion -- see DESIGN.md section 5.
-struct Coroutine : Object {
-    Value entry;             // the function this coroutine runs
-    std::vector<CallFrame> frames;
+struct Coroutine {
+    Value entry;
     CoStatus status = CoStatus::Suspended;
+    std::vector<CallFrame> frames;
+    std::vector<Value> yielded_values;
+    Coroutine() : status(CoStatus::Suspended) {}
 };
 
 } // namespace ava

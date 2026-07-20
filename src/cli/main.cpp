@@ -7,6 +7,7 @@
 #include <cstring>
 #include "ava.h"
 #include "../vm/vm.h"
+#include "../vm/value.h"
 #include "../builtins/builtin.h"
 
 #ifndef NDEBUG
@@ -527,6 +528,36 @@ static ava_value_t native_import(AvaVM* vm, const ava_value_t* args, size_t coun
     return result;
 }
 
+static ava_value_t native_raise(AvaVM* vm, const ava_value_t* args, size_t count, void*) {
+    ava_value_t nil{}; nil.type = AVA_NIL;
+    if (count < 1) return nil;
+    
+    std::string message;
+    
+    if (args[0].type == AVA_STRING) {
+        size_t len = 0;
+        const char* msg = ava_string_data(vm, args[0], &len);
+        message = std::string(msg, len);
+    } else if (args[0].type == AVA_DICT) {
+        ava_value_t msg_val = ava_dict_get(vm, args[0], "message");
+        if (msg_val.type == AVA_STRING) {
+            size_t len = 0;
+            const char* m = ava_string_data(vm, msg_val, &len);
+            message = std::string(m, len);
+        }
+    }
+    
+    ava_value_t exc_str = ava_string_create(vm, message.c_str(), message.size());
+    ava_value_t exc{};
+    exc.type = AVA_EXCEPTION;
+    exc.as.err = exc_str.as.ref;
+    
+    ava::VM* raw_vm = reinterpret_cast<ava::VM*>(vm);
+    raw_vm->RaiseException(ava::FromC(exc));
+    
+    return nil;
+}
+
 int main(int argc, char** argv) {
     DEBUG_PRINT("DEBUG: ava_cli started, argc=%d\n", argc);
     if (argc < 2) {
@@ -579,6 +610,7 @@ int main(int argc, char** argv) {
     ava_vm_register_native(vm, "reversed", native_reversed, nullptr);
     ava_vm_register_native(vm, "slice", native_slice, nullptr);
     ava_vm_register_native(vm, "__import__", native_import, nullptr);
+    ava_vm_register_native(vm, "raise", native_raise, nullptr);
 
     char* error = nullptr;
     DEBUG_PRINT("DEBUG: calling ava_compile\n");

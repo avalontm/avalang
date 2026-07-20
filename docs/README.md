@@ -13,10 +13,12 @@ Lenguaje de scripting embebible con sintaxis tipo Python y semántica tipo Lua.
 - [Funciones](functions.md) - Definición, parámetros, return, closures
 - [Clases](classes.md) - Definición, __init__, métodos, herencia con base()
 - [F-Strings](fstrings.md) - Interpolación de expresiones con sintaxis `$"..."`
+- [Excepciones](exceptions.md) - try/except/finally, raise, re-raise
 - [Built-in Functions](builtins.md) - print, type, str, int, float, len, range, etc.
 - [String Methods](string-methods.md) - .upper(), .lower(), .split(), .trim(), etc.
 - [List Methods](list-methods.md) - .append(), .pop(), .insert(), .remove(), etc.
 - [Dict Methods](dict-methods.md) - .keys(), .values(), .items(), .containsKey()
+- [Coroutines](coroutines.md) - coroutine(fn), resume(co), yield
 - [Opcodes](opcodes.md) - Conjunto de instrucciones del VM bytecode
 
 ---
@@ -92,9 +94,11 @@ print($"La suma es {x + 5}")
 ## Palabras Clave
 
 ```
-and       class     end       false     for       func      
-if        in        nil       not       or        return    
-then      true      while     base
+and       as        base      break     class     
+continue  else      end       except    false     
+for       func      if        in        nil       
+not       or        raise     return    then      
+true      try       while     finally
 ```
 
 ---

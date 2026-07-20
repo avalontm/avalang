@@ -187,6 +187,34 @@ if not x       # NOT R0, R[x]
 | `JMP` | - | sBx | `pc += sBx` - Salto relativo |
 | `TEST` | reg | C | `if truthy(R[A]) != C then pc++` |
 
+### Excepciones
+
+| Opcode | A | B | Descripción |
+|--------|---|---|-------------|
+| `TRY` | - | sBx | Push handler, jump a catch_pc si excepción |
+| `TRY_END` | - | - | Pop handler (try body completado) |
+| `CATCH` | - | sBx | Si excepción activa: clear y ejecuta; si no: skip |
+| `RAISE` | src | - | Lanza excepción, busca handler en stack |
+
+```python
+# TRY - push handler, jump patched al primer CATCH
+try
+# TRY sBx[-offset]
+
+# TRY_END - pop handler
+end
+# TRY_END
+
+# CATCH - verifica si hay excepción activa
+except as e
+# CATCH sBx[skip_offset]
+
+# RAISE - lanza excepción
+raise "error"
+# LOADK R0, K["error"]
+# RAISE R0
+```
+
 ```python
 # JMP - salto incondicional
 # Usado para if/else/while/for
@@ -239,12 +267,33 @@ p = Point(1, 2) # NEWINSTANCE R0, R[Point]
                 # CALL R0, 2, 0
 ```
 
-### Coroutines (No implementado)
+### Coroutines (Implementado)
 
 | Opcode | A | B | Descripción |
 |--------|---|---|-------------|
-| `YIELD` | val | count | `yield R[A..A+B-1]` |
-| `RESUME` | dst | coroutine | C args | `resume R[B] with args` |
+| `YIELD` | val | count | `yield R[A..A+B-1]`, suspende la coroutine actual y retorna los valores como una lista (`[v1, v2, ...]`) al `resume()` que la reanudó |
+| `RESUME` | dst | coroutine | C args | reservado para un futuro opcode dedicado; **actualmente sin usar** — `resume()` se compila como una llamada normal (`CALL`) a la función nativa registrada vía `RegisterNative`, que internamente hace `VM::Call` sobre el valor `Coroutine` |
+
+`coroutine(fn)` y `resume(co, ...args)` son funciones globales nativas (`src/builtins/builtin_coroutine.cpp`), registradas con `RegisterNative` (no con `RegisterBuiltinMethod`, que es solo para el azúcar `obj.metodo()`).
+
+Semántica de estado: `Coroutine.status` es `Suspended` al crearse; `Running` mientras se ejecuta; vuelve a `Suspended` si terminó en un `YIELD`, o pasa a `Dead` si la función retornó normalmente (llegó a `end` o a un `return`). El estado se determina con el flag explícito `VM::is_coroutine_suspended_`, **no** infiriendo por si el valor de retorno es `nil` (esa heurística era ambigua: una función normal que no retorna nada también da `nil`).
+
+Limitación conocida: `yield` solo suspende correctamente si ocurre directamente en el frame de la función-coroutine (frame 0 relativo a la coroutine). Si el `yield` ocurre dentro de una función anidada llamada desde la coroutine, no se propaga hasta `resume()` — solo desenrolla un nivel, como un `return` normal.
+
+Ejemplo:
+```python
+func gen()
+    yield 1
+    yield 2
+    yield 3
+end
+
+co = coroutine(gen)
+print(resume(co))   # [1]
+print(resume(co))   # [2]
+print(resume(co))   # [3]
+print(resume(co))   # nil (coroutine ya está Dead)
+```
 
 ---
 
@@ -322,7 +371,7 @@ RETURN R0, 1             ; return R0
 |--------|--------|-------|
 | LOADK, LOADNIL, LOADBOOL, MOVE | ✅ Implementado | |
 | GETGLOBAL, SETGLOBAL | ✅ Implementado | |
-| GETUPVAL, SETUPVAL | ⚪ Reservado | No usado aún |
+| GETUPVAL, SETUPVAL | ✅ Implementado | |
 | GETINDEX, SETINDEX | ✅ Implementado | |
 | GETATTR, SETATTR | ✅ Implementado | |
 | ADD, SUB, MUL, DIV, MOD, POW | ✅ Implementado | |
@@ -334,4 +383,6 @@ RETURN R0, 1             ; return R0
 | NEWCLASS, NEWINSTANCE | ✅ Implementado | |
 | BASECALL | ✅ Implementado | |
 | NEWLIST, LISTAPPEND, NEWDICT | ✅ Implementado | |
-| YIELD, RESUME | ❌ No implementado | |
+| TRY, TRY_END, CATCH, RAISE | ✅ Implementado | |
+| YIELD | ✅ Implementado | Ver sección "Coroutines" arriba |
+| RESUME (opcode) | ❌ No usado | `resume()` se compila como `CALL` a native, no emite este opcode |

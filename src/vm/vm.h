@@ -10,6 +10,7 @@
 #include "proto.h"
 #include "closure.h"
 #include "module.h"
+#include "coroutine.h"
 
 #ifdef _WIN32
   #define AVA_API __declspec(dllexport)
@@ -18,14 +19,6 @@
 #endif
 
 namespace ava {
-
-struct CallFrame {
-    std::shared_ptr<Proto> proto;
-    std::shared_ptr<Closure> closure;
-    std::vector<Value> registers;
-    uint32_t pc = 0;
-    std::string module_dir;
-};
 
 class AVA_API VM {
 public:
@@ -55,6 +48,12 @@ public:
     void SetCurrentDir(const std::string& dir);
     Value DoImport(const std::string& module_path, const std::string& alias);
 
+    void RaiseException(const Value& exc);
+    Value GetAndClearException();
+    bool HasException() const;
+
+    Coroutine* CreateCoroutine(const Value& func);
+
 private:
     Value ExecuteFrame(size_t frame_idx);
 
@@ -65,6 +64,20 @@ private:
     ModuleCache module_cache_;
     std::string current_module_;
     std::unordered_map<std::string, std::pair<AvaNativeFn, void*>> builtin_methods_;
+
+    Value pending_exception_;
+    bool try_had_exception_ = false;
+    struct ExceptionHandler {
+        size_t catch_pc;
+    };
+    std::vector<ExceptionHandler> exception_handlers_;
+
+    std::vector<Coroutine*> coroutine_resumers_;
+    std::vector<Coroutine*> created_coroutines_;
+    Value yielded_values_;
+    std::vector<CallFrame> saved_frames_;
+    bool is_coroutine_suspended_ = false;
+    Coroutine* current_coroutine_ = nullptr;
 };
 
 } // namespace ava

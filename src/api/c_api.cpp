@@ -93,17 +93,69 @@ AVA_API ava_value_t ava_import(AvaVM* vm, const char* module_path, const char* a
     }
 }
 
-AVA_API AvaCoroutine* ava_coroutine_create(AvaVM*, ava_value_t) {
-    // TODO: implement once VM::Resume exists (see src/vm/coroutine.cpp).
-    return nullptr;
+AVA_API AvaCoroutine* ava_coroutine_create(AvaVM* vm, ava_value_t func) {
+    try {
+        auto* co = reinterpret_cast<VM*>(vm)->CreateCoroutine(FromC(func));
+        return reinterpret_cast<AvaCoroutine*>(co);
+    } catch (...) {
+        return nullptr;
+    }
 }
 
-AVA_API void ava_coroutine_destroy(AvaCoroutine*) { /* TODO */ }
+AVA_API void ava_coroutine_destroy(AvaCoroutine* co) {
+    delete reinterpret_cast<Coroutine*>(co);
+}
 
-AVA_API AvaCoStatus ava_coroutine_resume(AvaVM*, AvaCoroutine*, const ava_value_t*, size_t,
-                                          ava_value_t*, size_t, size_t* out_count) {
-    if (out_count) *out_count = 0;
-    return AVA_CO_DEAD; // TODO: real implementation, see coroutine.cpp
+AVA_API AvaCoStatus ava_coroutine_resume(AvaVM* vm, AvaCoroutine* co,
+                                          const ava_value_t* args, size_t arg_count,
+                                          ava_value_t* out_values, size_t max_out,
+                                          size_t* out_count) {
+    try {
+        auto* coroutine = reinterpret_cast<Coroutine*>(co);
+        if (coroutine->status == CoStatus::Dead) {
+            if (out_count) *out_count = 0;
+            return AVA_CO_DEAD;
+        }
+        if (coroutine->status == CoStatus::Running) {
+            if (out_count) *out_count = 0;
+            return AVA_CO_RUNNING;
+        }
+
+        std::vector<Value> vargs;
+        vargs.reserve(arg_count);
+        for (size_t i = 0; i < arg_count; ++i) vargs.push_back(FromC(args[i]));
+
+        auto result = reinterpret_cast<VM*>(vm)->Call(Value::Coroutine(coroutine), vargs);
+
+        size_t yielded_count = 0;
+        if (result.type == ValueType::List) {
+            auto* list = static_cast<ListObj*>(result.obj);
+            for (size_t i = 0; i < list->items.size() && i < max_out; ++i) {
+                out_values[i] = ToC(list->items[i]);
+                yielded_count++;
+            }
+        }
+
+        if (out_count) *out_count = yielded_count;
+
+        if (coroutine->status == CoStatus::Dead) {
+            return AVA_CO_DEAD;
+        }
+        return AVA_CO_SUSPENDED;
+    } catch (...) {
+        if (out_count) *out_count = 0;
+        return AVA_CO_DEAD;
+    }
+}
+
+AVA_API AvaCoStatus ava_coroutine_status(AvaVM*, AvaCoroutine* co) {
+    auto* coroutine = reinterpret_cast<Coroutine*>(co);
+    switch (coroutine->status) {
+        case CoStatus::Suspended: return AVA_CO_SUSPENDED;
+        case CoStatus::Running:   return AVA_CO_RUNNING;
+        case CoStatus::Dead:       return AVA_CO_DEAD;
+    }
+    return AVA_CO_DEAD;
 }
 
 AVA_API ava_value_t ava_string_create(AvaVM*, const char* utf8, size_t len) {

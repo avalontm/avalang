@@ -56,6 +56,9 @@ private:
     void CompileFunc(const FuncDef* func);
     void CompileClass(const ClassDef* cls);
     void CompileImport(const ImportStmt* stmt);
+    void CompileTry(const TryStmt* stmt);
+    void CompileRaise(const RaiseStmt* stmt);
+    void CompileYield(const YieldStmt* stmt);
     uint16_t CompileFStringExpression(const std::string& expr_str);
 
     std::shared_ptr<ExprNode> ParseFStringExpr(const std::string& expr_str);

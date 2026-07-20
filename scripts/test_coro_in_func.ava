@@ -1,0 +1,18 @@
+func gen()
+    yield 1
+    yield 2
+    return 3
+end
+
+func consume()
+    co = coroutine(gen)
+    count = 0
+    while count < 3 do
+        r = resume(co)
+        print(r)
+        count = count + 1
+    end
+end
+
+consume()
+print("Done!")

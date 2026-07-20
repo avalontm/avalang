@@ -145,6 +145,22 @@ struct BreakStmt : StmtNode {};
 
 struct ContinueStmt : StmtNode {};
 
+struct TryStmt : StmtNode {
+    std::vector<std::shared_ptr<StmtNode>> try_body;
+    std::vector<std::vector<std::shared_ptr<StmtNode>>> except_bodies;
+    std::vector<std::pair<std::string, std::string>> except_types;
+    std::vector<std::string> except_vars;
+    std::vector<std::shared_ptr<StmtNode>> finally_body;
+    TryStmt(std::vector<std::shared_ptr<StmtNode>> t,
+            std::vector<std::vector<std::shared_ptr<StmtNode>>> eb,
+            std::vector<std::pair<std::string, std::string>> et,
+            std::vector<std::string> ev,
+            std::vector<std::shared_ptr<StmtNode>> f = {})
+        : try_body(std::move(t)), except_bodies(std::move(eb)),
+          except_types(std::move(et)), except_vars(std::move(ev)),
+          finally_body(std::move(f)) {}
+};
+
 struct IfStmt : StmtNode {
     std::shared_ptr<ExprNode> condition;
     std::vector<std::shared_ptr<StmtNode>> then_body;
@@ -198,6 +214,11 @@ struct ImportStmt : StmtNode {
         : module_path(std::move(mp)), alias(std::move(a)) {}
 };
 
+struct RaiseStmt : StmtNode {
+    std::shared_ptr<ExprNode> value;
+    explicit RaiseStmt(std::shared_ptr<ExprNode> v) : value(std::move(v)) {}
+};
+
 struct LambdaExpr : ExprNode {
     std::string name;
     std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> defaults;
@@ -206,6 +227,11 @@ struct LambdaExpr : ExprNode {
     LambdaExpr(std::string n, std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> d,
                std::vector<std::shared_ptr<StmtNode>> b, bool v)
         : name(std::move(n)), defaults(std::move(d)), body(std::move(b)), is_vararg(v) {}
+};
+
+struct YieldStmt : StmtNode {
+    std::vector<std::shared_ptr<ExprNode>> values;
+    explicit YieldStmt(std::vector<std::shared_ptr<ExprNode>> v = {}) : values(std::move(v)) {}
 };
 
 struct Chunk {

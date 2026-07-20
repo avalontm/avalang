@@ -1,2 +1,13 @@
-local arr = [1, 2, 3]
-print(arr)
+x = 0
+try
+    x = 1
+    print("before raise")
+    raise "test"
+    print("after raise")
+except
+    x = -1
+    print("in except")
+finally
+    print("finally")
+end
+print("done")

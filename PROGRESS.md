@@ -243,8 +243,11 @@ print($"Saludo: {u.greet()}")      # Saludo: Hola Ana
 | NEWDICT | Diccionarios | ✅ |
 | NEWCLASS, NEWINSTANCE | Clases e instancias | ✅ |
 | BASECALL | Llamadas a método base | ✅ |
-| GETUPVAL, SETUPVAL | Upvalues | ❌ No usado |
-| YIELD, RESUME | Coroutines | ❌ |
+| TRY, TRY_END, CATCH, RAISE | Excepciones | ✅ |
+| GETUPVAL, SETUPVAL | Upvalues | ✅ |
+| YIELD | Coroutines: suspender | ✅ |
+| CALL (a `coroutine`/`resume` nativos) | Coroutines: crear/reanudar | ✅ |
+| RESUME (opcode) | No usado — `resume()` se compila como `CALL`, ver `docs/coroutines.md` | ❌ (código muerto, no emitido por el compiler) |
 | FOR, FORPREP | Iteración | ❌ (implementado en compiler) |
 
 ## Estructura del Proyecto
@@ -312,6 +315,10 @@ build\Release\ava_cli.exe scripts\<test>.ava
 | `test_import.ava` | Import con alias |
 | `test_fstrings.ava` | F-strings con interpolación |
 | `test_operators_bugs.ava` | Bugs de operadores (comparaciones, AugAssign, self) |
+| `test_min.ava` | try/except/finally completo |
+| `test_try_catch.ava` | try/except múltiples con finally |
+| `test_simple_raise.ava` | raise y re-raise |
+| `test_coro5.ava` | Coroutines: coroutine(), resume(), yield con múltiples pausas |
 
 ## Comandos de Build
 
@@ -380,16 +387,22 @@ error at test.ava:2:8: extraneous input '+' expecting {...}
 - **List methods** (`.append()`, `.push()`, `.pop()`, `.insert()`, `.remove()`, `.length`, `.contains()`)
 - **Dict methods** (`.keys()`, `.values()`, `.items()`, `.length`, `.containsKey()`)
 - **F-strings** con sintaxis `$"..."` para interpolación de expresiones
+- **Slicing de listas y strings** con sintaxis `arr[start:end:step]` y función `slice(arr, start, end, step)`
+- **Bug de registro en SliceExpr corregido**: Reservación de slots con AllocReg() explícito antes de compilar subexpresiones para evitar reutilización de registros
+- **Bug off-by-one en native_slice corregido**: Umbrales de count corregidos y flag has_end explícito para evitar conflicto con end=0 válido
+- **Excepciones (try/except/finally)** - Implementación completa con handler stack, re-raise propagation, y soporte para native calls
+
+**Highlights:**
+- **Bug de slicing corregido (Jul 2026)**: El compilador no avanzaba `next_reg_` al escribir LOADNIL para argumentos faltantes en slices, causando sobrescritura del nil por CompileExpr subsiguiente. Fix: reservar 4 slots con AllocReg() explícito antes de compilar cualquier subexpresión.
 
 ### ⚠️ Limitaciones Conocidas
-- No hay soporte para exceptions
 - No hay soporte para decorators
 - No hay soporte para list/dict comprehensions
-- Coroutines no implementadas (YIELD/RESUME)
+- Coroutines: `yield` dentro de una función anidada (llamada desde la coroutine, no el cuerpo directo de la coroutine) no suspende hasta arriba — solo desenrolla un nivel, como un `return` normal. Ver `docs/coroutines.md`.
+- Coroutines: `resume()` sobre una coroutine ya `Dead` no lanza error, simplemente devuelve `nil` sin ejecutar nada (el opcode `RESUME` sí valida esto, pero no se usa; `resume()` se compila como `CALL` a la nativa, que pasa por `VM::Call` y ahí no se chequea `Dead`)
 
 ### ❌ Por Implementar
-- `try`/`except` (excepciones)
-- Generators (yield en funciones)
+- Generators con `yield` dentro de llamadas anidadas (propagación de yield a través del call stack)
 - Decorators
 
 ---
@@ -416,3 +429,46 @@ error at test.ava:2:8: extraneous input '+' expecting {...}
 - Formato iABC con operandos de ancho fijo
 - Tabla de constantes (K) para números, strings, clases
 - CallFrames con registers virtuales para frames de función
+
+---
+
+## Sesión: Coroutines / Generators (2026-07-19)
+
+Se implementaron y depuraron `coroutine(fn)`, `resume(co, ...)` y `yield`
+(generadores tipo Python). Cuatro bugs distintos bloqueaban esto, encontrados
+en orden:
+
+1. **`coroutine`/`resume` invisibles como funciones globales** — estaban
+   registrados con `RegisterBuiltinMethod` (tabla usada solo para el azúcar
+   `obj.metodo()`, ej. `str_upper`), que nunca hace `SetGlobal`. Por eso
+   `coroutine(test)` resolvía a `nil` y tronaba con
+   `attempt to call a non-callable value`. Fix: `RegisterNative` en
+   `builtin_registry.cpp`.
+2. **`YIELD` corrompía el stack de frames** — restauraba `frames_` al stack
+   del caller y seguía escribiendo/iterando con el `frame_idx` de la
+   coroutine, mezclando dos stacks distintos. Fix: `YIELD` ahora solo hace
+   `return result;` (como un `return` normal) y deja que `VM::Call` sea el
+   único dueño del swap de frames, usando el flag `is_coroutine_suspended_`
+   en vez de inferir el estado (`Suspended` vs `Dead`) por si el resultado
+   es `nil` (heurística ambigua: un `return` sin valor también da `nil`).
+3. **`Coroutine` no debía ser ref-counted** — `Coroutine` no hereda de
+   `Object`, pero `IsRefCounted()` lo marcaba como tal; un `Release()` sobre
+   ese `Value` habría hecho `delete` interpretando el puntero como `Object*`
+   con un layout de memoria que no coincide (corrupción/doble free contra
+   `VM::created_coroutines_`, el dueño real). Fix: sacado de
+   `IsRefCounted()` en `value.h`.
+4. **Bug raíz real, encontrado con instrumentación de debug**: `yield` se
+   descartaba en silencio y nunca llegaba a compilarse. `AstBuilder::stmtFromAny()`
+   prueba una lista fija de `std::any_cast<std::shared_ptr<X>>` (uno por cada
+   tipo de statement) y cae a `return nullptr;` si ninguno matchea —
+   `YieldStmt` no estaba en esa lista (sí lo estaban `RaiseStmt`, `TryStmt`,
+   etc.). Como resultado, `visitBlock` descartaba el nodo (`if (stmt) {...}`),
+   el compilador nunca veía un `YieldStmt`, y la función corría de corrido
+   como si el `yield` no existiera. Fix: agregado el `try { any_cast<shared_ptr<YieldStmt>> } catch {}`
+   faltante en `ast_builder.cpp`.
+
+Ver `docs/coroutines.md` para semántica completa y limitaciones conocidas
+(yield no se propaga a través de llamadas anidadas).
+
+**Estado:** coroutines funcionales para el caso directo (yield en el cuerpo
+de la función-coroutine). Verificado con `scripts/test_coro5.ava`.

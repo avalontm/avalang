@@ -1,0 +1,27 @@
+func gen()
+    yield 1
+    yield 2
+    return 3
+end
+
+co = coroutine.create(gen)
+
+results1 = []
+while coroutine.status(co) == "suspended" do
+    ok, val = coroutine.resume(co)
+    if ok then
+        results1.append(val)
+    end
+end
+
+print("First round:", results1)
+
+co2 = coroutine.create(gen)
+results2 = []
+while coroutine.status(co2) == "suspended" do
+    ok, val = coroutine.resume(co2)
+    if ok then
+        results2.append(val)
+    end
+end
+print("Second round:", results2)

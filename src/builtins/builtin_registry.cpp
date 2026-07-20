@@ -31,6 +31,9 @@ void RegisterBuiltinMethods(AvaVM* vm) {
     raw_vm->RegisterBuiltinMethod("dict_items", builtin_dict_items, nullptr);
     raw_vm->RegisterBuiltinMethod("dict_length", builtin_dict_length, nullptr);
     raw_vm->RegisterBuiltinMethod("dict_containsKey", builtin_dict_containsKey, nullptr);
+
+    raw_vm->RegisterNative("coroutine", builtin_coroutine, nullptr);
+    raw_vm->RegisterNative("resume", builtin_resume, nullptr);
 }
 
 }

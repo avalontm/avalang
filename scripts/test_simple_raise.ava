@@ -1,0 +1,11 @@
+print("Starting test")
+result = "unknown"
+try
+    print("Inside try block")
+    raise "test error"
+    print("After raise")
+except
+    print("In except block")
+    result = "caught"
+end
+print("Final result: " + result)

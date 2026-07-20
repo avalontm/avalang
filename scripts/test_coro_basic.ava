@@ -1,0 +1,13 @@
+func inner()
+    yield 1
+    return 2
+end
+
+print("Calling outer...")
+co = coroutine(inner)
+print("Coroutine created:", co)
+r1 = resume(co)
+print("Resume 1:", r1)
+r2 = resume(co)
+print("Resume 2:", r2)
+print("Done!")

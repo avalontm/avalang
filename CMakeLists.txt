@@ -98,6 +98,7 @@ set(CORE_SOURCES
     src/builtins/builtin_strings.cpp
     src/builtins/builtin_lists.cpp
     src/builtins/builtin_dicts.cpp
+    src/builtins/builtin_coroutine.cpp
     src/builtins/builtin_registry.cpp
     ${FRONTEND_SOURCES}
 )
