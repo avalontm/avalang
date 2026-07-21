@@ -6,8 +6,8 @@ D:\_CODE_\avalang\bindings\csharp\AvaLang.Interop\obj\Debug\net8.0\AvaLang.Inter
 D:\_CODE_\avalang\bindings\csharp\AvaLang.Interop\obj\Debug\net8.0\AvaLang.Interop.AssemblyInfoInputs.cache
 D:\_CODE_\avalang\bindings\csharp\AvaLang.Interop\obj\Debug\net8.0\AvaLang.Interop.AssemblyInfo.cs
 D:\_CODE_\avalang\bindings\csharp\AvaLang.Interop\obj\Debug\net8.0\AvaLang.Interop.csproj.CoreCompileInputs.cache
+D:\_CODE_\avalang\bindings\csharp\AvaLang.Interop\obj\Debug\net8.0\AvaLang.Interop.sourcelink.json
 D:\_CODE_\avalang\bindings\csharp\AvaLang.Interop\obj\Debug\net8.0\AvaLang.Interop.dll
 D:\_CODE_\avalang\bindings\csharp\AvaLang.Interop\obj\Debug\net8.0\refint\AvaLang.Interop.dll
 D:\_CODE_\avalang\bindings\csharp\AvaLang.Interop\obj\Debug\net8.0\AvaLang.Interop.pdb
 D:\_CODE_\avalang\bindings\csharp\AvaLang.Interop\obj\Debug\net8.0\ref\AvaLang.Interop.dll
-D:\_CODE_\avalang\bindings\csharp\AvaLang.Interop\obj\Debug\net8.0\AvaLang.Interop.sourcelink.json

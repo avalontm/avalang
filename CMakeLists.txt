@@ -73,47 +73,56 @@ if(antlr4-runtime_FOUND AND JAVA_EXECUTABLE AND ANTLR4_JAR)
         ${GENERATED_DIR}/AvaLangBaseListener.cpp
     )
     set(FRONTEND_SOURCES
-        src/frontend/denter.cpp
-        src/frontend/frontend_antlr.cpp
-        src/ast/ast_builder.cpp
-        src/compiler/compiler.cpp
+        core/src/frontend/denter.cpp
+        core/src/frontend/frontend_antlr.cpp
+        core/src/ast/ast_builder.cpp
+        core/src/compiler/compiler.cpp
         ${GENERATED_SOURCES}
     )
 else()
     set(AVA_HAVE_ANTLR FALSE)
     message(STATUS "avalang: antlr4-runtime NOT found, building with stub frontend "
                     "(ava_compile() will report a clear error; VM/C-API/CLI still build)")
-    set(FRONTEND_SOURCES src/frontend/frontend_stub.cpp)
+    set(FRONTEND_SOURCES core/src/frontend/frontend_stub.cpp)
 endif()
 
 # ---------------------------------------------------------------------
-# Core library sources
+# Core library sources (PRIVATE - do not export)
 # ---------------------------------------------------------------------
 set(CORE_SOURCES
-    src/vm/value.cpp
-    src/vm/vm.cpp
-    src/vm/module.cpp
-    src/vm/coroutine.cpp
-    src/api/c_api.cpp
-    src/builtins/builtin_strings.cpp
-    src/builtins/builtin_lists.cpp
-    src/builtins/builtin_dicts.cpp
-    src/builtins/builtin_coroutine.cpp
-    src/builtins/builtin_registry.cpp
+    core/src/vm/value.cpp
+    core/src/vm/vm.cpp
+    core/src/vm/module.cpp
+    core/src/vm/coroutine.cpp
+    core/src/builtins/builtin_strings.cpp
+    core/src/builtins/builtin_lists.cpp
+    core/src/builtins/builtin_dicts.cpp
+    core/src/builtins/builtin_coroutine.cpp
+    core/src/builtins/builtin_registry.cpp
     ${FRONTEND_SOURCES}
 )
 
+# ---------------------------------------------------------------------
+# Public library (core + C API)
+# ---------------------------------------------------------------------
+set(PUBLIC_SOURCES
+    ${CORE_SOURCES}
+    public/src/c_api.cpp
+)
+
 if(AVA_BUILD_SHARED)
-    add_library(avalang SHARED ${CORE_SOURCES})
+    add_library(avalang SHARED ${PUBLIC_SOURCES})
 else()
-    add_library(avalang STATIC ${CORE_SOURCES})
+    add_library(avalang STATIC ${PUBLIC_SOURCES})
 endif()
 
 target_include_directories(avalang
     PUBLIC
-        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/public/include
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/core/src
+        ${CMAKE_SOURCE_DIR}/public/src
+        ${CMAKE_SOURCE_DIR}/public/include
         ${GENERATED_DIR}
 )
 
@@ -143,17 +152,22 @@ endif()
 
 target_compile_definitions(avalang PRIVATE AVA_BUILDING_LIBRARY)
 # NOTE: symbol visibility is intentionally left at the compiler default
-# (not hidden) so internal headers (src/vm/*.h) remain linkable from
+# (not hidden) so internal headers (core/src/vm/*.h) remain linkable from
 # tests/ and from ava_cli, which both use VM internals directly rather
 # than going through the C API. External bindings should still only rely
-# on include/ava.h -- the internal headers are not a stable contract.
+# on public/include/avalang.h -- the internal headers are not a stable contract.
 
 # ---------------------------------------------------------------------
 # CLI (native reference host, useful for testing scripts without a binding)
 # ---------------------------------------------------------------------
 if(AVA_BUILD_CLI)
-    add_executable(ava_cli src/cli/main.cpp)
+    add_executable(ava_cli public/src/main.cpp)
     target_link_libraries(ava_cli PRIVATE avalang)
+    target_include_directories(ava_cli PRIVATE
+        ${CMAKE_SOURCE_DIR}/core/src
+        ${CMAKE_SOURCE_DIR}/public/src
+        ${CMAKE_SOURCE_DIR}/public/include
+    )
 endif()
 
 # No tests - use scripts to test
@@ -163,4 +177,4 @@ install(TARGETS avalang
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin
 )
-install(FILES include/ava.h DESTINATION include)
+install(FILES public/include/avalang.h DESTINATION include)

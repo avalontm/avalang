@@ -26,10 +26,10 @@ cmake --build .
 **CRITICAL**: After fixing bugs in VM, compiler, or core runtime, always do a clean build before testing. Old object files may cache incorrect behavior.
 
 Common cases requiring `build.bat clean`:
-- Changes to `src/vm/vm.cpp` (bytecode execution, opcodes)
-- Changes to `src/compiler/` (AST compilation, code generation)
-- Changes to `src/vm/value.h` (Value model, type tags)
-- Changes to `src/vm/opcodes.h` (opcode definitions)
+- Changes to `core/src/vm/vm.cpp` (bytecode execution, opcodes)
+- Changes to `core/src/compiler/` (AST compilation, code generation)
+- Changes to `core/src/vm/value.h` (Value model, type tags)
+- Changes to `core/src/vm/opcodes.h` (opcode definitions)
 - Changes to class inheritance or `base()` calls
 - Changes to register allocation logic
 
@@ -56,11 +56,10 @@ build\Release\ava_cli.exe scripts\test_hello.ava
 build\Debug\ava_cli.exe scripts\test_hello.ava
 ```
 
-Ejemplos de scripts disponibles en la raíz del proyecto:
-- `test_hello.ava` - Hello world básico
-- `test_for.ava` - Loop for con range()
-- `test_list.ava` - Listas y diccionarios
-- `test_simple.ava` - Expresiones básicas
+Ejemplos de scripts disponibles en `scripts/`:
+- `scripts/test_simple.ava` - Expresiones básicas
+- `scripts/test_for.ava` - Loop for con range()
+- `scripts/test_class_inherit.ava` - Herencia de clases
 
 Scripts de prueba deben crearse en `scripts/`:
 
@@ -159,19 +158,46 @@ private:
 
 ## Architecture
 
-### Value Model (`src/vm/value.h`)
+### Value Model (`core/src/vm/value.h`)
 Tag-union: `Nil | Bool | Number | String | List | Dict | Function | NativeFunc | Instance | Class | Coroutine`
 Use factory methods: `Value::Number(1)`, `Value::Nil()`, etc.
 
-### VM (`src/vm/vm.cpp`)
+### VM (`core/src/vm/vm.cpp`)
 - Register-based bytecode interpreter (Lua-style, not stack-based)
 - Frames on `VM::frames_` (not native call stack) - enables coroutines
-- Opcodes in `src/vm/opcodes.h`
+- Opcodes in `core/src/vm/opcodes.h`
 
-### Public C API (`include/ava.h`)
+### Public C API (`public/include/avalang.h`)
 - All functions `extern "C"`
 - Opaque handles (`void*`) for objects
 - `ava_value_t` is POD struct (tag + union)
+
+### Architecture Overview
+
+For complete architecture documentation, see `docs/architecture.md`.
+
+```
+avalang/
+├── core/src/           # Language implementation (PRIVATE - do not export)
+│   ├── vm/             # Value, VM, opcodes, Proto
+│   ├── ast/            # AST nodes and builder
+│   ├── compiler/       # AST → bytecode
+│   ├── frontend/      # ANTLR4 integration, denter
+│   └── builtins/       # Builtin functions
+├── public/             # Public headers to export
+│   ├── include/       # API headers (avalang.h)
+│   └── src/            # C API impl + CLI
+├── plugins/            # Plugin implementations (TODO: create)
+├── bindings/           # Language bindings (TODO: create)
+└── docs/               # Architecture and documentation
+```
+
+### Key Principles
+
+1. **Core is PRIVATE** - Never export C++ classes, only C API
+2. **Handles are opaque** - `typedef struct AvaVM AvaVM;` (no `class VM`)
+3. **Memory managed** - Bindings never alloc/free internal objects
+4. **Plugin System** - Extend via `ava_plugin_register()`, not modifying core
 
 ### Error Handling
 - VM errors: throw `std::runtime_error`
@@ -181,22 +207,24 @@ Use factory methods: `Value::Number(1)`, `Value::Nil()`, etc.
 ## Common Tasks
 
 ### Add New Opcode
-1. Add to `src/vm/opcodes.h` enum
-2. Implement in `src/vm/vm.cpp` `ExecuteFrame()` switch
+1. Add to `core/src/vm/opcodes.h` enum
+2. Implement in `core/src/vm/vm.cpp` `ExecuteFrame()` switch
 
 ### Add Native Function
-1. Implement in `src/api/c_api.cpp`
-2. Declare in `include/ava.h`
+1. Implement in `public/src/c_api.cpp`
+2. Declare in `public/include/avalang.h`
 
 ## Common Tasks
 ```
-src/
+core/src/
 ├── vm/           # Value, VM, opcodes, Proto
 ├── ast/          # AST nodes and builder
 ├── compiler/     # AST → bytecode
 ├── frontend/     # ANTLR4 integration, denter
-├── api/          # C API
-└── cli/          # ava_cli binary
+├── builtins/     # Builtin functions
+public/src/
+├── c_api.cpp     # C API
+└── main.cpp      # CLI
 ```
 
 ## Timeout Prevention for AI Agents
@@ -230,6 +258,45 @@ cd build && cmake --build . --config Debug
 - Check bytecode compilation output if needed
 - Investigate the VM execution loop if infinite loop suspected
 
+## Plugin System (Planned)
+
+Plugins allow extending AvaLang without modifying core. See `docs/architecture.md` for full design.
+
+```c
+// Plugin descriptor (concept, not implemented yet)
+typedef struct AvaPluginDesc {
+    const char* name;
+    const char* version;
+    void (*init)(AvaVM* vm);
+    void (*shutdown)(AvaVM* vm);
+    const char** function_names;
+    size_t function_count;
+} AvaPluginDesc;
+
+void ava_plugin_register(AvaVM* vm, const AvaPluginDesc* desc);
+```
+
+### Planned Plugins
+
+| Plugin | Description | Status |
+|--------|-------------|--------|
+| `avalang-sdl` | SDL2 wrapper (window, textures, audio) | Planned |
+| `avalang-godot` | Godot 4.x GDExtension | Planned |
+| `avalang-opengl` | OpenGL 3.3+ bindings | Planned |
+
+## Roadmap Progress
+
+**See**: `docs/architecture.md` - Section 10 for full roadmap with checkpoints.
+
+### Current Phase: Architecture Refactor (COMPLETED)
+
+```
+[x] Create docs/architecture.md
+[x] Refactor directory structure (core/, public/, plugins/)
+[x] Verify build works after refactor
+[ ] Create avalang_plugin.h
+```
+
 ---
 
-**Important**: Builds with or without ANTLR4. Do NOT commit secrets.
+**Important**: Builds with or without ANTLR4. Do not commit secrets.

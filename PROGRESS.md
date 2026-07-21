@@ -503,3 +503,56 @@ Ver `docs/coroutines.md` para semántica completa y limitaciones conocidas
 
 **Estado:** coroutines funcionales para el caso directo (yield en el cuerpo
 de la función-coroutine). Verificado con `scripts/test_coro5.ava`.
+
+---
+
+## Sesión: C# Binding - Llamadas Bidireccionales (2026-07-20)
+
+Se implementaron llamadas bidireccionales completas entre C# y scripts AvaLang:
+
+### C# llama funciones del script
+```csharp
+using var ava = new AvaLangManager();
+
+ava.LoadScriptString(@"
+    func add(a, b)
+        return a + b
+    end
+    
+    func greet(name)
+        return 'Hola ' + name
+    end
+");
+
+int sum = ava.Call<int>("add", 5, 3);           // 8
+string greeting = ava.Call<string>("greet", "Carlos");  // "Hola Carlos"
+```
+
+### Script llama funciones de C#
+```csharp
+ava.RegisterFunction("log", (AvaVM vm, AvaValue[] args) =>
+{
+    foreach (var arg in args)
+        Console.WriteLine(vm.Inspect(arg));
+    return AvaValue.Nil;
+});
+
+ava.RegisterFunction("getTime", (AvaVM vm, AvaValue[] args) =>
+    vm.CreateString(DateTime.Now.ToString("HH:mm:ss")));
+
+ava.LoadScriptString("log(getTime())");  // El script llama a C#
+```
+
+### Funciones de alto nivel en AvaLangManager
+```csharp
+ava.LoadScript("scripts/player.ava");           // Cargar desde archivo
+ava.LoadScriptString("x = 5");                  // Cargar desde string
+int x = ava.Get<int>("x");                       // Leer variable
+ava.Set("health", 100);                          // Escribir variable
+ava.RegisterFunction("log", (vm, args) => ...);  // Registrar función
+ava.RegisterObject("Game", gameObject);          // Registrar objeto con métodos
+```
+
+**Ver:** `bindings/csharp/BINDING_CSHARP_PROGRESS.md` para documentación completa del binding.
+
+**Estado:** Funcional - Llamadas bidireccionales C# ↔ Script verificadas.

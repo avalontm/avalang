@@ -162,7 +162,7 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
         if (it != locals_.end()) {
             return it->second;
         }
-        if (n->name == "this" || n->name == "self") {
+        if (n->name == "this") {
             if (locals_.find("this") != locals_.end()) {
                 return locals_.at("this");
             }
@@ -400,7 +400,6 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
 }
 
 void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
-    fprintf(stderr, "[C++] CompileStmt: stmt=%p\n", stmt.get());
     if (auto* e = dynamic_cast<ExprStmt*>(stmt.get())) {
         CompileExpr(e->expr);
         return;
@@ -416,7 +415,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
             bool has_local = locals_.find(n->name) != locals_.end();
             bool is_known_attr = instance_attrs_.find(n->name) != instance_attrs_.end();
             auto val_reg = CompileExpr(a->value);
-            if (in_method && n->name != "this" && n->name != "self" && !has_local && is_known_attr) {
+            if (in_method && n->name != "this" && !has_local && is_known_attr) {
                 auto attr_idx = AddConstant(MakeString(n->name));
                 auto this_reg = locals_.at("this");
                 Emit(OpCode::SETATTR, this_reg, attr_idx, val_reg);
@@ -441,17 +440,17 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
             return;
         }
         if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
-            bool is_self = false;
+            bool is_this = false;
             if (auto* name = dynamic_cast<NameExpr*>(a_expr->obj.get())) {
-                if (name->name == "this" || name->name == "self") {
-                    is_self = true;
+                if (name->name == "this") {
+                    is_this = true;
                 }
             }
             
             auto val_reg = CompileExpr(a->value);
             
             uint16_t obj_reg;
-            if (is_self && locals_.find("this") != locals_.end()) {
+            if (is_this && locals_.find("this") != locals_.end()) {
                 obj_reg = locals_.at("this");
             } else {
                 obj_reg = CompileExpr(a_expr->obj);
@@ -460,7 +459,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
             auto attr_idx = AddConstant(MakeString(a_expr->attr));
             Emit(OpCode::SETATTR, obj_reg, attr_idx, val_reg);
             
-            if (!is_self) {
+            if (!is_this) {
                 FreeRegs(1);
             }
             FreeRegs(1);
@@ -489,15 +488,15 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
             return;
         }
         if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
-            bool is_self = false;
+            bool is_this = false;
             if (auto* name = dynamic_cast<NameExpr*>(a_expr->obj.get())) {
-                if (name->name == "this" || name->name == "self") {
-                    is_self = true;
+                if (name->name == "this") {
+                    is_this = true;
                 }
             }
             
             uint16_t obj_reg;
-            if (is_self && locals_.find("this") != locals_.end()) {
+            if (is_this && locals_.find("this") != locals_.end()) {
                 obj_reg = locals_.at("this");
             } else {
                 obj_reg = CompileExpr(a_expr->obj);
@@ -506,7 +505,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
             auto attr_idx = AddConstant(MakeString(a_expr->attr));
             Emit(OpCode::SETATTR, obj_reg, attr_idx, result_reg);
             
-            if (!is_self) {
+            if (!is_this) {
                 FreeRegs(1);
             }
             return;
@@ -852,8 +851,6 @@ void Compiler::CompileForDynamic(const ForStmt* stmt) {
 }
 
 void Compiler::CompileFunc(const FuncDef* func) {
-    fprintf(stderr, "[C++] CompileFunc: name=%s, params=%zu\n", func->name.c_str(), func->params.size());
-    fprintf(stderr, "[C++] CompileFunc: body size=%zu\n", func->body.size());
     Compiler sub;
     sub.proto_ = std::make_shared<Proto>();
     sub.proto_->debug_name = func->name;
@@ -868,14 +865,7 @@ void Compiler::CompileFunc(const FuncDef* func) {
     }
     sub.max_reg_ = sub.next_reg_;
 
-    fprintf(stderr, "[C++] CompileFunc: compiling body\n");
     sub.CompileChunk(func->body);
-    fprintf(stderr, "[C++] CompileFunc: body compiled, result_reg_=%d\n", sub.result_reg_);
-    fprintf(stderr, "[C++] CompileFunc: child proto instructions:\n");
-    for (size_t i = 0; i < sub.proto_->instructions.size(); i++) {
-        auto& in = sub.proto_->instructions[i];
-        fprintf(stderr, "  [%2d] opcode=%2d a=%d b=%d c=%d\n", (int)i, (int)in.op, in.a, in.b, in.c);
-    }
     uint8_t ret_a = sub.result_reg_ > 0 ? static_cast<uint8_t>(sub.result_reg_) : 0;
     uint8_t ret_b = sub.result_reg_ > 0 ? 1 : 0;
     sub.proto_->instructions.push_back({OpCode::RETURN, ret_a, static_cast<uint16_t>(ret_b), 0});
@@ -902,28 +892,19 @@ void Compiler::CompileChunk(const std::vector<std::shared_ptr<StmtNode>>& stmts)
 }
 
 std::shared_ptr<Proto> Compiler::Compile(const std::shared_ptr<Chunk>& chunk) {
-    fprintf(stderr, "[C++] Compiler::Compile: start\n");
-    fprintf(stderr, "[C++] Compiler::Compile: calling Reset\n");
     Reset();
-    fprintf(stderr, "[C++] Compiler::Compile: Reset done, proto_=%p\n", proto_.get());
-    fprintf(stderr, "[C++] Compiler::Compile: chunk=%p, statements=%zu\n", chunk.get(), chunk->statements.size());
-    fprintf(stderr, "[C++] Compiler::Compile: calling CompileChunk\n");
     CompileChunk(chunk->statements);
-    fprintf(stderr, "[C++] Compiler::Compile: CompileChunk done, result_reg_=%d, next_reg_=%d, max_reg_=%d\n", result_reg_, next_reg_, max_reg_);
     if (result_reg_ > 0 || next_reg_ > 0) {
         Emit(OpCode::RETURN, result_reg_ > 0 ? result_reg_ : 0, result_reg_ > 0 ? 1 : 0);
     } else {
         Emit(OpCode::RETURN, 0, 0);
     }
     proto_->num_registers = max_reg_ + 1;
-    fprintf(stderr, "[C++] Compiler::Compile: returning proto with %zu instructions\n", proto_->instructions.size());
     return proto_;
 }
 
 uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
-    fprintf(stderr, "[C++] CompileExprToReg: stmt=%p\n", stmt.get());
     if (auto* e = dynamic_cast<ExprStmt*>(stmt.get())) {
-        fprintf(stderr, "[C++] CompileExprToReg: ExprStmt\n");
         return CompileExpr(e->expr);
     }
     if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
@@ -936,7 +917,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
             bool has_local = locals_.find(n->name) != locals_.end();
             bool is_known_attr = instance_attrs_.find(n->name) != instance_attrs_.end();
             auto val_reg = CompileExpr(a->value);
-            if (in_method && n->name != "this" && n->name != "self" && !has_local && is_known_attr) {
+            if (in_method && n->name != "this" && !has_local && is_known_attr) {
                 auto attr_idx = AddConstant(MakeString(n->name));
                 auto this_reg = locals_.at("this");
                 Emit(OpCode::SETATTR, this_reg, attr_idx, val_reg);
@@ -961,17 +942,17 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
             return 0;
         }
         if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
-            bool is_self = false;
+            bool is_this = false;
             if (auto* name = dynamic_cast<NameExpr*>(a_expr->obj.get())) {
-                if (name->name == "this" || name->name == "self") {
-                    is_self = true;
+                if (name->name == "this") {
+                    is_this = true;
                 }
             }
             
             auto val_reg = CompileExpr(a->value);
             
             uint16_t obj_reg;
-            if (is_self && locals_.find("this") != locals_.end()) {
+            if (is_this && locals_.find("this") != locals_.end()) {
                 obj_reg = locals_.at("this");
             } else {
                 obj_reg = CompileExpr(a_expr->obj);
@@ -980,7 +961,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
             auto attr_idx = AddConstant(MakeString(a_expr->attr));
             Emit(OpCode::SETATTR, obj_reg, attr_idx, val_reg);
             
-            if (!is_self) {
+            if (!is_this) {
                 FreeRegs(1);
             }
             FreeRegs(1);
@@ -1008,15 +989,15 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
             return 0;
         }
         if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
-            bool is_self = false;
+            bool is_this = false;
             if (auto* name = dynamic_cast<NameExpr*>(a_expr->obj.get())) {
-                if (name->name == "this" || name->name == "self") {
-                    is_self = true;
+                if (name->name == "this") {
+                    is_this = true;
                 }
             }
             
             uint16_t obj_reg;
-            if (is_self && locals_.find("this") != locals_.end()) {
+            if (is_this && locals_.find("this") != locals_.end()) {
                 obj_reg = locals_.at("this");
             } else {
                 obj_reg = CompileExpr(a_expr->obj);
@@ -1025,7 +1006,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
             auto attr_idx = AddConstant(MakeString(a_expr->attr));
             Emit(OpCode::SETATTR, obj_reg, attr_idx, result_reg);
             
-            if (!is_self) {
+            if (!is_this) {
                 FreeRegs(1);
             }
             return 0;

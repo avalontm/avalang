@@ -1,0 +1,20 @@
+playerName = "Juan"
+health = 100
+score = 0
+
+func init()
+    print("Player initialized: " + playerName)
+end
+
+func takeDamage(amount)
+    health = health - amount
+    if health < 0 then health = 0 end
+end
+
+func addScore(points)
+    score = score + points
+end
+
+func getStatus()
+    return playerName
+end

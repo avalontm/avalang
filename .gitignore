@@ -4,6 +4,9 @@ bin/
 dist/
 out/
 
+# Agent instructions (local dev only)
+AGENTS.md
+
 # CMake
 CMakeFiles/
 CMakeCache.txt

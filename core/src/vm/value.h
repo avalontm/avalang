@@ -8,7 +8,7 @@
 #include <memory>
 #include <atomic>
 
-#include "ava.h"
+#include "avalang.h"
 
 namespace ava {
 

@@ -5,7 +5,7 @@
 Este documento registra el desarrollo completo del binding de C# para AvaLang, incluyendo la arquitectura, errores encontrados, bugs corregidos y lecciones aprendidas.
 
 **Última actualización:** 2026-07-20
-**Estado:** Funcional - Ejecutando scripts de prueba
+**Estado:** Funcional - Llamadas bidireccionales C# ↔ Script
 
 ---
 
@@ -258,109 +258,94 @@ public bool IsRefCounted() => Type switch
 
 ## 3. Verificación de Funcionalidad
 
-### Test 1: Aritmética Básica
+### Test 1: Llamadas Bidireccionales Completas
+
+**C# llama funciones del script:**
 ```csharp
-var r1 = vm.Eval("1 + 2 * 3");
-Console.WriteLine(r1.AsNumber() == 7);  // PASS
+ava.LoadScriptString(@"
+    func add(a, b) return a + b end
+    func greet(name) return 'Hola ' + name end
+");
+
+int sum = ava.Call<int>("add", 5, 3);              // 8
+string greeting = ava.Call<string>("greet", "Ana"); // "Hola Ana"
 ```
 
-### Test 2: Creación de Strings
+**Script llama funciones de C#:**
 ```csharp
-var r2 = vm.Eval("\"hello\"");
-Console.WriteLine(r2.Type == AvaValueType.String);  // PASS
-```
-
-### Test 3: Listas
-```csharp
-var r3 = vm.Eval("[1, 2, 3]");
-Console.WriteLine(vm.GetListLength(r3) == 3);  // PASS
-```
-
-### Test 4: Funciones Nativas
-```csharp
-vm.RegisterNative("print", (vm, args) => {
-    Console.WriteLine(string.Join(" ", args.Select(vm.FormatValue)));
+ava.RegisterFunction("log", (AvaVM vm, AvaValue[] args) =>
+{
+    foreach (var arg in args)
+        Console.WriteLine(vm.Inspect(arg));
     return AvaValue.Nil;
 });
 
-vm.Eval("print('Hello from AvaLang!')");  // Imprime: Hello from AvaLang!
+ava.RegisterFunction("getTime", (AvaVM vm, AvaValue[] args) =>
+    vm.CreateString(DateTime.Now.ToString("HH:mm:ss")));
+
+ava.LoadScriptString("log(getTime())");
 ```
 
-### Test 5: Scripts Externos
+### Test 2: Cargar Script desde Archivo
 ```csharp
-vm.RunScript("scripts/test_arithmetic.ava");
+ava.LoadScript("scripts/player.ava");
+int health = ava.Get<int>("health");  // 100
+ava.Set("health", 50);
+```
+
+### Test 3: Registrar Objetos con Métodos
+```csharp
+public class GameAPI {
+    public double GetScore() => 500;
+    public void ResetGame() => Console.WriteLine("Reset!");
+}
+
+ava.RegisterObject("Game", new GameAPI());
+ava.LoadScriptString("Game_resetgame()");  // Llama método C#
 ```
 
 ---
 
 ## 4. API C# Expuesta
 
+### Clase AvaLangManager
+
+```csharp
+using var ava = new AvaLangManager();
+
+// Cargar scripts
+ava.LoadScript("scripts/player.ava");           // Desde archivo
+ava.LoadScriptString("x = 5");                  // Desde string
+
+// Variables globales
+int x = ava.Get<int>("x");
+ava.Set("health", 100);
+
+// Llamadas bidireccionales
+int sum = ava.Call<int>("add", 5, 3);          // C# → Script
+ava.RegisterFunction("log", (vm, args) => ...); // Script → C#
+
+// Registrar objetos
+ava.RegisterObject("Game", gameObject);         // Métodos como Game_nombremetodo()
+```
+
 ### Clase AvaVM
 
 ```csharp
-// Creación
 using var vm = new AvaVM();
 
-// Ejecución de código
-AvaModule module = vm.Compile(source, name);
-AvaValue result = vm.Run(module);
-AvaValue result = vm.Eval(source);
-AvaValue result = vm.RunScript(filePath);
+// Ejecución
+AvaValue result = vm.Eval("1 + 2 * 3");
 
-// Globals
-AvaValue fn = vm.GetGlobal("name");
-vm.SetGlobal("name", value);
-vm.SetGlobal("name", 42);        // overloads para primitivos
-vm.SetGlobal("name", "string");
+// Funciones nativas
+vm.RegisterNative("print", (vm, args) => {
+    Console.WriteLine(string.Join(" ", args.Select(vm.FormatValue)));
+    return AvaValue.Nil;
+});
 
-// Llamadas a función
-AvaValue result = vm.Call(callable, arg1, arg2, ...);
-T result = vm.Call<T>("functionName", args);
-
-// Creación de valores
-AvaValue nil = vm.CreateNil();
-AvaValue b = vm.CreateBool(true);
-AvaValue n = vm.CreateNumber(3.14);
-AvaValue s = vm.CreateString("hello");
-AvaValue list = vm.CreateList();          // vacía
-AvaValue list = vm.CreateList(v1, v2);    // con elementos
-AvaValue dict = vm.CreateDict();
-
-// Operaciones de lista
+// Contenedores
+AvaValue list = vm.CreateList(1, 2, 3);
 int len = vm.GetListLength(list);
-AvaValue item = vm.GetListItem(list, index);
-vm.SetListItem(list, index, value);
-vm.ListAppend(list, item);
-List<AvaValue> items = vm.GetListItems(list);
-
-// Operaciones de diccionario
-int len = vm.GetDictLength(dict);
-AvaValue item = vm.GetDictItem(dict, "key");
-vm.DictSet(dict, "key", value);
-bool exists = vm.DictContains(dict, "key");
-
-// Strings
-string str = vm.GetStringData(stringValue);
-
-// Registro de funciones nativas
-vm.RegisterNative("print", (vm, args) => { ... });
-vm.RegisterNative("add", (a, b) => a + b);  // generic overloads
-
-// Conversión
-T value = vm.ConvertFrom<T>(result);
-
-// Formateo
-string formatted = vm.FormatValue(value);
-
-// Gestión de memoria
-vm.Retain(value);   // incrementar ref count
-vm.Release(value);  // decrementar ref count
-
-// Coroutines
-AvaCoroutine co = vm.CreateCoroutine(function);
-
-// Importación de módulos
-AvaValue module = vm.Import("module_path", alias);
 
 // Cleanup
 vm.Dispose();  // o usar 'using'
@@ -404,16 +389,18 @@ enum AvaValueType {
 
 ## 6. Trabajo Futuro
 
-### Por Implementar
+### ✅ Completado
+- [x] Llamadas bidireccionales C# ↔ Script
+- [x] Cargar scripts desde archivo con `LoadScript()`
+- [x] Registrar funciones nativas con `RegisterFunction()`
+- [x] Registrar objetos con métodos via `RegisterObject()`
 
-- [ ] Más overloads de `ConvertFrom<T>` para tipos comunes
+### Por Implementar
 - [ ] Enumeradores para `List` y `Dict`
-- [ ] Async/await support
-- [ ] Tests más exhaustivos con más scripts .ava
+- [ ] Async/await support para funciones nativas
 - [ ] Integración con proyectos externos (Unity, Godot)
 
 ### Mejoras Posibles
-
 - [ ] Cache de `Marshal.SizeOf<AvaValue>()` en static field
 - [ ] Pool de memoria para argumentos de función
 - [ ] Source generators para reducing boilerplate

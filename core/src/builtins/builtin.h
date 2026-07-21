@@ -1,7 +1,7 @@
 #ifndef AVA_BUILTINS_BUILTIN_H
 #define AVA_BUILTINS_BUILTIN_H
 
-#include "ava.h"
+#include "avalang.h"
 
 #ifdef __cplusplus
 extern "C" {

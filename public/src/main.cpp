@@ -5,10 +5,10 @@
 #include <algorithm>
 #include <vector>
 #include <cstring>
-#include "ava.h"
-#include "../vm/vm.h"
-#include "../vm/value.h"
-#include "../builtins/builtin.h"
+#include "avalang.h"
+#include "vm/vm.h"
+#include "vm/value.h"
+#include "builtins/builtin.h"
 
 #ifndef NDEBUG
 #define DEBUG_PRINT(...) fprintf(stderr, __VA_ARGS__)
@@ -130,9 +130,7 @@ static ava_value_t native_type(AvaVM*, const ava_value_t* args, size_t count, vo
     };
     int idx = static_cast<int>(args[0].type);
     if (idx < 0 || idx > 12) idx = 0;
-    fprintf(stderr, "[C++] native_type: arg0.type=%d (%s)\n", (int)args[0].type, names[idx]);
     ava_value_t str = ava_string_create(nullptr, names[idx], strlen(names[idx]));
-    fprintf(stderr, "[C++] native_type: returning type=%d, ref.id=%lu\n", (int)str.type, (unsigned long)str.as.ref.id);
     return str;
 }
 
@@ -565,12 +563,10 @@ static ava_value_t native_raise(AvaVM* vm, const ava_value_t* args, size_t count
 }
 
 int main(int argc, char** argv) {
-    DEBUG_PRINT("DEBUG: ava_cli started, argc=%d\n", argc);
     if (argc < 2) {
         std::fprintf(stderr, "usage: %s <script.ava>\n", argv[0]);
         return 1;
     }
-    DEBUG_PRINT("DEBUG: opening file %s\n", argv[1]);
 
     std::ifstream file(argv[1]);
     if (!file) {
@@ -619,9 +615,7 @@ int main(int argc, char** argv) {
     ava_vm_register_native(vm, "raise", native_raise, nullptr);
 
     char* error = nullptr;
-    DEBUG_PRINT("DEBUG: calling ava_compile\n");
     AvaModule* module = ava_compile(vm, buffer.str().c_str(), argv[1], &error);
-    DEBUG_PRINT("DEBUG: ava_compile returned, module=%p, error=%p\n", module, error);
     if (!module) {
         std::fprintf(stderr, "compile error: %s\n", error ? error : "unknown error");
         if (error) ava_string_free(error);
@@ -629,10 +623,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    DEBUG_PRINT("DEBUG: calling ava_run\n");
     ava_value_t result{};
     ava_run(vm, module, &result, &error);
-    DEBUG_PRINT("DEBUG: ava_run returned, error=%p, result.type=%d, result.n=%g\n", error, (int)result.type, result.as.n);
     if (error) {
         std::fprintf(stderr, "runtime error: %s\n", error);
         ava_string_free(error);

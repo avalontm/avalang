@@ -491,3 +491,64 @@ working native-host bridge) without committing to any specific
 component/markup syntax yet — that syntax should be designed once real
 usage of the base language (once closures and classes exist) shows what
 actually feels ergonomic, rather than guessed at now.
+
+
+## AI Language Design Constitution (Proposed)
+
+### Core philosophy
+- AvaLang is a modern embeddable scripting language.
+- Primary inspiration: Visual Basic 6 block readability, not C-family braces.
+- Secondary influences: Lua (embedding, end blocks), Python (clarity), modern languages (lambdas, slices, collections).
+- Every future syntax decision must preserve readability over terseness.
+
+### Non-negotiable syntax rules
+1. All executable blocks end with `end`.
+2. `then` opens conditional blocks.
+3. `do` opens loop blocks.
+4. Braces `{}` are reserved for data literals only (maps/dictionaries), never code blocks.
+5. `[]` represent indexing, slicing and list literals.
+6. `()` are only for grouping, calls and parameter lists.
+7. Prefer one obvious way to express a construct.
+
+### Identity
+Do not evolve toward "another C#".
+Do not evolve toward JavaScript syntax.
+Target identity:
+> Modern Visual Basic + Lua philosophy + DSL capabilities.
+
+### Future DSL requirements
+The grammar should naturally support declarative APIs such as:
+
+```ava
+component Login
+
+    state username = ""
+
+    view
+
+        column
+
+            text("Hello")
+
+            button
+                text = "Login"
+            end
+
+        end
+
+    end
+
+end
+```
+
+The parser should remain extensible enough that component-like DSLs can be introduced without breaking existing grammar.
+
+### Checklist before adding grammar features
+- Is it consistent with existing keywords?
+- Does it preserve block syntax with `end`?
+- Does it avoid introducing braces for executable blocks?
+- Can it be represented cleanly in the AST?
+- Does it improve DSL expressiveness?
+- Does it preserve readability?
+- Would a new user immediately recognize it as AvaLang?
+

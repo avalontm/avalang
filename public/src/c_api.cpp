@@ -1,7 +1,7 @@
-#include "ava.h"
-#include "../vm/vm.h"
-#include "../vm/value.h"
-#include "../frontend/frontend.h"
+#include "avalang.h"
+#include "vm/vm.h"
+#include "vm/value.h"
+#include "frontend/frontend.h"
 
 #include <cstring>
 #include <cstdlib>
@@ -37,28 +37,15 @@ AVA_API void ava_vm_register_native(AvaVM* vm, const char* name, AvaNativeFn fn,
 }
 
 AVA_API AvaModule* ava_compile(AvaVM*, const char* source, const char* source_name, char** out_error) {
-    fprintf(stderr, "[C++] ava_compile entered\n");
     try {
-        fprintf(stderr, "[C++] calling CompileSource...\n");
         auto proto = CompileSource(source, source_name ? source_name : "<script>");
-        fprintf(stderr, "[C++] CompileSource returned, proto=%p\n", proto.get());
-        fprintf(stderr, "[C++] Proto: num_registers=%d, num_params=%d, instructions=%zu, constants=%zu, child_protos=%zu\n",
-                proto->num_registers, proto->num_params, proto->instructions.size(), 
-                proto->constants.size(), proto->child_protos.size());
-        for (size_t i = 0; i < proto->instructions.size(); i++) {
-            auto& in = proto->instructions[i];
-            fprintf(stderr, "  [%2d] opcode=%2d a=%d b=%d c=%d\n", (int)i, (int)in.op, in.a, in.b, in.c);
-        }
         auto* module = new AvaModule();
         module->proto = proto;
-        fprintf(stderr, "[C++] module created\n");
         return module;
     } catch (const std::exception& e) {
-        fprintf(stderr, "[C++] exception: %s\n", e.what());
         if (out_error) *out_error = DupString(e.what());
         return nullptr;
     } catch (...) {
-        fprintf(stderr, "[C++] unknown exception\n");
         if (out_error) *out_error = DupString("unknown error");
         return nullptr;
     }
