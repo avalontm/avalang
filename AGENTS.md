@@ -101,41 +101,25 @@ if x == 1 then      # también válido
 
 ## Common Tasks
 
-### CMake Options
-| Option | Default | Description |
-|--------|---------|-------------|
-| `CMAKE_BUILD_TYPE` | Release | Debug or Release |
-| `AVA_BUILD_SHARED` | ON | Build shared library (.dll/.so) |
-| `AVA_BUILD_CLI` | ON | Build ava_cli executable |
+### Add New Opcode
+1. Add to `core/src/vm/opcodes.h` enum
+2. Implement in `core/src/vm/vm.cpp` `ExecuteFrame()` switch
 
-## Code Style
+### Add Native Function
+1. Implement in `public/src/c_api.cpp`
+2. Declare in `public/include/avalang.h`
 
-### General
-- C++20, `namespace ava { }` for internal code
-- No comments unless explaining non-obvious logic
-- Prefer `const`/`constexpr`; use `std::make_shared` (no raw `new`/`delete`)
-
-### Naming
-| Element | Convention | Example |
-|---------|-----------|---------|
-| Classes/Structs | PascalCase | `class VM` |
-| Methods/Functions | PascalCase | `RegisterNative` |
-| Member variables | snake_case_ with `_` | `globals_` |
-| Local variables | snake_case | `proto`, `result` |
-| Constants | kPascalCase | `kMaxRegisters` |
-
-### Include Order
-1. Corresponding header (for .cpp files)
-2. Standard library (`<vector>`, `<string>`, etc.)
-3. Third-party headers
-4. Internal headers
-
-### Header Guards
-Use `#ifndef`/`#define` guards, NOT `#pragma once`:
-```cpp
-#ifndef AVA_VM_VM_H
-#define AVA_VM_VM_H
-#endif // AVA_VM_VM_H
+### Directory Structure Reference
+```
+core/src/
+├── vm/           # Value, VM, opcodes, Proto
+├── ast/          # AST nodes and builder
+├── compiler/     # AST → bytecode
+├── frontend/     # ANTLR4 integration, denter
+├── builtins/     # Builtin functions
+public/src/
+├── c_api.cpp     # C API
+└── main.cpp      # CLI
 ```
 
 ### Class Style
@@ -258,6 +242,34 @@ cd build && cmake --build . --config Debug
 - Check bytecode compilation output if needed
 - Investigate the VM execution loop if infinite loop suspected
 
+## Documentation Policy
+
+When the user confirms a bug is fixed, document it using a task format in the corresponding architecture document.
+
+### Task Format in Architecture Docs
+
+When documenting fixes, use this format in the appropriate `docs/architecture/*.md`:
+
+```markdown
+## Tasks
+
+### [COMPLETED] Bug #N: Brief Description
+- **Date**: YYYY-MM-DD
+- **File**: path/to/file.cs:line
+- **Problem**: What was wrong
+- **Solution**: How it was fixed
+```
+
+### Document Mapping
+
+| Bug/Feature Type | Document |
+|------------------|----------|
+| AvaUI Web fixes | `docs/architecture/framework_ui_web.md` |
+| Component tree/Renderer | `docs/architecture/07_COMPONENT_TREE.md` |
+| Core language features | `docs/architecture.md` |
+
+**AvaUI Web → `docs/architecture/framework_ui_web.md`**
+
 ## Plugin System (Planned)
 
 Plugins allow extending AvaLang without modifying core. See `docs/architecture.md` for full design.
@@ -284,18 +296,41 @@ void ava_plugin_register(AvaVM* vm, const AvaPluginDesc* desc);
 | `avalang-godot` | Godot 4.x GDExtension | Planned |
 | `avalang-opengl` | OpenGL 3.3+ bindings | Planned |
 
-## Roadmap Progress
+## Research Documentation
 
-**See**: `docs/architecture.md` - Section 10 for full roadmap with checkpoints.
+Before working on any task, **read the relevant documentation first**:
 
-### Current Phase: Architecture Refactor (COMPLETED)
+### AvaUI Framework (Web/Desktop UI)
+| Document | Purpose |
+|----------|---------|
+| `docs/architecture/AVAUI_FRAMEWORK.md` | Vision, principles, architecture overview |
+| `docs/architecture/AVA_PAGE_COMPONENT_ARCHITECTURE.md` | Page/component structure, sections, lifecycle |
+| `bindings/csharp/AvaLang.UI/docs/FRAMEWORK.md` | C# implementation, API reference |
+| `docs/architecture/07_COMPONENT_TREE.md` | Component tree abstraction |
 
-```
-[x] Create docs/architecture.md
-[x] Refactor directory structure (core/, public/, plugins/)
-[x] Verify build works after refactor
-[ ] Create avalang_plugin.h
-```
+### AvaUI Web Specific
+| Document | Purpose |
+|----------|---------|
+| `docs/architecture/framework_ui_web.md` | Web framework bugs, fixes, current state |
+| `docs/architecture/05_AVAWEB_HOST.md` | Web host architecture, routing, rendering |
+
+### AvaLang Core Language
+| Document | Purpose |
+|----------|---------|
+| `docs/architecture.md` | Overall architecture, roadmap, layers |
+| `docs/builtins.md` | Builtin functions reference |
+| `docs/classes.md` | Class system and inheritance |
+| `docs/operators.md` | Operator precedence and behavior |
+| `docs/coroutines.md` | Coroutine/async behavior |
+
+### Quick Reference: What to Read
+| Task Type | Documents to Read |
+|-----------|------------------|
+| UI bug/feature | `AVAUI_FRAMEWORK.md` + `FRAMEWORK.md` |
+| New UI component | `AVA_PAGE_COMPONENT_ARCHITECTURE.md` |
+| Rendering issues | `framework_ui_web.md` |
+| Core language bug | `docs/architecture.md` |
+| Script syntax | `docs/builtins.md`, `docs/operators.md` |
 
 ---
 

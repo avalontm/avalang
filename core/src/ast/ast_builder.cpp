@@ -261,8 +261,16 @@ std::any AstBuilder::visitSmallStatement(AvaLangParser::SmallStatementContext* c
     if (ctx->localStatement())    return visitLocalStatement(ctx->localStatement());
     if (ctx->importStatement())   return visitImportStatement(ctx->importStatement());
     if (ctx->raiseStatement())    return visitRaiseStatement(ctx->raiseStatement());
-    if (ctx->yieldStatement())   return visitYieldStatement(ctx->yieldStatement());
+    if (ctx->yieldStatement())    return visitYieldStatement(ctx->yieldStatement());
+    if (ctx->incDecStatement())  return visitIncDecStatement(ctx->incDecStatement());
     throw std::runtime_error("unsupported small statement");
+}
+
+std::any AstBuilder::visitIncDecStatement(AvaLangParser::IncDecStatementContext* ctx) {
+    auto target = exprFromTarget(ctx->target());
+    auto op_text = ctx->children[0]->getText();
+    UnOp op = (op_text == "++") ? UnOp::Inc : UnOp::Dec;
+    return std::make_shared<ExprStmt>(std::make_shared<UnOpExpr>(op, target));
 }
 
 std::any AstBuilder::visitExprStatement(AvaLangParser::ExprStatementContext* ctx) {
@@ -387,29 +395,19 @@ std::any AstBuilder::visitTryStatement(AvaLangParser::TryStatementContext* ctx) 
     auto try_body = stmtsFromAny(visitBlock(ctx->block()));
     
     std::vector<std::vector<std::shared_ptr<StmtNode>>> except_bodies;
-    std::vector<std::pair<std::string, std::string>> except_types;
-    std::vector<std::string> except_vars;
+    std::vector<std::shared_ptr<ExprNode>> except_exprs;
     
     for (auto* exc : ctx->exceptClause()) {
         auto exc_body = stmtsFromAny(visitBlock(exc->block()));
         except_bodies.push_back(exc_body);
         
-        std::string type_name;
-        std::string var_name;
+        std::shared_ptr<ExprNode> exc_expr = nullptr;
         
-        if (exc->NAME().size() == 1) {
-            type_name = exc->NAME(0)->getText();
-            var_name = exc->NAME(0)->getText();
-        } else if (exc->NAME().size() == 2) {
-            type_name = exc->NAME(0)->getText();
-            var_name = exc->NAME(1)->getText();
-        } else {
-            type_name = "Exception";
-            var_name = "";
+        if (exc->expr()) {
+            exc_expr = exprFromAny(exc->expr()->accept(this));
         }
         
-        except_types.push_back({type_name, ""});
-        except_vars.push_back(var_name);
+        except_exprs.push_back(exc_expr);
     }
     
     std::vector<std::shared_ptr<StmtNode>> finally_body;
@@ -418,7 +416,7 @@ std::any AstBuilder::visitTryStatement(AvaLangParser::TryStatementContext* ctx) 
         finally_body = stmtsFromAny(visitBlock(fin->block()));
     }
     
-    return std::make_shared<TryStmt>(try_body, except_bodies, except_types, except_vars, finally_body);
+    return std::make_shared<TryStmt>(try_body, except_bodies, except_exprs, finally_body);
 }
 
 std::any AstBuilder::visitExprList(AvaLangParser::ExprListContext* ctx) {
@@ -524,28 +522,37 @@ std::any AstBuilder::visitAdditive(AvaLangParser::AdditiveContext* ctx) {
     if (exprs.size() == 1) return exprFromAny(exprs[0]->accept(this));
 
     auto left = exprFromAny(exprs[0]->accept(this));
-    auto ops = ctx->children;
-    size_t op_idx = 1;
-    for (size_t i = 1; i < exprs.size(); ++i) {
-        auto right = exprFromAny(exprs[i]->accept(this));
-        auto txt = ops[op_idx++]->getText();
-        left = std::make_shared<BinOpExpr>(textToBinOp(txt), left, right);
+    std::vector<antlr4::tree::TerminalNode*> ops;
+    for (auto* child : ctx->children) {
+        if (auto* t = dynamic_cast<antlr4::tree::TerminalNode*>(child)) {
+            auto txt = t->getText();
+            if (txt == "+" || txt == "-") ops.push_back(t);
+        }
+    }
+
+    for (size_t i = 0; i < ops.size(); ++i) {
+        auto right = exprFromAny(exprs[i + 1]->accept(this));
+        left = std::make_shared<BinOpExpr>(textToBinOp(ops[i]->getText()), left, right);
     }
     return left;
 }
 
 std::any AstBuilder::visitMultiplicative(AvaLangParser::MultiplicativeContext* ctx) {
     auto exprs = ctx->unary();
-    auto ops = ctx->children;
-
     if (exprs.size() == 1) return exprFromAny(exprs[0]->accept(this));
 
     auto left = exprFromAny(exprs[0]->accept(this));
-    size_t op_idx = 1;
-    for (size_t i = 1; i < exprs.size(); ++i) {
-        auto right = exprFromAny(exprs[i]->accept(this));
-        auto txt = ops[op_idx++]->getText();
-        left = std::make_shared<BinOpExpr>(textToBinOp(txt), left, right);
+    std::vector<antlr4::tree::TerminalNode*> ops;
+    for (auto* child : ctx->children) {
+        if (auto* t = dynamic_cast<antlr4::tree::TerminalNode*>(child)) {
+            auto txt = t->getText();
+            if (txt == "*" || txt == "/" || txt == "%") ops.push_back(t);
+        }
+    }
+
+    for (size_t i = 0; i < ops.size(); ++i) {
+        auto right = exprFromAny(exprs[i + 1]->accept(this));
+        left = std::make_shared<BinOpExpr>(textToBinOp(ops[i]->getText()), left, right);
     }
     return left;
 }
@@ -555,6 +562,8 @@ std::any AstBuilder::visitUnary(AvaLangParser::UnaryContext* ctx) {
         auto operand = exprFromAny(ctx->unary()->accept(this));
         auto txt = ctx->children[0]->getText();
         if (txt == "-") return std::make_shared<UnOpExpr>(UnOp::Neg, operand);
+        if (txt == "++") return std::make_shared<UnOpExpr>(UnOp::Inc, operand);
+        if (txt == "--") return std::make_shared<UnOpExpr>(UnOp::Dec, operand);
         return std::make_shared<UnOpExpr>(UnOp::Not, operand);
     }
     return visitPower(ctx->power());
@@ -597,6 +606,10 @@ std::any AstBuilder::visitPostfix(AvaLangParser::PostfixContext* ctx) {
                 }
             }
             expr = std::make_shared<CallExpr>(expr, args);
+        } else if (dynamic_cast<AvaLangParser::IncTrailerContext*>(t)) {
+            expr = std::make_shared<UnOpExpr>(UnOp::Inc, expr);
+        } else if (dynamic_cast<AvaLangParser::DecTrailerContext*>(t)) {
+            expr = std::make_shared<UnOpExpr>(UnOp::Dec, expr);
         }
     }
     return expr;

@@ -15,7 +15,7 @@ enum class BinOp {
 };
 
 enum class UnOp {
-    Neg, Not
+    Neg, Not, Inc, Dec
 };
 
 struct AstNode {
@@ -148,17 +148,14 @@ struct ContinueStmt : StmtNode {};
 struct TryStmt : StmtNode {
     std::vector<std::shared_ptr<StmtNode>> try_body;
     std::vector<std::vector<std::shared_ptr<StmtNode>>> except_bodies;
-    std::vector<std::pair<std::string, std::string>> except_types;
-    std::vector<std::string> except_vars;
+    std::vector<std::shared_ptr<ExprNode>> except_exprs;
     std::vector<std::shared_ptr<StmtNode>> finally_body;
     TryStmt(std::vector<std::shared_ptr<StmtNode>> t,
             std::vector<std::vector<std::shared_ptr<StmtNode>>> eb,
-            std::vector<std::pair<std::string, std::string>> et,
-            std::vector<std::string> ev,
+            std::vector<std::shared_ptr<ExprNode>> ee,
             std::vector<std::shared_ptr<StmtNode>> f = {})
         : try_body(std::move(t)), except_bodies(std::move(eb)),
-          except_types(std::move(et)), except_vars(std::move(ev)),
-          finally_body(std::move(f)) {}
+          except_exprs(std::move(ee)), finally_body(std::move(f)) {}
 };
 
 struct IfStmt : StmtNode {
@@ -217,6 +214,12 @@ struct ImportStmt : StmtNode {
 struct RaiseStmt : StmtNode {
     std::shared_ptr<ExprNode> value;
     explicit RaiseStmt(std::shared_ptr<ExprNode> v) : value(std::move(v)) {}
+};
+
+struct IncDecStmt : StmtNode {
+    std::shared_ptr<ExprNode> target;
+    UnOp op;
+    IncDecStmt(std::shared_ptr<ExprNode> t, UnOp o) : target(std::move(t)), op(o) {}
 };
 
 struct LambdaExpr : ExprNode {

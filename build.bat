@@ -110,6 +110,24 @@ if "%USE_NINJA%"=="1" (
 )
 echo =====================================================================
 
+REM =====================================================================
+REM Copy avalang.dll to Interop bindings for C# development
+REM =====================================================================
+set "SOURCE_DLL=%BUILD_DIR%\%BUILD_TYPE%\avalang.dll"
+set "DEST_DIR=bindings\csharp\AvaLang.Interop\runtimes\win-x64\native"
+
+if exist "%SOURCE_DLL%" (
+    if not exist "%DEST_DIR%" mkdir "%DEST_DIR%"
+    copy /Y "%SOURCE_DLL%" "%DEST_DIR%\avalang.dll" >nul
+    echo [OK] Copied avalang.dll to Interop
+) else (
+    if exist "%BUILD_DIR%\avalang.dll" (
+        if not exist "%DEST_DIR%" mkdir "%DEST_DIR%"
+        copy /Y "%BUILD_DIR%\avalang.dll" "%DEST_DIR%\avalang.dll" >nul
+        echo [OK] Copied avalang.dll to Interop
+    )
+)
+
 endlocal
 exit /b 0
 

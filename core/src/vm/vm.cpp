@@ -6,6 +6,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
+#include <iomanip>
+#include <cmath>
 
 #ifdef _WIN32
 #include <direct.h>
@@ -27,6 +29,23 @@ static std::string GetFileDir(const std::string& path) {
     size_t pos = path.find_last_of("/\\");
     if (pos == std::string::npos) return ".";
     return path.substr(0, pos);
+}
+
+static std::string NumberToString(double n) {
+    if (std::abs(n - std::round(n)) < 0.0000001)
+        return std::to_string(static_cast<long long>(std::round(n)));
+    std::ostringstream oss;
+    oss << std::setprecision(15) << n;
+    std::string s = oss.str();
+    size_t dot = s.find('.');
+    if (dot != std::string::npos) {
+        size_t last_not_zero = s.find_last_not_of('0');
+        if (last_not_zero == dot)
+            s.erase(dot);
+        else
+            s.erase(last_not_zero + 1);
+    }
+    return s;
 }
 
 static std::string JoinPath(const std::string& a, const std::string& b) {
@@ -265,9 +284,9 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 auto& Rc = frames_[frame_idx].registers[in.c];
                 if (Rb.type == ValueType::String || Rc.type == ValueType::String) {
                     std::string s1 = Rb.type == ValueType::String 
-                        ? static_cast<StringObj*>(Rb.obj)->data : std::to_string(Rb.n);
+                        ? static_cast<StringObj*>(Rb.obj)->data : NumberToString(Rb.n);
                     std::string s2 = Rc.type == ValueType::String 
-                        ? static_cast<StringObj*>(Rc.obj)->data : std::to_string(Rc.n);
+                        ? static_cast<StringObj*>(Rc.obj)->data : NumberToString(Rc.n);
                     Value v; v.type = ValueType::String; v.obj = new StringObj(s1 + s2);
                     Ra = v;
                 } else if (Rb.type == ValueType::List && Rc.type == ValueType::List) {
@@ -318,6 +337,14 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 frames_[frame_idx].registers[in.a] = Value::Bool(
                     !frames_[frame_idx].registers[in.b].IsTruthy()); 
                 break;
+            case OpCode::INC:
+                frames_[frame_idx].registers[in.a] = Value::Number(
+                    frames_[frame_idx].registers[in.b].n + 1);
+                break;
+            case OpCode::DEC:
+                frames_[frame_idx].registers[in.a] = Value::Number(
+                    frames_[frame_idx].registers[in.b].n - 1);
+                break;
 
             case OpCode::EQ: {
                 auto& Ra = frames_[frame_idx].registers[in.a];
@@ -335,6 +362,44 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                     Ra = Value::Bool(true);
                 } else {
                     Ra = Value::Bool(Rb.type == Rc.type && Rb.n == Rc.n);
+                }
+                break;
+            }
+            case OpCode::EQK: {
+                auto& Ra = frames_[frame_idx].registers[in.a];
+                auto& Rb = frames_[frame_idx].registers[in.b];
+                const Value& Kc = K[in.c];
+                if (Rb.type == ValueType::String && Kc.type == ValueType::String) {
+                    auto* s1 = static_cast<StringObj*>(Rb.obj);
+                    auto* s2 = static_cast<StringObj*>(Kc.obj);
+                    Ra = Value::Bool(s1->data == s2->data);
+                } else if (Rb.type == ValueType::Number && Kc.type == ValueType::Number) {
+                    Ra = Value::Bool(Rb.n == Kc.n);
+                } else if (Rb.type == ValueType::Bool && Kc.type == ValueType::Bool) {
+                    Ra = Value::Bool(Rb.b == Kc.b);
+                } else if (Rb.type == ValueType::Nil && Kc.type == ValueType::Nil) {
+                    Ra = Value::Bool(true);
+                } else {
+                    Ra = Value::Bool(Rb.type == Kc.type && Rb.n == Kc.n);
+                }
+                break;
+            }
+            case OpCode::NEK: {
+                auto& Ra = frames_[frame_idx].registers[in.a];
+                auto& Rb = frames_[frame_idx].registers[in.b];
+                const Value& Kc = K[in.c];
+                if (Rb.type == ValueType::Bool && Kc.type == ValueType::Number && Kc.n == 0) {
+                    Ra = Value::Bool(!Rb.b);
+                } else if (Rb.type == ValueType::Number && Kc.type == ValueType::Number) {
+                    Ra = Value::Bool(Rb.n != Kc.n);
+                } else if (Rb.type == ValueType::Bool && Kc.type == ValueType::Bool) {
+                    Ra = Value::Bool(Rb.b != Kc.b);
+                } else if (Rb.type == ValueType::Nil && Kc.type == ValueType::Nil) {
+                    Ra = Value::Bool(false);
+                } else if (Rb.type == ValueType::Nil && Kc.type == ValueType::Number && Kc.n == 0) {
+                    Ra = Value::Bool(true);
+                } else {
+                    Ra = Value::Bool(!(Rb.type == Kc.type && Rb.n == Kc.n));
                 }
                 break;
             }
@@ -1018,6 +1083,50 @@ Value VM::RunFile(const std::string& file_path) {
     }
 }
 
+static void SetNestedNamespace(
+    std::unordered_map<std::string, Value>& globals,
+    const std::vector<std::string>& parts,
+    size_t part_idx,
+    Value module_dict) {
+    if (part_idx == parts.size() - 1) {
+        Retain(module_dict);
+        auto it = globals.find(parts[part_idx]);
+        if (it != globals.end()) {
+            Release(it->second);
+            it->second = module_dict;
+        } else {
+            globals.emplace(parts[part_idx], module_dict);
+        }
+        Release(module_dict);
+    } else {
+        Value ns_val;
+        ns_val.type = ValueType::Dict;
+        ns_val.obj = new DictObj();
+        Retain(ns_val);
+        
+        Value existing = globals.find(parts[part_idx]) != globals.end() 
+            ? globals.at(parts[part_idx]) : Value::Nil();
+        if (existing.type == ValueType::Dict) {
+            auto* existing_dict = static_cast<DictObj*>(existing.obj);
+            std::string next_key = parts[part_idx + 1];
+            auto next_it = existing_dict->index.find(next_key);
+            if (next_it != existing_dict->index.end()) {
+                Release(existing_dict->entries[next_it->second].second);
+                existing_dict->entries[next_it->second].second = ns_val;
+            } else {
+                existing_dict->index[next_key] = existing_dict->entries.size();
+                existing_dict->entries.emplace_back(next_key, ns_val);
+            }
+            Retain(ns_val);
+        } else {
+            globals.emplace(parts[part_idx], ns_val);
+        }
+        
+        SetNestedNamespace(globals, parts, part_idx + 1, module_dict);
+        Release(ns_val);
+    }
+}
+
 Value VM::DoImport(const std::string& module_path, const std::string& alias) {
     std::string current_dir = GetCurrentDir();
     
@@ -1077,13 +1186,156 @@ Value VM::DoImport(const std::string& module_path, const std::string& alias) {
     
     ExecuteFrame(frames_.size() - 1);
     
-frames_.pop_back();
+    frames_.pop_back();
     
-    Value result = Value::Nil();
+    Value module_dict;
+    module_dict.type = ValueType::Dict;
+    module_dict.obj = new DictObj();
+    Retain(module_dict);
+    
+    auto* dict = static_cast<DictObj*>(module_dict.obj);
+    for (auto& entry : globals_) {
+        if (entry.first == "__import__") continue;
+        dict->index[entry.first] = dict->entries.size();
+        dict->entries.emplace_back(entry.first, entry.second);
+        Retain(entry.second);
+    }
+    
     if (alias.empty()) {
-        for (auto& entry : globals_) {
-            if (entry.first == "__import__") continue;
-            SetGlobal(entry.first, entry.second);
+        std::vector<std::string> parts;
+        std::string temp = module_path;
+        size_t start = 0;
+        while ((start = temp.find('.')) != std::string::npos) {
+            parts.push_back(temp.substr(0, start));
+            temp = temp.substr(start + 1);
+        }
+        parts.push_back(temp);
+        
+        if (parts.size() > 1) {
+            std::vector<std::string> ns_parts(parts.begin(), parts.end() - 1);
+            globals_ = std::move(outer_globals);
+            SetNestedNamespace(globals_, ns_parts, 0, module_dict);
+        } else {
+            globals_ = std::move(outer_globals);
+            SetGlobal(module_path, module_dict);
+            Release(module_dict);
+        }
+    } else {
+        globals_ = std::move(outer_globals);
+        SetGlobal(alias, module_dict);
+        Release(module_dict);
+    }
+    
+    return Value::Nil();
+}
+    
+    if (!module_cache_.Exists(module_path)) {
+        module_cache_.BeginLoading(module_path);
+        
+        std::ifstream file(resolved_path);
+        if (!file.is_open()) {
+            module_cache_.EndLoading(module_path);
+            throw std::runtime_error("could not open module file: " + resolved_path);
+        }
+        
+        std::stringstream ss;
+        ss << file.rdbuf();
+        std::string source = ss.str();
+        file.close();
+        
+        std::string prev_dir = GetCurrentDir();
+        std::string prev_module = current_module_;
+        SetCurrentDir(GetFileDir(resolved_path));
+        current_module_ = resolved_path;
+        
+        try {
+            auto proto = CompileSource(source, resolved_path);
+            module_cache_.Add(module_path, proto, resolved_path);
+            SetCurrentDir(prev_dir);
+            current_module_ = prev_module;
+            module_cache_.EndLoading(module_path);
+        } catch (...) {
+            SetCurrentDir(prev_dir);
+            current_module_ = prev_module;
+            module_cache_.EndLoading(module_path);
+            module_cache_.Remove(module_path);
+            throw;
+        }
+    }
+    
+    auto proto = module_cache_.Get(module_path);
+    
+    std::unordered_map<std::string, Value> outer_globals = std::move(globals_);
+    globals_.clear();
+    
+    auto import_fn = outer_globals.find("__import__");
+    if (import_fn != outer_globals.end()) {
+        SetGlobal("__import__", import_fn->second);
+    }
+    
+    CallFrame frame;
+    frame.proto = proto;
+    frame.registers.resize(proto->num_registers);
+    frames_.push_back(std::move(frame));
+    
+    ExecuteFrame(frames_.size() - 1);
+    
+    frames_.pop_back();
+    
+    if (alias.empty()) {
+        size_t dot_pos = module_path.find('.');
+        if (dot_pos != std::string::npos) {
+            std::string first_part = module_path.substr(0, dot_pos);
+            std::string remainder = module_path.substr(dot_pos + 1);
+            
+            Value module_dict;
+            module_dict.type = ValueType::Dict;
+            module_dict.obj = new DictObj();
+            Retain(module_dict);
+            
+            auto* dict = static_cast<DictObj*>(module_dict.obj);
+            for (auto& entry : globals_) {
+                if (entry.first == "__import__") continue;
+                dict->index[entry.first] = dict->entries.size();
+                dict->entries.emplace_back(entry.first, entry.second);
+                Retain(entry.second);
+            }
+            
+            globals_ = std::move(outer_globals);
+            
+            Value existing = GetGlobal(first_part);
+            if (existing.type == ValueType::Dict) {
+                auto* existing_dict = static_cast<DictObj*>(existing.obj);
+                
+                auto it = existing_dict->index.find(remainder);
+                if (it != existing_dict->index.end()) {
+                    Release(existing_dict->entries[it->second].second);
+                    existing_dict->entries[it->second].second = module_dict;
+                } else {
+                    existing_dict->index[remainder] = existing_dict->entries.size();
+                    existing_dict->entries.emplace_back(remainder, module_dict);
+                }
+                Release(module_dict);
+            } else {
+                Value ns_dict;
+                ns_dict.type = ValueType::Dict;
+                ns_dict.obj = new DictObj();
+                Retain(ns_dict);
+                
+                auto* ns = static_cast<DictObj*>(ns_dict.obj);
+                ns->index[remainder] = ns->entries.size();
+                ns->entries.emplace_back(remainder, module_dict);
+                
+                SetGlobal(first_part, ns_dict);
+                Release(ns_dict);
+                Release(module_dict);
+            }
+        } else {
+            for (auto& entry : globals_) {
+                if (entry.first == "__import__") continue;
+                SetGlobal(entry.first, entry.second);
+            }
+            globals_ = std::move(outer_globals);
         }
     } else {
         auto dict = new DictObj();
@@ -1096,16 +1348,12 @@ frames_.pop_back();
         Value v;
         v.type = ValueType::Dict;
         v.obj = dict;
+        
+        globals_ = std::move(outer_globals);
+        
+        Retain(v);
         SetGlobal(alias, v);
-        result = v;
-        Retain(result);
-    }
-    
-    globals_ = std::move(outer_globals);
-    
-    if (!alias.empty()) {
-        SetGlobal(alias, result);
-        Release(result);
+        Release(v);
     }
     
     return Value::Nil();

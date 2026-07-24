@@ -33,6 +33,11 @@ smallStatement
     | localStatement
     | raiseStatement
     | yieldStatement
+    | incDecStatement
+    ;
+
+incDecStatement
+    : (INC | DEC) target
     ;
 
 compoundStatement
@@ -50,7 +55,8 @@ tryStatement
     ;
 
 exceptClause
-    : 'except' (NAME ('as' NAME)?)? block
+    : 'catch' '(' expr ')' block
+    | 'catch' expr block
     ;
 
 finallyClause
@@ -118,11 +124,13 @@ elseClause
     ;
 
 whileStatement
-    : 'while' expr 'do' block 'end'
+    : 'while' '(' expr ')' block 'end'
+    | 'while' expr block 'end'
     ;
 
 forStatement
-    : 'for' targetList 'in' exprList 'do' block 'end'
+    : 'for' targetList 'in' exprList 'then' block 'end'
+    | 'for' targetList 'in' '(' exprList ')' 'then' block 'end'
     ;
 
 funcDeclaration
@@ -205,7 +213,7 @@ multiplicative
     ;
 
 unary
-    : ('-' | 'not') unary
+    : ( '-' | 'not' | INC | DEC ) unary
     | power
     ;
 
@@ -222,6 +230,8 @@ trailer
     | '[' expr ']'                 # indexTrailer
     | '[' sliceRange ']'           # sliceTrailer
     | '(' argList? ')'             # callTrailer
+    | INC                          # incTrailer
+    | DEC                          # decTrailer
     ;
 
 sliceRange
@@ -266,6 +276,14 @@ dictEntry
 // ---------------------------------------------------------------------
 // Lexer rules
 // ---------------------------------------------------------------------
+
+INC
+    : '++'
+    ;
+
+DEC
+    : '--'
+    ;
 
 NAME
     : [a-zA-Z_] [a-zA-Z_0-9]*

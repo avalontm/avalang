@@ -2,9 +2,14 @@
 #include "vm/vm.h"
 #include "vm/value.h"
 #include "frontend/frontend.h"
+#include "ui/component.h"
+#include "ui/tree.h"
+#include "builtins/builtin.h"
+#include "builtins/builtin_natives.h"
 
 #include <cstring>
 #include <cstdlib>
+#include <sstream>
 
 using namespace ava;
 
@@ -25,7 +30,10 @@ char* DupString(const std::string& s) {
 extern "C" {
 
 AVA_API AvaVM* ava_vm_create() {
-    return reinterpret_cast<AvaVM*>(new VM());
+    VM* vm = new VM();
+    RegisterBuiltinMethods(reinterpret_cast<AvaVM*>(vm));
+    RegisterBuiltinGlobals(reinterpret_cast<AvaVM*>(vm));
+    return reinterpret_cast<AvaVM*>(vm);
 }
 
 AVA_API void ava_vm_destroy(AvaVM* vm) {
@@ -276,6 +284,193 @@ AVA_API void ava_value_release(AvaVM*, ava_value_t value) {
 
 AVA_API void ava_string_free(char* s) {
     std::free(s);
+}
+
+struct AvaComponent {
+    std::shared_ptr<ava::ui::Component> comp;
+    explicit AvaComponent(const std::string& type) : comp(std::make_shared<ava::ui::Component>(type)) {}
+};
+
+struct AvaComponentTree {
+    std::shared_ptr<ava::ui::ComponentTree> tree;
+    AvaComponentTree() : tree(std::make_shared<ava::ui::ComponentTree>()) {}
+};
+
+AVA_API AvaComponentTree* ava_ui_create_tree(void) {
+    return new AvaComponentTree();
+}
+
+AVA_API void ava_ui_destroy_tree(AvaComponentTree* tree) {
+    delete tree;
+}
+
+AVA_API AvaComponent* ava_ui_create_component(const char* type) {
+    return new AvaComponent(type);
+}
+
+AVA_API void ava_ui_destroy_component(AvaComponent* component) {
+    delete component;
+}
+
+AVA_API void ava_ui_set_property(AvaComponent* comp, const char* key, ava_value_t value) {
+    if (!comp) return;
+    comp->comp->SetProperty(key, FromC(value));
+}
+
+AVA_API int ava_ui_has_property(AvaComponent* comp, const char* key) {
+    if (!comp) return 0;
+    return comp->comp->HasProperty(key) ? 1 : 0;
+}
+
+AVA_API ava_value_t ava_ui_get_property(AvaComponent* comp, const char* key) {
+    if (!comp) return ava_value_t{AVA_NIL, {0}};
+    return ToC(comp->comp->GetProperty(key));
+}
+
+AVA_API void ava_ui_remove_property(AvaComponent* comp, const char* key) {
+    if (!comp) return;
+    comp->comp->RemoveProperty(key);
+}
+
+AVA_API void ava_ui_add_child(AvaComponent* parent, AvaComponent* child) {
+    if (!parent || !child) return;
+    parent->comp->AddChild(child->comp);
+}
+
+AVA_API void ava_ui_remove_child(AvaComponent* parent, AvaComponent* child) {
+    if (!parent || !child) return;
+    parent->comp->RemoveChild(child->comp.get());
+}
+
+AVA_API size_t ava_ui_child_count(AvaComponent* parent) {
+    if (!parent) return 0;
+    return parent->comp->GetChildren().size();
+}
+
+AVA_API AvaComponent* ava_ui_get_child(AvaComponent* parent, size_t index) {
+    if (!parent) return nullptr;
+    const auto& children = parent->comp->GetChildren();
+    if (index >= children.size()) return nullptr;
+    auto* wrapper = new AvaComponent(children[index]->GetType());
+    wrapper->comp = children[index];
+    return wrapper;
+}
+
+AVA_API void ava_ui_set_event(AvaComponent* comp, const char* event, ava_value_t callback) {
+    if (!comp) return;
+    comp->comp->SetEvent(event, FromC(callback));
+}
+
+AVA_API int ava_ui_has_event(AvaComponent* comp, const char* event) {
+    if (!comp) return 0;
+    return comp->comp->HasEvent(event) ? 1 : 0;
+}
+
+AVA_API ava_value_t ava_ui_get_event(AvaComponent* comp, const char* event) {
+    if (!comp) return ava_value_t{AVA_NIL, {0}};
+    return ToC(comp->comp->GetEvent(event));
+}
+
+AVA_API void ava_ui_set_id(AvaComponent* comp, const char* id) {
+    if (!comp) return;
+    comp->comp->SetId(id);
+}
+
+AVA_API const char* ava_ui_get_id(AvaComponent* comp) {
+    if (!comp) return nullptr;
+    static thread_local std::string id_str;
+    id_str = comp->comp->GetId();
+    return id_str.c_str();
+}
+
+AVA_API void ava_ui_set_layout(AvaComponent* comp, int layout) {
+    if (!comp) return;
+    comp->comp->SetLayout(layout);
+}
+
+AVA_API int ava_ui_get_layout(AvaComponent* comp) {
+    if (!comp) return 0;
+    return comp->comp->GetLayout();
+}
+
+AVA_API void ava_ui_set_root(AvaComponentTree* tree, AvaComponent* root) {
+    if (!tree || !root) return;
+    tree->tree->SetRoot(root->comp);
+}
+
+AVA_API AvaComponent* ava_ui_get_root(AvaComponentTree* tree) {
+    if (!tree) return nullptr;
+    auto root = tree->tree->GetRoot();
+    if (!root) return nullptr;
+    auto* wrapper = new AvaComponent(root->GetType());
+    wrapper->comp = root;
+    return wrapper;
+}
+
+AVA_API const char* ava_ui_get_component_type(AvaComponent* comp) {
+    if (!comp) return nullptr;
+    static thread_local std::string type_str;
+    type_str = comp->comp->GetType();
+    return type_str.c_str();
+}
+
+static void ComponentToJson(std::ostream& os, ava::ui::Component* comp, int indent) {
+    if (!comp) return;
+    std::string pad(indent * 2, ' ');
+    os << pad << "{\n";
+    os << pad << "  \"type\": \"" << comp->GetType() << "\"";
+    if (!comp->GetId().empty()) {
+        os << ",\n" << pad << "  \"id\": \"" << comp->GetId() << "\"";
+    }
+    os << ",\n" << pad << "  \"layout\": " << comp->GetLayout();
+    const auto& props = comp->GetAllProperties();
+    if (!props.empty()) {
+        os << ",\n" << pad << "  \"properties\": {";
+        bool first = true;
+        for (const auto& [k, v] : props) {
+            if (!first) os << ", ";
+            os << "\"" << k << "\": ";
+            if (v.type == ava::ValueType::String) {
+                os << "\"" << "\"";
+            } else if (v.type == ava::ValueType::Number) {
+                os << v.n;
+            } else if (v.type == ava::ValueType::Bool) {
+                os << (v.b ? "true" : "false");
+            } else {
+                os << "null";
+            }
+            first = false;
+        }
+        os << "}";
+    }
+    const auto& children = comp->GetChildren();
+    if (!children.empty()) {
+        os << ",\n" << pad << "  \"children\": [\n";
+        for (size_t i = 0; i < children.size(); ++i) {
+            ComponentToJson(os, children[i].get(), indent + 2);
+            if (i < children.size() - 1) os << ",";
+            os << "\n";
+        }
+        os << pad << "  ]";
+    }
+    os << "\n" << pad << "}";
+}
+
+AVA_API const char* ava_ui_tree_to_json(AvaComponentTree* tree) {
+    if (!tree) return "";
+    static thread_local std::ostringstream oss;
+    oss.str(""); oss.clear();
+    auto root = tree->tree->GetRoot();
+    if (root) {
+        ComponentToJson(oss, root.get(), 0);
+    }
+    static thread_local std::string result;
+    result = oss.str();
+    return result.c_str();
+}
+
+AVA_API void ava_ui_json_free(char* json) {
+    (void)json;
 }
 
 } // extern "C"

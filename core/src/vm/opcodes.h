@@ -30,7 +30,11 @@ enum class OpCode : uint8_t {
     POW,         // A, B, C  R[A] = R[B] ** R[C]
     NEG,         // A, B     R[A] = -R[B]
     NOT,         // A, B     R[A] = !truthy(R[B])
+    INC,         // A, B     R[A] = R[B] + 1
+    DEC,         // A, B     R[A] = R[B] - 1
     EQ,          // A, B, C  R[A] = R[B] == R[C]
+    EQK,         // A, B, C  R[A] = R[B] == K[C]
+    NEK,         // A, B, C  R[A] = R[B] != K[C]
     NE,          // A, B, C  R[A] = R[B] != R[C]
     LT,          // A, B, C  R[A] = R[B] < R[C]
     LE,          // A, B, C  R[A] = R[B] <= R[C]

@@ -197,6 +197,46 @@ AVA_API void ava_value_release(AvaVM* vm, ava_value_t value);
 
 AVA_API void ava_string_free(char* s); /* frees strings returned via out_error, etc. */
 
+/* ---------------------------------------------------------------------
+ * UI Component Tree API
+ * ------------------------------------------------------------------- */
+
+typedef struct AvaComponent AvaComponent;
+typedef struct AvaComponentTree AvaComponentTree;
+
+AVA_API AvaComponentTree* ava_ui_create_tree(void);
+AVA_API void               ava_ui_destroy_tree(AvaComponentTree* tree);
+
+AVA_API AvaComponent* ava_ui_create_component(const char* type);
+AVA_API void           ava_ui_destroy_component(AvaComponent* component);
+
+AVA_API void ava_ui_set_property(AvaComponent* comp, const char* key, ava_value_t value);
+AVA_API int  ava_ui_has_property(AvaComponent* comp, const char* key);
+AVA_API ava_value_t ava_ui_get_property(AvaComponent* comp, const char* key);
+AVA_API void ava_ui_remove_property(AvaComponent* comp, const char* key);
+
+AVA_API void ava_ui_add_child(AvaComponent* parent, AvaComponent* child);
+AVA_API void ava_ui_remove_child(AvaComponent* parent, AvaComponent* child);
+AVA_API size_t ava_ui_child_count(AvaComponent* parent);
+AVA_API AvaComponent* ava_ui_get_child(AvaComponent* parent, size_t index);
+
+AVA_API void ava_ui_set_event(AvaComponent* comp, const char* event, ava_value_t callback);
+AVA_API int  ava_ui_has_event(AvaComponent* comp, const char* event);
+AVA_API ava_value_t ava_ui_get_event(AvaComponent* comp, const char* event);
+
+AVA_API void ava_ui_set_id(AvaComponent* comp, const char* id);
+AVA_API const char* ava_ui_get_id(AvaComponent* comp);
+
+AVA_API void ava_ui_set_layout(AvaComponent* comp, int layout);
+AVA_API int  ava_ui_get_layout(AvaComponent* comp);
+
+AVA_API void ava_ui_set_root(AvaComponentTree* tree, AvaComponent* root);
+AVA_API AvaComponent* ava_ui_get_root(AvaComponentTree* tree);
+
+AVA_API const char* ava_ui_get_component_type(AvaComponent* comp);
+AVA_API const char* ava_ui_tree_to_json(AvaComponentTree* tree);
+AVA_API void ava_ui_json_free(char* json);
+
 #ifdef __cplusplus
 }
 #endif

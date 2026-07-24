@@ -34,6 +34,7 @@ public:
     std::any visitRaiseStatement(AvaLangParser::RaiseStatementContext* ctx) override;
     std::any visitYieldStatement(AvaLangParser::YieldStatementContext* ctx) override;
     std::any visitTryStatement(AvaLangParser::TryStatementContext* ctx) override;
+    std::any visitIncDecStatement(AvaLangParser::IncDecStatementContext* ctx) override;
 
     std::any visitExprList(AvaLangParser::ExprListContext* ctx) override;
     std::any visitShortLambdaExprAlt(AvaLangParser::ShortLambdaExprAltContext* ctx) override;

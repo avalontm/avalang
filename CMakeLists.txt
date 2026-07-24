@@ -99,6 +99,15 @@ set(CORE_SOURCES
     core/src/builtins/builtin_dicts.cpp
     core/src/builtins/builtin_coroutine.cpp
     core/src/builtins/builtin_registry.cpp
+    core/src/builtins/builtin_natives.cpp
+    core/src/builtins/builtin_init.cpp
+    core/src/ui/component.cpp
+    core/src/ui/tree.cpp
+    core/src/ui/layout.cpp
+    core/src/ui/property.cpp
+    core/src/ui/event.cpp
+    core/src/ui/registry.cpp
+    core/src/ui/builtins.cpp
     ${FRONTEND_SOURCES}
 )
 

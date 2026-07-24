@@ -199,27 +199,38 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
 
     if (auto* b = dynamic_cast<BinOpExpr*>(expr.get())) {
         if (IsShortCircuit(b->op)) {
-            auto result_reg = AllocReg();
+            auto zero_idx = AddConstant(Value::Number(0));
             if (b->op == BinOp::And) {
                 auto left_reg = CompileExpr(b->left);
-                Emit(OpCode::TEST, left_reg, 0);
-                size_t jmp_idx = proto_->instructions.size();
+                auto result_reg = AllocReg();
+                auto jmp_falsy = proto_->instructions.size();
+                Emit(OpCode::NEK, result_reg, left_reg, zero_idx);
+                Emit(OpCode::TEST, result_reg, 0);
                 Emit(OpCode::JMP, 0);
                 auto right_reg = CompileExpr(b->right);
                 Emit(OpCode::MOVE, result_reg, right_reg);
-                PatchJump(jmp_idx);
+                size_t jmp_end = proto_->instructions.size();
+                Emit(OpCode::JMP, 0);
+                PatchJump(jmp_falsy);
                 Emit(OpCode::MOVE, result_reg, left_reg);
+                PatchJump(jmp_end);
+                return result_reg;
             } else {
                 auto left_reg = CompileExpr(b->left);
-                Emit(OpCode::TEST, left_reg, 1);
-                size_t jmp_idx = proto_->instructions.size();
+                auto result_reg = AllocReg();
+                auto jmp_truthy = proto_->instructions.size();
+                Emit(OpCode::EQK, result_reg, left_reg, zero_idx);
+                Emit(OpCode::TEST, result_reg, 0);
                 Emit(OpCode::JMP, 0);
                 auto right_reg = CompileExpr(b->right);
                 Emit(OpCode::MOVE, result_reg, right_reg);
-                PatchJump(jmp_idx);
+                size_t jmp_end = proto_->instructions.size();
+                Emit(OpCode::JMP, 0);
+                PatchJump(jmp_truthy);
                 Emit(OpCode::MOVE, result_reg, left_reg);
+                PatchJump(jmp_end);
+                return result_reg;
             }
-            return result_reg;
         }
 
         auto left_reg = CompileExpr(b->left);
@@ -234,6 +245,36 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
         if (u->op == UnOp::Neg) {
             auto result = AllocReg();
             Emit(OpCode::NEG, result, reg);
+            return result;
+        }
+        if (u->op == UnOp::Inc) {
+            if (auto* n = dynamic_cast<NameExpr*>(u->operand.get())) {
+                auto original = AllocReg();
+                Emit(OpCode::MOVE, original, reg);
+                auto result = AllocReg();
+                Emit(OpCode::INC, result, reg);
+                auto idx = AddConstant(MakeString(n->name));
+                Emit(OpCode::SETGLOBAL, result, idx);
+                FreeRegs(1);
+                return original;
+            }
+            auto result = AllocReg();
+            Emit(OpCode::INC, result, reg);
+            return result;
+        }
+        if (u->op == UnOp::Dec) {
+            if (auto* n = dynamic_cast<NameExpr*>(u->operand.get())) {
+                auto original = AllocReg();
+                Emit(OpCode::MOVE, original, reg);
+                auto result = AllocReg();
+                Emit(OpCode::DEC, result, reg);
+                auto idx = AddConstant(MakeString(n->name));
+                Emit(OpCode::SETGLOBAL, result, idx);
+                FreeRegs(1);
+                return original;
+            }
+            auto result = AllocReg();
+            Emit(OpCode::DEC, result, reg);
             return result;
         }
         auto result = AllocReg();
@@ -1238,11 +1279,14 @@ void Compiler::CompileTry(const TryStmt* stmt) {
         Emit(OpCode::CATCH, 0);
         except_jmps.push_back(catch_instr_idx);
 
-        if (!stmt->except_vars[i].empty()) {
+        if (stmt->except_exprs[i]) {
             auto exc_reg = AllocReg();
             Emit(OpCode::GETGLOBAL, exc_reg, AddConstant(MakeString("__exception__")));
-            auto var_idx = AddConstant(MakeString(stmt->except_vars[i]));
-            Emit(OpCode::SETGLOBAL, exc_reg, var_idx);
+            auto var_name = std::dynamic_pointer_cast<NameExpr>(stmt->except_exprs[i]);
+            if (var_name) {
+                auto var_idx = AddConstant(MakeString(var_name->name));
+                Emit(OpCode::SETGLOBAL, exc_reg, var_idx);
+            }
             FreeRegs(1);
         }
 
@@ -1252,10 +1296,6 @@ void Compiler::CompileTry(const TryStmt* stmt) {
         Emit(OpCode::JMP, 0);
         except_end_jmps.push_back(end_jmp);
 
-        // If this except doesn't match (unreachable today since there's
-        // no exception-type filtering yet -- every CATCH matches), fall
-        // through to the next CATCH, or to the re-raise fallback below
-        // for the last one.
         PatchJump(catch_instr_idx);
     }
 
@@ -1482,6 +1522,16 @@ std::shared_ptr<ExprNode> Compiler::ParseUnary(const std::string& s, size_t& pos
         pos += 4;
         auto operand = ParseUnary(s, pos);
         return std::make_shared<UnOpExpr>(UnOp::Not, operand);
+    }
+    if (StartsWith(s, pos, "++")) {
+        pos += 2;
+        auto operand = ParseUnary(s, pos);
+        return std::make_shared<UnOpExpr>(UnOp::Inc, operand);
+    }
+    if (StartsWith(s, pos, "--")) {
+        pos += 2;
+        auto operand = ParseUnary(s, pos);
+        return std::make_shared<UnOpExpr>(UnOp::Dec, operand);
     }
     if (StartsWith(s, pos, "-")) {
         pos++;
