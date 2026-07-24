@@ -1,0 +1,17 @@
+x = 7 // 2
+print("7 // 2 = " + str(x))
+assert(x == 3)
+
+y = 10 // 3
+print("10 // 3 = " + str(y))
+assert(y == 3)
+
+z = -7 // 2
+print("-7 // 2 = " + str(z))
+assert(z == -4)
+
+w = 7.5 // 2
+print("7.5 // 2 = " + str(w))
+assert(w == 3)
+
+print("Floor division tests passed!")

@@ -62,6 +62,7 @@ target_link_libraries(imgui_docking PUBLIC glfw)
 # --- Ava Studio executable ---------------------------------------------
 set(STUDIO_SOURCES
     src/main.cpp
+    src/theme.cpp
     src/engine/engine_bridge.cpp
     src/panels/explorer_panel.cpp
     src/panels/editor_panel.cpp

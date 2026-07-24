@@ -17,6 +17,7 @@ public:
     std::any visitCompoundStatement(AvaLangParser::CompoundStatementContext* ctx) override;
 
     std::any visitAssignStatement(AvaLangParser::AssignStatementContext* ctx) override;
+    std::any visitMultiAssignStatement(AvaLangParser::MultiAssignStatementContext* ctx) override;
     std::any visitAugAssignStatement(AvaLangParser::AugAssignStatementContext* ctx) override;
     std::any visitExprStatement(AvaLangParser::ExprStatementContext* ctx) override;
     std::any visitReturnStatement(AvaLangParser::ReturnStatementContext* ctx) override;

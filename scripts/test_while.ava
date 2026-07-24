@@ -1,0 +1,71 @@
+# ============================================
+# TEST: test_while.ava
+# Category: 01_control_flow
+# Feature: while loops, break, continue
+# ============================================
+
+# --- Test 1: Basic while loop ---
+print("1. Count 1 to 5:")
+i = 1
+while i <= 5
+    print("   ", i)
+    i = i + 1
+end
+
+# --- Test 2: While with break ---
+print("2. Break at 5:")
+j = 1
+while true
+    if j > 5 then
+        break
+    end
+    print("   ", j)
+    j = j + 1
+end
+
+# --- Test 3: While with continue ---
+print("3. Skip 3:")
+k = 0
+while k < 5
+    k = k + 1
+    if k == 3 then
+        continue
+    end
+    print("   ", k)
+end
+
+# --- Test 4: While with complex condition ---
+print("4. Fibonacci (first 8):")
+a = 0
+b = 1
+count = 0
+while count < 8
+    if count > 0 then
+        print("   ", a)
+    end
+    temp = a + b
+    a = b
+    b = temp
+    count = count + 1
+end
+
+# --- Test 5: Nested while ---
+print("5. Nested while:")
+outer = 1
+while outer <= 2
+    inner = 1
+    while inner <= 3
+        print("   (", outer, ",", inner, ")")
+        inner = inner + 1
+    end
+    outer = outer + 1
+end
+
+# --- Test 6: While false (no iterations) ---
+print("6. Empty while (condition false):")
+while false
+    print("   This should never print")
+end
+print("   Exited cleanly")
+
+print("While loop tests completed!")

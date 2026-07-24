@@ -23,6 +23,7 @@ simpleStatement
 
 smallStatement
     : assignStatement
+    | multiAssignStatement
     | augAssignStatement
     | exprStatement
     | returnStatement
@@ -65,12 +66,16 @@ finallyClause
 
 // --- simple statements -------------------------------------------------
 
+multiAssignStatement
+    : assignStatement (',' assignStatement)+
+    ;
+
 assignStatement
     : targetList '=' exprList
     ;
 
 augAssignStatement
-    : target op=('+=' | '-=' | '*=' | '/=' | '%=') expr
+    : target op=('+=' | '-=' | '*=' | '/=' | '%=' | '//=') expr
     ;
 
 exprStatement
@@ -209,7 +214,7 @@ additive
     ;
 
 multiplicative
-    : unary (('*' | '/' | '%') unary)*
+    : unary (('*' | '/' | '%' | IDIV) unary)*
     ;
 
 unary
@@ -283,6 +288,10 @@ INC
 
 DEC
     : '--'
+    ;
+
+IDIV
+    : '//'
     ;
 
 NAME

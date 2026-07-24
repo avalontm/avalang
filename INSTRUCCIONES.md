@@ -87,3 +87,29 @@ La primera vez que actives el flag, CMake va a bajar GLFW y Dear ImGui
 5. Cambiar el textbox plano del Editor por un widget con syntax
    highlighting (ImGuiColorTextEdit u otro) ahora que la mecánica base
    ya funciona.
+
+## Apariencia y layout (estilo VSCode)
+
+- **Tema:** paleta oscura tipo VSCode "Dark+" (`studio/src/theme.cpp`) --
+  fondo `#1e1e1e`, sidebar `#252526`, acento azul `#007acc`, tabs y
+  bordes al estilo VSCode.
+- **Layout por defecto:** la primera vez que se abre `ava_studio.exe`
+  (o si borrás su config), arma solo el layout Explorer (izquierda) /
+  Code Editor (centro) / Properties (derecha) / Preview + Output
+  (abajo, en tabs) -- no arranca con las ventanas apiladas al azar.
+- **Persistencia por usuario:** cualquier cambio que hagas arrastrando
+  o redimensionando paneles se guarda automáticamente (lo hace ImGui
+  solo) en:
+  - Windows: `%APPDATA%\AvaStudio\imgui.ini`
+  - Linux/macOS: `~/.config/AvaStudio/imgui.ini`
+
+  No es el `build/` ni el exe -- es config de usuario, así que
+  sobrevive a un `git pull` o a recompilar. Borrar ese archivo vuelve
+  al layout por defecto.
+
+## .gitignore
+
+Le agregué `build_studio/` (te faltaba -- `build/` en gitignore solo
+ignora una carpeta llamada exactamente `build`, no `build_studio`, son
+nombres distintos). Sin esa línea se te iba a subir entero, incluyendo
+lo que baja FetchContent de GLFW/ImGui la primera vez.

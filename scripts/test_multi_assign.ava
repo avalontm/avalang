@@ -1,0 +1,10 @@
+a = 1, b = 2, c = 3
+print("a =", a, "b =", b, "c =", c)
+
+x = "hola", y = "mundo"
+print("x =", x, "y =", y)
+
+i = 0, j = 10, k = 20
+print("i =", i, "j =", j, "k =", k)
+
+print("Multi-assign works!")

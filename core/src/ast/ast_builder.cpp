@@ -27,6 +27,7 @@ static BinOp textToBinOp(const std::string& txt) {
     if (txt == "-")  return BinOp::Sub;
     if (txt == "*")  return BinOp::Mul;
     if (txt == "/")  return BinOp::Div;
+    if (txt == "//") return BinOp::IDiv;
     if (txt == "%")  return BinOp::Mod;
     if (txt == "**") return BinOp::Pow;
     throw std::runtime_error("unknown binop: " + txt);
@@ -215,14 +216,29 @@ std::any AstBuilder::visitAssignStatement(AvaLangParser::AssignStatementContext*
     return std::make_shared<AssignStmt>(target, value);
 }
 
+std::any AstBuilder::visitMultiAssignStatement(AvaLangParser::MultiAssignStatementContext* ctx) {
+    std::vector<std::shared_ptr<StmtNode>> stmts;
+    for (auto* assign : ctx->assignStatement()) {
+        auto result = visitAssignStatement(assign);
+        auto stmt = stmtFromAny(result);
+        if (stmt) {
+            stmts.push_back(stmt);
+        }
+    }
+    return stmts;
+}
+
 std::any AstBuilder::visitChunk(AvaLangParser::ChunkContext* ctx) {
     auto chunk = std::make_shared<Chunk>();
     std::vector<std::shared_ptr<StmtNode>> stmts;
     for (auto* s : ctx->statement()) {
         auto any_result = s->accept(this);
-        auto stmt = stmtFromAny(any_result);
-        if (stmt) {
-            stmts.push_back(stmt);
+        auto single_stmt = stmtFromAny(any_result);
+        if (single_stmt) {
+            stmts.push_back(single_stmt);
+        } else {
+            auto more_stmts = stmtsFromAny(any_result);
+            stmts.insert(stmts.end(), more_stmts.begin(), more_stmts.end());
         }
     }
     chunk->statements = stmts;
@@ -233,9 +249,12 @@ std::any AstBuilder::visitBlock(AvaLangParser::BlockContext* ctx) {
     std::vector<std::shared_ptr<StmtNode>> stmts;
     for (auto* s : ctx->statement()) {
         auto any_result = s->accept(this);
-        auto stmt = stmtFromAny(any_result);
-        if (stmt) {
-            stmts.push_back(stmt);
+        auto single_stmt = stmtFromAny(any_result);
+        if (single_stmt) {
+            stmts.push_back(single_stmt);
+        } else {
+            auto more_stmts = stmtsFromAny(any_result);
+            stmts.insert(stmts.end(), more_stmts.begin(), more_stmts.end());
         }
     }
     return stmts;
@@ -252,6 +271,7 @@ std::any AstBuilder::visitSimpleStatement(AvaLangParser::SimpleStatementContext*
 
 std::any AstBuilder::visitSmallStatement(AvaLangParser::SmallStatementContext* ctx) {
     if (ctx->assignStatement())    return visitAssignStatement(ctx->assignStatement());
+    if (ctx->multiAssignStatement()) return visitMultiAssignStatement(ctx->multiAssignStatement());
     if (ctx->augAssignStatement()) return visitAugAssignStatement(ctx->augAssignStatement());
     if (ctx->exprStatement())     return visitExprStatement(ctx->exprStatement());
     if (ctx->returnStatement())   return visitReturnStatement(ctx->returnStatement());
@@ -546,7 +566,7 @@ std::any AstBuilder::visitMultiplicative(AvaLangParser::MultiplicativeContext* c
     for (auto* child : ctx->children) {
         if (auto* t = dynamic_cast<antlr4::tree::TerminalNode*>(child)) {
             auto txt = t->getText();
-            if (txt == "*" || txt == "/" || txt == "%") ops.push_back(t);
+            if (txt == "*" || txt == "/" || txt == "%" || txt == "//") ops.push_back(t);
         }
     }
 

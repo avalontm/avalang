@@ -1,0 +1,32 @@
+# Test: Busqueda Binaria con division normal + floor()
+arr = [2, 3, 4, 10, 40, 50, 60, 70, 80, 90]
+target = 40
+print("Array:", arr)
+print("Buscando:", target)
+
+low = 0
+high = 9
+found = false
+
+while low <= high do
+    mid = floor((low + high) / 2)
+    print("low=" + low + " high=" + high + " mid=" + mid)
+    
+    if arr[mid] == target then
+        found = true
+        print("Encontrado en indice: " + mid)
+        break
+    end
+    
+    if arr[mid] < target then
+        low = mid + 1
+    else
+        high = mid - 1
+    end
+end
+
+if not found then
+    print("No encontrado")
+end
+
+print("Esperado: indice 4")

@@ -1,0 +1,54 @@
+# ============================================
+# TEST: test_variables.ava
+# Category: 00_basics
+# Feature: Declaraciones, tipos, shadowing
+# ============================================
+
+# --- Test 1: Nil ---
+nil_var = nil
+print("1. nil test: ", nil_var)
+
+# --- Test 2: Booleans ---
+bool_true = true
+bool_false = false
+print("2. bool test: ", bool_true, " ", bool_false)
+
+# --- Test 3: Numbers ---
+int_num = 42
+float_num = 3.14
+print("3. numbers test: ", int_num, " ", float_num)
+
+# --- Test 4: Strings ---
+str_var = "Hello"
+print("4. string test: ", str_var)
+
+# --- Test 5: String concatenation ---
+combined = str_var + " World"
+print("5. concat test: ", combined)
+
+# --- Test 6: F-strings ---
+name = "Ava"
+greeting = $"Hello {name}!"
+print("6. fstring test: ", greeting)
+
+# --- Test 7: List ---
+list_var = [1, 2, 3]
+print("7. list test: ", list_var)
+
+# --- Test 8: Dict ---
+dict_var = {"key": "value", "num": 42}
+print("8. dict test: ", dict_var)
+
+# --- Test 9: Shadowing (re-assign) ---
+shadow = 100
+print("9. before shadow: ", shadow)
+shadow = 200
+print("10. after shadow: ", shadow)
+
+# --- Test 10: Multiple assignment ---
+a = 1
+b = 2
+c = 3
+print("11. multi-assign: ", a, " ", b, " ", c)
+
+print("All variable tests completed!")

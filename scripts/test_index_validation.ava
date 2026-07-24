@@ -1,0 +1,17 @@
+print("=== Testing index validation ===")
+
+var arr = [10, 20, 30]
+print("Valid integer index arr[0]: " + arr[0])
+print("Float effectively integer arr[1.0]: " + arr[1.0])
+
+print("")
+print("Testing invalid float index arr[1.5]...")
+var result = arr[1.5]
+print("(should have errored above)")
+
+print("")
+print("Testing negative index arr[-1]...")
+result = arr[-1]
+print("(should have errored above)")
+
+print("=== Tests completed ===")

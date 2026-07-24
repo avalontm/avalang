@@ -9,7 +9,7 @@
 namespace ava {
 
 enum class BinOp {
-    Add, Sub, Mul, Div, Mod, Pow,
+    Add, Sub, Mul, Div, IDiv, Mod, Pow,
     Eq, Ne, Lt, Le, Gt, Ge,
     And, Or
 };

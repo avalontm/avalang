@@ -63,7 +63,14 @@ void Compiler::PatchJump(size_t instr_idx) {
     auto& instr = proto_->instructions[instr_idx];
     int32_t offset = static_cast<int32_t>(proto_->instructions.size()) -
                      static_cast<int32_t>(instr_idx) - 1;
-    instr.b = static_cast<uint16_t>(static_cast<int16_t>(offset));
+    instr.bx32 = offset;
+}
+
+void Compiler::PatchContinueJump(size_t instr_idx, size_t loop_start) {
+    auto& instr = proto_->instructions[instr_idx];
+    int32_t offset = static_cast<int32_t>(loop_start) -
+                     static_cast<int32_t>(instr_idx) - 1;
+    instr.bx32 = offset;
 }
 
 OpCode Compiler::BinOpToOpcode(BinOp op) {
@@ -72,6 +79,7 @@ OpCode Compiler::BinOpToOpcode(BinOp op) {
         case BinOp::Sub: return OpCode::SUB;
         case BinOp::Mul: return OpCode::MUL;
         case BinOp::Div: return OpCode::DIV;
+        case BinOp::IDiv: return OpCode::IDIV;
         case BinOp::Mod: return OpCode::MOD;
         case BinOp::Pow: return OpCode::POW;
         case BinOp::Eq:  return OpCode::EQ;
@@ -684,7 +692,8 @@ void Compiler::CompileWhile(const WhileStmt* stmt) {
 
     size_t jmp_back = proto_->instructions.size();
     int32_t offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(jmp_back) - 1;
-    Emit(OpCode::JMP, 0, static_cast<uint16_t>(static_cast<int16_t>(offset)));
+    proto_->instructions.push_back({OpCode::JMP, 0, 0, 0});
+    proto_->instructions.back().bx32 = offset;
 
     PatchJump(jmp_out);
 
@@ -694,7 +703,7 @@ void Compiler::CompileWhile(const WhileStmt* stmt) {
     pending_breaks_.clear();
 
     for (auto& patch : pending_continues_) {
-        PatchJump(patch.instr_idx);
+        PatchContinueJump(patch.instr_idx, loop_start);
     }
     pending_continues_.clear();
 }
@@ -782,7 +791,8 @@ void Compiler::CompileForList(const ForStmt* stmt) {
     Emit(OpCode::JMP, 0);
     
     int32_t back_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(proto_->instructions.size()) - 1;
-    Emit(OpCode::JMP, 0, static_cast<uint16_t>(static_cast<int16_t>(back_offset)));
+    proto_->instructions.push_back({OpCode::JMP, 0, 0, 0});
+    proto_->instructions.back().bx32 = back_offset;
     
     PatchJump(jmp_out);
     
@@ -792,7 +802,7 @@ void Compiler::CompileForList(const ForStmt* stmt) {
     pending_breaks_.clear();
 
     for (auto& patch : pending_continues_) {
-        PatchJump(patch.instr_idx);
+        PatchContinueJump(patch.instr_idx, loop_start);
     }
     pending_continues_.clear();
 }
@@ -846,7 +856,8 @@ void Compiler::CompileForCoroutine(const ForStmt* stmt) {
     CompileChunk(stmt->body);
     
     int32_t back_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(proto_->instructions.size()) - 1;
-    Emit(OpCode::JMP, 0, static_cast<uint16_t>(static_cast<int16_t>(back_offset)));
+    proto_->instructions.push_back({OpCode::JMP, 0, 0, 0});
+    proto_->instructions.back().bx32 = back_offset;
     
     PatchJump(jmp_out);
     
@@ -856,7 +867,7 @@ void Compiler::CompileForCoroutine(const ForStmt* stmt) {
     pending_breaks_.clear();
 
     for (auto& patch : pending_continues_) {
-        PatchJump(patch.instr_idx);
+        PatchContinueJump(patch.instr_idx, loop_start);
     }
     pending_continues_.clear();
 }
@@ -1355,7 +1366,7 @@ bool IsAlpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') |
 bool IsAlphaNum(char c) { return IsAlpha(c) || IsDigit(c); }
 
 bool IsBinOp(const std::string& s) {
-    return s == "+" || s == "-" || s == "*" || s == "/" || s == "%" || s == "**" ||
+    return s == "+" || s == "-" || s == "*" || s == "/" || s == "%" || s == "//" || s == "**" ||
            s == "==" || s == "!=" || s == "<" || s == ">" || s == "<=" || s == ">=" ||
            s == "and" || s == "or";
 }
@@ -1365,6 +1376,7 @@ BinOp ParseBinOp(const std::string& s) {
     if (s == "-") return BinOp::Sub;
     if (s == "*") return BinOp::Mul;
     if (s == "/") return BinOp::Div;
+    if (s == "//") return BinOp::IDiv;
     if (s == "%") return BinOp::Mod;
     if (s == "**") return BinOp::Pow;
     if (s == "==") return BinOp::Eq;
@@ -1422,6 +1434,7 @@ std::string PeekNextToken(const std::string& s, size_t pos) {
     if (s[pos] == '+' || s[pos] == '-' || s[pos] == '*' || s[pos] == '/' || s[pos] == '%') {
         if (pos + 1 < s.size() && s[pos + 1] == s[pos]) {
             if (s[pos] == '*') return "**";
+            if (s[pos] == '/') return "//";
             return "";
         }
         return std::string(1, s[pos]);

@@ -1,0 +1,13 @@
+# Test division
+a = 7
+b = 2
+c = a / b
+print("7/2 =", c)
+
+if c > 3 then
+    print("c > 3")
+end
+
+d = 5
+e = 5 / 2
+print("5/2 =", e)

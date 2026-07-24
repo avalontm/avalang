@@ -1,0 +1,10 @@
+# Minimal continue test - should hang if continue not implemented
+count = 0
+while count < 10
+    count = count + 1
+    if count == 5 then
+        continue  # This should jump to while condition
+    end
+    print(count)
+end
+print("Done")

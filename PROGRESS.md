@@ -19,7 +19,7 @@ register-based, con clases, closures, coroutines y excepciones.
 | **Listas** (crear, indexar, slicing `arr[a:b:c]`) | ✅ | Verificado — Test 04 |
 | **Diccionarios** | ✅ | Verificado — Test 05 |
 | **Strings** + interpolación f-string (`$"...{x}..."`) | ✅ | Verificado — Test 06 |
-| **Operadores** (aritméticos, comparación, lógicos) | ✅ | — |
+| **Operadores** (aritméticos, comparación, lógicos) | ✅ | `/` ahora es división normal (float), `floor()` para truncar |
 | **Control flow** (if/elif/else, while, for, break, continue) | ✅ | Verificado — Test 02 |
 | **Funciones** (params, return, recursión) | ✅ | Verificado — Test 03 |
 | **Closures** (funciones anidadas, upvalues) | 🚧 | Verificado — Test 08. **Bug:** no mantienen estado correctamente. Ver [Bugs Conocidos](#bugs-conocidos-jul-2026). |
@@ -186,6 +186,13 @@ componentes, propiedades, render de página completa) — ver
 Bugs no triviales ya resueltos, dejados acá como referencia rápida en
 vez del relato completo de cada sesión:
 
+- **continue en loops:**
+  1. Offset de JMP insuficiente: JMP usaba 16 bits (`int16_t`) que causaba overflow en loops grandes.
+  2. Cálculo incorrecto: `PatchJump` calculaba offsets hacia adelante, pero `continue` necesita saltar hacia atrás.
+  Fix:
+  - Extendido JMP para usar offsets de 32 bits (`bx32` en `opcodes.h`)
+  - Agregado `PatchContinueJump()` para offsets negativos (`compiler.cpp:69-74`)
+  - Actualizado `CompileWhile`, `CompileForList`, `CompileForCoroutine` para usar `PatchContinueJump`
 - **Coroutines (4 bugs, resueltos en orden):**
   1. `coroutine`/`resume` registrados con `RegisterBuiltinMethod` (solo
      para azúcar `obj.metodo()`) en vez de `RegisterNative` → no
@@ -234,36 +241,65 @@ avalang/
 └── docs/                     # Referencia del lenguaje + docs/architecture/
 ```
 
-## Scripts de Prueba
+## Scripts de Prueba (Jul 2026)
 
 ```bash
 # Windows
 build\Release\ava_cli.exe scripts\<test>.ava
-
-# Linux/macOS
-./build/ava_cli scripts/<test>.ava
 ```
 
-| Script | Descripción |
-|---|---|
-| `test_arithmetic.ava` | Operaciones aritméticas |
-| `test_variables.ava` | Variables y booleanos |
-| `test_control_flow.ava` | if/while/break/continue |
-| `test_lists_dicts.ava` | Listas y diccionarios |
-| `test_functions.ava` | Funciones, closures y recursión |
-| `test_parens.ava` | Paréntesis opcionales |
-| `test_builtins.ava` | Todas las funciones built-in |
-| `test_class_inherit.ava` | Herencia de clases |
-| `test_class_multilevel.ava` | Herencia multinivel |
-| `test_base_simple.ava` | `base()` con argumentos |
-| `test_super_simple.ava` | `base()` sin argumentos |
-| `test_this2.ava` | `this` implícito en métodos |
-| `test_import.ava` | Import con alias |
-| `test_fstrings.ava` | F-strings con interpolación |
-| `test_operators_bugs.ava` | Bugs de operadores (comparaciones, AugAssign, self) |
-| `test_try_catch.ava` | try/except múltiples con finally |
-| `test_simple_raise.ava` | raise y re-raise |
-| `test_coro5.ava` | Coroutines: múltiples pausas |
+### Resultados de Tests en scripts/ (Jul 2026)
+
+| Script | Descripción | Resultado |
+|---|---|:---:|
+| `test_variables.ava` | nil, bool, numbers, strings, fstrings, list, dict, shadow, multi-assign | ✅ |
+| `test_operators.ava` | Aritmética, comparación, lógicos, inc/dec, augmented assign | ✅ |
+| `test_if.ava` | if/elif/else, condiciones | ✅ |
+| `test_while.ava` | while, break, continue, Fibonacci, nested while | ✅ Todos pasan |
+| `test_simple2.ava` | if simple | ✅ |
+| `debug_continue.ava` | continue skip numbers | ✅ |
+| `debug_continue2.ava` | continue vs if | ✅ |
+| `test_continue_large.ava` | continue en loop grande (100 iteraciones) | ✅ |
+| `test_assignments.ava` | Asignaciones normales y múltiples con comas | ✅ |
+
+### Algoritmos Verificados (Jul 2026)
+
+| Script | Descripción | Resultado |
+|---|---|:---:|
+| `test_binary_search.ava` | Búsqueda binaria con `floor((low+high)/2)` | ✅ |
+| `test_bubble_sort.ava` | Ordenamiento burbuja | ✅ |
+| `test_div_normal.ava` | División normal: `7/2 = 3.5` | ✅ |
+
+**Nota:** `/` ahora es división real (float). Para obtener enteros (índices de array),
+usar `floor(x)` o `int(x)`.
+
+### Nueva Funcionalidad: Asignación Múltiple en una línea
+
+**Sintaxis:** `a = 1, b = 2, c = 3`
+
+Permite declarar múltiples variables en una sola línea separadas por comas. Equivale a:
+```lua
+a = 1
+b = 2
+c = 3
+```
+
+**Ejemplos válidos:**
+```lua
+x = 1, y = 2, z = 3
+i=1,j=2,k=3
+p = 100
+q = 200, r = 300
+```
+
+**Implementación:**
+- **Gramatica** (`AvaLang.g4`): Nueva regla `multiAssignStatement`
+- **AST Builder** (`ast_builder.cpp`): Nuevo visitor `visitMultiAssignStatement`
+- No requiere cambios en el VM ni en el compilador
+
+---
+
+## Scripts de Prueba (Original)
 
 ## Build
 
@@ -292,6 +328,25 @@ código con caret debajo del token ofensivo.
 
 ---
 
-**Fecha:** 2026-07-22
+**Fecha:** 2026-07-24
 **Estado:** Desarrollo activo — funcionalidades core completas, 2 bugs
 abiertos (closures, constructor de clases — ver arriba).
+
+### División Normal con `/` (Jul 2026)
+
+**Cambio:** El operador `/` ahora es división normal (float), más intuitivo que `//` para Python.
+
+**Antes:**
+```lua
+mid = (low + high) // 2  # integer division
+```
+
+**Ahora:**
+```lua
+mid = floor((low + high) / 2)  # usar floor() si necesitas entero
+```
+
+**Builtins disponibles para truncar:**
+- `floor(x)` → mayor entero ≤ x
+- `int(x)` → truncar decimal
+- `round(x)` → redondear

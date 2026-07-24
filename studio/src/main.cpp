@@ -6,11 +6,15 @@
 // for the full rationale.
 
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <string>
 
 #include "GLFW/glfw3.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#include "imgui_internal.h" // DockBuilder* -- used once to lay out the default panels on first run
 
 #include "engine/engine_bridge.h"
 #include "panels/editor_panel.h"
@@ -18,6 +22,9 @@
 #include "panels/output_panel.h"
 #include "panels/preview_panel.h"
 #include "panels/properties_panel.h"
+#include "theme.h"
+
+namespace fs = std::filesystem;
 
 namespace {
 
@@ -50,7 +57,36 @@ int main() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
-    ImGui::StyleColorsDark();
+    // Persist window/dock layout per-user, the same way VSCode remembers
+    // your panel arrangement between sessions -- not next to the exe
+    // (which might be a shared/read-only install location) and not in
+    // whatever directory ava_studio.exe happens to be launched from.
+    // ImGui itself does the actual save/load (on exit and periodically)
+    // once io.IniFilename points here; we only need to make sure the
+    // folder exists and the string outlives the ImGui context, hence
+    // `static` (ImGui keeps the raw pointer, not a copy).
+    static std::string ini_path = [] {
+        fs::path config_dir;
+#if defined(_WIN32)
+        if (const char* appdata = std::getenv("APPDATA")) {
+            config_dir = fs::path(appdata) / "AvaStudio";
+        } else {
+            config_dir = "AvaStudio";
+        }
+#else
+        if (const char* home = std::getenv("HOME")) {
+            config_dir = fs::path(home) / ".config" / "AvaStudio";
+        } else {
+            config_dir = "AvaStudio";
+        }
+#endif
+        std::error_code ec;
+        fs::create_directories(config_dir, ec);
+        return (config_dir / "imgui.ini").string();
+    }();
+    io.IniFilename = ini_path.c_str();
+
+    studio::ApplyVSCodeDarkTheme();
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
@@ -110,6 +146,32 @@ int main() {
         }
 
         ImGuiID dockspace_id = ImGui::GetID("AvaStudioDockspace");
+
+        // Only runs when this dockspace ID has no saved layout yet --
+        // i.e. the very first launch, or if imgui.ini was deleted/moved.
+        // Once the user drags a panel anywhere, ImGui's own save (into
+        // io.IniFilename) takes over and this block is skipped on every
+        // later launch, so their arrangement sticks.
+        if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr) {
+            ImGui::DockBuilderRemoveNode(dockspace_id);
+            ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
+            ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->WorkSize);
+
+            ImGuiID dock_main = dockspace_id;
+            ImGuiID dock_bottom = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.28f, nullptr, &dock_main);
+            ImGuiID dock_left = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Left, 0.20f, nullptr, &dock_main);
+            ImGuiID dock_right = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.22f, nullptr, &dock_main);
+            ImGuiID dock_center = dock_main;
+
+            ImGui::DockBuilderDockWindow("Explorer", dock_left);
+            ImGui::DockBuilderDockWindow("Code Editor", dock_center);
+            ImGui::DockBuilderDockWindow("Properties", dock_right);
+            ImGui::DockBuilderDockWindow("Preview", dock_bottom);
+            ImGui::DockBuilderDockWindow("Output", dock_bottom); // tabs alongside Preview, like VSCode's bottom panel
+
+            ImGui::DockBuilderFinish(dockspace_id);
+        }
+
         ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f));
         ImGui::End();
 

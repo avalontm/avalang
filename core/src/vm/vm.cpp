@@ -48,6 +48,20 @@ static std::string NumberToString(double n) {
     return s;
 }
 
+static size_t ValidateIntegerIndex(double n, const char* context) {
+    if (std::abs(n - std::round(n)) >= 0.0000001) {
+        throw std::runtime_error(std::string(context) + ": index must be an integer, got " + NumberToString(n));
+    }
+    double rounded = std::round(n);
+    if (rounded < 0) {
+        throw std::runtime_error(std::string(context) + ": index must not be negative, got " + NumberToString(rounded));
+    }
+    if (rounded > static_cast<double>(SIZE_MAX)) {
+        throw std::runtime_error(std::string(context) + ": index too large: " + NumberToString(rounded));
+    }
+    return static_cast<size_t>(rounded);
+}
+
 static std::string JoinPath(const std::string& a, const std::string& b) {
     if (a.empty()) return b;
     if (b.empty()) return a;
@@ -321,6 +335,10 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 frames_[frame_idx].registers[in.a] = Value::Number(
                     frames_[frame_idx].registers[in.b].n / frames_[frame_idx].registers[in.c].n); 
                 break;
+            case OpCode::IDIV: 
+                frames_[frame_idx].registers[in.a] = Value::Number(
+                    std::floor(frames_[frame_idx].registers[in.b].n / frames_[frame_idx].registers[in.c].n)); 
+                break;
             case OpCode::MOD: 
                 frames_[frame_idx].registers[in.a] = Value::Number(
                     std::fmod(frames_[frame_idx].registers[in.b].n, frames_[frame_idx].registers[in.c].n)); 
@@ -430,7 +448,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
 
             case OpCode::JMP: 
                 frames_[frame_idx].pc = static_cast<uint32_t>(
-                    static_cast<int32_t>(frames_[frame_idx].pc) + static_cast<int16_t>(in.b)); 
+                    static_cast<int32_t>(frames_[frame_idx].pc) + in.bx32); 
                 break;
             case OpCode::TEST:
                 if (frames_[frame_idx].registers[in.a].IsTruthy() == (in.c == 0)) 
@@ -504,8 +522,12 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 auto& obj = frames_[frame_idx].registers[in.b];
                 auto& idx = frames_[frame_idx].registers[in.c];
                 if (obj.type == ValueType::List) {
+                    if (idx.type != ValueType::Number) {
+                        frames_[frame_idx].registers[in.a] = Value::Nil();
+                        break;
+                    }
                     auto* list = static_cast<ListObj*>(obj.obj);
-                    size_t pos = static_cast<size_t>(idx.n);
+                    size_t pos = ValidateIntegerIndex(idx.n, "list index");
                     if (pos < list->items.size()) {
                         frames_[frame_idx].registers[in.a] = list->items[pos];
                     } else {
@@ -514,7 +536,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 } else if (obj.type == ValueType::Dict) {
                     auto* dict = static_cast<DictObj*>(obj.obj);
                     if (idx.type == ValueType::Number) {
-                        size_t pos = static_cast<size_t>(idx.n);
+                        size_t pos = ValidateIntegerIndex(idx.n, "dict index");
                         if (pos < dict->entries.size()) {
                             frames_[frame_idx].registers[in.a] = dict->entries[pos].second;
                         } else {
@@ -542,8 +564,11 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 auto& idx = frames_[frame_idx].registers[in.b];
                 auto& val = frames_[frame_idx].registers[in.c];
                 if (obj.type == ValueType::List) {
+                    if (idx.type != ValueType::Number) {
+                        break;
+                    }
                     auto* list = static_cast<ListObj*>(obj.obj);
-                    size_t pos = static_cast<size_t>(idx.n);
+                    size_t pos = ValidateIntegerIndex(idx.n, "list index");
                     if (pos < list->items.size()) {
                         list->items[pos] = val;
                     }
@@ -895,36 +920,38 @@ Value VM::ExecuteFrame(size_t frame_idx) {
 
             case OpCode::SLICE: {
                 auto& obj = frames_[frame_idx].registers[in.b];
+                double start_val = 0;
+                double end_val = 0;
+                if (in.c < frames_[frame_idx].registers.size() && frames_[frame_idx].registers[in.c].type == ValueType::Number) {
+                    start_val = frames_[frame_idx].registers[in.c].n;
+                }
+                if (in.a < frames_[frame_idx].registers.size() && frames_[frame_idx].registers[in.a].type == ValueType::Number) {
+                    end_val = frames_[frame_idx].registers[in.a].n;
+                }
+                if (std::abs(start_val - std::round(start_val)) >= 0.0000001 || start_val < 0) {
+                    throw std::runtime_error(std::string("slice start must be a non-negative integer, got ") + NumberToString(start_val));
+                }
+                if (std::abs(end_val - std::round(end_val)) >= 0.0000001 || end_val < 0) {
+                    throw std::runtime_error(std::string("slice end must be a non-negative integer, got ") + NumberToString(end_val));
+                }
+                size_t s_start = static_cast<size_t>(std::round(start_val));
+                size_t s_end = static_cast<size_t>(std::round(end_val));
                 if (obj.type == ValueType::List) {
                     auto* list = static_cast<ListObj*>(obj.obj);
-                    double start_val = frames_[frame_idx].registers[in.c].n;
-                    double end_val = (in.a < frames_[frame_idx].registers.size()) 
-                        ? frames_[frame_idx].registers[in.a].n : 0;
                     size_t len = list->items.size();
-                    size_t start_idx = 0, end_idx = len;
-                    int step = 1;
-                    if (start_val < 0) start_idx = static_cast<size_t>((std::max)(0, static_cast<int>(len) + static_cast<int>(start_val)));
-                    else start_idx = (std::min)(static_cast<size_t>(start_val), len);
-                    if (end_val < 0) end_idx = static_cast<size_t>((std::max)(0, static_cast<int>(len) + static_cast<int>(end_val)));
-                    else end_idx = (std::min)(static_cast<size_t>(end_val), len);
+                    size_t start_idx = s_start < len ? s_start : len;
+                    size_t end_idx = s_end < len ? s_end : len;
                     auto* result = new ListObj();
-                    for (size_t i = start_idx; i < end_idx && i < len; i += step) {
+                    for (size_t i = start_idx; i < end_idx && i < len; ++i) {
                         result->items.push_back(list->items[i]);
                     }
                     Value v; v.type = ValueType::List; v.obj = result;
                     frames_[frame_idx].registers[in.a] = v;
                 } else if (obj.type == ValueType::String) {
                     auto* str = static_cast<StringObj*>(obj.obj);
-                    double start_val = frames_[frame_idx].registers[in.c].n;
-                    double end_val = (in.a < frames_[frame_idx].registers.size()) 
-                        ? frames_[frame_idx].registers[in.a].n : 0;
                     size_t len = str->data.size();
-                    size_t start_idx = 0, end_idx = len;
-                    int step = 1;
-                    if (start_val < 0) start_idx = static_cast<size_t>((std::max)(0, static_cast<int>(len) + static_cast<int>(start_val)));
-                    else start_idx = (std::min)(static_cast<size_t>(start_val), len);
-                    if (end_val < 0) end_idx = static_cast<size_t>((std::max)(0, static_cast<int>(len) + static_cast<int>(end_val)));
-                    else end_idx = (std::min)(static_cast<size_t>(end_val), len);
+                    size_t start_idx = s_start < len ? s_start : len;
+                    size_t end_idx = s_end < len ? s_end : len;
                     std::string result = str->data.substr(start_idx, end_idx - start_idx);
                     Value v; v.type = ValueType::String; v.obj = new StringObj(result);
                     frames_[frame_idx].registers[in.a] = v;
@@ -936,7 +963,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
 
             case OpCode::TRY: {
                 ExceptionHandler handler;
-                handler.catch_pc = frames_[frame_idx].pc + static_cast<int16_t>(in.b);
+                handler.catch_pc = frames_[frame_idx].pc + in.bx32;
                 exception_handlers_.push_back(handler);
                 break;
             }
@@ -951,7 +978,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
             case OpCode::CATCH: {
                 if (HasException()) {
                     frames_[frame_idx].pc = static_cast<uint32_t>(
-                        static_cast<int32_t>(frames_[frame_idx].pc) + static_cast<int16_t>(in.b));
+                        static_cast<int32_t>(frames_[frame_idx].pc) + in.bx32);
                 }
                 break;
             }

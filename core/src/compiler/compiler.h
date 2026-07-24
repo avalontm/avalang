@@ -19,6 +19,7 @@ private:
     struct JmpPatch {
         size_t instr_idx;
         int32_t offset;
+        size_t target_idx;
     };
 
     std::shared_ptr<Proto> proto_;
@@ -51,6 +52,7 @@ private:
     uint16_t CompileExprToReg(const std::shared_ptr<StmtNode>& stmt);
 
     void PatchJump(size_t instr_idx);
+    void PatchContinueJump(size_t instr_idx, size_t loop_start);
 
     void CompileIf(const IfStmt* stmt);
     void CompileWhile(const WhileStmt* stmt);

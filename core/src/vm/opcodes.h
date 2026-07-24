@@ -25,7 +25,8 @@ enum class OpCode : uint8_t {
     ADD,         // A, B, C  R[A] = R[B] + R[C]
     SUB,         // A, B, C  R[A] = R[B] - R[C]
     MUL,         // A, B, C  R[A] = R[B] * R[C]
-    DIV,         // A, B, C  R[A] = R[B] / R[C]
+    DIV,         // A, B, C  R[A] = R[B] / R[C] (float)
+    IDIV,        // A, B, C  R[A] = floor(R[B] / R[C]) (integer division)
     MOD,         // A, B, C  R[A] = R[B] % R[C]
     POW,         // A, B, C  R[A] = R[B] ** R[C]
     NEG,         // A, B     R[A] = -R[B]
@@ -40,19 +41,19 @@ enum class OpCode : uint8_t {
     LE,          // A, B, C  R[A] = R[B] <= R[C]
     GT,          // A, B, C  R[A] = R[B] > R[C]
     GE,          // A, B, C  R[A] = R[B] >= R[C]
-    JMP,         // sBx      pc += sBx
+    JMP,         // sBx(32)  pc += sBx (32-bit signed offset)
     TEST,        // A, C     if truthy(R[A]) != C then pc++ (skips next JMP)
     CALL,        // A, B, C  R[A..] = call R[A](R[A+1..A+B-1]), C results
     RETURN,      // A, B     return R[A..A+B-1]
     CLOSURE,     // A, Bx    R[A] = make closure from child_protos[Bx]
     NEWCLASS,    // A, Bx    R[A] = new Class from class template K[Bx]
-    NEWINSTANCE, // A, B     R[A] = new Instance of class R[B]
+    NEWINSTANCE, // A, Bx    R[A] = new Instance of class R[B]
     BASECALL,    // A, B, C  call base class method: R[A].method(K[B]) with args R[A+1..A+C]
     YIELD,       // A, B     suspend coroutine, yielding R[A..A+B-1]
     RESUME,      // A, B, C  resume coroutine R[B] with args, C results
-    TRY,         // sBx       push handler, jump target
+    TRY,         // sBx(32)  push handler, jump target (32-bit)
     TRY_END,     //           mark end of try block
-    CATCH,       // sBx       if exception active, jump
+    CATCH,       // sBx(32)  if exception active, jump (32-bit)
     RAISE,       // A         raise exception from R[A]
 };
 
@@ -61,8 +62,13 @@ enum class OpCode : uint8_t {
 struct Instr {
     OpCode  op;
     uint8_t a;
-    uint16_t b; // also serves as Bx when the opcode is Bx-form
-    uint16_t c; // also serves as sBx's low bits when the opcode is sBx-form
+    union {
+        struct {
+            uint16_t b; // low 16 bits
+            uint16_t c; // high 16 bits (extends b for 32-bit signed offsets)
+        };
+        int32_t bx32; // 32-bit signed offset (used by JMP, TRY, CATCH)
+    };
 };
 
 } // namespace ava
