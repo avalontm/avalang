@@ -1,2 +1,0 @@
-local arr = [1]
-print(arr[:])

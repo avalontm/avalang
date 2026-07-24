@@ -1,3 +1,0 @@
-var s = "hello"
-var upper = s.upper()
-print(upper)

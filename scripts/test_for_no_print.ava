@@ -1,7 +1,0 @@
-func gen()
-    yield 1
-end
-
-for n in coroutine(gen) do
-    x = n
-end

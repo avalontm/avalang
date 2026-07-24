@@ -1,9 +1,0 @@
-func counter()
-    yield 1
-    yield 2
-end
-
-for n in coroutine(counter) do
-    print("Got:", n)
-end
-print("Done!")

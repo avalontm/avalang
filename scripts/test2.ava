@@ -1,3 +1,0 @@
-var t = "  hello  "
-var tr = t.trim()
-print(tr)

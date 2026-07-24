@@ -1,5 +1,0 @@
-local arr = [1, 2, 3, 4, 5]
-local a = arr[:]
-local b = arr[:]
-print("First:", a)
-print("Second:", b)

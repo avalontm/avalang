@@ -1,5 +1,6 @@
 # Build outputs
 build/
+build_studio/
 bin/
 dist/
 out/

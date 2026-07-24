@@ -1,9 +1,0 @@
-print("1")
-func test()
-    print("2")
-    x = 1
-    print("3")
-    return x
-end
-r = test()
-print("4:", r)

@@ -1,7 +1,0 @@
-print(coroutine(test))  
-print("Starting test")
-func test()
-    print("Inside generator")
-    yield 1
-end
-print("Test function defined: " + __debug_type)

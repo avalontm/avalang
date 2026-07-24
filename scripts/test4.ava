@@ -1,4 +1,0 @@
-var s = "Hello World"
-print("split:")
-var parts = s.split(" ")
-print(parts)

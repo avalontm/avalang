@@ -10,6 +10,7 @@ set(ENV{VCPKG_TARGET_TRIPLET} x64-windows-static-md)
 
 option(AVA_BUILD_SHARED "Build avalang as a shared library (.dll/.so)" ON)
 option(AVA_BUILD_CLI "Build the standalone ava_cli (compile/run scripts)" ON)
+option(AVA_BUILD_STUDIO "Build ava_studio, the ImGui-based IDE shell (fetches GLFW + Dear ImGui via CMake FetchContent)" OFF)
 
 # ---------------------------------------------------------------------
 # ANTLR4 C++ runtime (optional at configure time)
@@ -187,3 +188,11 @@ install(TARGETS avalang
     RUNTIME DESTINATION bin
 )
 install(FILES public/include/avalang.h DESTINATION include)
+
+# ---------------------------------------------------------------------
+# Ava Studio (optional -- off by default so a plain `cmake ..` doesn't
+# suddenly need internet access to fetch GLFW/ImGui)
+# ---------------------------------------------------------------------
+if(AVA_BUILD_STUDIO)
+    add_subdirectory(studio)
+endif()

@@ -1,2 +1,0 @@
-local arr = [1, 2, 3]
-print(slice(arr, nil, 3))

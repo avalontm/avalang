@@ -1,9 +1,0 @@
-class Animal
-    nombre
-    func init(n)
-        this.nombre = n
-    end
-end
-
-a = Animal("Toby")
-print(a.nombre)

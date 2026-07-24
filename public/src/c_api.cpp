@@ -431,7 +431,15 @@ static void ComponentToJson(std::ostream& os, ava::ui::Component* comp, int inde
             if (!first) os << ", ";
             os << "\"" << k << "\": ";
             if (v.type == ava::ValueType::String) {
-                os << "\"" << "\"";
+                os << "\"";
+                if (v.obj) {
+                    const std::string& s = static_cast<ava::StringObj*>(v.obj)->data;
+                    for (char c : s) {
+                        if (c == '"' || c == '\\') os << '\\';
+                        os << c;
+                    }
+                }
+                os << "\"";
             } else if (v.type == ava::ValueType::Number) {
                 os << v.n;
             } else if (v.type == ava::ValueType::Bool) {

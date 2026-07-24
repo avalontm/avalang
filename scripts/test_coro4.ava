@@ -1,5 +1,0 @@
-func gen() print(1) yield(10) print(2) end  
-co = coroutine(gen)  
-print(co)  
-result = resume(co)  
-print(result)  

@@ -1,2 +1,0 @@
-func test() print(1) end  
-print(coroutine(test))  

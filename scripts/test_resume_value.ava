@@ -1,9 +1,0 @@
-func gen()
-    yield 42
-    return "done"
-end
-
-co = coroutine(gen)
-result = resume(co)
-print("Type of resume result:", type(result))
-print("Resume result:", result)
