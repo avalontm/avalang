@@ -1,4 +1,0 @@
-# Llama a una funcion "host" (C#) registrada via RegisterNative,
-# para probar el puente script -> C# de ida y vuelta.
-print("hola desde AvaLang")
-print(1 + 2)
