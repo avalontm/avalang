@@ -10,20 +10,25 @@ void ApplyVSCodeDarkTheme() {
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
-    // VSCode "Dark+" reference colors.
-    const ImVec4 bg_editor      = ImVec4(0.118f, 0.118f, 0.118f, 1.00f); // #1e1e1e
-    const ImVec4 bg_sidebar     = ImVec4(0.145f, 0.145f, 0.149f, 1.00f); // #252526
-    const ImVec4 bg_titlebar    = ImVec4(0.129f, 0.129f, 0.129f, 1.00f); // #212121
-    const ImVec4 bg_input       = ImVec4(0.235f, 0.235f, 0.235f, 1.00f); // #3c3c3c
-    const ImVec4 border         = ImVec4(0.078f, 0.078f, 0.078f, 1.00f); // #141414
-    const ImVec4 accent         = ImVec4(0.000f, 0.478f, 0.800f, 1.00f); // #007acc
-    const ImVec4 accent_hover   = ImVec4(0.110f, 0.588f, 0.910f, 1.00f); // #1c96e8
-    const ImVec4 accent_active  = ImVec4(0.055f, 0.388f, 0.639f, 1.00f); // #0e639c
-    const ImVec4 tab_active     = ImVec4(0.118f, 0.118f, 0.118f, 1.00f); // #1e1e1e (same as editor -- active tab blends into content)
-    const ImVec4 tab_inactive   = ImVec4(0.145f, 0.145f, 0.149f, 1.00f); // #252526
-    const ImVec4 text_normal    = ImVec4(0.827f, 0.827f, 0.827f, 1.00f); // #d4d4d4
-    const ImVec4 text_disabled  = ImVec4(0.518f, 0.518f, 0.518f, 1.00f); // #848484
-    const ImVec4 scrollbar      = ImVec4(0.235f, 0.235f, 0.235f, 0.60f);
+    // "Ava amber" -- orange-dominant theme. Chrome (backgrounds, borders,
+    // panels) uses a neutral, almost-pure-black palette in the style of
+    // terminal-style IDEs like OpenCode -- cool near-black instead of the
+    // previous warm brown -- so the orange accent (buttons, active tab,
+    // syntax highlighting) is the only thing carrying color and really
+    // pops against it.
+    const ImVec4 bg_editor      = ImVec4(0.043f, 0.043f, 0.051f, 1.00f); // #0b0b0d
+    const ImVec4 bg_sidebar     = ImVec4(0.063f, 0.063f, 0.075f, 1.00f); // #101013
+    const ImVec4 bg_titlebar    = ImVec4(0.055f, 0.055f, 0.063f, 1.00f); // #0e0e10
+    const ImVec4 bg_input       = ImVec4(0.110f, 0.110f, 0.125f, 1.00f); // #1c1c20
+    const ImVec4 border         = ImVec4(0.161f, 0.161f, 0.180f, 1.00f); // #29292e
+    const ImVec4 accent         = ImVec4(0.910f, 0.478f, 0.204f, 1.00f); // #e87a34
+    const ImVec4 accent_hover   = ImVec4(1.000f, 0.596f, 0.290f, 1.00f); // #ff984a
+    const ImVec4 accent_active  = ImVec4(0.761f, 0.376f, 0.129f, 1.00f); // #c26021
+    const ImVec4 tab_active     = ImVec4(0.043f, 0.043f, 0.051f, 1.00f); // #0b0b0d (same as editor -- active tab blends into content)
+    const ImVec4 tab_inactive   = ImVec4(0.063f, 0.063f, 0.075f, 1.00f); // #101013
+    const ImVec4 text_normal    = ImVec4(0.902f, 0.902f, 0.910f, 1.00f); // #e6e6e8
+    const ImVec4 text_disabled  = ImVec4(0.420f, 0.420f, 0.439f, 1.00f); // #6b6b70
+    const ImVec4 scrollbar      = ImVec4(0.180f, 0.180f, 0.200f, 0.60f);
 
     colors[ImGuiCol_Text]                  = text_normal;
     colors[ImGuiCol_TextDisabled]          = text_disabled;
@@ -33,8 +38,8 @@ void ApplyVSCodeDarkTheme() {
     colors[ImGuiCol_Border]                = border;
     colors[ImGuiCol_BorderShadow]          = ImVec4(0, 0, 0, 0);
     colors[ImGuiCol_FrameBg]               = bg_input;
-    colors[ImGuiCol_FrameBgHovered]        = ImVec4(0.278f, 0.278f, 0.278f, 1.00f);
-    colors[ImGuiCol_FrameBgActive]         = ImVec4(0.318f, 0.318f, 0.318f, 1.00f);
+    colors[ImGuiCol_FrameBgHovered]        = ImVec4(0.165f, 0.165f, 0.188f, 1.00f); // #2a2a30
+    colors[ImGuiCol_FrameBgActive]         = ImVec4(0.204f, 0.204f, 0.235f, 1.00f); // #34343c
     colors[ImGuiCol_TitleBg]               = bg_titlebar;
     colors[ImGuiCol_TitleBgActive]         = bg_titlebar;
     colors[ImGuiCol_TitleBgCollapsed]      = bg_titlebar;
@@ -49,8 +54,8 @@ void ApplyVSCodeDarkTheme() {
     colors[ImGuiCol_Button]                = bg_input;
     colors[ImGuiCol_ButtonHovered]         = accent_active;
     colors[ImGuiCol_ButtonActive]          = accent;
-    colors[ImGuiCol_Header]                = ImVec4(0.212f, 0.212f, 0.216f, 1.00f); // list-item hover, e.g. Explorer rows
-    colors[ImGuiCol_HeaderHovered]         = ImVec4(0.180f, 0.180f, 0.180f, 1.00f);
+    colors[ImGuiCol_Header]                = ImVec4(0.102f, 0.102f, 0.122f, 1.00f); // #1a1a1f -- list-item hover, e.g. Explorer rows
+    colors[ImGuiCol_HeaderHovered]         = ImVec4(0.090f, 0.090f, 0.106f, 1.00f); // #17171b
     colors[ImGuiCol_HeaderActive]          = accent_active;
     colors[ImGuiCol_Separator]             = border;
     colors[ImGuiCol_SeparatorHovered]      = accent_hover;
@@ -84,7 +89,7 @@ void ApplyVSCodeDarkTheme() {
     style.FrameBorderSize  = 0.0f;
     style.PopupBorderSize  = 1.0f;
 
-    style.WindowPadding     = ImVec2(8, 8);
+    style.WindowPadding     = ImVec2(10, 10);
     style.FramePadding      = ImVec2(6, 4);
     style.ItemSpacing       = ImVec2(6, 6);
     style.IndentSpacing     = 16.0f;

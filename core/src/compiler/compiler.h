@@ -58,6 +58,8 @@ private:
     void CompileWhile(const WhileStmt* stmt);
     void CompileFor(const ForStmt* stmt);
     void CompileFunc(const FuncDef* func);
+    void EmitDefaultsPrologue(const std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>>& params,
+                               uint16_t param_reg_base);
     void CompileClass(const ClassDef* cls);
     void CompileImport(const ImportStmt* stmt);
     void CompileTry(const TryStmt* stmt);

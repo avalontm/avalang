@@ -6,15 +6,27 @@
 
 namespace studio {
 
+// UI-only state for the Output panel. The actual scrollback (the
+// ConsoleLine history) lives in EngineBridge, not here -- see the
+// comment on EngineBridge::Console() for why (it's tied to the VM's
+// print callback, which outlives any one panel draw call).
 struct OutputState {
-    bool has_run_result = false;
-    RunResult last_run;
-    std::string last_tree_json;
+    std::string input_buffer;    // scratch buffer for the console's input box widget
+    bool has_run_result = false; // true once the user has pressed Run at least once this session
+    RunResult last_run;          // last run's summary -- lets other UI (e.g. a future status bar) show success/failure without re-scanning the console
 };
 
-// Draws the Output/Console panel (bottom dock). Shows the result of the
-// last Run (F5) and, once available, the JSON dump proving the
-// Component Tree round-trip through ava_ui_tree_to_json.
-void DrawOutputPanel(const OutputState& state);
+// Draws the Output panel (bottom dock) as an execution console: every
+// print() from the running script, interleaved with Run/error/result
+// markers, accumulated across every run this session like a real
+// terminal -- replaces the old static "last run result + Component Tree
+// JSON" view.
+//
+// The bottom input line calls EngineBridge::SubmitConsoleInput() on
+// Enter and echoes the text into the console, but nothing in the
+// language reads from it yet -- there is no `input()` builtin. See
+// engine_bridge.h for why and what's needed before there can be one;
+// this is scaffolding for that, not a working REPL today.
+void DrawOutputPanel(OutputState& state, EngineBridge& engine);
 
 } // namespace studio

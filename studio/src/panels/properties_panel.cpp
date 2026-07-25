@@ -8,7 +8,7 @@ void DrawPropertiesPanel(const PropertiesState& state) {
     ImGui::Begin("Properties");
 
     if (state.selected_component_type.empty()) {
-        ImGui::TextDisabled("Selecciona un componente en Preview.");
+        ImGui::TextDisabled("Select a component in Preview.");
         ImGui::End();
         return;
     }

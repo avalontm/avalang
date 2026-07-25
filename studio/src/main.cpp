@@ -10,6 +10,12 @@
 #include <filesystem>
 #include <string>
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include "GLFW/glfw3.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -17,11 +23,14 @@
 #include "imgui_internal.h" // DockBuilder* -- used once to lay out the default panels on first run
 
 #include "engine/engine_bridge.h"
+#include "fonts/embedded_font.h"
 #include "panels/editor_panel.h"
 #include "panels/explorer_panel.h"
 #include "panels/output_panel.h"
 #include "panels/preview_panel.h"
 #include "panels/properties_panel.h"
+#include "panels/titlebar_panel.h"
+#include "platform/win32_titlebar.h"
 #include "theme.h"
 
 namespace fs = std::filesystem;
@@ -31,6 +40,39 @@ namespace {
 void GlfwErrorCallback(int error, const char* description) {
     std::fprintf(stderr, "GLFW error %d: %s\n", error, description);
 }
+
+// Ava Studio's initial workspace folder -- resolved next to the .exe
+// (not the process's current working directory, which depends on how
+// the app was launched: double-click, a shortcut, a debugger, etc.) so
+// "scripts/" is found reliably every time, the same way VSCode always
+// opens relative to a known workspace root. Created on first run if it
+// doesn't exist yet, so a fresh install has somewhere to save into.
+std::string ResolveWorkspaceDir() {
+    fs::path base = fs::current_path();
+#if defined(_WIN32)
+    char exe_path[MAX_PATH];
+    if (GetModuleFileNameA(nullptr, exe_path, MAX_PATH) > 0) {
+        base = fs::path(exe_path).parent_path();
+    }
+#endif
+    fs::path workspace = base / "scripts";
+    std::error_code ec;
+    fs::create_directories(workspace, ec);
+    return workspace.string();
+}
+
+// Height of Ava Studio's own title bar (see panels/titlebar_panel.h) --
+// the dockspace below it starts at this offset instead of the very top
+// of the window, now that there's no OS-native title bar reserving that
+// space for us.
+constexpr float kTitleBarHeight = 34.0f;
+
+// Small gap below the custom title bar so the docked panel tabs (Explorer /
+// Code Editor / ...) don't sit visually glued to it -- without this, the
+// tab row started at y == kTitleBarHeight exactly, right up against the
+// titlebar's bottom edge, which read as everything being flush to the top
+// of the window with no breathing room.
+constexpr float kTitleBarGap = 6.0f;
 
 } // namespace
 
@@ -52,10 +94,25 @@ int main() {
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
 
+    // Removes the OS-native title bar (Windows only -- no-op elsewhere)
+    // so we can draw our own VSCode-style one below, while keeping
+    // native move/resize/Aero-Snap/minimize/maximize. See
+    // platform/win32_titlebar.h for how.
+    studio::titlebar::Install(window);
+
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+
+    // Ava Studio's default font -- JetBrains Mono, compiled into the exe
+    // (see src/fonts/). Must happen before the OpenGL3 backend builds its
+    // font atlas texture, so this runs before ImGui_ImplOpenGL3_Init() below.
+    studio::LoadDefaultFont(16.0f);
+
+    // Bold weight for the Code Editor panel only (see editor_panel.cpp) --
+    // loaded into the same atlas, same timing constraint as above.
+    studio::LoadBoldFont(16.0f);
 
     // Persist window/dock layout per-user, the same way VSCode remembers
     // your panel arrangement between sessions -- not next to the exe
@@ -94,15 +151,11 @@ int main() {
     studio::EngineBridge engine;
 
     studio::ExplorerState explorer_state;
-    explorer_state.root_dir = "scripts"; // relative to the working directory ava_studio is launched from
+    explorer_state.root_dir = ResolveWorkspaceDir();
 
     studio::EditorState editor_state;
-    editor_state.text =
-        "func greet(name)\n"
-        "    print($\"Hello {name}!\")\n"
-        "end\n"
-        "\n"
-        "greet(\"Ava Studio\")\n";
+    studio::InitEditorPanel(editor_state);
+    studio::OpenWelcomeTab(editor_state);
 
     studio::OutputState output_state;
     studio::PropertiesState properties_state;
@@ -119,31 +172,76 @@ int main() {
         ImGui::NewFrame();
 
         ImGuiViewport* viewport = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos(viewport->WorkPos);
-        ImGui::SetNextWindowSize(viewport->WorkSize);
+
+        // --- Custom title bar (replaces the OS-native one) -------------
+        const bool is_maximized = studio::titlebar::IsWindowMaximizedNow(window);
+        studio::TitleBarResult titlebar_result = studio::DrawTitleBar(editor_state, is_maximized, kTitleBarHeight);
+
+        if (titlebar_result.minimize_clicked) {
+            glfwIconifyWindow(window);
+        }
+        if (titlebar_result.maximize_or_restore_clicked) {
+            if (is_maximized) {
+                glfwRestoreWindow(window);
+            } else {
+                glfwMaximizeWindow(window);
+            }
+        }
+        if (titlebar_result.close_clicked) {
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+        }
+
+        // Tells the Win32 hook which pixels are "real" buttons so
+        // WM_NCHITTEST doesn't treat clicking them as dragging the
+        // window (see platform/win32_titlebar.h). No-op on other
+        // platforms.
+        auto to_rect = [](const studio::ScreenRect& r) {
+            return studio::titlebar::Rect{static_cast<int>(r.min_x), static_cast<int>(r.min_y),
+                                           static_cast<int>(r.max_x), static_cast<int>(r.max_y)};
+        };
+        studio::titlebar::Rect extra_rects[4] = {
+            to_rect(titlebar_result.file_menu_rect),
+            to_rect(titlebar_result.run_menu_rect),
+            to_rect(titlebar_result.about_rect),
+        };
+        int extra_rect_count = 3;
+        if (titlebar_result.any_popup_open) {
+            // While a File/Run dropdown is open, treat the *entire*
+            // titlebar strip as a real (HTCLIENT) region for this frame
+            // instead of just the three button rects. Otherwise a click
+            // meant to dismiss the dropdown by clicking elsewhere on the
+            // titlebar (the brand icon area, the empty space between
+            // buttons, the centered file name, etc.) gets intercepted by
+            // Windows as HTCAPTION -- treated as "start dragging the
+            // window" -- and never reaches ImGui, so the popup's normal
+            // click-outside-closes-it behavior can't fire. Clicks in the
+            // dockspace/editor area below the titlebar were never affected
+            // by this, since that area is already HTCLIENT.
+            extra_rects[3] = studio::titlebar::Rect{
+                static_cast<int>(viewport->WorkPos.x), static_cast<int>(viewport->WorkPos.y),
+                static_cast<int>(viewport->WorkPos.x + viewport->WorkSize.x),
+                static_cast<int>(viewport->WorkPos.y + kTitleBarHeight)};
+            extra_rect_count = 4;
+        }
+        studio::titlebar::UpdateHitRegions(static_cast<int>(kTitleBarHeight), to_rect(titlebar_result.minimize_rect),
+                                            to_rect(titlebar_result.maximize_rect), to_rect(titlebar_result.close_rect),
+                                            extra_rects, extra_rect_count);
+
+        // --- Dockspace host (everything below the title bar) -----------
+        const ImVec2 dock_pos(viewport->WorkPos.x, viewport->WorkPos.y + kTitleBarHeight + kTitleBarGap);
+        const ImVec2 dock_size(viewport->WorkSize.x, viewport->WorkSize.y - kTitleBarHeight - kTitleBarGap);
+        ImGui::SetNextWindowPos(dock_pos);
+        ImGui::SetNextWindowSize(dock_size);
         ImGui::SetNextWindowViewport(viewport->ID);
         ImGuiWindowFlags host_flags =
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
-            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
-            ImGuiWindowFlags_MenuBar;
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
         ImGui::Begin("AvaStudioDockHost", nullptr, host_flags);
         ImGui::PopStyleVar(3);
-
-        if (ImGui::BeginMenuBar()) {
-            if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem("Save", "Ctrl+S")) editor_state.save_requested = true;
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Run")) {
-                if (ImGui::MenuItem("Run Script", "F5")) editor_state.run_requested = true;
-                ImGui::EndMenu();
-            }
-            ImGui::EndMenuBar();
-        }
 
         ImGuiID dockspace_id = ImGui::GetID("AvaStudioDockspace");
 
@@ -155,7 +253,7 @@ int main() {
         if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr) {
             ImGui::DockBuilderRemoveNode(dockspace_id);
             ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
-            ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->WorkSize);
+            ImGui::DockBuilderSetNodeSize(dockspace_id, dock_size);
 
             ImGuiID dock_main = dockspace_id;
             ImGuiID dock_bottom = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.28f, nullptr, &dock_main);
@@ -176,19 +274,92 @@ int main() {
         ImGui::End();
 
         // --- Explorer -> Editor -----------------------------------------
-        if (auto clicked_file = studio::DrawExplorerPanel(explorer_state)) {
-            studio::LoadFileIntoEditor(editor_state, *clicked_file);
+        studio::ExplorerResult explorer_result = studio::DrawExplorerPanel(explorer_state);
+        if (explorer_result.file_to_open) {
+            studio::OpenFileInTab(editor_state, *explorer_result.file_to_open);
+        }
+        if (explorer_result.file_deleted) {
+            studio::CloseTabForPath(editor_state, *explorer_result.file_deleted);
         }
 
         // --- Editor -> Save / Run ----------------------------------------
         studio::DrawEditorPanel(editor_state);
-        if (editor_state.save_requested) {
-            studio::SaveEditorToFile(editor_state);
+
+        // Global hotkeys (checked here, not tied to any single panel's
+        // focus, so they work the same whether the click that opened a
+        // popup, the Explorer, or the editor currently has focus).
+        ImGuiIO& io = ImGui::GetIO();
+        const bool want_save    = io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S);
+        const bool want_save_as = io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S);
+        const bool want_new     = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N);
+        const bool want_open    = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O);
+        const bool want_close_tab = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_W);
+        const bool want_run     = ImGui::IsKeyPressed(ImGuiKey_F5);
+
+        if (titlebar_result.new_requested || want_new || editor_state.new_tab_requested) {
+            studio::NewUntitledTab(editor_state);
         }
-        if (editor_state.run_requested) {
-            output_state.last_run = engine.RunScript(editor_state.text, editor_state.file_path);
-            output_state.has_run_result = true;
+        if (titlebar_result.open_requested || want_open || editor_state.open_requested) {
+            std::string path;
+            if (studio::titlebar::OpenFileDialog(window, path, explorer_state.root_dir)) {
+                studio::OpenFileInTab(editor_state, path);
+            }
         }
+        if (titlebar_result.open_folder_requested || editor_state.open_folder_requested) {
+            std::string path;
+            if (studio::titlebar::OpenFolderDialog(window, path, explorer_state.root_dir)) {
+                // Switches the Explorer panel over to the chosen directory,
+                // the same "open a project" role VSCode's Open Folder plays --
+                // it's just the working directory Explorer browses from,
+                // it doesn't touch whatever tabs are already open in the
+                // Code Editor.
+                explorer_state.root_dir = path;
+            }
+        }
+        if (titlebar_result.save_as_requested || want_save_as) {
+            if (studio::EditorTab* active = editor_state.Active(); active && !active->is_welcome) {
+                std::string path;
+                if (studio::titlebar::SaveFileDialog(window, path, explorer_state.root_dir)) {
+                    active->file_path = path;
+                    studio::SaveActiveTab(editor_state);
+                }
+            }
+        }
+        if (editor_state.save_requested || want_save) {
+            if (studio::EditorTab* active = editor_state.Active(); active && !active->is_welcome) {
+                // Untitled buffer: Ctrl+S / File > Save falls through to the
+                // Save As dialog, same as most editors.
+                if (active->file_path.empty()) {
+                    std::string path;
+                    if (studio::titlebar::SaveFileDialog(window, path, explorer_state.root_dir)) {
+                        active->file_path = path;
+                        studio::SaveActiveTab(editor_state);
+                    }
+                } else {
+                    studio::SaveActiveTab(editor_state);
+                }
+            }
+        }
+        if (editor_state.close_tab_requested || want_close_tab) {
+            if (editor_state.active_tab >= 0) {
+                studio::RequestCloseTab(editor_state, editor_state.active_tab);
+            }
+        }
+        if (editor_state.run_requested || want_run) {
+            if (const studio::EditorTab* active = editor_state.Active(); active && !active->is_welcome) {
+                output_state.last_run = engine.RunScript(active->GetText(), active->file_path);
+                output_state.has_run_result = true;
+            }
+        }
+        if (titlebar_result.quit_requested) {
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+        }
+        editor_state.save_requested = false;
+        editor_state.run_requested = false;
+        editor_state.close_tab_requested = false;
+        editor_state.open_requested = false;
+        editor_state.open_folder_requested = false;
+        editor_state.new_tab_requested = false;
 
         // --- Preview -> Properties -----------------------------------------
         if (auto selected = studio::DrawPreviewPanel(demo_tree.root)) {
@@ -197,14 +368,13 @@ int main() {
         studio::DrawPropertiesPanel(properties_state);
 
         // --- Output --------------------------------------------------------
-        output_state.last_tree_json = demo_tree.json;
-        studio::DrawOutputPanel(output_state);
+        studio::DrawOutputPanel(output_state, engine);
 
         ImGui::Render();
         int display_w, display_h;
         glfwGetFramebufferSize(window, &display_w, &display_h);
         glViewport(0, 0, display_w, display_h);
-        glClearColor(0.10f, 0.10f, 0.11f, 1.0f);
+        glClearColor(0.043f, 0.043f, 0.051f, 1.0f); // #0b0b0d, matches theme.cpp's bg_editor
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 

@@ -4,14 +4,51 @@ namespace studio {
 
 EngineBridge::EngineBridge() {
     vm_ = ava_vm_create();
+    // Route every print() call from any script this VM runs into
+    // OnScriptPrint() instead of the process's stdout -- see the Console()
+    // comment in engine_bridge.h for why.
+    ava_vm_set_print_callback(vm_, &EngineBridge::PrintCallbackTrampoline, this);
 }
 
 EngineBridge::~EngineBridge() {
     if (vm_) ava_vm_destroy(vm_);
 }
 
+void EngineBridge::PrintCallbackTrampoline(const char* utf8, size_t len, void* user_data) {
+    static_cast<EngineBridge*>(user_data)->OnScriptPrint(std::string(utf8, len));
+}
+
+void EngineBridge::OnScriptPrint(const std::string& chunk) {
+    pending_stdout_line_ += chunk;
+
+    // Split on '\n', pushing one ConsoleLine per complete physical line
+    // and leaving any trailing partial line buffered for the next chunk.
+    size_t start = 0;
+    while (true) {
+        size_t newline = pending_stdout_line_.find('\n', start);
+        if (newline == std::string::npos) break;
+        console_.push_back({ConsoleLine::Kind::Stdout, pending_stdout_line_.substr(start, newline - start)});
+        start = newline + 1;
+    }
+    pending_stdout_line_.erase(0, start);
+}
+
+void EngineBridge::FlushPendingStdoutLine() {
+    if (!pending_stdout_line_.empty()) {
+        console_.push_back({ConsoleLine::Kind::Stdout, pending_stdout_line_});
+        pending_stdout_line_.clear();
+    }
+}
+
+void EngineBridge::SubmitConsoleInput(const std::string& text) {
+    console_.push_back({ConsoleLine::Kind::Input, "> " + text});
+    input_queue_.push_back(text);
+}
+
 RunResult EngineBridge::RunScript(const std::string& source, const std::string& source_name) {
     RunResult result;
+
+    console_.push_back({ConsoleLine::Kind::Info, "Run " + (source_name.empty() ? std::string("<script>") : source_name)});
 
     char* compile_error = nullptr;
     AvaModule* module = ava_compile(vm_, source.c_str(), source_name.c_str(), &compile_error);
@@ -19,6 +56,7 @@ RunResult EngineBridge::RunScript(const std::string& source, const std::string& 
         result.success = false;
         result.message = compile_error ? compile_error : "unknown compile error";
         if (compile_error) ava_string_free(compile_error);
+        console_.push_back({ConsoleLine::Kind::Error, result.message});
         return result;
     }
 
@@ -27,10 +65,16 @@ RunResult EngineBridge::RunScript(const std::string& source, const std::string& 
     ava_run(vm_, module, &out_result, &run_error);
     ava_module_destroy(module);
 
+    // Flush any print() output before the error/success marker below, so
+    // the console reads top-to-bottom the way a real terminal would
+    // (script output, then the final status line).
+    FlushPendingStdoutLine();
+
     if (run_error) {
         result.success = false;
         result.message = run_error;
         ava_string_free(run_error);
+        console_.push_back({ConsoleLine::Kind::Error, result.message});
         return result;
     }
 
@@ -57,6 +101,7 @@ RunResult EngineBridge::RunScript(const std::string& source, const std::string& 
             ava_value_release(vm_, out_result);
             break;
     }
+    console_.push_back({ConsoleLine::Kind::Success, result.message});
     return result;
 }
 

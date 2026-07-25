@@ -1,0 +1,55 @@
+diff --git a/TextEditor.cpp b/TextEditor.cpp
+--- a/TextEditor.cpp
++++ b/TextEditor.cpp
+@@ -445,7 +445,11 @@
+ 				}
+ 
+ 			} else {
+-				font->RenderChar(drawList, fontSize, glyphPos, palette.get(glyph.color), codepoint);
++				// AvaLang addition: use boldFont for colors flagged via
++				// SetBoldColors() (e.g. keywords), regular font otherwise.
++				// See patches/README.md.
++				ImFont* glyphFont = (boldFont && boldColors[static_cast<size_t>(glyph.color)]) ? boldFont : font;
++				glyphFont->RenderChar(drawList, fontSize, glyphPos, palette.get(glyph.color), codepoint);
+ 			}
+ 
+ 			index++;
+diff --git a/TextEditor.h b/TextEditor.h
+--- a/TextEditor.h
++++ b/TextEditor.h
+@@ -366,6 +366,24 @@
+ 	static const Palette& GetDarkPalette();
+ 	static const Palette& GetLightPalette();
+ 
++	// AvaLang addition: optional second font used to render specific token
++	// colors in bold (e.g. keywords) while the rest of the text stays on
++	// the regular font. Upstream only ever pulls a single ImFont::GetFont()
++	// per Render() call (see renderText()), with no per-glyph font
++	// selection -- boldFont/boldColors add that without touching the
++	// tokenizer/colorizer. If boldFont is null (default) or a glyph's
++	// color isn't in the bold set, rendering is byte-identical to
++	// upstream. See patches/README.md in the AvaLang repo.
++	// NOTE: this must come after Color/Palette are declared above (moved
++	// here from just after Render() because upstream now declares Color
++	// later in the class than when this patch was first written; see
++	// patches/README.md).
++	inline void SetBoldFont(ImFont* aFont) { boldFont = aFont; }
++	inline void SetBoldColors(std::initializer_list<Color> colors) {
++		boldColors.fill(false);
++		for (Color c : colors) { boldColors[static_cast<size_t>(c)] = true; }
++	}
++
+ 	// a single colored character (a glyph)
+ 	class Glyph {
+ 	public:
+@@ -1323,6 +1341,10 @@
+ 	// rendering context
+ 	ImFont* font;
+ 	float fontSize;
++
++	// AvaLang addition: see SetBoldFont()/SetBoldColors() above.
++	ImFont* boldFont = nullptr;
++	std::array<bool, static_cast<size_t>(Color::count)> boldColors{};
+ 	ImVec2 glyphSize;
+ 	ImVec2 lastRenderOrigin;
+ 	float lineNumberLeftOffset;

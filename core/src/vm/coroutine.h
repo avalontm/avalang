@@ -19,6 +19,8 @@ struct CallFrame {
     uint32_t pc = 0;
     std::string module_dir;
     int ret_slot = -1;  // Register in caller frame to write return value to; -1 = discard
+    uint32_t argc = 0;  // Number of arguments actually supplied by the caller (excludes implicit `this`),
+                         // used by the compiler's default-parameter prologue via OpCode::ARGC.
 };
 
 enum class CoStatus { Suspended, Running, Dead };

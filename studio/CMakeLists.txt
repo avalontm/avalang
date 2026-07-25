@@ -50,38 +50,114 @@ set(IMGUI_SOURCES
     ${imgui_SOURCE_DIR}/imgui_demo.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp
 )
 
 add_library(imgui_docking STATIC ${IMGUI_SOURCES})
 target_include_directories(imgui_docking PUBLIC
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
+    ${imgui_SOURCE_DIR}/misc/cpp
 )
 target_link_libraries(imgui_docking PUBLIC glfw)
+
+# --- ImGuiColorTextEdit (line numbers, syntax highlighting, autocomplete) --
+# The editor widget behind the Code Editor panel. Like GLFW/ImGui above,
+# this is fetched at configure time and compiled straight into ava_studio
+# as a static library -- there is no separate .dll/.so to ship, the editor
+# code ends up baked into ava_studio.exe.
+#
+# PATCH_COMMAND applies both patches in one `git apply` call (it accepts
+# multiple patch files and applies them in order against the pristine
+# clone):
+#  1. patches/imguicolortextedit_interpolation.patch -- adds
+#     Color::interpolation so `{expr}` inside an f-string colors
+#     differently from the surrounding string (upstream has no hook for
+#     this).
+#  2. patches/imguicolortextedit_bold_keywords.patch -- adds an optional
+#     second (bold) ImFont that TextEditor uses per-glyph for whichever
+#     Color::... values the caller flags via SetBoldColors() (AvaLang
+#     uses it for keyword/declaration), instead of a single font for
+#     the whole Render() call.
+#  3. patches/imguicolortextedit_doc_comment.patch -- adds
+#     Color::docComment and Color::docParamTag plus a Language field
+#     (docCommentPrefix) so a "##" doc-comment block colors differently
+#     from a plain "#" comment, and the "@param" tag itself (not the name
+#     or description that follows) inside a doc
+#     block gets its own color too (upstream only has one flat
+#     Color::comment for the whole singleLineComment match).
+# See patches/README.md for why these are patches and not a fork. git
+# apply fails loudly (breaks the CMake configure step) if any patch
+# can't apply cleanly, rather than silently falling back to the
+# unpatched library.
+FetchContent_Declare(
+    imguicolortextedit
+    GIT_REPOSITORY https://github.com/goossens/ImGuiColorTextEdit.git
+    GIT_TAG        master
+    GIT_SHALLOW    TRUE
+    PATCH_COMMAND  git apply --ignore-whitespace
+                   ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_interpolation.patch
+                   ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_bold_keywords.patch
+                   ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_doc_comment.patch
+    UPDATE_DISCONNECTED TRUE
+)
+FetchContent_MakeAvailable(imguicolortextedit)
+
+add_library(text_editor STATIC ${imguicolortextedit_SOURCE_DIR}/TextEditor.cpp)
+target_include_directories(text_editor PUBLIC ${imguicolortextedit_SOURCE_DIR})
+target_link_libraries(text_editor PUBLIC imgui_docking)
 
 # --- Ava Studio executable ---------------------------------------------
 set(STUDIO_SOURCES
     src/main.cpp
     src/theme.cpp
+    src/fonts/embedded_font.cpp
+    src/languages/avalang_language.cpp
+    src/languages/function_index.cpp
+    src/languages/builtin_signatures.cpp
     src/engine/engine_bridge.cpp
     src/panels/explorer_panel.cpp
     src/panels/editor_panel.cpp
     src/panels/properties_panel.cpp
     src/panels/preview_panel.cpp
     src/panels/output_panel.cpp
+    src/panels/titlebar_panel.cpp
+    src/platform/win32_titlebar.cpp
+    src/branding/logo_texture.cpp
 )
+
+if(WIN32)
+    list(APPEND STUDIO_SOURCES resources/app.rc)
+endif()
 
 add_executable(ava_studio ${STUDIO_SOURCES})
 
+if(WIN32)
+    # GUI subsystem, no console window. We still define int main() (not
+    # WinMain) -- WIN32_EXECUTABLE alone is enough for MinGW (it auto-
+    # generates the WinMain shim around main()), but MSVC's default entry
+    # point for a /SUBSYSTEM:WINDOWS target is WinMainCRTStartup, so it
+    # needs to be told explicitly to start at mainCRTStartup instead, or
+    # linking fails with "unresolved external symbol WinMain".
+    set_target_properties(ava_studio PROPERTIES WIN32_EXECUTABLE TRUE)
+    if(MSVC)
+        target_link_options(ava_studio PRIVATE /ENTRY:mainCRTStartup)
+    endif()
+endif()
+
 target_include_directories(ava_studio PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party
     ${CMAKE_SOURCE_DIR}/public/include
 )
 
-target_link_libraries(ava_studio PRIVATE avalang imgui_docking)
+target_link_libraries(ava_studio PRIVATE avalang imgui_docking text_editor)
 
 if(WIN32)
-    target_link_libraries(ava_studio PRIVATE opengl32)
+    # dwmapi -- DwmExtendFrameIntoClientArea, used by
+    # src/platform/win32_titlebar.cpp to keep the native drop shadow on
+    # our borderless/custom-titlebar window.
+    target_link_libraries(ava_studio PRIVATE opengl32 dwmapi)
 elseif(APPLE)
     target_link_libraries(ava_studio PRIVATE "-framework OpenGL")
 else()

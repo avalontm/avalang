@@ -55,6 +55,7 @@ enum class OpCode : uint8_t {
     TRY_END,     //           mark end of try block
     CATCH,       // sBx(32)  if exception active, jump (32-bit)
     RAISE,       // A         raise exception from R[A]
+    ARGC,        // A        R[A] = number of args the current call actually received (Number)
 };
 
 // iABC-style fixed-width instruction, same family as Lua's own encoding.

@@ -2,6 +2,7 @@
 #include "module.h"
 #include "coroutine.h"
 #include "../frontend/frontend.h"
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -117,6 +118,18 @@ void VM::RegisterBuiltinMethod(const std::string& name, AvaNativeFn fn, void* us
     builtin_methods_[name] = {fn, user_data};
 }
 
+void VM::SetPrintSink(PrintSink sink) {
+    print_sink_ = std::move(sink);
+}
+
+void VM::Print(const std::string& text) const {
+    if (print_sink_) {
+        print_sink_(text);
+    } else {
+        std::fputs(text.c_str(), stdout);
+    }
+}
+
 bool VM::HasBuiltinMethod(const std::string& name) const {
     return builtin_methods_.find(name) != builtin_methods_.end();
 }
@@ -193,6 +206,7 @@ Value VM::Call(const Value& callable, const std::vector<Value>& args) {
         for (size_t i = 0; i < all_args.size() && i + 1 < frame.registers.size(); ++i) {
             frame.registers[i + 1] = all_args[i];
         }
+        frame.argc = static_cast<uint32_t>(args.size());
         frames_.push_back(frame);
         Value result = ExecuteFrame(frames_.size() - 1);
         frames_.pop_back();
@@ -211,6 +225,7 @@ Value VM::Call(const Value& callable, const std::vector<Value>& args) {
         for (size_t i = 0; i < args.size() && i + 1 < frame.registers.size(); ++i) {
             frame.registers[i + 1] = args[i];
         }
+        frame.argc = static_cast<uint32_t>(args.size());
         frames_.push_back(frame);
         Value result = ExecuteFrame(frames_.size() - 1);
         frames_.pop_back();
@@ -239,6 +254,7 @@ Value VM::Call(const Value& callable, const std::vector<Value>& args) {
             for (size_t i = 0; i < args.size() && i < resume_frame.registers.size(); ++i) {
                 resume_frame.registers[i] = args[i];
             }
+            resume_frame.argc = static_cast<uint32_t>(args.size());
             frames_.push_back(resume_frame);
         } else {
             for (size_t i = 0; i < args.size() && i < frames_[0].registers.size(); ++i) {
@@ -752,6 +768,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                     for (size_t i = 0; i < all_args.size() && i + 1 < callee_frame.registers.size(); ++i) {
                         callee_frame.registers[i + 1] = all_args[i];
                     }
+                    callee_frame.argc = static_cast<uint32_t>(args.size());
                     frames_.push_back(callee_frame);
                     Value result = ExecuteFrame(frames_.size() - 1);
                     frames_.pop_back();
@@ -788,6 +805,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                         for (size_t i = 0; i < init_args.size() && i < init_frame.registers.size(); ++i) {
                             init_frame.registers[i] = init_args[i];
                         }
+                        init_frame.argc = static_cast<uint32_t>(args.size());
                         frames_.push_back(init_frame);
                         ExecuteFrame(frames_.size() - 1);
                         frames_.pop_back();
@@ -821,6 +839,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                     for (size_t i = 0; i < args.size() && i + 1 < callee_frame.registers.size(); ++i) {
                         callee_frame.registers[i + 1] = args[i];
                     }
+                    callee_frame.argc = static_cast<uint32_t>(args.size());
                     frames_.push_back(callee_frame);
                     Value result = ExecuteFrame(frames_.size() - 1);
                     frames_.pop_back();
@@ -900,6 +919,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                             for (size_t i = 0; i < args.size() && i < callee_frame.registers.size(); ++i) {
                                 callee_frame.registers[i] = args[i];
                             }
+                            callee_frame.argc = static_cast<uint32_t>(in.c);
                             frames_.push_back(callee_frame);
                             Value result = ExecuteFrame(frames_.size() - 1);
                             frames_.pop_back();
@@ -991,6 +1011,12 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 break;
             }
 
+            case OpCode::ARGC: {
+                frames_[frame_idx].registers[in.a] =
+                    Value::Number(static_cast<double>(frames_[frame_idx].argc));
+                break;
+            }
+
             default:
                 throw std::runtime_error("opcode not yet implemented: " + std::to_string(static_cast<int>(in.op)));
 
@@ -1054,6 +1080,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 for (size_t i = 0; i < args.size() && i < frames_[0].registers.size(); ++i) {
                     frames_[0].registers[i] = args[i];
                 }
+                frames_[0].argc = static_cast<uint32_t>(args.size());
 
                 Value result = ExecuteFrame(0);
 

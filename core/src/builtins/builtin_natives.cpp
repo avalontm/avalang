@@ -1,6 +1,7 @@
 #include "builtin_natives.h"
 
 #include "vm/value.h"
+#include "vm/vm.h"
 
 #include <algorithm>
 #include <cmath>
@@ -165,12 +166,24 @@ ava_value_t builtin_float(AvaVM*, const ava_value_t* args, size_t count, void*) 
     return ToC(Value::Number(AsNumber(FromC(args[0]))));
 }
 
-ava_value_t builtin_print(AvaVM*, const ava_value_t* args, size_t count, void*) {
+ava_value_t builtin_print(AvaVM* vm, const ava_value_t* args, size_t count, void*) {
+    // Built as a single line + trailing newline (rather than the old
+    // per-argument fputc/fputs calls straight to stdout) so an embedder's
+    // print sink (see VM::SetPrintSink / ava_vm_set_print_callback) gets
+    // one clean chunk per print() call instead of 2-3 fragments -- makes
+    // it trivial to render as one console line in a host UI.
+    std::string line;
     for (size_t i = 0; i < count; ++i) {
-        if (i > 0) std::fputc(' ', stdout);
-        std::fputs(ToDisplayString(FromC(args[i])).c_str(), stdout);
+        if (i > 0) line += ' ';
+        line += ToDisplayString(FromC(args[i]));
     }
-    std::fputc('\n', stdout);
+    line += '\n';
+    ava::VM* raw_vm = reinterpret_cast<ava::VM*>(vm);
+    if (raw_vm) {
+        raw_vm->Print(line);
+    } else {
+        std::fputs(line.c_str(), stdout);
+    }
     return ToC(MakeNilV());
 }
 

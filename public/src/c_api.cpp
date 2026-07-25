@@ -44,6 +44,17 @@ AVA_API void ava_vm_register_native(AvaVM* vm, const char* name, AvaNativeFn fn,
     reinterpret_cast<VM*>(vm)->RegisterNative(name, fn, user_data);
 }
 
+AVA_API void ava_vm_set_print_callback(AvaVM* vm, AvaPrintFn fn, void* user_data) {
+    auto* raw_vm = reinterpret_cast<VM*>(vm);
+    if (fn) {
+        raw_vm->SetPrintSink([fn, user_data](const std::string& text) {
+            fn(text.data(), text.size(), user_data);
+        });
+    } else {
+        raw_vm->SetPrintSink(nullptr);
+    }
+}
+
 AVA_API AvaModule* ava_compile(AvaVM*, const char* source, const char* source_name, char** out_error) {
     try {
         auto proto = CompileSource(source, source_name ? source_name : "<script>");

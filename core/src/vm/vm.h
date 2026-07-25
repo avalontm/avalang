@@ -1,6 +1,7 @@
 #ifndef AVA_VM_VM_H
 #define AVA_VM_VM_H
 
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -54,9 +55,21 @@ public:
 
     Coroutine* CreateCoroutine(const Value& func);
 
+    // Print sink used by the `print` builtin (builtin_natives.cpp). When
+    // set, Print() forwards to the sink instead of writing straight to
+    // the process's stdout -- this is what lets an embedder (e.g. Ava
+    // Studio's Output console, see studio/src/engine/engine_bridge.cpp)
+    // capture script output instead of it going to a stdout a GUI app
+    // typically has no visible console for. Pass nullptr to restore the
+    // stdout default. See ava_vm_set_print_callback in avalang.h.
+    using PrintSink = std::function<void(const std::string&)>;
+    void SetPrintSink(PrintSink sink);
+    void Print(const std::string& text) const;
+
 private:
     Value ExecuteFrame(size_t frame_idx);
 
+    PrintSink print_sink_;
     std::string current_dir_;
     std::unordered_map<std::string, Value> globals_;
     std::vector<CallFrame> frames_;

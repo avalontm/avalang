@@ -1,0 +1,78 @@
+diff --git a/TextEditor.cpp b/TextEditor.cpp
+index a25a42b..838a16d 100644
+--- a/TextEditor.cpp
++++ b/TextEditor.cpp
+@@ -2320,6 +2320,7 @@ const TextEditor::Palette& TextEditor::GetDarkPalette() {
+ 		IM_COL32( 90, 179, 155, 255),	// declaration
+ 		IM_COL32(181, 206, 168, 255),	// number
+ 		IM_COL32(206, 145, 120, 255),	// string
++		IM_COL32(220, 168,  90, 255),	// interpolation ({expr} inside f-string)
+ 		IM_COL32(255, 255, 153, 255),	// punctuation
+ 		IM_COL32( 64, 192, 128, 255),	// preprocessor
+ 		IM_COL32(156, 220, 254, 255),	// identifier
+@@ -2350,6 +2351,7 @@ const TextEditor::Palette& TextEditor::GetLightPalette()
+ 		IM_COL32( 65,   0, 255, 255),	// declaration
+ 		IM_COL32( 40, 140,  90, 255),	// number
+ 		IM_COL32(160,  32,  32, 255),	// string
++		IM_COL32(150,  90,   0, 255),	// interpolation ({expr} inside f-string)
+ 		IM_COL32(  0,   0,   0, 255),	// punctuation
+ 		IM_COL32( 96,  96,  64, 255),	// preprocessor
+ 		IM_COL32( 64,  64,  64, 255),	// identifier
+@@ -3647,6 +3649,13 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
+ 	auto nonWhiteSpace = false;
+ 	auto glyph = line.begin();
+ 
++	// AvaLang addition: tracks nesting of {expr} interpolations inside an
++	// "otherString" (used for FSTRING, $"..."). Resets every line -- an
++	// interpolation left open across a line break (rare/invalid AvaLang)
++	// will mis-color the following line; acceptable for a single-pass
++	// line-based colorizer, see patches/README in the AvaLang repo.
++	int interpolationDepth = 0;
++
+ 	while (glyph < line.end()) {
+ 		if (state == State::inText) {
+ 			// special handling for preprocessor lines
+@@ -3796,14 +3805,29 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
+ 					(glyph++)->color = Color::string;
+ 				}
+ 
+-			} else if (matches(glyph, line.end(), language->otherStringEnd)) {
++			// AvaLang addition: track {expr} interpolation nesting and color
++			// it separately from the surrounding string. A '"' inside an
++			// open interpolation (interpolationDepth > 0) must NOT end the
++			// string -- see the interpolationDepth == 0 guard below.
++			} else if (glyph->codepoint == '{') {
++				++interpolationDepth;
++				(glyph++)->color = Color::interpolation;
++
++			} else if (glyph->codepoint == '}' && interpolationDepth > 0) {
++				--interpolationDepth;
++				(glyph++)->color = Color::interpolation;
++
++			} else if (interpolationDepth == 0 && matches(glyph, line.end(), language->otherStringEnd)) {
+ 				auto size = language->otherStringEnd.size();
+ 				setColor(glyph, glyph + size, Color::string);
+ 				glyph += size;
+ 				state = State::inText;
+ 
+ 			} else {
+-				(glyph++)->color = Color::comment;
++				// AvaLang fix: upstream colored this Color::comment, which
++				// made f-string bodies render in the comment color instead
++				// of the string color. See patches/README.
++				(glyph++)->color = interpolationDepth > 0 ? Color::interpolation : Color::string;
+ 			}
+ 
+ 		} else if (state == State::inOtherStringAlt) {
+diff --git a/TextEditor.h b/TextEditor.h
+index ba41bd8..bc95977 100644
+--- a/TextEditor.h
++++ b/TextEditor.h
+@@ -332,6 +332,7 @@ public:
+ 		declaration,
+ 		number,
+ 		string,
++		interpolation,	// {expr} inside an f-string (custom AvaLang addition, see patches/)
+ 		punctuation,
+ 		preprocessor,
+ 		identifier,

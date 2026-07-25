@@ -1,0 +1,92 @@
+diff --git a/TextEditor.cpp b/TextEditor.cpp
+index a25a42b..a6df145 100644
+--- a/TextEditor.cpp
++++ b/TextEditor.cpp
+@@ -2325,6 +2325,8 @@ const TextEditor::Palette& TextEditor::GetDarkPalette() {
+ 		IM_COL32(156, 220, 254, 255),	// identifier
+ 		IM_COL32( 79, 193, 255, 255),	// known identifier
+ 		IM_COL32(106, 153,  85, 255),	// comment
++		IM_COL32(77, 182, 172, 255),	// docComment ("##" block, custom AvaLang addition) -- turquoise, distinct from plain "#" comment green and from every other token color
++		IM_COL32(199, 146, 234, 255),	// docParamTag ("@param name" tag, custom AvaLang addition) -- purple, stands out from both comment colors above
+ 		IM_COL32( 30,  30,  30, 255),	// background
+ 		IM_COL32(224, 224, 224, 255),	// cursor
+ 		IM_COL32( 32,  96, 160, 255),	// selection
+@@ -2355,6 +2357,8 @@ const TextEditor::Palette& TextEditor::GetLightPalette()
+ 		IM_COL32( 64,  64,  64, 255),	// identifier
+ 		IM_COL32( 16,  96,  96, 255),	// known identifier
+ 		IM_COL32( 35, 135,   5, 255),	// comment
++		IM_COL32( 26, 130, 120, 255),	// docComment ("##" block, custom AvaLang addition) -- turquoise, distinct from plain "#" comment green and from every other token color
++		IM_COL32(124,  58, 237, 255),	// docParamTag ("@param name" tag, custom AvaLang addition) -- purple, stands out from both comment colors above
+ 		IM_COL32(255, 255, 255, 255),	// background
+ 		IM_COL32(  0,   0,   0, 255),	// cursor
+ 		IM_COL32(  0,   0,  96,  64),	// selection
+@@ -3661,6 +3665,34 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
+ 			if (CodePoint::isWhiteSpace(glyph->codepoint)) {
+ 				(glyph++)->color = Color::whitespace;
+ 
++			// AvaLang addition: "doc comment" blocks (e.g. "##") get their own
++			// color, distinct from plain "#" comments, and the literal
++			// "@param" tag inside them is re-colored again so it stands out
++			// from the surrounding prose -- just the tag itself, not the
++			// parameter name or description that follows (that stays
++			// docComment-colored, same as the rest of the block). Must be
++			// checked before the plain singleLineComment branch below,
++			// since "##" also matches the shorter "#" prefix. See
++			// patches/README.
++			} else if (language->docCommentPrefix.size() && matches(glyph, line.end(), language->docCommentPrefix)) {
++				setColor(glyph, line.end(), Color::docComment);
++
++				auto scan = glyph;
++				static const std::string_view paramTag = "@param";
++
++				while (scan < line.end()) {
++					if (matches(scan, line.end(), paramTag)) {
++						auto tagEnd = scan + paramTag.size();
++						setColor(scan, tagEnd, Color::docParamTag);
++						scan = tagEnd;
++
++					} else {
++						++scan;
++					}
++				}
++
++				glyph = line.end();
++
+ 			// handle single line comments
+ 			} else if (language->singleLineComment.size() && matches(glyph, line.end(), language->singleLineComment)) {
+ 				setColor(glyph, line.end(), Color::comment);
+@@ -4904,7 +4944,7 @@ void TextEditor::Autocomplete::updateState(Document& document, const Language* l
+ 		auto color = document.getColor(Coordinate(currentLocation.line, currentLocation.column - 1));
+ 		state.inIdentifier = color == Color::identifier || color == Color::knownIdentifier;
+ 		state.inNumber = color == Color::number;
+-		state.inComment = color == Color::comment;
++		state.inComment = color == Color::comment || color == Color::docComment || color == Color::docParamTag;
+ 		state.inString = color == Color::string;
+ 	}
+ 
+diff --git a/TextEditor.h b/TextEditor.h
+index ba41bd8..3e62c5e 100644
+--- a/TextEditor.h
++++ b/TextEditor.h
+@@ -337,6 +337,8 @@ public:
+ 		identifier,
+ 		knownIdentifier,
+ 		comment,
++		docComment,	// "##" doc-comment block (custom AvaLang addition, see patches/)
++		docParamTag,	// "@param name" tag inside a doc-comment block (custom AvaLang addition, see patches/)
+ 		background,
+ 		cursor,
+ 		selection,
+@@ -427,6 +429,12 @@ public:
+ 		// an alternate single line comment character sequence (can be blank if language doesn't have this feature)
+ 		std::string singleLineCommentAlt;
+ 
++		// a character sequence that starts a "doc comment" block (can be blank if language doesn't have
++		// this feature); checked before singleLineComment, so it should be a more specific prefix of it
++		// (e.g. "##" vs "#") -- colored Color::docComment, with any "@param name" tag inside it colored
++		// Color::docParamTag instead (custom AvaLang addition, see patches/)
++		std::string docCommentPrefix;
++
+ 		// the start and end character sequence for multiline comments (can be blank language doesn't have this feature)
+ 		std::string commentStart;
+ 		std::string commentEnd;

@@ -433,6 +433,8 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
             }
         }
 
+        sub.EmitDefaultsPrologue(l->defaults, 1);
+
         sub.CompileChunk(l->body);
         sub.proto_->instructions.push_back({OpCode::RETURN, 0, 0, 0});
         sub.proto_->num_registers = std::max<uint16_t>(sub.max_reg_ + 1, sub.next_reg_);
@@ -902,6 +904,48 @@ void Compiler::CompileForDynamic(const ForStmt* stmt) {
     PatchJump(jmp_end);
 }
 
+// Emits, at the very start of a function/method/lambda body, a check-and-assign
+// block for every parameter that has a default expression:
+//
+//   if (ARGC <= param_index) param_reg = <default expr>
+//
+// ARGC is the number of arguments the caller actually supplied (never counting
+// an implicit `this`), which the VM tracks per call frame. param_reg_base is
+// the register holding the first declared parameter (1 for plain functions,
+// lambdas, and methods alike, since register 0 is reserved — `this` for
+// methods, unused otherwise).
+void Compiler::EmitDefaultsPrologue(const std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>>& params,
+                                     uint16_t param_reg_base) {
+    for (size_t i = 0; i < params.size(); ++i) {
+        auto& def = params[i].second;
+        if (!def) continue;
+
+        uint16_t param_reg = static_cast<uint16_t>(param_reg_base + i);
+
+        auto argc_reg = AllocReg();
+        Emit(OpCode::ARGC, argc_reg);
+
+        auto idx_const = AddConstant(Value::Number(static_cast<double>(i)));
+        auto idx_reg = AllocReg();
+        Emit(OpCode::LOADK, idx_reg, idx_const);
+
+        auto cond_reg = AllocReg();
+        Emit(OpCode::LE, cond_reg, argc_reg, idx_reg);
+        FreeRegs(2); // argc_reg, idx_reg no longer needed
+
+        Emit(OpCode::TEST, cond_reg, 0);
+        size_t jmp_have_arg = proto_->instructions.size();
+        Emit(OpCode::JMP, 0);
+        FreeRegs(1); // cond_reg no longer needed
+
+        auto val_reg = CompileExpr(def);
+        Emit(OpCode::MOVE, param_reg, val_reg);
+        FreeRegs(1); // val_reg
+
+        PatchJump(jmp_have_arg);
+    }
+}
+
 void Compiler::CompileFunc(const FuncDef* func) {
     Compiler sub;
     sub.proto_ = std::make_shared<Proto>();
@@ -916,6 +960,8 @@ void Compiler::CompileFunc(const FuncDef* func) {
         sub.next_reg_++;
     }
     sub.max_reg_ = sub.next_reg_;
+
+    sub.EmitDefaultsPrologue(func->params, 1);
 
     sub.CompileChunk(func->body);
     uint8_t ret_a = sub.result_reg_ > 0 ? static_cast<uint8_t>(sub.result_reg_) : 0;
@@ -1191,7 +1237,9 @@ void Compiler::CompileClass(const ClassDef* cls) {
                 auto& pname = f->params[i].first;
                 sub.locals_[pname] = static_cast<uint16_t>(i + 1);
             }
-            
+
+            sub.EmitDefaultsPrologue(f->params, 1);
+
             sub.CompileChunk(f->body);
             sub.proto_->instructions.push_back({OpCode::RETURN, 0, 0, 0});
             

@@ -106,6 +106,20 @@ AVA_API void ava_vm_register_native(
     void* user_data
 );
 
+/* Print sink: called once per `print(...)` call from a running script,
+ * with the fully formatted line (arguments space-joined, trailing '\n'
+ * included) as `utf8`/`len`. Lets a host UI (e.g. Ava Studio's Output
+ * console) capture script output instead of it going to a process's
+ * stdout, which a GUI app typically has no visible console for. Pass
+ * fn = NULL to restore the default (print writes to stdout). */
+typedef void (*AvaPrintFn)(const char* utf8, size_t len, void* user_data);
+
+AVA_API void ava_vm_set_print_callback(
+    AvaVM* vm,
+    AvaPrintFn fn,
+    void* user_data
+);
+
 /* ---------------------------------------------------------------------
  * Compilation
  * ------------------------------------------------------------------- */
