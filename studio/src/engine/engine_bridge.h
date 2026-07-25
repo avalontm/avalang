@@ -68,6 +68,17 @@ public:
     // terminal, not a single-shot result panel.
     RunResult RunScript(const std::string& source, const std::string& source_name);
 
+    // Sets the base modules folder `import` falls back to when a module
+    // isn't found relative to the running script (see
+    // ava_vm_set_stdlib_path in avalang.h). Called once at startup with
+    // the persisted setting (util/settings.h), and again any time the
+    // user changes it via the Properties dialog -- takes effect on the
+    // next RunScript(), no restart needed. `path` empty means "use the
+    // default modules/ folder next to the executable" (see
+    // util::ResolveDefaultModulesDir()) -- this is where that's resolved,
+    // so the caller/settings file can stay portable and keep storing "".
+    void SetModulesPath(const std::string& path);
+
     // The execution console: every print() from every RunScript() call
     // this session, in order, plus the Run/error/result markers around
     // them. print() output is captured live via ava_vm_set_print_callback

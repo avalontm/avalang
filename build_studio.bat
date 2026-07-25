@@ -12,12 +12,18 @@ REM
 REM Usage:
 REM   build_studio.bat                build Release with the default generator
 REM   build_studio.bat debug           build Debug instead
-REM   build_studio.bat clean            wipe build_studio\ first
+REM   build_studio.bat clean            delete build_studio\ and exit -- nothing
+REM                                     else, no configure/build (see below)
 REM   build_studio.bat ninja            use Ninja instead of Visual Studio/MSBuild
 REM                                     (requires ninja.exe on PATH)
 REM   build_studio.bat run              after a successful build, launch ava_studio.exe
 REM
 REM Flags can be combined, e.g.:  build_studio.bat clean debug run
+REM "clean" alone (no other flag) just wipes build_studio\ and stops there --
+REM handy when you only want to reclaim disk space or force a from-scratch
+REM CMake reconfigure later. Combine it with another flag (debug/ninja/run)
+REM to wipe build_studio\ first and then continue into a normal build, same
+REM as before.
 REM
 REM The first time you configure with AVA_BUILD_STUDIO=ON, CMake fetches
 REM GLFW and Dear ImGui (docking branch) via FetchContent -- needs
@@ -37,18 +43,34 @@ set "CLEAN=0"
 set "GENERATOR=Visual Studio 17 2022"
 set "USE_NINJA=0"
 set "RUN_AFTER=0"
+REM Set when debug/ninja/run is explicitly passed, so a bare "clean" (no
+REM other flag) can be told apart from "clean" combined with one of them --
+REM see the clean-only branch right after argument parsing below.
+set "OTHER_FLAG=0"
 
 :parse_args
 if "%~1"=="" goto args_done
 if /I "%~1"=="clean"  set "CLEAN=1"
-if /I "%~1"=="debug"  set "BUILD_TYPE=Debug"
-if /I "%~1"=="ninja"  set "USE_NINJA=1"
-if /I "%~1"=="run"    set "RUN_AFTER=1"
+if /I "%~1"=="debug"  (set "BUILD_TYPE=Debug" & set "OTHER_FLAG=1")
+if /I "%~1"=="ninja"  (set "USE_NINJA=1" & set "OTHER_FLAG=1")
+if /I "%~1"=="run"    (set "RUN_AFTER=1" & set "OTHER_FLAG=1")
 if /I "%~1"=="help"   goto show_help
 if /I "%~1"=="/?"     goto show_help
 shift
 goto parse_args
 :args_done
+
+if "%CLEAN%"=="1" if "%OTHER_FLAG%"=="0" (
+    if exist "%BUILD_DIR%" (
+        echo Cleaning %BUILD_DIR% ...
+        rmdir /s /q "%BUILD_DIR%"
+        echo Done -- %BUILD_DIR%\ removed.
+    ) else (
+        echo Nothing to clean -- %BUILD_DIR%\ doesn't exist.
+    )
+    endlocal
+    exit /b 0
+)
 
 where cmake >nul 2>nul
 if errorlevel 1 (
@@ -145,7 +167,8 @@ exit /b 0
 
 :show_help
 echo Usage: build_studio.bat [clean] [debug] [ninja] [run]
-echo   clean   wipe build_studio\ before configuring
+echo   clean   alone: delete build_studio\ and exit, nothing else
+echo           combined with debug/ninja/run: wipe build_studio\ first, then build
 echo   debug   build Debug instead of Release
 echo   ninja   use the Ninja generator instead of Visual Studio/MSBuild
 echo   run     launch ava_studio.exe after a successful build

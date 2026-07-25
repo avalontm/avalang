@@ -1,4 +1,0 @@
-print("Testing negative index...")
-var arr = [10, 20, 30]
-var result = arr[-1]
-print(result)

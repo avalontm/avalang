@@ -766,7 +766,14 @@ void Compiler::CompileForList(const ForStmt* stmt) {
     Emit(OpCode::SETGLOBAL, len_func, len_var);
     FreeRegs(2);
     
-    Emit(OpCode::LOADNIL, 1);
+    // El índice del loop arranca en 0, no en nil -- list[0] tiene que ser
+    // el primer elemento leído. Antes esto emitía LOADNIL, así que la
+    // primera vuelta indexaba list[nil] (imprimía nil) y el resto de las
+    // vueltas quedaban corridas una posición (list[1], list[2], ... en vez
+    // de list[0], list[1], ...), porque idx = nil + 1 en la ADD de abajo
+    // la VM lo trata como 0 + 1 = 1.
+    auto zero_c = AddConstant(Value::Number(0));
+    Emit(OpCode::LOADK, 1, zero_c);
     Emit(OpCode::SETGLOBAL, 1, idx_var);
     
     size_t loop_start = proto_->instructions.size();
@@ -1253,11 +1260,17 @@ void Compiler::CompileClass(const ClassDef* cls) {
             uint16_t min_registers = static_cast<uint16_t>(f->params.size() + 1);
             sub.proto_->num_registers = std::max<uint16_t>(sub.max_reg_ + 1, min_registers);
             
-            std::string method_name = f->name == "init" ? "__init__" : f->name;
+            // Constructor: un método llamado igual que la clase (estilo
+            // C#, ej. `class Dog ... func Dog(name) ... end end`) se
+            // compila como __init__, el nombre real que busca el VM (ver
+            // vm.cpp:810). No hay resolución de sobrecarga por cantidad
+            // de parámetros en ningún otro lugar del lenguaje: si se
+            // definen dos constructores con el mismo nombre y distinta
+            // aridad, class_obj->methods es un mapa por nombre, así que
+            // el segundo simplemente pisa al primero -- no coexisten.
+            bool is_constructor = f->name == cls->name;
+            std::string method_name = is_constructor ? "__init__" : f->name;
             class_obj->methods[method_name] = sub.proto_;
-            if (f->name == "init") {
-                class_obj->methods["init"] = sub.proto_;
-            }
         }
     }
     

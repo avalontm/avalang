@@ -97,6 +97,28 @@ typedef ava_value_t (*AvaNativeFn)(
 AVA_API AvaVM* ava_vm_create(void);
 AVA_API void   ava_vm_destroy(AvaVM* vm);
 
+/* Sets the base directory `import` resolves module paths against for
+ * ava_compile/ava_run (which take source as a string, not a file path --
+ * without this, module resolution falls back to the process's current
+ * working directory, which is usually wrong for a host like an editor
+ * that runs unsaved-buffer text from an arbitrary file's location).
+ * Pass the directory of the file being run (or "" to reset to CWD). */
+AVA_API void ava_vm_set_current_dir(AvaVM* vm, const char* dir);
+
+/* Module resolution ("import"), in order:
+ *   1. relative to the current script's own directory (ava_vm_set_current_dir)
+ *   2. each path added via ava_vm_add_search_path, in the order added
+ *   3. the single stdlib path set via ava_vm_set_stdlib_path
+ * Neither of the below is set by default; a host that wants a "base
+ * modules" folder (shared library-style .ava files, separate from a
+ * project's own modules) must call these explicitly. */
+AVA_API void ava_vm_add_search_path(AvaVM* vm, const char* path);
+AVA_API void ava_vm_set_stdlib_path(AvaVM* vm, const char* path);
+
+/* Returns the currently configured stdlib path ("" if unset). Caller
+ * must free the returned string with ava_string_free. */
+AVA_API char* ava_vm_get_stdlib_path(AvaVM* vm);
+
 /* Registers a native (host) function under `name`, callable from scripts.
  * `user_data` is passed back unchanged on every call (closure context). */
 AVA_API void ava_vm_register_native(

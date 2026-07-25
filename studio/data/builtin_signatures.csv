@@ -1,0 +1,21 @@
+name,params,doc
+abs,number,Returns the absolute value of number.
+all,*values,"Returns true only if every value/item is truthy. Same two calling forms as min(): all(a, b, ...) or all(list)."
+any,*values,"Returns true if at least one value/item is truthy. Same two calling forms as min(): any(a, b, ...) or any(list)."
+ceil,number,Rounds number up toward positive infinity.
+float,value,Coerces value to a floating-point number (strings/bools are converted; invalid strings become 0).
+floor,number,Rounds number down toward negative infinity.
+int,value,Truncates value toward zero and returns it as a number. Strings/bools are coerced first (invalid strings become 0).
+len,value,"Returns the length of a string, list, or dict (character count / item count / entry count). Returns 0 for any other type."
+max,*values,"Returns the largest value. Same two calling forms as min(): max(a, b, ...) or max(list)."
+min,*values,"Returns the smallest value. Call it either as min(a, b, ...) with two or more arguments, or as min(list) with a single list -- returns nil if given nothing and no list."
+pow,base|exponent,Returns base raised to exponent (base ** exponent).
+print,*values,"Prints every argument, converted with the same rules as str(), separated by single spaces, followed by one newline. Accepts zero or more arguments of any type -- print() alone just prints a blank line."
+range,end,"Builds a list of numbers. Three calling forms: range(end) counts 0..end-1; range(start, end) counts start..end-1; range(start, end, step) steps by step (negative step counts down). Overload note: this entry shows the 1-argument form -- range(start, end) and range(start, end, step) are also valid."
+reversed,list,Returns a new list with list's items in reverse order. Non-list input returns an empty list.
+round,number,Rounds number to the nearest integer (half away from zero).
+sorted,list,"Returns a new list with list's items sorted ascending (numbers compare numerically, strings lexicographically). Non-list input returns an empty list."
+sqrt,number,Returns the square root of number.
+str,value,Converts value to its display string (the same formatting print() uses).
+sum,*values,"Returns the numeric total. Same two calling forms as min(): sum(a, b, ...) or sum(list); non-numeric items coerce to 0."
+type,value,"Returns the type name of value as a string: ""nil"", ""bool"", ""number"", ""string"", ""list"", ""dict"", ""function"", ""instance"", ""class"", ""coroutine"", ""native"", ""bound"", or ""exception""."

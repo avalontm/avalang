@@ -36,6 +36,10 @@ BUILTIN_API void RegisterBuiltinGlobals(AvaVM* vm) {
     raw_vm->RegisterNative("all", builtin_all, nullptr);
     raw_vm->RegisterNative("len", builtin_len, nullptr);
     raw_vm->RegisterNative("range", builtin_range, nullptr);
+
+    // Required by every `import` statement -- see builtin_import's doc
+    // comment in builtin_natives.h for why this must be registered here.
+    raw_vm->RegisterNative("__import__", builtin_import, nullptr);
 }
 
 // Declared in builtin.h but (per grep across this snapshot) never

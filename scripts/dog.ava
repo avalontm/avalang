@@ -1,0 +1,9 @@
+class dog
+	dog()
+	
+	end
+	
+	func say()
+		print("woof!!")
+	end
+end

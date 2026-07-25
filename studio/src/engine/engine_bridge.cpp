@@ -1,6 +1,19 @@
 #include "engine/engine_bridge.h"
 
+#include "util/data_dir.h"
+
 namespace studio {
+
+namespace {
+
+// "a/b/c.ava" -> "a/b". "" if there's no separator (unsaved buffer, source
+// passed as a bare in-memory string with no real path).
+std::string DirOf(const std::string& file_path) {
+    auto pos = file_path.find_last_of("/\\");
+    return pos == std::string::npos ? "" : file_path.substr(0, pos);
+}
+
+} // namespace
 
 EngineBridge::EngineBridge() {
     vm_ = ava_vm_create();
@@ -45,10 +58,22 @@ void EngineBridge::SubmitConsoleInput(const std::string& text) {
     input_queue_.push_back(text);
 }
 
+void EngineBridge::SetModulesPath(const std::string& path) {
+    const std::string resolved = path.empty() ? util::ResolveDefaultModulesDir() : path;
+    ava_vm_set_stdlib_path(vm_, resolved.c_str());
+}
+
 RunResult EngineBridge::RunScript(const std::string& source, const std::string& source_name) {
     RunResult result;
 
     console_.push_back({ConsoleLine::Kind::Info, "Run " + (source_name.empty() ? std::string("<script>") : source_name)});
+
+    // ava_compile/ava_run take `source` as an in-memory string, not a file
+    // path, so the VM has no way to know where it "lives" on disk -- and
+    // without that, `import` falls back to resolving relative to the
+    // process's CWD instead of the script's own folder. Fix that up front
+    // using source_name (which main.cpp passes as the tab's real file_path).
+    ava_vm_set_current_dir(vm_, DirOf(source_name).c_str());
 
     char* compile_error = nullptr;
     AvaModule* module = ava_compile(vm_, source.c_str(), source_name.c_str(), &compile_error);

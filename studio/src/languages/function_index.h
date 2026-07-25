@@ -84,14 +84,14 @@ private:
     void ScanImports(const std::string& text, const std::string& current_file_dir,
                       std::unordered_set<std::string>& visited);
 
-    // module_path = {"a","b","c"} -> ruta de archivo, best-effort.
-    // SUPUESTO (el runtime de __import__ no está implementado en este
-    // snapshot -- ver core/src/builtins/builtin_natives.h -- así que esto
-    // es una aproximación que espeja el join de Compiler::CompileImport,
-    // usando '/' en vez de '.'):
+    // module_path = {"a","b","c"} -> ruta de archivo, best-effort. Espeja
+    // ModuleResolver::ResolveModulePath (core/src/vm/module.cpp), que es
+    // lo que el runtime (__import__, ver builtin_natives.cpp) usa de
+    // verdad:
     //   1. <current_file_dir>/a/b/c.ava
-    //   2. <current_file_dir>/a/b/c/__init__.ava (por si los módulos son carpetas)
-    // Ajustar esto en cuanto __import__ tenga una implementación real.
+    //   2. <current_file_dir>/a/b/c/index.ava (módulos-carpeta)
+    // No sigue los demás search_paths_ del resolver (stdlib, etc.) --
+    // solo resuelve relativo al archivo abierto, best-effort para el editor.
     static std::string ResolveImportPath(const std::vector<std::string>& module_path,
                                           const std::string& current_file_dir);
 };

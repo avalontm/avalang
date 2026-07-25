@@ -14,6 +14,13 @@ struct OutputState {
     std::string input_buffer;    // scratch buffer for the console's input box widget
     bool has_run_result = false; // true once the user has pressed Run at least once this session
     RunResult last_run;          // last run's summary -- lets other UI (e.g. a future status bar) show success/failure without re-scanning the console
+
+    // Selection range over console line indices, both inclusive. -1 means
+    // "no selection". anchor is where the click/drag started, cursor is
+    // where it currently ends (they can be in either order -- callers use
+    // std::min/max of the pair to get the actual [first, last] range).
+    int selection_anchor = -1;
+    int selection_cursor = -1;
 };
 
 // Draws the Output panel (bottom dock) as an execution console: every

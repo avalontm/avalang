@@ -115,6 +115,14 @@ set(STUDIO_SOURCES
     src/languages/avalang_language.cpp
     src/languages/function_index.cpp
     src/languages/builtin_signatures.cpp
+    src/languages/keyword_docs.cpp
+    src/util/csv.cpp
+    src/util/data_dir.cpp
+    src/util/settings.cpp
+    src/design/component_catalog.cpp
+    src/design/design_document.cpp
+    src/design/avaui_text.cpp
+    src/design/layout_engine.cpp
     src/engine/engine_bridge.cpp
     src/panels/explorer_panel.cpp
     src/panels/editor_panel.cpp
@@ -122,6 +130,8 @@ set(STUDIO_SOURCES
     src/panels/preview_panel.cpp
     src/panels/output_panel.cpp
     src/panels/titlebar_panel.cpp
+    src/panels/toolbox_panel.cpp
+    src/panels/designer_canvas.cpp
     src/platform/win32_titlebar.cpp
     src/branding/logo_texture.cpp
 )
@@ -152,6 +162,22 @@ target_include_directories(ava_studio PRIVATE
 )
 
 target_link_libraries(ava_studio PRIVATE avalang imgui_docking text_editor)
+
+# data/keyword_docs.csv and data/builtin_signatures.csv -- the editable
+# tooltip/autocomplete-help tables (see languages/keyword_docs.h and
+# languages/builtin_signatures.h). Copied next to the .exe on every
+# build, same folder ResolveDataDir() (util/data_dir.cpp) looks in at
+# runtime, mirroring how ResolveWorkspaceDir() in main.cpp already
+# resolves "scripts/" the same way. Uses copy_directory instead of
+# copy_if_different so deleting a row from the source CSV during
+# development is reflected in the build output too, not just additions.
+add_custom_command(TARGET ava_studio POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:ava_studio>/data"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/data"
+            "$<TARGET_FILE_DIR:ava_studio>/data"
+    COMMENT "Copying data/ (keyword_docs.csv, builtin_signatures.csv) next to ava_studio.exe"
+)
 
 if(WIN32)
     # dwmapi -- DwmExtendFrameIntoClientArea, used by

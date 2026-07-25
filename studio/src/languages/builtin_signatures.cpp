@@ -1,5 +1,10 @@
 #include "languages/builtin_signatures.h"
 
+#include <filesystem>
+
+#include "util/csv.h"
+#include "util/data_dir.h"
+
 namespace studio {
 
 namespace {
@@ -32,7 +37,7 @@ FunctionSignature Make(const std::string& name, std::vector<std::string> params,
 
 } // namespace
 
-const std::unordered_map<std::string, FunctionSignature>& BuiltinSignatures() {
+const std::unordered_map<std::string, FunctionSignature>& DefaultBuiltinSignatures() {
     static const std::unordered_map<std::string, FunctionSignature> table = [] {
         std::unordered_map<std::string, FunctionSignature> m;
 
@@ -98,6 +103,80 @@ const std::unordered_map<std::string, FunctionSignature>& BuiltinSignatures() {
 
         return m;
     }();
+    return table;
+}
+
+namespace {
+
+namespace fs = std::filesystem;
+
+// data/builtin_signatures.csv columns: name,params,doc
+//  - params: pipe-separated raw parameter tokens as they'd appear in
+//    FunctionSignature::params ("value", "*values", "base|exponent" for
+//    two params). has_var_args is derived from any token starting with
+//    "*", rather than a separate column, since the token already carries
+//    that information.
+//  - doc: plain sentence(s).
+bool LoadBuiltinSignaturesFromCsv(const std::string& path,
+                                   std::unordered_map<std::string, FunctionSignature>& out) {
+    std::string text;
+    if (!util::ReadFileToString(path, text)) return false;
+
+    auto rows = util::ParseCsv(text);
+    if (rows.empty()) return false;
+
+    std::unordered_map<std::string, FunctionSignature> parsed;
+    // rows[0] is the header (name,params,doc) -- skip it.
+    for (size_t r = 1; r < rows.size(); ++r) {
+        const auto& row = rows[r];
+        if (row.size() == 1 && row[0].empty()) continue; // blank line
+        if (row.size() < 3) continue; // malformed row -- skip rather than crash on it
+
+        const std::string name = row[0];
+        if (name.empty()) continue;
+
+        std::vector<std::string> params;
+        bool has_var_args = false;
+        for (const auto& token : util::SplitOn(row[1], "|")) {
+            if (token.empty()) continue;
+            params.push_back(token);
+            if (token[0] == '*') has_var_args = true;
+        }
+
+        FunctionSignature sig = Make(name, std::move(params), has_var_args, util::UnescapeCell(row[2]));
+        parsed[name] = std::move(sig);
+    }
+
+    if (parsed.empty()) return false;
+    out = std::move(parsed);
+    return true;
+}
+
+} // namespace
+
+const std::unordered_map<std::string, FunctionSignature>& BuiltinSignatures() {
+    static std::unordered_map<std::string, FunctionSignature> table;
+    static fs::file_time_type last_loaded_time{};
+    static bool loaded_from_csv = false;
+    static bool first_call = true;
+
+    const std::string csv_path = util::ResolveDataDir() + "builtin_signatures.csv";
+    std::error_code ec;
+    fs::file_time_type current_time = fs::last_write_time(csv_path, ec);
+    bool csv_exists = !ec;
+
+    bool should_reload = first_call || (csv_exists && current_time != last_loaded_time);
+
+    if (should_reload) {
+        first_call = false;
+        if (csv_exists && LoadBuiltinSignaturesFromCsv(csv_path, table)) {
+            loaded_from_csv = true;
+            last_loaded_time = current_time;
+        } else if (!loaded_from_csv) {
+            table = DefaultBuiltinSignatures();
+        }
+    }
+
     return table;
 }
 

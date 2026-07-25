@@ -30,8 +30,11 @@
 #include "panels/preview_panel.h"
 #include "panels/properties_panel.h"
 #include "panels/titlebar_panel.h"
+#include "panels/toolbox_panel.h"
+#include "palette.h"
 #include "platform/win32_titlebar.h"
 #include "theme.h"
+#include "util/settings.h"
 
 namespace fs = std::filesystem;
 
@@ -74,6 +77,23 @@ constexpr float kTitleBarHeight = 34.0f;
 // of the window with no breathing room.
 constexpr float kTitleBarGap = 6.0f;
 
+// Set by GlfwWindowCloseRequested() below -- can't capture state directly
+// since GLFW callbacks are plain C function pointers, so this is written
+// there and read back once per frame in the main loop instead.
+bool g_native_close_requested = false;
+
+// Fires on Alt+F4, the taskbar/dock "close", or any other OS-level close
+// request GLFW would otherwise honor immediately. Ava Studio needs a
+// chance to warn about unsaved files first (see the exit confirmation in
+// main()), so this cancels GLFW's default "close now" and defers to that
+// same confirmation instead -- the same one the custom titlebar's X
+// button and File > Exit already go through, so every way of closing the
+// window behaves consistently.
+void GlfwWindowCloseRequested(GLFWwindow* window) {
+    glfwSetWindowShouldClose(window, GLFW_FALSE);
+    g_native_close_requested = true;
+}
+
 } // namespace
 
 int main() {
@@ -93,6 +113,7 @@ int main() {
     }
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
+    glfwSetWindowCloseCallback(window, GlfwWindowCloseRequested);
 
     // Removes the OS-native title bar (Windows only -- no-op elsewhere)
     // so we can draw our own VSCode-style one below, while keeping
@@ -150,6 +171,18 @@ int main() {
 
     studio::EngineBridge engine;
 
+    // Settings are loaded once here and applied to the VM immediately --
+    // modules_path defaults to "" (first run, or user cleared it), which
+    // SetModulesPath() resolves to util::ResolveDefaultModulesDir(). See
+    // util/settings.h.
+    studio::StudioSettings settings = studio::LoadSettings();
+    engine.SetModulesPath(settings.modules_path);
+
+    // One-shot channel from the "Browse..." folder dialog (which can only
+    // run here, since it needs `window`) back into the Properties modal's
+    // text field a frame later -- see DrawTitleBar's `browsed_folder` param.
+    std::string pending_modules_browse;
+
     studio::ExplorerState explorer_state;
     explorer_state.root_dir = ResolveWorkspaceDir();
 
@@ -175,7 +208,9 @@ int main() {
 
         // --- Custom title bar (replaces the OS-native one) -------------
         const bool is_maximized = studio::titlebar::IsWindowMaximizedNow(window);
-        studio::TitleBarResult titlebar_result = studio::DrawTitleBar(editor_state, is_maximized, kTitleBarHeight);
+        studio::TitleBarResult titlebar_result =
+            studio::DrawTitleBar(editor_state, settings, is_maximized, kTitleBarHeight, pending_modules_browse);
+        pending_modules_browse.clear(); // one-shot, consumed by DrawTitleBar this frame
 
         if (titlebar_result.minimize_clicked) {
             glfwIconifyWindow(window);
@@ -187,9 +222,12 @@ int main() {
                 glfwMaximizeWindow(window);
             }
         }
-        if (titlebar_result.close_clicked) {
-            glfwSetWindowShouldClose(window, GLFW_TRUE);
-        }
+        // Every way of asking to quit (this button, File > Exit further
+        // down, and native close via the GLFW callback above) funnels
+        // into the same "any unsaved changes?" check right before the
+        // main loop's end instead of closing here directly -- see
+        // want_quit below.
+        bool want_quit = titlebar_result.close_clicked;
 
         // Tells the Win32 hook which pixels are "real" buttons so
         // WM_NCHITTEST doesn't treat clicking them as dragging the
@@ -262,6 +300,14 @@ int main() {
             ImGuiID dock_center = dock_main;
 
             ImGui::DockBuilderDockWindow("Explorer", dock_left);
+            // Sibling tab in the same dock node as Explorer, not its own
+            // split -- see 08_DESIGNER_VIEW_PLAN.md section 5.5. Only
+            // ever actually drawn (see DrawToolboxPanel() call below)
+            // while the active tab is a .avaui in Design view, same as
+            // VS6 only showing the Toolbox with a .frm open; docking it
+            // here up front just means it lands in the right place
+            // instead of floating the first time that happens.
+            ImGui::DockBuilderDockWindow("Toolbox", dock_left);
             ImGui::DockBuilderDockWindow("Code Editor", dock_center);
             ImGui::DockBuilderDockWindow("Properties", dock_right);
             ImGui::DockBuilderDockWindow("Preview", dock_bottom);
@@ -281,9 +327,28 @@ int main() {
         if (explorer_result.file_deleted) {
             studio::CloseTabForPath(editor_state, *explorer_result.file_deleted);
         }
+        if (explorer_result.file_renamed) {
+            studio::RenameTabPath(editor_state, explorer_result.file_renamed->first,
+                                   explorer_result.file_renamed->second);
+        }
+
+        // --- Toolbox (only while a .avaui tab is showing Design view) ---
+        // Not called at all otherwise -- an ImGui window that isn't
+        // drawn on a frame just doesn't appear (it stays docked where
+        // DockBuilderDockWindow put it above for next time), same as
+        // how Preview/Output already work as always-tabbed-but-
+        // sometimes-empty siblings. See 08_DESIGNER_VIEW_PLAN.md
+        // section 5.5.
+        if (const studio::EditorTab* active = editor_state.Active();
+            active && active->is_avaui && active->view_mode == studio::TabViewMode::Design) {
+            studio::DrawToolboxPanel();
+        }
 
         // --- Editor -> Save / Run ----------------------------------------
         studio::DrawEditorPanel(editor_state);
+        if (editor_state.designer_selection) {
+            properties_state = *editor_state.designer_selection;
+        }
 
         // Global hotkeys (checked here, not tied to any single panel's
         // focus, so they work the same whether the click that opened a
@@ -295,6 +360,7 @@ int main() {
         const bool want_open    = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O);
         const bool want_close_tab = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_W);
         const bool want_run     = ImGui::IsKeyPressed(ImGuiKey_F5);
+        const bool want_toggle_view = ImGui::IsKeyPressed(ImGuiKey_F7);
 
         if (titlebar_result.new_requested || want_new || editor_state.new_tab_requested) {
             studio::NewUntitledTab(editor_state);
@@ -345,6 +411,14 @@ int main() {
                 studio::RequestCloseTab(editor_state, editor_state.active_tab);
             }
         }
+        if (want_toggle_view) {
+            // No-op for any tab that isn't .avaui -- ToggleTabViewMode
+            // guards on tab.is_avaui itself, same as VS6 where F7 only
+            // meant something with a .frm open.
+            if (studio::EditorTab* active = editor_state.Active()) {
+                studio::ToggleTabViewMode(*active);
+            }
+        }
         if (editor_state.run_requested || want_run) {
             if (const studio::EditorTab* active = editor_state.Active(); active && !active->is_welcome) {
                 studio::ClearErrorHighlights(editor_state);
@@ -358,9 +432,97 @@ int main() {
                 }
             }
         }
-        if (titlebar_result.quit_requested) {
-            glfwSetWindowShouldClose(window, GLFW_TRUE);
+        if (titlebar_result.modules_browse_requested) {
+            std::string path;
+            if (studio::titlebar::OpenFolderDialog(window, path, settings.modules_path)) {
+                pending_modules_browse = path;
+            }
         }
+        if (titlebar_result.modules_save_requested) {
+            engine.SetModulesPath(settings.modules_path);
+            studio::SaveSettings(settings);
+        }
+        // Fold in File > Exit and any native close request (Alt+F4, the
+        // taskbar/dock close, etc. -- see GlfwWindowCloseRequested) so
+        // every path to quitting resolves through the one check below.
+        want_quit = want_quit || titlebar_result.quit_requested || g_native_close_requested;
+        g_native_close_requested = false; // consumed this frame either way
+
+        if (want_quit) {
+            if (studio::HasUnsavedChanges(editor_state)) {
+                ImGui::OpenPopup("Unsaved Changes##ExitConfirm");
+            } else {
+                glfwSetWindowShouldClose(window, GLFW_TRUE);
+            }
+        }
+
+        // --- Unsaved-changes confirmation on exit (Save All & Exit /
+        // Exit / Cancel) -- drawn every frame so it stays open across
+        // frames once OpenPopup fires above, same pattern as every other
+        // modal in this file/the panels.
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f));
+        if (ImGui::BeginPopupModal("Unsaved Changes##ExitConfirm", nullptr,
+                                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse)) {
+            ImGui::TextWrapped("You have unsaved files. Do you want to save your changes before exiting?");
+            ImGui::Spacing();
+            ImGui::TextDisabled("Unsaved changes will be lost if you don't save them.");
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Three outcomes, three colors, so the button someone taps
+            // under pressure matches what they meant: green = keeps your
+            // work, red = throws it away, gray = does nothing / backs out.
+            const float spacing = ImGui::GetStyle().ItemSpacing.x;
+            const float button_w = (ImGui::GetContentRegionAvail().x - 2.0f * spacing) / 3.0f;
+
+            ImGui::PushStyleColor(ImGuiCol_Button, studio::palette::FromHex(studio::palette::kSuccess, 0.85f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, studio::palette::FromHex(studio::palette::kSuccess, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, studio::palette::FromHex(0x189b48));
+            if (ImGui::Button("Save All & Exit", ImVec2(button_w, 0.0f))) {
+                studio::SaveAllTabs(editor_state);
+                // SaveAllTabs() skips untitled tabs (nothing to write into
+                // without a path) -- walk those here, one Save As dialog
+                // at a time, same as Ctrl+S on an untitled buffer would.
+                // If the user cancels any of those dialogs, stay open
+                // instead of quitting so that tab's work isn't discarded.
+                bool all_saved = true;
+                for (auto& tab : editor_state.tabs) {
+                    if (tab->is_welcome || !tab->dirty || !tab->file_path.empty()) continue;
+                    std::string path;
+                    if (studio::titlebar::SaveFileDialog(window, path, explorer_state.root_dir)) {
+                        tab->file_path = path;
+                        studio::SaveTab(*tab);
+                    } else {
+                        all_saved = false;
+                    }
+                }
+                if (all_saved) glfwSetWindowShouldClose(window, GLFW_TRUE);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::PopStyleColor(3);
+            ImGui::SameLine(0.0f, spacing);
+
+            ImGui::PushStyleColor(ImGuiCol_Button, studio::palette::FromHex(studio::palette::kError, 0.85f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, studio::palette::FromHex(studio::palette::kError, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, studio::palette::FromHex(0xc93b3b));
+            // Renamed from "Exit" -- the label now says exactly what it
+            // does (discards unsaved work) instead of leaving that to be
+            // inferred from position/color alone.
+            if (ImGui::Button("Exit Without Saving", ImVec2(button_w, 0.0f))) {
+                glfwSetWindowShouldClose(window, GLFW_TRUE);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::PopStyleColor(3);
+            ImGui::SameLine(0.0f, spacing);
+
+            if (ImGui::Button("Cancel", ImVec2(button_w, 0.0f))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
         editor_state.save_requested = false;
         editor_state.run_requested = false;
         editor_state.close_tab_requested = false;

@@ -291,7 +291,7 @@ std::string FunctionIndex::ResolveImportPath(const std::vector<std::string>& mod
     fs::path candidate = base / (rel + ".ava");
     if (fs::exists(candidate, ec)) return candidate.string();
 
-    candidate = base / rel / "__init__.ava";
+    candidate = base / rel / "index.ava";
     if (fs::exists(candidate, ec)) return candidate.string();
 
     return ""; // no resuelto -- se ignora en silencio, best-effort

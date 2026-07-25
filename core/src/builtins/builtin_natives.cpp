@@ -314,4 +314,13 @@ ava_value_t builtin_range(AvaVM*, const ava_value_t* args, size_t count, void*) 
     return ToC(out);
 }
 
+ava_value_t builtin_import(AvaVM* vm, const ava_value_t* args, size_t count, void*) {
+    std::string module_path = count >= 1 ? ToDisplayString(FromC(args[0])) : "";
+    std::string alias = (count >= 2) ? ToDisplayString(FromC(args[1])) : "";
+
+    auto* raw_vm = reinterpret_cast<VM*>(vm);
+    Value result = raw_vm->DoImport(module_path, alias);
+    return ToC(result);
+}
+
 } // extern "C"

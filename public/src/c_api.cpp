@@ -40,6 +40,23 @@ AVA_API void ava_vm_destroy(AvaVM* vm) {
     delete reinterpret_cast<VM*>(vm);
 }
 
+AVA_API void ava_vm_set_current_dir(AvaVM* vm, const char* dir) {
+    reinterpret_cast<VM*>(vm)->SetCurrentDir(dir ? dir : "");
+}
+
+AVA_API void ava_vm_add_search_path(AvaVM* vm, const char* path) {
+    if (!path || !*path) return;
+    reinterpret_cast<VM*>(vm)->GetModuleResolver().AddSearchPath(path);
+}
+
+AVA_API void ava_vm_set_stdlib_path(AvaVM* vm, const char* path) {
+    reinterpret_cast<VM*>(vm)->GetModuleResolver().SetStdlibPath(path ? path : "");
+}
+
+AVA_API char* ava_vm_get_stdlib_path(AvaVM* vm) {
+    return DupString(reinterpret_cast<VM*>(vm)->GetModuleResolver().GetStdlibPath());
+}
+
 AVA_API void ava_vm_register_native(AvaVM* vm, const char* name, AvaNativeFn fn, void* user_data) {
     reinterpret_cast<VM*>(vm)->RegisterNative(name, fn, user_data);
 }
