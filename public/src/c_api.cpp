@@ -4,6 +4,7 @@
 #include "frontend/frontend.h"
 #include "ui/component.h"
 #include "ui/tree.h"
+#include "ui/avaui_text.h"
 #include "builtins/builtin.h"
 #include "builtins/builtin_natives.h"
 
@@ -399,6 +400,20 @@ AVA_API void ava_ui_remove_property(AvaComponent* comp, const char* key) {
     comp->comp->RemoveProperty(key);
 }
 
+AVA_API size_t ava_ui_property_count(AvaComponent* comp) {
+    if (!comp) return 0;
+    return comp->comp->GetAllProperties().size();
+}
+
+AVA_API const char* ava_ui_property_key_at(AvaComponent* comp, size_t index) {
+    if (!comp) return nullptr;
+    const auto& props = comp->comp->GetAllProperties();
+    if (index >= props.size()) return nullptr;
+    static thread_local std::string key_str;
+    key_str = props[index].first;
+    return key_str.c_str();
+}
+
 AVA_API void ava_ui_add_child(AvaComponent* parent, AvaComponent* child) {
     if (!parent || !child) return;
     parent->comp->AddChild(child->comp);
@@ -436,6 +451,20 @@ AVA_API int ava_ui_has_event(AvaComponent* comp, const char* event) {
 AVA_API ava_value_t ava_ui_get_event(AvaComponent* comp, const char* event) {
     if (!comp) return ava_value_t{AVA_NIL, {0}};
     return ToC(comp->comp->GetEvent(event));
+}
+
+AVA_API size_t ava_ui_event_count(AvaComponent* comp) {
+    if (!comp) return 0;
+    return comp->comp->GetAllEvents().size();
+}
+
+AVA_API const char* ava_ui_event_key_at(AvaComponent* comp, size_t index) {
+    if (!comp) return nullptr;
+    const auto& events = comp->comp->GetAllEvents();
+    if (index >= events.size()) return nullptr;
+    static thread_local std::string key_str;
+    key_str = events[index].first;
+    return key_str.c_str();
 }
 
 AVA_API void ava_ui_set_id(AvaComponent* comp, const char* id) {
@@ -546,6 +575,47 @@ AVA_API const char* ava_ui_tree_to_json(AvaComponentTree* tree) {
 
 AVA_API void ava_ui_json_free(char* json) {
     (void)json;
+}
+
+AVA_API AvaComponentTree* ava_ui_parse_avaui_text(
+    const char* text,
+    char** out_state_json,
+    char** out_imports_json,
+    char** out_methods_text,
+    char** out_error
+) {
+    ava::ui::ParsedAvaui parsed = ava::ui::ParseAvauiText(text ? text : "");
+
+    auto* tree = new AvaComponentTree();
+    tree->tree->SetRoot(parsed.root);
+
+    if (out_state_json) *out_state_json = DupString(ava::ui::StateToJson(parsed.state));
+    if (out_imports_json) *out_imports_json = DupString(ava::ui::ImportsToJson(parsed.imports));
+    if (out_methods_text) *out_methods_text = DupString(parsed.methods_text);
+    if (out_error) *out_error = DupString(""); // forgiving parser -- see avaui_text.h
+
+    return tree;
+}
+
+AVA_API char* ava_ui_write_avaui_text(
+    AvaComponentTree* tree,
+    const char* state_json,
+    const char* imports_json,
+    const char* methods_text
+) {
+    if (!tree) return DupString("");
+    auto root = tree->tree->GetRoot();
+    if (!root) return DupString("");
+
+    auto state = ava::ui::StateFromJson(state_json ? state_json : "{}");
+    auto imports = ava::ui::ImportsFromJson(imports_json ? imports_json : "[]");
+    std::string methods = methods_text ? methods_text : "";
+
+    return DupString(ava::ui::WriteAvauiText(*root, state, imports, methods));
+}
+
+AVA_API void ava_ui_text_free(char* text) {
+    std::free(text);
 }
 
 } // extern "C"

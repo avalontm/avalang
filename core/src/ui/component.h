@@ -52,6 +52,11 @@ public:
     void SetEvent(const std::string& event, const Value& callback);
     bool HasEvent(const std::string& event) const;
     Value GetEvent(const std::string& event) const;
+    // Insertion-ordered, like GetAllProperties() -- added for
+    // ui/avaui_text.cpp's writer, which needs to enumerate every event
+    // bound on a node (not just look one up by name) to serialize it
+    // back to `.avaui` text (see WriteAvauiText).
+    const std::vector<std::pair<std::string, Value>>& GetAllEvents() const { return events_; }
 
     // Children.
     void AddChild(std::shared_ptr<Component> child);

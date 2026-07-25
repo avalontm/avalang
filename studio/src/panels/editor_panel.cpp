@@ -985,7 +985,7 @@ void DrawEditorPanel(EditorState& state) {
                         ImGui::Separator();
                     }
                     const ImVec2 avail = ImGui::GetContentRegionAvail();
-                    if (auto selected_node = DrawDesignerCanvas(tab.design, avail)) {
+                    if (auto selected_node = DrawDesignerCanvas(tab.design, avail, state.project_root)) {
                         state.designer_selection = std::move(selected_node);
                     }
                     if (tab.design.dirty) tab.dirty = true;

@@ -188,6 +188,11 @@ int main() {
 
     studio::EditorState editor_state;
     studio::InitEditorPanel(editor_state);
+    // Same root Explorer is rooted at (explorer_state.root_dir above) --
+    // .avaui imports resolve against this, see design/component_resolver.h
+    // and EditorState::project_root's comment on why it must be one
+    // fixed root shared by the whole recursion.
+    editor_state.project_root = explorer_state.root_dir;
     studio::OpenWelcomeTab(editor_state);
 
     studio::OutputState output_state;

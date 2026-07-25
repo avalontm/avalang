@@ -109,6 +109,7 @@ set(CORE_SOURCES
     core/src/ui/event.cpp
     core/src/ui/registry.cpp
     core/src/ui/builtins.cpp
+    core/src/ui/avaui_text.cpp
     ${FRONTEND_SOURCES}
 )
 

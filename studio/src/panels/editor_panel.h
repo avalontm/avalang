@@ -106,6 +106,16 @@ struct EditorState {
     // tree does.
     std::optional<PropertiesState> designer_selection;
 
+    // The fixed root every `.avaui` file's `import "components/x"`
+    // resolves against (see design/component_resolver.h's constructor
+    // comment) -- set once by main.cpp right after
+    // ResolveWorkspaceDir(), same folder the Explorer is rooted at.
+    // Empty until main.cpp sets it, which DrawDesignerCanvas treats as
+    // "don't resolve components" (see designer_canvas.h) -- so a
+    // caller that never sets this just keeps the pre-resolver
+    // behavior instead of crashing on an empty base dir.
+    std::string project_root;
+
     EditorTab* Active();
     const EditorTab* Active() const;
 

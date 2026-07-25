@@ -122,6 +122,7 @@ set(STUDIO_SOURCES
     src/design/component_catalog.cpp
     src/design/design_document.cpp
     src/design/avaui_text.cpp
+    src/design/component_resolver.cpp
     src/design/layout_engine.cpp
     src/engine/engine_bridge.cpp
     src/panels/explorer_panel.cpp

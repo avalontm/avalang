@@ -1,9 +1,11 @@
 #include "panels/designer_canvas.h"
 
 #include <algorithm>
+#include <optional>
 #include <string>
 
 #include "design/component_catalog.h"
+#include "design/component_resolver.h"
 #include "design/layout_engine.h"
 #include "imgui.h"
 #include "palette.h"
@@ -62,8 +64,23 @@ void HandleDropTarget(design::DesignNode& node, design::DesignDocument& doc) {
 // screen-space top-left, since layout_engine's Rects are relative to
 // whatever `available_space` ComputeLayout was called with (see
 // layout_engine.h).
+//
+// `synthetic`: true when `node` is part of a resolved-component copy
+// (see the recursion into resolved subtrees below) rather than a real
+// node of `doc.root` -- HandleDropTarget is skipped for these (there's
+// nowhere in `doc` to actually append the dropped child to) but click
+// selection still works, for inspection. Always false for doc.root's
+// own tree.
+//
+// `resolver`: non-null enables resolving `Componente()` call-site
+// children into their real subtree for display (see designer_canvas.h
+// on why this is read-only/display-only). Null preserves the old
+// behavior exactly (call-site nodes draw as an empty labeled box, no
+// resolution attempted) -- see DrawDesignerCanvas's `project_root`
+// parameter.
 void DrawNode(design::DesignNode& node, const design::LayoutResult& layout, ImVec2 origin,
-              design::DesignDocument& doc, std::optional<PropertiesState>& out_selected) {
+              design::DesignDocument& doc, std::optional<PropertiesState>& out_selected,
+              const design::ComponentResolver* resolver, bool synthetic) {
     const auto it = layout.rects.find(node.node_uid);
     if (it == layout.rects.end()) return; // shouldn't happen -- ComputeLayout visits every node
     const design::Rect& r = it->second;
@@ -90,6 +107,12 @@ void DrawNode(design::DesignNode& node, const design::LayoutResult& layout, ImVe
 
     std::string label = node.type;
     if (!node.id.empty()) label += " (" + node.id + ")";
+    // Synthetic (resolved-component) nodes get a small marker so it's
+    // visually obvious this subtree came from an import, not from
+    // doc.root directly -- otherwise a resolved Navbar() would look
+    // indistinguishable from a hand-placed one, which matters here
+    // since (unlike the real tree) it silently discards drops.
+    if (synthetic) label += " [import]";
     draw_list->AddText(ImVec2(p0.x + 4.0f, p0.y + 4.0f), palette::U32FromHex(palette::kTextPrimary),
                         label.c_str());
 
@@ -114,18 +137,58 @@ void DrawNode(design::DesignNode& node, const design::LayoutResult& layout, ImVe
         doc.selected_uid = node.node_uid;
         out_selected = ToPropertiesState(node);
     }
-    HandleDropTarget(node, doc);
+    // Resolved-component subtrees aren't part of doc.root -- nothing
+    // to append a Toolbox drop to, so skip the drop target entirely
+    // rather than silently accepting a drop that vanishes next frame
+    // (see designer_canvas.h's header comment on this being
+    // read-only/display-only for now).
+    if (!synthetic) {
+        HandleDropTarget(node, doc);
+    }
     ImGui::PopID();
 
     for (design::DesignNode& child : node.children) {
-        DrawNode(child, layout, origin, doc, out_selected);
+        if (!synthetic && resolver != nullptr && design::ComponentResolver::IsComponentCall(child.type)) {
+            const design::DesignNode* cached = resolver->GetComponentNode(child.type);
+            if (cached != nullptr) {
+                // Resolve into a throwaway copy (fresh node_uids, see
+                // component_resolver.h) and lay it out fresh within
+                // the call-site node's own already-computed rect --
+                // see designer_canvas.h's "Known limitation" note on
+                // why that rect's SIZE still comes from the
+                // unresolved tree.
+                const auto child_rect_it = layout.rects.find(child.node_uid);
+                if (child_rect_it != layout.rects.end()) {
+                    design::DesignNode resolved = resolver->ResolveComponentCall(child);
+                    const design::LayoutResult inner_layout = design::ComputeLayout(resolved, child_rect_it->second);
+                    DrawNode(resolved, inner_layout, origin, doc, out_selected, resolver, /*synthetic=*/true);
+                    continue; // don't also draw the unresolved call-site node below
+                }
+            }
+        }
+        DrawNode(child, layout, origin, doc, out_selected, resolver, synthetic);
     }
 }
 
 } // namespace
 
-std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, ImVec2 size) {
+std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, ImVec2 size,
+                                                   const std::string& project_root) {
     std::optional<PropertiesState> selected;
+
+    // Built fresh every call (every frame, in practice) -- cheap by
+    // design (see component_resolver.h's class comment), though that
+    // does mean re-reading/re-parsing every imported .avaui off disk
+    // once per frame while a Design tab with imports is visible. Fine
+    // for the handful of components a real project has today; if that
+    // ever shows up as an actual perf problem, the fix is caching a
+    // resolver (and invalidating it on save) at the EditorTab level
+    // instead of here -- not done now, no evidence yet it's needed.
+    std::optional<design::ComponentResolver> resolver;
+    if (!project_root.empty()) {
+        resolver.emplace(project_root);
+        resolver->ResolveImports(doc);
+    }
 
     ImGui::BeginChild("##DesignerCanvas", size, true, ImGuiWindowFlags_HorizontalScrollbar);
 
@@ -134,7 +197,7 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
     const design::Rect canvas_rect{0.0f, 0.0f, std::max(avail.x, 1.0f), std::max(avail.y, 1.0f)};
 
     const design::LayoutResult layout = design::ComputeLayout(doc.root, canvas_rect);
-    DrawNode(doc.root, layout, origin, doc, selected);
+    DrawNode(doc.root, layout, origin, doc, selected, resolver ? &*resolver : nullptr, /*synthetic=*/false);
 
     // Root itself (the page) also accepts drops -- e.g. the very first
     // control on a blank page, before any container has been placed

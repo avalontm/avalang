@@ -666,3 +666,361 @@ Compilar (punto 4) y probar carga/guardado de un `.avaui` de ejemplo
 (9.2 punto 1) — son las dos formas más baratas de encontrar errores
 en el puerto del parser antes de construir más cosas encima.
 
+**Superado por 9.4** — en vez de eso, la sesión siguiente unificó el
+parser en `avalang.dll` (recomendado aparte, no era parte de este
+documento) antes de compilar el proyecto completo; ver abajo.
+
+### 9.4 Unificación en `avalang.dll` (hecho, en dos entregas)
+
+Cambio de arquitectura, no de formato de archivo: la gramática de 9.1
+(que en ese momento vivía duplicada en `studio/src/design/avaui_text.cpp`,
+puerto C++ de `AvaComponentParser.cs`) se centralizó en el core del
+lenguaje para que cualquier host (Ava Studio, el binding .NET, uno
+futuro) la use vía la C API en lugar de mantener su propia copia a
+mano — el mismo riesgo de "dos implementaciones de la misma gramática
+que pueden divergir" que ya advertía 9.2 punto 3, pero a nivel de
+lenguaje en vez de a nivel de host.
+
+**Entrega 1:**
+- **`core/src/ui/avaui_text.h` / `.cpp`** (nuevo): el parser/writer de
+  9.1 re-portado para construir directamente árboles
+  `ava::ui::Component` (el mismo modelo que ya usa
+  `ava_ui_create_component`/`ava_ui_create_tree`), en vez de
+  `DesignNode` (Studio) o `ComponentNode` (C#). Vive en
+  `core/src/ui/`, compilado dentro de `avalang.dll`.
+- **`core/src/ui/component.h`**: agregado `Component::GetAllEvents()`
+  (insertion-ordered, igual que `GetAllProperties()`) — hacía falta
+  para que el writer pueda serializar de vuelta los eventos de un
+  nodo, y no existía ningún accessor para enumerarlos.
+- **`public/include/avalang.h`** / **`public/src/c_api.cpp`**:
+  `ava_ui_parse_avaui_text` / `ava_ui_write_avaui_text` / `ava_ui_text_free`
+  — la gramática de 9.1 expuesta como C API. `ava_ui_parse_avaui_text`
+  devuelve un `AvaComponentTree*` normal (mismo modelo que
+  `ava_ui_create_tree`) más tres out-params para las secciones que no
+  encajan en el modelo de Component (`state` como JSON plano,
+  `imports` como JSON plano, `methods` como texto verbatim).
+- **`CMakeLists.txt`** (raíz): agregado `core/src/ui/avaui_text.cpp` a
+  `CORE_SOURCES`.
+- Bug encontrado y corregido durante esta entrega (con un test
+  standalone real, no solo revisión manual): un componente en forma de
+  llamada (`Navbar()`) sin línea en blanco después de él hacía que el
+  parser se comiera la línea del sibling siguiente en un segundo
+  parse pass — off-by-one heredado tal cual de la lógica original de
+  9.1 (y presente también, según lo revisado, en
+  `AvaComponentParser.cs`). Corregido en el nuevo parser de
+  `core/src/ui/`; **9.1 nunca se corrigió con este fix** porque quedó
+  reemplazado por completo en la entrega 2 (ver abajo) — no hace falta
+  aplicarlo dos veces.
+
+**Entrega 2:**
+- **`public/include/avalang.h`** / **`public/src/c_api.cpp`**: cuatro
+  funciones de enumeración —
+  `ava_ui_property_count`/`ava_ui_property_key_at` y
+  `ava_ui_event_count`/`ava_ui_event_key_at` — para que un caller
+  recorra todas las props/eventos de un `AvaComponent` por índice sin
+  conocer sus claves de antemano (`ava_ui_get_property`/`get_event`
+  existentes piden la clave). Hacía falta específicamente para que el
+  adaptador de abajo pueda convertir un `AvaComponent` a `DesignNode`
+  sin una lista fija de props posibles por tipo de componente.
+- **`studio/src/design/avaui_text.cpp` reescrito por completo**: dejó
+  de ser el puerto C++ de 9.1 (duplicado) y pasó a ser un adaptador
+  delgado — llama a `ava_ui_parse_avaui_text`/`ava_ui_write_avaui_text`
+  de `avalang.dll` y solo convierte `AvaComponent` ↔ `DesignNode` (con
+  las cuatro funciones de enumeración de arriba) más un encode/decode
+  chico del JSON plano de `state`/`imports` (mismo escapado que el
+  core, carácter por carácter: `\" \\ \n \r \t`). Las firmas públicas
+  de `studio/src/design/avaui_text.h` no cambiaron — ningún otro
+  archivo de `studio/` (`design_document.cpp`, `editor_panel.cpp`)
+  necesitó tocarse.
+- Detalle de la API resuelto en esta entrega: `ava_ui_set_property`/
+  `set_event` piden un `ava_value_t`, y crear uno de tipo string
+  normalmente pediría una `AvaVM*` viva (`ava_string_create(vm, ...)`)
+  — pero `c_api.cpp` ignora ese parámetro por completo, así que el
+  adaptador de Studio pasa `nullptr` sin necesitar levantar una VM solo
+  para mover strings de propiedades a través del límite C.
+- **`studio/src/design/avaui_json.h` / `.cpp` borrados** — quedaban sin
+  ninguna referencia real en el proyecto desde la migración de 9.1 (el
+  único rastro era un comentario).
+- Verificado con `g++ -fsyntax-only -std=c++20` (limpio, no es un
+  build real): `c_api.cpp` completo, el nuevo `avaui_text.cpp` de
+  Studio, y `design_document.cpp` (para confirmar que sigue
+  compilando contra el header sin cambios de firma).
+
+**Qué NO cambió con esta unificación** (para que quede claro el
+alcance): el *formato* del archivo `.avaui` sigue siendo exactamente
+el de la sección 3 — esto es un cambio de *dónde vive el código* que
+lo lee/escribe, no de qué dice el archivo. Todo lo demás de 9.1
+(`design_document.h/.cpp`, `layout_engine.*`, `component_catalog.*`,
+`toolbox_panel.*`, `designer_canvas.*`) sigue igual, no dependía del
+parser directamente.
+
+**Sigue pendiente** (superset de 9.2, sin cambios por esta
+unificación salvo lo tachado):
+1. Resolución de `import`/`Componente()` — igual que 9.2 punto 1, sin
+   tocar.
+2. `state` sin evaluar/bindear — igual que 9.2 punto 2, sin tocar.
+3. Sin ningún `.avaui` de prueba real cargado en Ava Studio compilado
+   — igual que 9.2 punto 3, sin tocar (el "test standalone" de la
+   Entrega 1 fue aparte, sobre el parser de `core/` directamente, no
+   sobre el `.avaui` real de la sección 3 vía Ava Studio).
+4. **Sin compilar el proyecto completo** — ~~lo único verificado en
+   las dos entregas fue syntax-check aislado por archivo
+   (`g++ -fsyntax-only`), no `build.bat`/`build_studio.bat` reales.~~
+   **Actualizado:** compilado por vos con `build.bat`/`build_studio.bat`
+   reales y confirmado que funciona — este punto queda resuelto. Sigue
+   sin haber, eso sí, una prueba puntual de un `.avaui` real cargado en
+   el Studio ya compilado (ver 9.5 punto 1).
+5. El resto de la sección 2 original (motor de layout más allá de
+   Column/Row, `ui.*` builtins registrados, catálogo de props más
+   rico) sigue en pie tal cual.
+
+### 9.5 Estado al cierre de esta sesión / qué sigue
+
+**Confirmado en esta sesión:** el proyecto compila completo
+(`avalang.dll` + Ava Studio) con la unificación de 9.4 adentro y
+corre. No se probó todavía, dentro de esta misma sesión, abrir un
+`.avaui` real en el Studio ya compilado — eso es lo primero de la
+lista de abajo.
+
+Para la próxima sesión, en orden:
+
+1. ~~**Probar un `.avaui` real en el Studio compilado.**~~ **Hecho en
+   esta sesión, con una salvedad — ver 9.6.**
+2. **Resolución de `import "components/x"` / llamadas `Componente()`**
+   (9.2 punto 1, sin tocar todavía). Hoy quedan como datos sueltos —
+   nada busca `components/x.avaui`, lo parsea, ni sustituye el nodo
+   por su árbol real. Es lo que bloquea que el canvas muestre un
+   `Navbar()` como algo más que una caja vacía, y es el gap más
+   grande que queda antes de que el Designer soporte multi-archivo.
+3. **Fase 2 del plan original (drag&drop desde Toolbox)** — sección 6:
+   soltar un tipo del catálogo en el canvas crea un `DesignNode`, y
+   `Ctrl+S` ya escribe un `.avaui` real vía `SaveAvauiFile` (que ya
+   delega en `avalang.dll` desde 9.4, así que esta fase no debería
+   tocar el parser en absoluto, solo `toolbox_panel.cpp`/
+   `designer_canvas.cpp`/el wiring de `main.cpp`).
+4. **`state` sin evaluar/bindear** (9.2 punto 2) — depende de
+   `ui.*` builtins (Fase 6), no bloqueante todavía.
+5. **El binding .NET (`AvaComponentParser.cs`) sigue sin migrar** a la
+   C API de `avalang.dll` — quedó fuera de alcance en las sesiones de
+   unificación (se pidió enfocarse solo en el repo `avalang`, C++). Si
+   se retoma esa unificación completa, es la pieza que falta del otro
+   lado.
+
+### 9.6 Round-trip del `.avaui` de la sección 3 (hecho, con una salvedad)
+
+**Salvedad primero, para que quede clara:** esto **no** se probó
+dentro de Ava Studio compilado con GUI — este entorno no puede correr
+un binario de escritorio (ImGui/Windows). Lo que sí se hizo es el
+equivalente de más bajo nivel que ya se había usado en la Entrega 1 de
+9.4 ("un test standalone real, no solo revisión manual"): un ejecutable
+aparte que enlaza directo contra el parser ya unificado en
+`core/src/ui/` (el mismo código que `avalang.dll` expone via
+`ava_ui_parse_avaui_text`/`ava_ui_write_avaui_text`, y que el adaptador
+de Studio en `studio/src/design/avaui_text.cpp` llama sin lógica propia
+de parseo) — así que cubre la gramática real, aunque no pasa por
+ImGui/`editor_panel.cpp`/F7 en sí. Punto 1 de la lista de arriba sigue
+sin una prueba dentro del Studio con GUI; si eso importa
+específicamente (vs. probar el parser que el Studio usa), sigue
+pendiente.
+
+**Qué se agregó:** `core/tests/avaui_text_roundtrip_test.cpp` —
+programa standalone (no enganchado a `CMakeLists.txt`, con el comando
+de compilación en un comentario arriba del archivo) que:
+
+1. Parsea el ejemplo exacto de la sección 3 de este documento y
+   verifica la forma del árbol resultante (`page` → `column` con
+   `fill`/`padding`/`gap` → `Navbar()` + `text` + `button`), el bloque
+   `state` (`counter = 0`), `imports` (`components/navbar`) y que
+   `methods_text` conserva `btnGuardar_Click`.
+2. Llama a `WriteAvauiText` sobre ese árbol y vuelve a parsear el
+   resultado — el round-trip F7 (código → diseño → código) — y repite
+   las mismas verificaciones.
+3. Confirma que un segundo ciclo escritura→parseo produce texto
+   idéntico al primero (el writer es estable, no hay drift entre
+   pasadas).
+4. Agrega el caso pedido: un `Navbar()` sin línea en blanco antes del
+   siguiente sibling (`text`) — la forma exacta que gatillaba el bug
+   off-by-one corregido en la Entrega 1 de 9.4 — y confirma que ambos
+   hijos sobreviven, tanto en el primer parseo como después de un
+   round-trip completo de escritura/reparseo.
+
+**Resultado: las 33 verificaciones pasan** (compilado con
+`g++ -std=c++20`, sin warnings, enlazando solo
+`avaui_text.cpp`/`component.cpp`/`property.cpp`/`event.cpp`/`value.cpp`
+— sin dependencias de ImGui ni del resto de Studio).
+
+**Un detalle de normalización encontrado, no un bug:** `fill = "true"`
+en el archivo original vuelve como `fill = true` (sin comillas)
+después de escribirlo — es el comportamiento documentado en
+`avaui_text.h`/`WritePropertyValue` (`"true"`/`"false"` se emiten sin
+comillas), no una pérdida de dato; el valor sigue siendo el string
+`"true"` en ambos parseos. Se deja anotado por si alguna vez se
+depende de la diferencia entre `true` literal (booleano) y `"true"`
+string en algún prop — hoy el parser no distingue esos dos casos en
+absoluto (todo es string, ver el header), así que no hay forma de que
+divergiera.
+
+### 9.7 Resolución de `import`/`Componente()` (hecho, no compilado -- ver salvedad)
+
+**Salvedad primero:** este entorno no compiló nada de esto (a pedido
+explícito para esta sesión) -- ni siquiera un `g++ -fsyntax-only` como
+en 9.4/9.6. El código de abajo se escribió y se revisó a mano contra
+las firmas reales de `design_document.h`/`avaui_text.h` ya existentes
+en el repo, pero **la primera compilación real la hace la próxima
+sesión** (con `build.bat`/`build_studio.bat` o el `g++` que se venía
+usando). Tratarlo como no verificado hasta entonces.
+
+**Qué resuelve** (punto 2 de la lista pendiente en 9.5, punto 1 de la
+sección 2 original): que un `import "components/x"` y una llamada
+`X()` en el `view` de un `.avaui` dejen de ser datos sueltos y se
+expandan al árbol real del componente importado.
+
+**Archivos nuevos** (agregados a `studio/CMakeLists.txt` junto a los
+otros de `design/`, no rompen nada existente):
+- `studio/src/design/component_resolver.h` / `.cpp` -- el equivalente
+  C++ de `ComponentResolver.cs` del prototipo .NET (ver sección 0.1),
+  adaptado a `DesignNode`/`DesignDocument` en vez de
+  `ComponentNode`/`ScriptCache` (acá no hay `AvaVM` de por medio -- el
+  Designer no evalúa expresiones todavía, ver sección 2 punto 3, esto
+  solo mueve estructura de árbol).
+
+**Diseño, igual que 9.2/lo ya resumido antes de esta sesión:**
+- `ComponentResolver(base_dir)` -- `base_dir` es la raíz del proyecto,
+  fija para toda la recursión (no el directorio del archivo que
+  importa en cada momento) -- mismo motivo que
+  `ComponentResolver.cs::_basePath` y el mismo bug que hay que evitar
+  si algún día se re-deriva por archivo: un import anidado escrito
+  *dentro* de un componente ya importado tiene que seguir resolviendo
+  contra la raíz, no contra `components/`.
+- `LoadComponent`/`ResolveImports(doc)` -- parsean el `.avaui`
+  importado vía `LoadAvauiFile` (el mismo parser real, no uno nuevo),
+  cachean por `import_path` para no releer/reparsear dos veces en la
+  misma pasada, y recurren en los imports del propio componente
+  importado.
+- El árbol del componente cacheado es `imported_doc.root.children[0]`
+  (el único hijo del `page` sintético que envuelve todo archivo
+  `.avaui`, ver `design_document.h`) -- coincide con la forma de
+  `navbar.ava` y el resto de archivos reales revisados en
+  `AvaLang.UI.Web/Pages/`. Si el `view` tuviera más de un nodo raíz
+  (no visto en ningún archivo real del proyecto), cae de vuelta al
+  `page` completo en vez de romper.
+- `ResolveComponentCall(node)` / `ResolveTree(root)` -- una llamada
+  `X()` (nodo hoja con `type` PascalCase, igual chequeo que
+  `char.IsUpper(type[0])` en el original) se reemplaza por una COPIA
+  del árbol cacheado, con `node_uid` regenerado en cada nodo de la
+  copia (misma razón que `MakeNode`/`LoadAvauiFile`: dos usos del
+  mismo componente no pueden compartir uid o la selección del canvas
+  se rompe). `ResolveTree` no muta `doc.root` -- se llama sobre una
+  copia del árbol, exactamente la misma decisión de diseño (y el mismo
+  motivo: no hornear el árbol expandido dentro del `.avaui` guardado)
+  que ya se había tomado para el resolver en la sesión anterior de
+  C++.
+- Ciclos (`A` importa `B` importa `A`) -- se corta con una pila de
+  nombres en expansión (`expansion_stack`); el nodo más interno del
+  ciclo queda sin resolver ("caja vacía"), no cuelga.
+- Referencias sin import declarado, o import a un archivo que no
+  existe en disco -- silenciosas, quedan como estaban (mismo
+  comportamiento tolerante que `ParseAvauiText`).
+
+**Pendiente, no bloqueante (sin tocar en esta sesión):**
+1. Compilar esto de verdad (ver salvedad arriba) -- primer paso de la
+   próxima sesión antes de seguir.
+2. Cablear `ComponentResolver` en `designer_canvas.cpp` para que el
+   canvas lo use al dibujar -- es trabajo de UI, no de resolución, y
+   sigue sin tocarse (mismo alcance acotado que ya se venía
+   siguiendo).
+3. `state` sin evaluar/bindear (sección 2 punto 2) -- sin cambios.
+4. El binding .NET (`AvaComponentParser.cs`/`ComponentResolver.cs`)
+   sigue sin migrar a la C API de `avalang.dll` -- sin cambios (sigue
+   fuera de alcance, ver 9.5 punto 5).
+
+### 9.8 Cablear el ComponentResolver en el canvas (hecho, no compilado)
+
+**Salvedad, igual que 9.7:** tampoco se compiló nada de esto en esta
+sesión (mismo pedido explícito). Revisado a mano contra las firmas
+reales de `designer_canvas.h/.cpp`, `editor_panel.h/.cpp` y
+`main.cpp` ya existentes -- primera compilación real, próxima sesión.
+
+**Hallazgo primero, importante:** al auditar el punto 3 original de la
+lista de 9.5 ("Fase 2 del plan -- drag&drop desde Toolbox") resultó
+que **ya estaba completo** en el repo que me pasaron -- no coincidía
+con lo que decía 9.5. Verificado uno por uno: `toolbox_panel.h/.cpp`
+(drag source), `designer_canvas.cpp::HandleDropTarget` (drop target
+real, agrega `DesignNode` al soltar), `editor_panel.cpp::DrawEditorPanel`
+(despacha a `DrawDesignerCanvas` en modo Design) y `SaveTab` (ya llama
+`SaveAvauiFile`), `main.cpp` (Toolbox dockeado y con visibilidad
+condicional a `view_mode == Design`, `designer_selection` ya
+alimentando `properties_state`), e ícono `.avaui` en Explorer. Nada
+de esto necesitó tocarse. El comentario "Not wired into
+DrawEditorPanel/main.cpp yet" que quedaba en `designer_canvas.h`
+estaba desactualizado -- reemplazado.
+
+**Lo que sí faltaba y se hizo en esta sesión:** que el canvas dibuje
+el árbol REAL de un `Navbar()` en vez de la caja vacía, usando el
+`ComponentResolver` de 9.7.
+
+**Diseño:**
+- `EditorState::project_root` (nuevo campo, `editor_panel.h`) -- la
+  misma raíz fija de proyecto contra la que resuelven los imports
+  (ver 9.7), seteada una vez en `main.cpp` justo después de
+  `ResolveWorkspaceDir()`, mismo valor que usa Explorer
+  (`explorer_state.root_dir`). Vacío por defecto -- ver abajo por qué
+  eso importa.
+- `DrawDesignerCanvas(doc, size, project_root = "")` -- nuevo tercer
+  parámetro, con default vacío para no romper ningún otro call site
+  hipotético (hoy solo hay uno, `editor_panel.cpp`, ya actualizado
+  para pasar `state.project_root`). Con `project_root` vacío el
+  comportamiento es IDÉNTICO a antes de esta sesión (caja vacía sin
+  resolver nada) -- importante porque así un test que llame a esta
+  función sin querer resolución no se ve afectado.
+- Adentro, si `project_root` no está vacío, arma un
+  `ComponentResolver` NUEVO cada vez que se llama (o sea, en la
+  práctica, cada frame mientras el tab está a la vista) y le hace
+  `ResolveImports(doc)`. Anotado como límite de performance conocido,
+  no bloqueante: hoy relee/reparsea cada `.avaui` importado del disco
+  una vez por frame -- aceptable para la cantidad de componentes que
+  tiene el proyecto hoy; si algún día es un problema real, cachear el
+  resolver a nivel `EditorTab` (invalidando al guardar) es el arreglo,
+  no hecho ahora sin evidencia de que haga falta.
+- `DrawNode` (dentro de `designer_canvas.cpp`) ahora recibe un
+  `const ComponentResolver*` (`nullptr` = comportamiento viejo) y un
+  `bool synthetic`. Al recorrer los hijos de un nodo: si el hijo es
+  una llamada a componente (`ComponentResolver::IsComponentCall`,
+  ahora público) y el resolver tiene un componente cacheado con ese
+  nombre, en vez de dibujar el nodo original se resuelve una COPIA
+  descartable (`ResolveComponentCall`, uids frescos) y se dibuja esa
+  copia completa con `synthetic = true`, con su propio
+  `ComputeLayout` interno acotado al rect que el layout principal ya
+  le había asignado al sitio de la llamada.
+- **`synthetic = true` implica dos cosas:** (1) el label del nodo
+  lleva un sufijo `[import]` para que se note a simple vista que viene
+  de un archivo importado, no del árbol editable; (2) NO acepta drops
+  del Toolbox (`HandleDropTarget` se saltea) -- soltar ahí no tiene
+  dónde persistir de verdad (la copia se descarta al siguiente frame),
+  así que en vez de aceptar el drop silenciosamente y perderlo, no se
+  ofrece en absoluto. El click SÍ sigue funcionando (selección/
+  Properties de solo inspección), igual que cualquier nodo.
+- **NO se muta `doc.root`** en ningún momento -- exactamente la misma
+  decisión de diseño que ya se había tomado para `ResolveImports` en
+  9.7 y para el resolver del `core/` en la sesión anterior a esta;
+  ahora se sostiene también en el punto donde de verdad se dibuja.
+
+**Límite conocido, no bloqueante (documentado en el header de
+`designer_canvas.h`):** el espacio que el nodo de la llamada
+(`Navbar()`) reserva en el layout de su padre sigue calculado sobre
+el árbol SIN resolver (un nodo sin hijos = una fila de altura fija,
+ver `layout_engine.cpp`) -- la resolución de esta sesión solo llena
+ese espacio ya reservado con el layout real del componente, no hace
+que el padre se reacomode si el componente resuelto es más alto que
+esa fila. Arreglarlo de verdad requiere que `layout_engine.cpp` sepa
+de resolución, cambio más grande, fuera de alcance acá.
+
+**Pendiente, no bloqueante:**
+1. Compilar esto de verdad (ver salvedad arriba).
+2. El límite de layout de arriba (altura del call-site sin ajustar al
+   contenido resuelto).
+3. Cachear el `ComponentResolver` por `EditorTab` en vez de reconstruirlo
+   cada frame, si el I/O a disco por frame llega a notarse.
+4. Todo lo demás sigue igual que 9.5/9.7 (Fase 3 properties
+   editable, `state` sin evaluar, binding .NET sin migrar).
+

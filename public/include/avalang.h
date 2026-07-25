@@ -263,6 +263,18 @@ AVA_API int  ava_ui_has_property(AvaComponent* comp, const char* key);
 AVA_API ava_value_t ava_ui_get_property(AvaComponent* comp, const char* key);
 AVA_API void ava_ui_remove_property(AvaComponent* comp, const char* key);
 
+/* Enumeration by index, in insertion order -- for a caller (e.g. a
+ * host's .avaui-text adapter converting an AvaComponent tree into its
+ * own node model) that needs to walk every property/event a component
+ * has without already knowing the key names ahead of time, unlike
+ * ava_ui_get_property/ava_ui_has_property above which require the key.
+ * Returns NULL / 0 for an out-of-range index or a NULL component. The
+ * returned key string follows the same thread-local-buffer convention
+ * as ava_ui_get_id -- copy it before the next ava_ui_* call on this
+ * thread if it needs to outlive that call. */
+AVA_API size_t ava_ui_property_count(AvaComponent* comp);
+AVA_API const char* ava_ui_property_key_at(AvaComponent* comp, size_t index);
+
 AVA_API void ava_ui_add_child(AvaComponent* parent, AvaComponent* child);
 AVA_API void ava_ui_remove_child(AvaComponent* parent, AvaComponent* child);
 AVA_API size_t ava_ui_child_count(AvaComponent* parent);
@@ -271,6 +283,11 @@ AVA_API AvaComponent* ava_ui_get_child(AvaComponent* parent, size_t index);
 AVA_API void ava_ui_set_event(AvaComponent* comp, const char* event, ava_value_t callback);
 AVA_API int  ava_ui_has_event(AvaComponent* comp, const char* event);
 AVA_API ava_value_t ava_ui_get_event(AvaComponent* comp, const char* event);
+
+/* Same enumeration pattern as ava_ui_property_count/key_at above, for
+ * the event map instead of properties. */
+AVA_API size_t ava_ui_event_count(AvaComponent* comp);
+AVA_API const char* ava_ui_event_key_at(AvaComponent* comp, size_t index);
 
 AVA_API void ava_ui_set_id(AvaComponent* comp, const char* id);
 AVA_API const char* ava_ui_get_id(AvaComponent* comp);
@@ -284,6 +301,87 @@ AVA_API AvaComponent* ava_ui_get_root(AvaComponentTree* tree);
 AVA_API const char* ava_ui_get_component_type(AvaComponent* comp);
 AVA_API const char* ava_ui_tree_to_json(AvaComponentTree* tree);
 AVA_API void ava_ui_json_free(char* json);
+
+/* ---------------------------------------------------------------------
+ * .avaui text format (parser/writer for the state/view/methods syntax
+ * described in docs/architecture/08_DESIGNER_VIEW_PLAN.md section 3).
+ *
+ * Centralizes the grammar here (core/src/ui/avaui_text.{h,cpp}, plain
+ * ava::ui::Component underneath, same as ava_ui_create_tree's model)
+ * instead of each host re-implementing it -- see that plan doc's
+ * section 9.2/9.3 for the reasoning: this used to be duplicated by
+ * hand in Ava Studio (C++, avaui_text.cpp under studio/src/design/)
+ * and the AvaLang.UI .NET prototype (C#, AvaComponentParser.cs), two
+ * ports of the same grammar that could silently drift from each other.
+ * Both are expected to migrate to call these two functions instead of
+ * keeping their own copy.
+ * ------------------------------------------------------------------- */
+
+/* Parses a full .avaui file's text and returns its Component tree --
+ * the same AvaComponentTree/AvaComponent model ava_ui_create_tree/
+ * ava_ui_create_component already produce, so a caller that already
+ * knows how to walk that tree (e.g. via ava_ui_tree_to_json, or the
+ * C# ComponentTree.cs binding) needs nothing new to consume the
+ * result. The tree's root is a synthetic "page" component whose
+ * properties come from the file's `properties` block and whose
+ * children are the `view` block's top-level component(s) -- there is
+ * no `page` keyword in the file format itself.
+ *
+ * The other three sections of the file don't fit that Component
+ * model, so they come back as separate out-params instead of being
+ * force-fit into properties:
+ *   out_state_json   -- the `state` block, as a flat JSON object of
+ *                        string values, e.g. {"counter": "0"}.
+ *   out_imports_json -- the `import "..."` lines, as a flat JSON
+ *                        array of strings, in file order. Not resolved
+ *                        (no import-resolution wiring exists yet on
+ *                        either host -- see the plan doc's section
+ *                        9.2 point 1).
+ *   out_methods_text -- the `methods` block, verbatim (real AvaLang
+ *                        source, e.g. `func onClick() ... end`) --
+ *                        not parsed here, ava_compile/ava_run already
+ *                        parse it when a host wants to execute it.
+ *
+ * Always returns a non-NULL tree and clears out_error -- an
+ * unrecognized/garbage file yields a mostly-empty page instead of
+ * failing, matching every existing .avaui parser's forgiving
+ * behavior. out_error exists for interface symmetry with the rest of
+ * this header and any future caller that does want to treat a parse
+ * problem as fatal.
+ *
+ * Every out-param is optional (pass NULL to skip it) and, when
+ * non-NULL, is set to a string the caller must free with
+ * ava_ui_text_free -- except the returned tree itself, which the
+ * caller owns and must release with ava_ui_destroy_tree as usual. */
+AVA_API AvaComponentTree* ava_ui_parse_avaui_text(
+    const char* text,
+    char** out_state_json,
+    char** out_imports_json,
+    char** out_methods_text,
+    char** out_error
+);
+
+/* Inverse of ava_ui_parse_avaui_text: serializes a Component tree plus
+ * the same three side-channel sections back into one complete .avaui
+ * file's text. `state_json`/`imports_json` use the same flat JSON
+ * shapes documented above (pass "{}"/"[]" or NULL for none);
+ * `methods_text` is emitted verbatim inside a `methods ... end` block
+ * (pass "" or NULL for none). Returns a string the caller must free
+ * with ava_ui_text_free. */
+AVA_API char* ava_ui_write_avaui_text(
+    AvaComponentTree* tree,
+    const char* state_json,
+    const char* imports_json,
+    const char* methods_text
+);
+
+/* Frees strings returned by ava_ui_parse_avaui_text's out-params and
+ * by ava_ui_write_avaui_text. Same pattern as ava_string_free /
+ * ava_ui_json_free -- kept as its own function (rather than reusing
+ * one of those) so this section of the header is self-contained and
+ * a binding doesn't have to guess which free function pairs with
+ * which allocator. */
+AVA_API void ava_ui_text_free(char* text);
 
 #ifdef __cplusplus
 }

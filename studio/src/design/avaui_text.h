@@ -15,6 +15,14 @@ namespace studio::design {
 // reference this file ports to C++). Replaces the earlier
 // avaui_json.{h,cpp} (a JSON envelope) written before that finding.
 //
+// UPDATE (plan section 9.2/9.3): the grammar itself now lives once in
+// core/src/ui/avaui_text.{h,cpp}, compiled into avalang.dll and
+// exposed via avalang.h's ava_ui_parse_avaui_text/ava_ui_write_avaui_text.
+// This header's function signatures are unchanged (every existing
+// caller -- design_document.cpp, editor_panel.cpp -- keeps working
+// as-is), but avaui_text.cpp is now a thin adapter that calls into
+// avalang.dll instead of re-implementing the parser/writer by hand.
+//
 // File shape (see the plan doc for the full worked example):
 //
 //   import "components/navbar"
