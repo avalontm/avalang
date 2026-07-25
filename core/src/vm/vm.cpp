@@ -167,13 +167,26 @@ void VM::SetGlobal(const std::string& name, Value value) {
 }
 
 Value VM::Run(const std::shared_ptr<Proto>& main) {
+    const size_t base = frames_.size();
     CallFrame frame;
     frame.proto = main;
     frame.registers.resize(main->num_registers);
     frames_.push_back(std::move(frame));
-    Value result = ExecuteFrame(0);
-    frames_.pop_back();
-    return result;
+    try {
+        Value result = ExecuteFrame(frames_.size() - 1);
+        frames_.pop_back();
+        return result;
+    } catch (...) {
+        // ExecuteFrame's own pop_back (and any nested callee's) never ran
+        // -- the throw skipped straight past them -- so frames_ would
+        // otherwise be left with this run's stale frame(s) still on it.
+        // Left uncleaned, the *next* Run() call would push its frame on
+        // top of that leftover instead of at index 0, and ExecuteFrame(0)
+        // would execute the wrong (stale) frame. Truncate back to
+        // whatever was there before this call started.
+        frames_.resize(base);
+        throw;
+    }
 }
 
 Value VM::Call(const Value& callable, const std::vector<Value>& args) {
@@ -282,6 +295,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
     auto& code = frames_[frame_idx].proto->instructions;
     auto& K = frames_[frame_idx].proto->constants;
 
+    try {
     while (frames_[frame_idx].pc < code.size()) {
         const Instr& in = code[frames_[frame_idx].pc++];
         switch (in.op) {
@@ -1095,6 +1109,30 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 break;
             }
         }
+    }
+    } catch (const AvaError&) {
+        // Already carries a real source position -- either annotated by
+        // a deeper ExecuteFrame call re-throwing through the CALL opcode
+        // above, or thrown directly with one (e.g. CompileSource during a
+        // dynamic import). The innermost frame's position is the most
+        // useful one to show the user, so leave it untouched.
+        throw;
+    } catch (const std::exception& e) {
+        // pc was already advanced past the offending instruction by the
+        // `code[frames_[frame_idx].pc++]` read above, so pc - 1 is the
+        // one that actually threw. debug_lines is filled 1:1 with
+        // instructions by Compiler::Emit (see
+        // core/src/compiler/compiler.cpp), so this maps straight back to
+        // a source line -- column isn't tracked at this granularity, only
+        // line (0 = unknown, e.g. a proto compiled before this existed).
+        int line = 0;
+        if (frame_idx < frames_.size()) {
+            const auto& debug_lines = frames_[frame_idx].proto->debug_lines;
+            const size_t pc = frames_[frame_idx].pc;
+            const size_t ip = pc > 0 ? pc - 1 : 0;
+            if (ip < debug_lines.size()) line = static_cast<int>(debug_lines[ip]);
+        }
+        throw AvaError(e.what(), line, 0);
     }
 
     return Value::Nil();

@@ -101,6 +101,22 @@ EditorTab& OpenWelcomeTab(EditorState& state);
 
 void SaveActiveTab(EditorState& state);
 
+// Highlights `line`/`column` (1-based; 0 = unknown, e.g. some runtime
+// errors -- see core/src/common/ava_error.h) in the tab open on
+// `file_path` as a compile/runtime error: tints that line's gutter and
+// text red (palette::kError) with `message` as its hover tooltip, and
+// moves the caret there so it's visible without hunting for it. No-op if
+// `file_path` isn't open in any tab or `line` is 0. Called from
+// main.cpp right after a failed EngineBridge::RunScript.
+void HighlightError(EditorState& state, const std::string& file_path, int line, int column,
+                     const std::string& message);
+
+// Clears any highlight set by HighlightError, on every open tab. Called
+// before each run (a previous error's line shouldn't stay red after a
+// successful retry) -- SetChangeCallback in InitTab also clears it
+// per-tab as soon as that tab's buffer is edited.
+void ClearErrorHighlights(EditorState& state);
+
 // Closes `index` immediately if its buffer is clean, or arms the
 // Save/Don't Save/Cancel confirmation (resolved inside DrawEditorPanel)
 // if it has unsaved changes. Safe to call with any valid index, including

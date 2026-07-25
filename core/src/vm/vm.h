@@ -66,6 +66,15 @@ public:
     void SetPrintSink(PrintSink sink);
     void Print(const std::string& text) const;
 
+    // Structured position of the most recent error caught by the C API
+    // (ava_compile/ava_run/ava_call/ava_import, see public/src/c_api.cpp).
+    // 1-based; 0 = unknown. Set from AvaError::line/column when the C API
+    // catches one, or reset to 0 on any other kind of exception. Read via
+    // ava_last_error_line/ava_last_error_column so an embedder (e.g. Ava
+    // Studio) can highlight the offending line in an editor.
+    int last_error_line = 0;
+    int last_error_column = 0;
+
 private:
     Value ExecuteFrame(size_t frame_idx);
 

@@ -225,6 +225,7 @@ void InitTab(EditorTab& tab) {
     // agregar debounce acá es el primer lugar a tocar.
     tab.editor.SetChangeCallback([&tab] {
         tab.dirty = true;
+        tab.editor.ClearMarkers();
         RebuildIndexAndTrie(tab);
     }, 0);
 
@@ -453,6 +454,47 @@ void CloseTabForPath(EditorState& state, const std::string& path) {
     int index = FindTabForPath(state, path);
     if (index >= 0) {
         CloseTabNow(state, index);
+    }
+}
+
+void HighlightError(EditorState& state, const std::string& file_path, int line, int column,
+                     const std::string& message) {
+    if (line <= 0 || file_path.empty()) return;
+    int index = FindTabForPath(state, file_path);
+    if (index < 0) return;
+    EditorTab& tab = *state.tabs[index];
+
+    // One error at a time -- a stale marker from a previous run (or one
+    // on a different line) would be confusing sitting next to the new one.
+    tab.editor.ClearMarkers();
+
+    // Alpha < 1 so the highlighted line's own text/syntax coloring stays
+    // readable underneath the red wash, instead of a solid opaque bar.
+    const ImU32 error_color = palette::U32FromHex(palette::kError, 0.35f);
+
+    // Compile errors' `message` already embeds "error at file:line:col: "
+    // (see frontend_antlr.cpp's formatError), but runtime errors' don't
+    // -- their text is just the raw C++ exception message, with no
+    // position of its own (column is always 0 for those, see
+    // core/src/vm/vm.cpp) -- so prefix the line number here for parity.
+    std::string tooltip = column > 0 ? message : ("Línea " + std::to_string(line) + ": " + message);
+
+    // AddMarker's line is zero-based (see TextEditor.h's "access markers
+    // (line numbers are zero-based)" comment); everything else in this
+    // codebase (SourceError, AvaError, RunResult) is 1-based, so -1 here
+    // and nowhere else.
+    tab.editor.AddMarker(line - 1, error_color, error_color, tooltip, tooltip);
+
+    // Jump the caret to the exact spot (column falls back to the start
+    // of the line when unknown) and scroll it into view even if the
+    // error is off-screen.
+    tab.editor.SetCursor(line - 1, column > 0 ? column - 1 : 0);
+    tab.editor.ScrollToLine(line - 1, TextEditor::Scroll::alignMiddle);
+}
+
+void ClearErrorHighlights(EditorState& state) {
+    for (auto& tab : state.tabs) {
+        if (tab) tab->editor.ClearMarkers();
     }
 }
 

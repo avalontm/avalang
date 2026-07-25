@@ -4,12 +4,13 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include "../common/ava_error.h"
 #include "../vm/proto.h"
 
 namespace ava {
 
-struct CompileError : std::runtime_error {
-    using std::runtime_error::runtime_error;
+struct CompileError : AvaError {
+    using AvaError::AvaError;
 };
 
 // Compiles AvaLang source text into a top-level Proto ready for VM::Run.

@@ -12,6 +12,7 @@ Value Compiler::MakeString(const std::string& s) {
 
 void Compiler::Reset() {
     proto_ = std::make_shared<Proto>();
+    current_line_ = 0;
     next_reg_ = 0;
     max_reg_ = 0;
     locals_.clear();
@@ -56,6 +57,10 @@ uint16_t Compiler::AddConstant(const Value& v) {
 
 void Compiler::Emit(OpCode op, uint16_t a, uint16_t b, uint16_t c) {
     proto_->instructions.push_back({op, static_cast<uint8_t>(a), b, c});
+    // Kept 1:1 with instructions so VM::ExecuteFrame can index it by pc on
+    // a runtime error (see core/src/vm/vm.cpp) -- every push to
+    // instructions must have a matching push here.
+    proto_->debug_lines.push_back(static_cast<uint32_t>(current_line_));
     if (next_reg_ > max_reg_) max_reg_ = next_reg_;
 }
 
@@ -436,7 +441,7 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
         sub.EmitDefaultsPrologue(l->defaults, 1);
 
         sub.CompileChunk(l->body);
-        sub.proto_->instructions.push_back({OpCode::RETURN, 0, 0, 0});
+        sub.Emit(OpCode::RETURN);
         sub.proto_->num_registers = std::max<uint16_t>(sub.max_reg_ + 1, sub.next_reg_);
 
         uint16_t child_idx = static_cast<uint16_t>(proto_->child_protos.size());
@@ -451,6 +456,8 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
 }
 
 void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
+    if (stmt->line > 0) current_line_ = stmt->line;
+
     if (auto* e = dynamic_cast<ExprStmt*>(stmt.get())) {
         CompileExpr(e->expr);
         return;
@@ -694,7 +701,7 @@ void Compiler::CompileWhile(const WhileStmt* stmt) {
 
     size_t jmp_back = proto_->instructions.size();
     int32_t offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(jmp_back) - 1;
-    proto_->instructions.push_back({OpCode::JMP, 0, 0, 0});
+    Emit(OpCode::JMP);
     proto_->instructions.back().bx32 = offset;
 
     PatchJump(jmp_out);
@@ -793,7 +800,7 @@ void Compiler::CompileForList(const ForStmt* stmt) {
     Emit(OpCode::JMP, 0);
     
     int32_t back_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(proto_->instructions.size()) - 1;
-    proto_->instructions.push_back({OpCode::JMP, 0, 0, 0});
+    Emit(OpCode::JMP);
     proto_->instructions.back().bx32 = back_offset;
     
     PatchJump(jmp_out);
@@ -858,7 +865,7 @@ void Compiler::CompileForCoroutine(const ForStmt* stmt) {
     CompileChunk(stmt->body);
     
     int32_t back_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(proto_->instructions.size()) - 1;
-    proto_->instructions.push_back({OpCode::JMP, 0, 0, 0});
+    Emit(OpCode::JMP);
     proto_->instructions.back().bx32 = back_offset;
     
     PatchJump(jmp_out);
@@ -966,7 +973,7 @@ void Compiler::CompileFunc(const FuncDef* func) {
     sub.CompileChunk(func->body);
     uint8_t ret_a = sub.result_reg_ > 0 ? static_cast<uint8_t>(sub.result_reg_) : 0;
     uint8_t ret_b = sub.result_reg_ > 0 ? 1 : 0;
-    sub.proto_->instructions.push_back({OpCode::RETURN, ret_a, static_cast<uint16_t>(ret_b), 0});
+    sub.Emit(OpCode::RETURN, ret_a, static_cast<uint16_t>(ret_b), 0);
     sub.proto_->num_registers = sub.max_reg_ + 1;
 
     uint16_t child_idx = static_cast<uint16_t>(proto_->child_protos.size());
@@ -1241,7 +1248,7 @@ void Compiler::CompileClass(const ClassDef* cls) {
             sub.EmitDefaultsPrologue(f->params, 1);
 
             sub.CompileChunk(f->body);
-            sub.proto_->instructions.push_back({OpCode::RETURN, 0, 0, 0});
+            sub.Emit(OpCode::RETURN);
             
             uint16_t min_registers = static_cast<uint16_t>(f->params.size() + 1);
             sub.proto_->num_registers = std::max<uint16_t>(sub.max_reg_ + 1, min_registers);

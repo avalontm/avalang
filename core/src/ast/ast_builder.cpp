@@ -261,8 +261,23 @@ std::any AstBuilder::visitBlock(AvaLangParser::BlockContext* ctx) {
 }
 
 std::any AstBuilder::visitStatement(AvaLangParser::StatementContext* ctx) {
-    if (ctx->simpleStatement()) return visitSimpleStatement(ctx->simpleStatement());
-    return visitCompoundStatement(ctx->compoundStatement());
+    std::any result = ctx->simpleStatement()
+        ? visitSimpleStatement(ctx->simpleStatement())
+        : visitCompoundStatement(ctx->compoundStatement());
+
+    // Every statement passes through here regardless of its concrete kind,
+    // so this is the single point where source lines get stamped onto the
+    // AST (see AstNode::line). stmtFromAny already knows how to pull a
+    // shared_ptr<StmtNode> out of any concrete statement type's std::any --
+    // reuse it here instead of duplicating that dispatch, then re-wrap as
+    // the base type so downstream stmtFromAny/stmtsFromAny calls (which
+    // try the base type first) still find it.
+    auto stmt = stmtFromAny(result);
+    if (stmt) {
+        stmt->line = static_cast<int>(ctx->getStart()->getLine());
+        return std::any(stmt);
+    }
+    return result;
 }
 
 std::any AstBuilder::visitSimpleStatement(AvaLangParser::SimpleStatementContext* ctx) {

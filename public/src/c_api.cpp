@@ -55,16 +55,23 @@ AVA_API void ava_vm_set_print_callback(AvaVM* vm, AvaPrintFn fn, void* user_data
     }
 }
 
-AVA_API AvaModule* ava_compile(AvaVM*, const char* source, const char* source_name, char** out_error) {
+AVA_API AvaModule* ava_compile(AvaVM* vm, const char* source, const char* source_name, char** out_error) {
+    auto* raw_vm = reinterpret_cast<VM*>(vm);
     try {
         auto proto = CompileSource(source, source_name ? source_name : "<script>");
         auto* module = new AvaModule();
         module->proto = proto;
         return module;
+    } catch (const AvaError& e) {
+        if (raw_vm) { raw_vm->last_error_line = e.line; raw_vm->last_error_column = e.column; }
+        if (out_error) *out_error = DupString(e.what());
+        return nullptr;
     } catch (const std::exception& e) {
+        if (raw_vm) { raw_vm->last_error_line = 0; raw_vm->last_error_column = 0; }
         if (out_error) *out_error = DupString(e.what());
         return nullptr;
     } catch (...) {
+        if (raw_vm) { raw_vm->last_error_line = 0; raw_vm->last_error_column = 0; }
         if (out_error) *out_error = DupString("unknown error");
         return nullptr;
     }
@@ -75,23 +82,39 @@ AVA_API void ava_module_destroy(AvaModule* module) {
 }
 
 AVA_API void ava_run(AvaVM* vm, AvaModule* module, ava_value_t* out_result, char** out_error) {
+    auto* raw_vm = reinterpret_cast<VM*>(vm);
     try {
-        Value result = reinterpret_cast<VM*>(vm)->Run(module->proto);
+        Value result = raw_vm->Run(module->proto);
         if (out_result) *out_result = ToC(result);
+    } catch (const AvaError& e) {
+        raw_vm->last_error_line = e.line;
+        raw_vm->last_error_column = e.column;
+        if (out_error) *out_error = DupString(e.what());
+        if (out_result) out_result->type = AVA_NIL;
     } catch (const std::exception& e) {
+        raw_vm->last_error_line = 0;
+        raw_vm->last_error_column = 0;
         if (out_error) *out_error = DupString(e.what());
         if (out_result) out_result->type = AVA_NIL;
     }
 }
 
 AVA_API void ava_call(AvaVM* vm, ava_value_t callable, const ava_value_t* args, size_t arg_count, ava_value_t* out_result, char** out_error) {
+    auto* raw_vm = reinterpret_cast<VM*>(vm);
     try {
         std::vector<Value> vargs;
         vargs.reserve(arg_count);
         for (size_t i = 0; i < arg_count; ++i) vargs.push_back(FromC(args[i]));
-        Value result = reinterpret_cast<VM*>(vm)->Call(FromC(callable), vargs);
+        Value result = raw_vm->Call(FromC(callable), vargs);
         if (out_result) *out_result = ToC(result);
+    } catch (const AvaError& e) {
+        raw_vm->last_error_line = e.line;
+        raw_vm->last_error_column = e.column;
+        if (out_error) *out_error = DupString(e.what());
+        if (out_result) out_result->type = AVA_NIL;
     } catch (const std::exception& e) {
+        raw_vm->last_error_line = 0;
+        raw_vm->last_error_column = 0;
         if (out_error) *out_error = DupString(e.what());
         if (out_result) out_result->type = AVA_NIL;
     }
@@ -106,10 +129,18 @@ AVA_API void ava_set_global(AvaVM* vm, const char* name, ava_value_t value) {
 }
 
 AVA_API ava_value_t ava_import(AvaVM* vm, const char* module_path, const char* alias, char** out_error) {
+    auto* raw_vm = reinterpret_cast<VM*>(vm);
     try {
-        Value result = reinterpret_cast<VM*>(vm)->DoImport(module_path, alias ? alias : "");
+        Value result = raw_vm->DoImport(module_path, alias ? alias : "");
         return ToC(result);
+    } catch (const AvaError& e) {
+        raw_vm->last_error_line = e.line;
+        raw_vm->last_error_column = e.column;
+        if (out_error) *out_error = DupString(e.what());
+        return ToC(Value::Nil());
     } catch (const std::exception& e) {
+        raw_vm->last_error_line = 0;
+        raw_vm->last_error_column = 0;
         if (out_error) *out_error = DupString(e.what());
         return ToC(Value::Nil());
     }
@@ -295,6 +326,14 @@ AVA_API void ava_value_release(AvaVM*, ava_value_t value) {
 
 AVA_API void ava_string_free(char* s) {
     std::free(s);
+}
+
+AVA_API int ava_last_error_line(AvaVM* vm) {
+    return vm ? reinterpret_cast<VM*>(vm)->last_error_line : 0;
+}
+
+AVA_API int ava_last_error_column(AvaVM* vm) {
+    return vm ? reinterpret_cast<VM*>(vm)->last_error_column : 0;
 }
 
 struct AvaComponent {

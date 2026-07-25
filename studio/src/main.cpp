@@ -347,8 +347,15 @@ int main() {
         }
         if (editor_state.run_requested || want_run) {
             if (const studio::EditorTab* active = editor_state.Active(); active && !active->is_welcome) {
+                studio::ClearErrorHighlights(editor_state);
                 output_state.last_run = engine.RunScript(active->GetText(), active->file_path);
                 output_state.has_run_result = true;
+                if (!output_state.last_run.success) {
+                    studio::HighlightError(editor_state, active->file_path,
+                                            output_state.last_run.error_line,
+                                            output_state.last_run.error_column,
+                                            output_state.last_run.message);
+                }
             }
         }
         if (titlebar_result.quit_requested) {

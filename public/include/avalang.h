@@ -211,6 +211,18 @@ AVA_API void ava_value_release(AvaVM* vm, ava_value_t value);
 
 AVA_API void ava_string_free(char* s); /* frees strings returned via out_error, etc. */
 
+/* Structured position (1-based; 0 = unknown) of the most recent error
+ * caught by ava_compile / ava_run / ava_call / ava_import on this VM --
+ * call right after one of those returns a NULL module / fills out_error.
+ * Lets a host UI (e.g. Ava Studio's Code Editor) highlight the exact
+ * source line/column instead of only showing out_error's formatted text.
+ * Runtime errors (from ava_run/ava_call) only carry line-level precision
+ * today, so ava_last_error_column returns 0 for those; syntax errors
+ * (from ava_compile) carry both. Overwritten by this VM's next such
+ * call, so read it before making another one. */
+AVA_API int ava_last_error_line(AvaVM* vm);
+AVA_API int ava_last_error_column(AvaVM* vm);
+
 /* ---------------------------------------------------------------------
  * UI Component Tree API
  * ------------------------------------------------------------------- */

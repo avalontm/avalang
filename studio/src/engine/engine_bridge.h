@@ -16,6 +16,14 @@ namespace studio {
 struct RunResult {
     bool success = false;
     std::string message; // final summary ("OK -> ...") or error text
+
+    // Source position of the failure, 1-based (0 = unknown -- e.g. an
+    // error with no meaningful line, or success). Mirrors
+    // ava_last_error_line/ava_last_error_column (see avalang.h), read
+    // right after the failing ava_compile/ava_run call in RunScript().
+    // Only meaningful when !success.
+    int error_line = 0;
+    int error_column = 0;
 };
 
 // One line of the Output panel's execution console -- built to feel like

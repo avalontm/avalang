@@ -18,7 +18,7 @@ statement
     ;
 
 simpleStatement
-    : smallStatement (NEWLINE | ';' NEWLINE)*
+    : smallStatement (NEWLINE | ';' NEWLINE)+
     ;
 
 smallStatement

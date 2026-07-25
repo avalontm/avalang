@@ -55,6 +55,8 @@ RunResult EngineBridge::RunScript(const std::string& source, const std::string& 
     if (!module) {
         result.success = false;
         result.message = compile_error ? compile_error : "unknown compile error";
+        result.error_line = ava_last_error_line(vm_);
+        result.error_column = ava_last_error_column(vm_);
         if (compile_error) ava_string_free(compile_error);
         console_.push_back({ConsoleLine::Kind::Error, result.message});
         return result;
@@ -73,6 +75,8 @@ RunResult EngineBridge::RunScript(const std::string& source, const std::string& 
     if (run_error) {
         result.success = false;
         result.message = run_error;
+        result.error_line = ava_last_error_line(vm_);
+        result.error_column = ava_last_error_column(vm_);
         ava_string_free(run_error);
         console_.push_back({ConsoleLine::Kind::Error, result.message});
         return result;

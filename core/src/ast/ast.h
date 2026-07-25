@@ -20,6 +20,12 @@ enum class UnOp {
 
 struct AstNode {
     virtual ~AstNode() = default;
+
+    // 1-based source line this node came from; 0 = unknown/not stamped.
+    // Only statements get this stamped today (see AstBuilder::visitStatement),
+    // since that's the granularity Compiler::CompileStmt needs to keep
+    // Proto::debug_lines in sync with emitted instructions.
+    int line = 0;
 };
 
 struct ExprNode : AstNode {};

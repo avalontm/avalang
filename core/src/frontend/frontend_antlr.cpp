@@ -117,7 +117,12 @@ std::shared_ptr<Proto> CompileSource(const std::string& source, const std::strin
         for (const auto& err : error_listener.errors) {
             err_out << formatError(source_name, err, normalized_source);
         }
-        throw CompileError(err_out.str());
+        // Multiple syntax errors can be collected, but only one source
+        // position can be reported upstream -- use the first, since it's
+        // usually the root cause (later ones are often just the parser
+        // getting confused after the first bad token).
+        const SourceError& first = error_listener.errors.front();
+        throw CompileError(err_out.str(), static_cast<int>(first.line), static_cast<int>(first.column));
     }
 
     if (parser.getNumberOfSyntaxErrors() > 0) {

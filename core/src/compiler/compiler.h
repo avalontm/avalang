@@ -23,6 +23,12 @@ private:
     };
 
     std::shared_ptr<Proto> proto_;
+    // Source line of the statement currently being compiled (see
+    // CompileStmt), stamped onto every instruction Emit() produces while
+    // compiling it so Proto::debug_lines can map instructions back to
+    // source for error reporting. 0 = unknown (e.g. instructions emitted
+    // outside any CompileStmt call, such as an implicit trailing RETURN).
+    int current_line_ = 0;
     uint16_t next_reg_ = 0;
     uint16_t max_reg_ = 0;
     uint16_t result_reg_ = 0;
