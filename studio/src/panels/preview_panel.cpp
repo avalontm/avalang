@@ -7,10 +7,13 @@ namespace studio {
 namespace {
 
 // PROPERTIES_EDITABLE: this only reads from PreviewNode into
-// PropertiesState -- there's no write-back into the .ava source yet.
-// That's the "changing a property immediately updates the source file"
-// piece from the vision doc; it needs a real script-backed tree (see
-// the note in engine_bridge.cpp) before it can mean anything.
+// PropertiesState, and leaves PropertiesState::editable at its default
+// (false) -- Properties shows this selection read-only. Write-back
+// exists now (see designer_canvas.cpp's ToPropertiesState and
+// properties_panel.cpp/main.cpp, Fase 3 of 08_DESIGNER_VIEW_PLAN.md),
+// but only for a real DesignNode backed by an actual .avaui file --
+// this demo Component Tree has no source file to write into (see the
+// note in engine_bridge.cpp), so it stays read-only on purpose.
 void DrawNode(const EngineBridge::PreviewNode& node, std::optional<PropertiesState>& selected) {
     std::string label = node.type;
     if (!node.id.empty()) label += " (" + node.id + ")";

@@ -124,6 +124,7 @@ set(STUDIO_SOURCES
     src/design/avaui_text.cpp
     src/design/component_resolver.cpp
     src/design/layout_engine.cpp
+    src/design/state_eval.cpp
     src/engine/engine_bridge.cpp
     src/panels/explorer_panel.cpp
     src/panels/editor_panel.cpp
@@ -164,7 +165,8 @@ target_include_directories(ava_studio PRIVATE
 
 target_link_libraries(ava_studio PRIVATE avalang imgui_docking text_editor)
 
-# data/keyword_docs.csv and data/builtin_signatures.csv -- the editable
+# data/keyword_docs.csv, data/builtin_signatures.csv and
+# data/component_catalog.csv -- the editable
 # tooltip/autocomplete-help tables (see languages/keyword_docs.h and
 # languages/builtin_signatures.h). Copied next to the .exe on every
 # build, same folder ResolveDataDir() (util/data_dir.cpp) looks in at
@@ -177,7 +179,7 @@ add_custom_command(TARGET ava_studio POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/data"
             "$<TARGET_FILE_DIR:ava_studio>/data"
-    COMMENT "Copying data/ (keyword_docs.csv, builtin_signatures.csv) next to ava_studio.exe"
+    COMMENT "Copying data/ (keyword_docs.csv, builtin_signatures.csv, component_catalog.csv) next to ava_studio.exe"
 )
 
 if(WIN32)

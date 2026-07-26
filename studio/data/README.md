@@ -72,6 +72,32 @@ pow,base|exponent,Returns base raised to exponent (base ** exponent).
 print,*values,"Prints every argument, converted with the same rules as str()..."
 ```
 
+## `component_catalog.csv` — componentes del Toolbox (`Button`, `TextBox`, `CheckBox`, ...)
+
+Columnas: `type,display_name,is_container,properties`
+
+| Columna | Qué es | Obligatoria |
+|---|---|---|
+| `type` | El tipo tal cual lo usa AvaComponent (`button`, `stack`, ...) | sí |
+| `display_name` | La etiqueta que se ve en el Toolbox (`Button`, `Stack`, ...) | sí |
+| `is_container` | `true` o `false` -- si acepta que otros componentes se suelten adentro | sí |
+| `properties` | Propiedades por defecto de una instancia nueva, como `key=default` separados por `\|` (una sola barra) | no, puede quedar vacía (containers como `column`/`row`/`stack`/`flex`) |
+
+Ejemplo de fila completa:
+
+```csv
+button,Button,false,value=Button|enabled=true
+```
+
+Los valores por defecto de hoy son palabras simples, booleanos o cadenas
+vacías -- si algún default necesitara contener literalmente `|` o `=`, esta
+columna no lo soporta todavía (no hay escape definido para eso).
+
+Si un `.avaui` referencia un `type` que no está en este CSV (por ejemplo,
+de una versión más nueva de Ava Studio), `FindComponentType` devuelve
+`nullptr` y el Designer Canvas cae al fallback de texto plano en vez de
+fallar -- ver `panels/designer_canvas.cpp`.
+
 ## Cómo agregar una palabra clave o función nueva
 
 1. Agregala primero donde corresponda en el lenguaje real: la gramática

@@ -142,6 +142,36 @@ AVA_API void ava_vm_set_print_callback(
     void* user_data
 );
 
+/* Alert/Navigate sinks (08_DESIGNER_VIEW_PLAN.md Fase 6, Anexo 9.17's
+ * pendientes 1-2): mismo mecanismo que AvaPrintFn de arriba, un evento
+ * por llamada de script a `ui.alert(msg)` / `ui.navigate(route)` (ver
+ * core/src/ui/builtins.cpp). Sin callback instalado (fn = NULL, el
+ * default), ambos degradan a print sink con un prefijo -- ver
+ * VM::Alert/VM::Navigate en core/src/vm/vm.cpp -- así un host que no
+ * define ninguno de los dos no pierde silenciosamente lo que el script
+ * pidió, solo no actúa sobre eso.
+ *
+ * ava_vm_set_navigate_callback en particular es un hook GENÉRICO: este
+ * repo (motor C++) no tiene noción de rutas/router -- eso vive en el
+ * host .NET (AvaLang.UI/Routing/RouteScanner.cs) o en un futuro router
+ * de Ava Studio -- así que quien instale este callback es quien decide
+ * qué significa "navegar". */
+typedef void (*AvaAlertFn)(const char* utf8, size_t len, void* user_data);
+
+AVA_API void ava_vm_set_alert_callback(
+    AvaVM* vm,
+    AvaAlertFn fn,
+    void* user_data
+);
+
+typedef void (*AvaNavigateFn)(const char* utf8, size_t len, void* user_data);
+
+AVA_API void ava_vm_set_navigate_callback(
+    AvaVM* vm,
+    AvaNavigateFn fn,
+    void* user_data
+);
+
 /* ---------------------------------------------------------------------
  * Compilation
  * ------------------------------------------------------------------- */

@@ -22,6 +22,7 @@
 #include "imgui_impl_opengl3.h"
 #include "imgui_internal.h" // DockBuilder* -- used once to lay out the default panels on first run
 
+#include "design/design_document.h"
 #include "engine/engine_bridge.h"
 #include "fonts/embedded_font.h"
 #include "panels/editor_panel.h"
@@ -351,8 +352,20 @@ int main() {
 
         // --- Editor -> Save / Run ----------------------------------------
         studio::DrawEditorPanel(editor_state);
-        if (editor_state.designer_selection) {
-            properties_state = *editor_state.designer_selection;
+        if (const studio::EditorTab* active = editor_state.Active();
+            active && active->is_avaui && active->view_mode == studio::TabViewMode::Design) {
+            // Unconditional (not `if (designer_selection)`): the active
+            // tab's Designer canvas now reports its CURRENT selection
+            // every single call (see designer_canvas.cpp's `doc.selected_uid`
+            // recompute), including nullopt when nothing is selected in
+            // it. Mirroring that unconditionally here is what makes
+            // switching to a tab with nothing selected actually clear
+            // Properties instead of leaving it pointed at whatever a
+            // DIFFERENT tab last had selected -- which, left alone,
+            // would let an edit made right now silently patch that
+            // OTHER tab's node instead of anything visible on screen.
+            properties_state = editor_state.designer_selection ? *editor_state.designer_selection
+                                                                 : studio::PropertiesState{};
         }
 
         // Global hotkeys (checked here, not tied to any single panel's
@@ -539,7 +552,105 @@ int main() {
         if (auto selected = studio::DrawPreviewPanel(demo_tree.root)) {
             properties_state = *selected;
         }
-        studio::DrawPropertiesPanel(properties_state);
+        // Fase 3 (write-back): DrawPropertiesPanel edits properties_state's
+        // own PropertyRow::value in place as the person types (so the table
+        // shows keystrokes immediately, see properties_panel.cpp), and
+        // returns a PropertyEdit only once a field is committed
+        // (unfocus/Enter) -- that's the point this patches the *real*
+        // DesignNode the selection came from, identified by tab id + uid
+        // rather than a stale pointer (properties_state outlives whatever
+        // frame the selection was made on, including tab switches).
+        if (auto edit = studio::DrawPropertiesPanel(properties_state)) {
+            for (auto& tab_ptr : editor_state.tabs) {
+                studio::EditorTab& tab = *tab_ptr;
+                if (tab.id != edit->tab_id || !tab.is_avaui) continue;
+                if (studio::design::DesignNode* node =
+                        studio::design::FindNodeByUid(tab.design.root, edit->node_uid)) {
+                    // 9.9/9.12: every kind of edit the Properties panel
+                    // can now emit -- see PropertyEditKind in
+                    // properties_panel.h for what each one means and
+                    // which field(s) of PropertyEdit it uses.
+                    switch (edit->kind) {
+                        case studio::PropertyEditKind::kValue:
+                            for (auto& prop : node->properties) {
+                                if (prop.key == edit->key) {
+                                    prop.value = edit->new_value;
+                                    break;
+                                }
+                            }
+                            break;
+                        case studio::PropertyEditKind::kId:
+                            node->id = edit->new_value;
+                            break;
+                        case studio::PropertyEditKind::kType:
+                            node->type = edit->new_value;
+                            break;
+                        case studio::PropertyEditKind::kAddProperty:
+                            // Guard against a duplicate key slipping in
+                            // anyway (e.g. two edits committed the same
+                            // frame from a stale UI state) -- the panel
+                            // already disables its own "+" button for a
+                            // key that exists, this is just a second,
+                            // cheap line of defense against a
+                            // duplicate that would otherwise be
+                            // impossible to tell apart in the table.
+                            {
+                                bool exists = false;
+                                for (const auto& prop : node->properties) {
+                                    if (prop.key == edit->key) { exists = true; break; }
+                                }
+                                if (!exists) node->properties.push_back({edit->key, edit->new_value});
+                            }
+                            break;
+                        case studio::PropertyEditKind::kRemoveProperty:
+                            for (auto it = node->properties.begin(); it != node->properties.end(); ++it) {
+                                if (it->key == edit->key) {
+                                    node->properties.erase(it);
+                                    break;
+                                }
+                            }
+                            break;
+                        case studio::PropertyEditKind::kEvent: {
+                            // Shared by "value changed" and "new row
+                            // added" (see properties_panel.cpp's
+                            // DrawEditableRowTable call for events) --
+                            // find-or-add covers both: an existing
+                            // event's handler gets updated in place, a
+                            // brand-new event name gets appended.
+                            bool found = false;
+                            for (auto& ev : node->events) {
+                                if (ev.key == edit->key) {
+                                    ev.value = edit->new_value;
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found) node->events.push_back({edit->key, edit->new_value});
+                            break;
+                        }
+                        case studio::PropertyEditKind::kRemoveEvent:
+                            for (auto it = node->events.begin(); it != node->events.end(); ++it) {
+                                if (it->key == edit->key) {
+                                    node->events.erase(it);
+                                    break;
+                                }
+                            }
+                            break;
+                    }
+                    // Same convention SaveTab/HandleDropTarget already use:
+                    // this loop sets design-doc dirty, DrawEditorPanel's
+                    // "if (tab.design.dirty) tab.dirty = true" line only
+                    // runs on its own next call, so mirror it here too --
+                    // otherwise the tab strip's unsaved dot wouldn't light
+                    // up until the next click on the canvas.
+                    tab.design.dirty = true;
+                    tab.dirty = true;
+                }
+                // Tab ids are unique (EditorState::next_tab_id only ever
+                // increments) -- no need to keep scanning once matched.
+                break;
+            }
+        }
 
         // --- Output --------------------------------------------------------
         studio::DrawOutputPanel(output_state, engine);

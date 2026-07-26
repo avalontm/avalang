@@ -1,0 +1,16 @@
+type,display_name,is_container,properties
+page,Page,true,title=Untitled
+column,Column,true,
+row,Row,true,
+stack,Stack,true,
+grid,Grid,true,columns=2|rows=2
+flex,Flex,true,
+text,Text,false,value=Text
+image,Image,false,src=
+spacer,Spacer,false,
+divider,Divider,false,
+link,Link,false,value=Link|href=
+button,Button,false,value=Button|enabled=true
+textbox,TextBox,false,placeholder=|value=
+checkbox,CheckBox,false,value=CheckBox|checked=false
+radiobutton,RadioButton,false,value=RadioButton|checked=false

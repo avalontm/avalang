@@ -10,9 +10,15 @@
 // encontró el identificador" under MSVC.
 #include "GLFW/glfw3.h"
 
+// Fase 10 (image widget preview, designer_canvas.cpp): STBI_ONLY_PNG and
+// STBI_NO_STDIO used to be defined here since this file only ever
+// decoded the embedded PNG logo from memory. Both are gone now that
+// this is the one TU providing the actual stb_image implementation for
+// the whole binary -- designer_canvas.cpp needs the file-path loader
+// (stbi_load(path, ...), which STBI_NO_STDIO strips out) and arbitrary
+// image formats (which STBI_ONLY_PNG would strip out) to preview
+// whatever `src` a user points an Image node at, not just PNG.
 #define STB_IMAGE_IMPLEMENTATION
-#define STBI_ONLY_PNG
-#define STBI_NO_STDIO // we decode from the embedded memory buffer, never from disk
 #include "stb_image.h"
 
 #include "images/avastudio_logo_png.h"

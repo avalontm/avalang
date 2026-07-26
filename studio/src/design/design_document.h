@@ -14,8 +14,9 @@ namespace studio::design {
 // see 08_DESIGNER_VIEW_PLAN.md section 5.2 for why they're kept
 // separate instead of merged.
 struct DesignNode {
-    // Stable per-node identity used for selection and (later) drag/
-    // drop hit-testing -- independent of position in the tree (which
+    // Stable per-node identity used for selection and drag/drop
+    // hit-testing (including Fase 4's move/reorder, see MoveNode
+    // below) -- independent of position in the tree (which
     // shifts as siblings are added/removed/reordered) and independent
     // of DesignNode::id (the user-facing, user-editable "btnGuardar"
     // name, which can be blank or duplicated while editing). Generated
@@ -102,5 +103,95 @@ bool SaveAvauiFile(const DesignDocument& doc, const std::string& path);
 // Non-const overload only -- callers needing a read-only lookup can
 // still call this and just not mutate through the pointer.
 DesignNode* FindNodeByUid(DesignNode& root, const std::string& uid);
+
+// Depth-first search for the PARENT of the node with node_uid == `uid`
+// -- i.e. the node whose `children` vector directly contains it.
+// Returns nullptr if `uid` is `root.node_uid` itself (root has no
+// parent) or if no node with that uid exists anywhere under `root`.
+// Used by MoveNode (Fase 4, see below) to splice a node out of / into
+// a sibling list without needing every caller to hand-roll the same
+// recursive search.
+DesignNode* FindParentOfUid(DesignNode& root, const std::string& uid);
+
+// True if `uid` is `node.node_uid` itself, or belongs to any node in
+// `node`'s subtree. Used by MoveNode to refuse turning a node into its
+// own descendant (dragging a container on top of one of its own
+// children/grandchildren) -- doing that would detach the subtree from
+// the document entirely, so it's rejected as a no-op instead.
+bool NodeContainsUid(const DesignNode& node, const std::string& uid);
+
+// Where a dragged node lands relative to a drop-target node -- see
+// MoveNode below. `kInto` means "become the target's last child"
+// (only meaningful when the target is a container; designer_canvas.cpp
+// only ever passes this when that's already been checked). `kBefore`/
+// `kAfter` mean "become the target's sibling, immediately before/after
+// it" -- these work for a leaf or container target alike, since they
+// never touch the target's own children.
+enum class DropZone { kBefore, kInto, kAfter };
+
+// Fase 4 (08_DESIGNER_VIEW_PLAN.md section 6): moves the node with
+// node_uid == `moved_uid` to a new position relative to the node with
+// node_uid == `target_uid`, per `zone`. Returns false (and leaves
+// `doc` untouched) for every case that isn't a real, safe move:
+//   - `moved_uid == target_uid` (dropped on itself),
+//   - `moved_uid == doc.root.node_uid` (the page root can't be moved
+//     -- it has no parent to remove it from),
+//   - `moved_uid` not found anywhere in `doc.root`,
+//   - moving would make a node its own descendant (see
+//     NodeContainsUid above).
+// On success, the moved node (with its whole subtree, and its
+// node_uid/id/properties/children all unchanged) ends up in its new
+// spot, `doc.dirty` is set to true, and this returns true.
+bool MoveNode(DesignDocument& doc, const std::string& moved_uid, const std::string& target_uid,
+              DropZone zone);
+
+// Fase 5 (08_DESIGNER_VIEW_PLAN.md section 6 / AGENTS_STUDIO.md's
+// "Workflow Futuro"): ensures the node with node_uid == `uid` has a
+// "click" event bound to a handler function name, and that a stub for
+// that function (`func <name>(sender, e) ... end`) exists in
+// `doc.code_behind`. Meant to be called from a double-click on a
+// canvas node (designer_canvas.cpp) -- VS6's "double-click a Button on
+// the form to jump to its Click handler", generating the handler the
+// first time instead of erroring.
+//
+// Behavior:
+//   - Returns "" (no-op, `doc` untouched) if `uid` doesn't resolve to
+//     a real node under `doc.root` -- e.g. a synthetic resolved-import
+//     node, or a stale uid.
+//   - If the node's `id` is blank, assigns a fresh one first (e.g.
+//     "button1", next free `type` + number across the whole tree --
+//     see NextAutoId in the .cpp), same spirit as VS6 auto-naming an
+//     unnamed control the first time you touch its code.
+//   - If the node already has a "click" event with a handler name,
+//     that exact name is reused (never renamed/overwritten here --
+//     Properties' own event editor is what changes a handler's name
+//     on purpose, see PropertyEditKind::kEvent) and only its stub gets
+//     (re-)added to `code_behind` if missing (e.g. someone deleted the
+//     func by hand in Code view but left the binding).
+//   - Otherwise, generates "<id>_Click" (id sanitized to a valid
+//     AvaLang identifier), stores it as the node's "click" event, and
+//     appends its stub to `code_behind`.
+// Sets `doc.dirty = true` whenever it actually changes anything.
+std::string EnsureClickHandler(DesignDocument& doc, const std::string& uid);
+
+// Fase 8 (09_DESIGNER_CANVAS_UX_PLAN.md): removes the node with
+// node_uid == `node_uid` (and its whole subtree) from `doc`. Same
+// family as MoveNode above -- a splice out of the parent's `children`
+// vector, no reinsertion. Returns false (and leaves `doc` untouched)
+// for every case that isn't a real, safe delete:
+//   - `node_uid == doc.root.node_uid` (the page root can't be deleted
+//     -- there'd be nothing left to draw/save),
+//   - `node_uid` not found anywhere in `doc.root` (already gone, or a
+//     synthetic/resolved-import uid that was never really in
+//     `doc.root` to begin with -- callers are expected to check that
+//     themselves before calling, same as MoveNode's callers do, but
+//     this also fails safe if one doesn't).
+// On success, sets `doc.dirty = true` and returns true. Also clears
+// `doc.selected_uid` if it was the removed node itself OR any node
+// inside its now-deleted subtree (a selection pointing at a node that
+// no longer exists would otherwise dangle until something else
+// happened to overwrite it) -- callers (designer_canvas.cpp) don't
+// need to duplicate that check themselves.
+bool RemoveNode(DesignDocument& doc, const std::string& node_uid);
 
 } // namespace studio::design

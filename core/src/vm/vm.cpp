@@ -130,6 +130,36 @@ void VM::Print(const std::string& text) const {
     }
 }
 
+void VM::SetAlertSink(AlertSink sink) {
+    alert_sink_ = std::move(sink);
+}
+
+void VM::Alert(const std::string& message) const {
+    if (alert_sink_) {
+        alert_sink_(message);
+    } else {
+        // Sin host escuchando ui.alert -- degrada a Print en vez de tirar
+        // el mensaje al piso, mismo espiritu que ui_log ya usaba antes de
+        // esta pasada. Ver builtins.cpp: ui.alert siempre pasa por acá.
+        Print("[ui:alert] " + message + "\n");
+    }
+}
+
+void VM::SetNavigateSink(NavigateSink sink) {
+    navigate_sink_ = std::move(sink);
+}
+
+void VM::Navigate(const std::string& route) const {
+    if (navigate_sink_) {
+        navigate_sink_(route);
+    } else {
+        // Sin router bindeado (el routing file-based vive en el host
+        // .NET/Studio, no acá -- ver builtins.h) -- degrada a Print para
+        // que quede visible que se pidió, en vez de silenciarse.
+        Print("[ui:navigate] " + route + " (sin router bindeado)\n");
+    }
+}
+
 bool VM::HasBuiltinMethod(const std::string& name) const {
     return builtin_methods_.find(name) != builtin_methods_.end();
 }

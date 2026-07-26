@@ -7,6 +7,7 @@
 #include "ui/avaui_text.h"
 #include "builtins/builtin.h"
 #include "builtins/builtin_natives.h"
+#include "ui/builtins.h"
 
 #include <cstring>
 #include <cstdlib>
@@ -34,6 +35,10 @@ AVA_API AvaVM* ava_vm_create() {
     VM* vm = new VM();
     RegisterBuiltinMethods(reinterpret_cast<AvaVM*>(vm));
     RegisterBuiltinGlobals(reinterpret_cast<AvaVM*>(vm));
+    // Fase 6 (08_DESIGNER_VIEW_PLAN.md): `ui.*` disponible en toda VM,
+    // no solo en la del Designer -- ver core/src/ui/builtins.h para el
+    // alcance (a proposito acotado) de lo que registra.
+    ava::ui::RegisterUIBuiltins(reinterpret_cast<AvaVM*>(vm));
     return reinterpret_cast<AvaVM*>(vm);
 }
 
@@ -70,6 +75,28 @@ AVA_API void ava_vm_set_print_callback(AvaVM* vm, AvaPrintFn fn, void* user_data
         });
     } else {
         raw_vm->SetPrintSink(nullptr);
+    }
+}
+
+AVA_API void ava_vm_set_alert_callback(AvaVM* vm, AvaAlertFn fn, void* user_data) {
+    auto* raw_vm = reinterpret_cast<VM*>(vm);
+    if (fn) {
+        raw_vm->SetAlertSink([fn, user_data](const std::string& text) {
+            fn(text.data(), text.size(), user_data);
+        });
+    } else {
+        raw_vm->SetAlertSink(nullptr);
+    }
+}
+
+AVA_API void ava_vm_set_navigate_callback(AvaVM* vm, AvaNavigateFn fn, void* user_data) {
+    auto* raw_vm = reinterpret_cast<VM*>(vm);
+    if (fn) {
+        raw_vm->SetNavigateSink([fn, user_data](const std::string& text) {
+            fn(text.data(), text.size(), user_data);
+        });
+    } else {
+        raw_vm->SetNavigateSink(nullptr);
     }
 }
 
@@ -618,4 +645,4 @@ AVA_API void ava_ui_text_free(char* text) {
     std::free(text);
 }
 
-} // extern "C"
+} // extern "C"

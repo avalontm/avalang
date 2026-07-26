@@ -66,6 +66,24 @@ public:
     void SetPrintSink(PrintSink sink);
     void Print(const std::string& text) const;
 
+    // Fase 6 completion (08_DESIGNER_VIEW_PLAN.md Anexo 9.17's pendientes
+    // 1-2, "ui.alert"/"ui.navigate" -- necesitan definir el mecanismo de
+    // callback host<->VM, no solo la firma). Mismo patrón EXACTO que
+    // PrintSink de arriba: un embedder (Ava Studio) instala un sink antes
+    // de correr un script; sin sink, degrada a Print() con un prefijo, así
+    // nunca se pierde silenciosamente lo que el script quiso comunicar aun
+    // si el host no está escuchando ese evento en particular. Ver
+    // ava_vm_set_alert_callback / ava_vm_set_navigate_callback en avalang.h,
+    // y core/src/ui/builtins.cpp (ui.alert/ui.navigate) para el lado que
+    // los dispara desde un script.
+    using AlertSink = std::function<void(const std::string&)>;
+    void SetAlertSink(AlertSink sink);
+    void Alert(const std::string& message) const;
+
+    using NavigateSink = std::function<void(const std::string&)>;
+    void SetNavigateSink(NavigateSink sink);
+    void Navigate(const std::string& route) const;
+
     // Structured position of the most recent error caught by the C API
     // (ava_compile/ava_run/ava_call/ava_import, see public/src/c_api.cpp).
     // 1-based; 0 = unknown. Set from AvaError::line/column when the C API
@@ -79,6 +97,8 @@ private:
     Value ExecuteFrame(size_t frame_idx);
 
     PrintSink print_sink_;
+    AlertSink alert_sink_;
+    NavigateSink navigate_sink_;
     std::string current_dir_;
     std::unordered_map<std::string, Value> globals_;
     std::vector<CallFrame> frames_;

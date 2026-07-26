@@ -488,6 +488,14 @@ bool PathContains(const std::filesystem::path& parent, const std::filesystem::pa
 
 void CloseTabNow(EditorState& state, int index) {
     if (index < 0 || index >= static_cast<int>(state.tabs.size())) return;
+    // Fase 6 caching pass (08_DESIGNER_VIEW_PLAN.md 9.15, designer_canvas.h's
+    // InvalidateDesignerVmCache): the Design canvas no longer destroys its
+    // AvaVM at the end of every draw call for a real tab_id -- it's cached
+    // across frames instead. This is the one place a tab actually leaves
+    // EditorState::tabs, so it's the one place that cache entry needs to be
+    // freed; a no-op for a tab that was never a .avaui tab / never cached
+    // anything.
+    InvalidateDesignerVmCache(state.tabs[index]->id);
     state.tabs.erase(state.tabs.begin() + index);
 
     if (state.tabs.empty()) {
@@ -706,6 +714,47 @@ void ToggleTabViewMode(EditorTab& tab) {
         tab.avaui_load_error = parse_error;
     }
 }
+
+namespace {
+
+// 0-based line number of the first occurrence of `needle` in `text`,
+// or -1 if it's not there. Used by JumpToCodeBehindHandler below --
+// good enough for finding a just-generated `func name(` stub without
+// needing TextEditor to expose its own search.
+int FindLineOf(const std::string& text, const std::string& needle) {
+    const size_t pos = text.find(needle);
+    if (pos == std::string::npos) return -1;
+    return static_cast<int>(std::count(text.begin(), text.begin() + static_cast<long>(pos), '\n'));
+}
+
+// Fase 5 (08_DESIGNER_VIEW_PLAN.md section 6): after
+// design::EnsureClickHandler has already added `handler_name`'s stub
+// to `tab.design.code_behind` (done by designer_canvas.cpp before this
+// is ever called -- see its DrawDesignerCanvas call site below),
+// switches the tab to Code view and moves the caret into the stub's
+// body, same "double-click a Button, land inside its Click handler"
+// flow VS6 had.
+//
+// Reuses ToggleTabViewMode itself for the Design -> Code half (it
+// already does exactly the serialize-and-rebuild-index work needed
+// here, see its own comment) rather than duplicating that logic --
+// this function only adds the "then find the line and move the caret"
+// part on top.
+void JumpToCodeBehindHandler(EditorTab& tab, const std::string& handler_name) {
+    if (tab.view_mode == TabViewMode::Design) {
+        ToggleTabViewMode(tab);
+    }
+    const int func_line = FindLineOf(tab.GetText(), "func " + handler_name + "(");
+    if (func_line < 0) return; // shouldn't happen -- EnsureClickHandler just added it
+    // Body line is the stub's second line (see design_document.cpp's
+    // AppendHandlerStub: "func ...(...)\n    -- TODO: ...\nend\n"),
+    // column 4 lands right after the fixed 4-space indent, ready to
+    // type over the placeholder comment.
+    tab.editor.SetCursor(func_line + 1, 4);
+    tab.editor.ScrollToLine(func_line, TextEditor::Scroll::alignMiddle);
+}
+
+} // namespace
 
 bool HasUnsavedChanges(const EditorState& state) {
     for (const auto& tab : state.tabs) {
@@ -984,11 +1033,36 @@ void DrawEditorPanel(EditorState& state) {
                         ImGui::TextDisabled("Mostrando una página en blanco -- guardar sobrescribe el archivo original.");
                         ImGui::Separator();
                     }
-                    const ImVec2 avail = ImGui::GetContentRegionAvail();
-                    if (auto selected_node = DrawDesignerCanvas(tab.design, avail, state.project_root)) {
+                    // Fase 10.1 (09_DESIGNER_CANVAS_UX_PLAN.md): el modo
+                    // Preview dedicado (Anexo 9.19 -- barra "Preview: ON/
+                    // OFF" + "Reset" + consola scrolleable de ui.log/
+                    // ui.alert/ui.navigate/errores) que vivía acá fue
+                    // eliminado. Perdió su propósito una vez que Fase 10
+                    // hace que el canvas dibuje los widgets reales
+                    // SIEMPRE, sin depender de ningún toggle -- ya no
+                    // hace falta un modo aparte para "ver cómo se vería
+                    // de verdad". El canvas vuelve a ocupar el espacio
+                    // completo disponible, sin reservar nada al fondo.
+                    // Probar un handler `click` sigue siendo Ctrl+Click
+                    // (Anexo 9.17/9.18, sin cambios) -- eso no era parte
+                    // del modo Preview y no se tocó.
+                    ImVec2 avail = ImGui::GetContentRegionAvail();
+                    std::string generated_handler; // Fase 5 -- see JumpToCodeBehindHandler below
+                    if (auto selected_node = DrawDesignerCanvas(tab.design, avail, state.project_root, tab.id,
+                                                                 &generated_handler)) {
                         state.designer_selection = std::move(selected_node);
                     }
                     if (tab.design.dirty) tab.dirty = true;
+
+                    // Double-click on a Button just generated/reused a
+                    // click handler stub in tab.design.code_behind --
+                    // switch to Code view and land the caret inside it,
+                    // same as VS6. Checked after the dirty-flag mirror
+                    // above so this frame's edit is already reflected
+                    // in tab.dirty before ToggleTabViewMode reads it.
+                    if (!generated_handler.empty()) {
+                        JumpToCodeBehindHandler(tab, generated_handler);
+                    }
                 } else {
                     // Reached for every plain .ava/.md/etc. tab, AND for
                     // a .avaui tab in Code view (view_mode == Code) --
