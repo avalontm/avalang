@@ -102,6 +102,22 @@ bool Compiler::IsShortCircuit(BinOp op) {
     return op == BinOp::And || op == BinOp::Or;
 }
 
+// `static`/`private` son sintácticamente válidos en cualquier
+// assignStatement/funcDeclaration (ver grammar/AvaLang.g4, Fase A) pero
+// solo tienen sentido dentro de un cuerpo de clase. `CompileClass` lee
+// esos flags directamente desde `cls->body` antes de que un
+// AssignStmt/FuncDef de nivel de clase llegue nunca a `CompileStmt` /
+// `CompileExprToReg` / `CompileFunc` -- así que si alguno de esos tres
+// ve un flag en true, es porque el modificador se usó afuera de una
+// clase (a nivel de módulo o dentro del cuerpo de una función/método).
+static void RejectMemberModifiersOutsideClass(bool is_static, bool is_private, const char* kind) {
+    if (is_static || is_private) {
+        throw std::runtime_error(
+            std::string("'static'/'private' solo son validos dentro del cuerpo de una clase (") +
+            kind + ")");
+    }
+}
+
 uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
     if (auto* n = dynamic_cast<NumberExpr*>(expr.get())) {
         auto reg = AllocReg();
@@ -419,6 +435,8 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
     if (auto* l = dynamic_cast<LambdaExpr*>(expr.get())) {
         Compiler sub;
         sub.proto_ = std::make_shared<Proto>();
+        sub.source_name_ = source_name_;
+        sub.proto_->source_name = source_name_;
         sub.proto_->debug_name = l->name;
         sub.proto_->num_params = static_cast<uint8_t>(l->defaults.size());
         sub.proto_->is_vararg = l->is_vararg;
@@ -464,6 +482,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
     }
 
     if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
+        RejectMemberModifiersOutsideClass(a->is_static, a->is_private, "asignacion");
         if (!a->target) {
             FreeRegs(1);
             return;
@@ -472,20 +491,22 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
             bool in_method = locals_.find("this") != locals_.end();
             bool has_local = locals_.find(n->name) != locals_.end();
             bool is_known_attr = instance_attrs_.find(n->name) != instance_attrs_.end();
+            uint16_t regs_before = next_reg_;
             auto val_reg = CompileExpr(a->value);
             if (in_method && n->name != "this" && !has_local && is_known_attr) {
                 auto attr_idx = AddConstant(MakeString(n->name));
                 auto this_reg = locals_.at("this");
                 Emit(OpCode::SETATTR, this_reg, attr_idx, val_reg);
-                FreeRegs(1);
+                FreeRegs(next_reg_ - regs_before);
                 return;
             }
             auto idx = AddConstant(MakeString(n->name));
             Emit(OpCode::SETGLOBAL, val_reg, idx);
-            FreeRegs(1);
+            FreeRegs(next_reg_ - regs_before);
             return;
         }
         if (auto* i = dynamic_cast<IndexExpr*>(a->target.get())) {
+            uint16_t regs_before = next_reg_;
             auto val_reg = CompileExpr(a->value);
             auto obj_reg = CompileExpr(i->obj);
             auto idx_reg = CompileExpr(i->index);
@@ -494,7 +515,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
             auto saved_obj = AllocReg();
             Emit(OpCode::MOVE, saved_obj, obj_reg);
             Emit(OpCode::SETINDEX, saved_obj, saved_idx, val_reg);
-            FreeRegs(5);
+            FreeRegs(next_reg_ - regs_before);
             return;
         }
         if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
@@ -505,6 +526,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
                 }
             }
             
+            uint16_t regs_before = next_reg_;
             auto val_reg = CompileExpr(a->value);
             
             uint16_t obj_reg;
@@ -517,10 +539,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
             auto attr_idx = AddConstant(MakeString(a_expr->attr));
             Emit(OpCode::SETATTR, obj_reg, attr_idx, val_reg);
             
-            if (!is_this) {
-                FreeRegs(1);
-            }
-            FreeRegs(1);
+            FreeRegs(next_reg_ - regs_before);
             return;
         }
         FreeRegs(1);
@@ -528,6 +547,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
     }
 
     if (auto* a = dynamic_cast<AugAssignStmt*>(stmt.get())) {
+        uint16_t regs_before = next_reg_;
         auto target_reg = CompileExpr(a->target);
         auto val_reg = CompileExpr(a->value);
         auto result_reg = AllocReg();
@@ -535,14 +555,14 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
         if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
             auto idx = AddConstant(MakeString(n->name));
             Emit(OpCode::SETGLOBAL, result_reg, idx);
-            FreeRegs(2);
+            FreeRegs(next_reg_ - regs_before);
             return;
         }
         if (auto* i = dynamic_cast<IndexExpr*>(a->target.get())) {
             auto obj_reg = CompileExpr(i->obj);
             auto idx_reg = CompileExpr(i->index);
             Emit(OpCode::SETINDEX, obj_reg, idx_reg, result_reg);
-            FreeRegs(3);
+            FreeRegs(next_reg_ - regs_before);
             return;
         }
         if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
@@ -563,12 +583,10 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
             auto attr_idx = AddConstant(MakeString(a_expr->attr));
             Emit(OpCode::SETATTR, obj_reg, attr_idx, result_reg);
             
-            if (!is_this) {
-                FreeRegs(1);
-            }
+            FreeRegs(next_reg_ - regs_before);
             return;
         }
-        FreeRegs(1);
+        FreeRegs(next_reg_ - regs_before);
         return;
     }
 
@@ -961,8 +979,12 @@ void Compiler::EmitDefaultsPrologue(const std::vector<std::pair<std::string, std
 }
 
 void Compiler::CompileFunc(const FuncDef* func) {
+    RejectMemberModifiersOutsideClass(func->is_static, func->is_private,
+                                       ("func " + func->name).c_str());
     Compiler sub;
     sub.proto_ = std::make_shared<Proto>();
+    sub.source_name_ = source_name_;
+    sub.proto_->source_name = source_name_;
     sub.proto_->debug_name = func->name;
     sub.proto_->num_params = static_cast<uint8_t>(func->params.size());
     sub.proto_->is_vararg = func->is_vararg;
@@ -1003,8 +1025,11 @@ void Compiler::CompileChunk(const std::vector<std::shared_ptr<StmtNode>>& stmts)
     }
 }
 
-std::shared_ptr<Proto> Compiler::Compile(const std::shared_ptr<Chunk>& chunk) {
+std::shared_ptr<Proto> Compiler::Compile(const std::shared_ptr<Chunk>& chunk,
+                                          const std::string& source_name) {
     Reset();
+    source_name_ = source_name;
+    proto_->source_name = source_name_;
     CompileChunk(chunk->statements);
     if (result_reg_ > 0 || next_reg_ > 0) {
         Emit(OpCode::RETURN, result_reg_ > 0 ? result_reg_ : 0, result_reg_ > 0 ? 1 : 0);
@@ -1020,6 +1045,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
         return CompileExpr(e->expr);
     }
     if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
+        RejectMemberModifiersOutsideClass(a->is_static, a->is_private, "asignacion");
         if (!a->target) {
             FreeRegs(1);
             return 0;
@@ -1204,10 +1230,27 @@ void Compiler::CompileClass(const ClassDef* cls) {
                         class_obj->methods[mname] = mproto;
                     }
                 }
-                for (auto& [aname, aval] : base_class->attrs) {
-                    if (aname != "__base__") {
-                        class_obj->attrs[aname] = aval;
-                    }
+                // OJO: los `attrs` static de la base NO se copian acá --
+                // eso los volvía dos valores independientes apenas
+                // existía una subclase (Sub.x dejaba de reflejar
+                // Base.x += 1). Static vive solo en la clase que lo
+                // declaró; GETATTR/SETATTR sobre Class recorren la
+                // cadena `__base__` (ver FindClassOwningAttr en
+                // vm.cpp) para encontrar esa clase dueña.
+                // Los defaults de instancia (atributos NO static) de la
+                // base también se heredan -- cada instancia de la clase
+                // hija sigue necesitando su propia copia independiente.
+                for (auto& [aname, aval] : base_class->instance_defaults) {
+                    class_obj->instance_defaults[aname] = aval;
+                }
+                // Un miembro private de la base sigue siendo private
+                // para el AST/metadata (aunque el método heredado que lo
+                // usa internamente lo siga viendo, porque ese método ya
+                // fue compilado dentro del contexto de la base). Ver
+                // §3.3 del documento de diseño: acá solo se propaga la
+                // marca, no hay cambio de comportamiento en runtime.
+                for (auto& pname : base_class->private_members) {
+                    class_obj->private_members.insert(pname);
                 }
             }
         }
@@ -1216,16 +1259,32 @@ void Compiler::CompileClass(const ClassDef* cls) {
     for (auto& stmt : cls->body) {
         if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
             if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
+                Value attr_val;
                 if (auto* s = dynamic_cast<StringExpr*>(a->value.get())) {
-                    class_obj->attrs[n->name] = MakeString(s->value);
+                    attr_val = MakeString(s->value);
                 } else if (auto* num = dynamic_cast<NumberExpr*>(a->value.get())) {
-                    class_obj->attrs[n->name] = Value::Number(num->value);
+                    attr_val = Value::Number(num->value);
                 } else if (dynamic_cast<NilExpr*>(a->value.get())) {
-                    class_obj->attrs[n->name] = Value::Nil();
+                    attr_val = Value::Nil();
                 } else if (auto* b = dynamic_cast<BoolExpr*>(a->value.get())) {
-                    class_obj->attrs[n->name] = Value::Bool(b->value);
+                    attr_val = Value::Bool(b->value);
                 } else {
-                    class_obj->attrs[n->name] = Value::Nil();
+                    attr_val = Value::Nil();
+                }
+                // static -> compartido, vive solo en `attrs`.
+                // sin modificador (default) -> valor por defecto de
+                // instancia, vive en `instance_defaults` y se copia a
+                // cada InstanceObj nuevo (ver NEWINSTANCE/CALL en
+                // vm.cpp). Antes de la Fase C ambos casos caían en
+                // `attrs`, que es justamente el bug que hacía que
+                // `Clase.x = valor` nunca compartiera estado real.
+                if (a->is_static) {
+                    class_obj->attrs[n->name] = attr_val;
+                } else {
+                    class_obj->instance_defaults[n->name] = attr_val;
+                }
+                if (a->is_private) {
+                    class_obj->private_members.insert(n->name);
                 }
             }
         }
@@ -1235,6 +1294,8 @@ void Compiler::CompileClass(const ClassDef* cls) {
         if (auto* f = dynamic_cast<FuncDef*>(stmt.get())) {
             Compiler sub;
             sub.proto_ = std::make_shared<Proto>();
+            sub.source_name_ = source_name_;
+            sub.proto_->source_name = source_name_;
             sub.proto_->debug_name = cls->name + "." + f->name;
             sub.proto_->num_params = static_cast<uint8_t>(f->params.size() + 1);
             sub.proto_->is_vararg = f->is_vararg;
@@ -1242,8 +1303,20 @@ void Compiler::CompileClass(const ClassDef* cls) {
             
             sub.next_reg_ = static_cast<uint16_t>(f->params.size() + 1);
             sub.max_reg_ = sub.next_reg_;
-            sub.locals_["this"] = 0;
-            for (auto& [attr_name, attr_val] : class_obj->attrs) {
+            // Un método `static` no recibe instancia: no se registra
+            // "this" como local, así que `this.algo` adentro no resuelve
+            // a un atributo (cae a búsqueda global, ver CompileExpr) y
+            // el bare-name-a-atributo tampoco aplica. Ver §3.1 del
+            // documento de diseño.
+            if (!f->is_static) {
+                sub.locals_["this"] = 0;
+            }
+            // El bare-name-resuelve-a-this.attr (instance_attrs_) solo
+            // debe aplicar a atributos de INSTANCIA, no a los `static`
+            // (esos se acceden siempre por NombreClase.attr de forma
+            // explícita, nunca implícita vía "this"). Antes de la Fase C
+            // esto iteraba sobre `class_obj->attrs`, que mezclaba ambos.
+            for (auto& [attr_name, attr_val] : class_obj->instance_defaults) {
                 sub.instance_attrs_.insert(attr_name);
             }
             
@@ -1271,6 +1344,9 @@ void Compiler::CompileClass(const ClassDef* cls) {
             bool is_constructor = f->name == cls->name;
             std::string method_name = is_constructor ? "__init__" : f->name;
             class_obj->methods[method_name] = sub.proto_;
+            if (f->is_private) {
+                class_obj->private_members.insert(method_name);
+            }
         }
     }
     

@@ -12,6 +12,7 @@
 #include "imgui.h"
 #include "languages/avalang_language.h"
 #include "languages/keyword_docs.h"
+#include "languages/member_access_resolver.h"
 #include "palette.h"
 #include "panels/designer_canvas.h"
 
@@ -61,7 +62,132 @@ void RebuildAutocompleteTrie(EditorTab& tab) {
 // Se llama en cada cambio del buffer y al cargar un archivo.
 void RebuildIndexAndTrie(EditorTab& tab) {
     tab.function_index.Rebuild(tab.GetText(), DirOf(tab.file_path));
+    // ClassIndex primero, VariableTypeIndex después -- éste último necesita
+    // consultar `class_index.Find(...)` para saber si el lado derecho de un
+    // `variable = X(...)` es de verdad una clase conocida (ver Fase 2 de
+    // TODO_autocompletado_miembros.md / member_access_resolver.h).
+    tab.class_index.Rebuild(tab.GetText(), DirOf(tab.file_path));
+    tab.variable_type_index.Rebuild(tab.GetText(), tab.class_index);
     RebuildAutocompleteTrie(tab);
+}
+
+// Texto de la línea del cursor desde la columna 0 hasta `pos.column`.
+//
+// Bug real que este helper corrige (y centraliza en un único lugar, en vez
+// de repetirlo en cada Draw*Hint/Populate*): `pos.column` es una COLUMNA
+// VISIBLE, no un índice de byte/codepoint dentro del string UTF-8 que
+// devuelve GetLineText -- ver la clase `Coordinate` en TextEditor.h
+// (vendorizado vía FetchContent, ver studio/CMakeLists.txt): "tabs are
+// counted as [1..tabsize] spaces, depending on how many spaces are
+// necessary to reach the next tab stop". Con cualquier tab de indentación
+// antes del cursor (el caso normal dentro del cuerpo de una función o de
+// una clase), `GetLineText(line).substr(0, pos.column)` corta el texto en
+// el lugar equivocado y rompe en silencio la detección de `this.`, de
+// `identificador.` o de una llamada a función que empieza más a la
+// izquierda en la línea.
+//
+// `GetSectionText(startLine, startColumn, endLine, endColumn)` sí hace esa
+// traducción columna->texto correctamente (vía
+// Document::normalizeCoordinate, la misma que usan SetCursor/
+// ReplaceSectionText), así que no hace falta reimplementarla acá ni
+// acotar manualmente `pos.column` contra `line.size()`.
+std::string TextBeforeCursor(EditorTab& tab, const TextEditor::CursorPosition& pos) {
+    return tab.editor.GetSectionText(pos.line, 0, pos.line, pos.column);
+}
+
+// Fases 3/4 de TODO_autocompletado_miembros.md, factorizado para que tanto
+// PopulateMemberSuggestions (autocompletado nativo de la librería, con
+// filtro por lo ya tipeado) como DrawDotCompletionPopup (popup propio,
+// dibujado a mano, para el instante en que todavía no se tipeó nada
+// después del '.') resuelvan la lista de miembros exactamente de la misma
+// forma -- una sola fuente de verdad para "qué miembros son visibles acá".
+//
+// Devuelve false (fallback seguro, nunca un popup vacío) si `identificador`
+// no se puede resolver contra una clase conocida, o si la clase resuelta
+// no tiene miembros conocidos después de aplicar las reglas de visibilidad.
+bool ResolveVisibleMembers(EditorTab& tab, int cursor_line, const std::string& before,
+                           MemberAccessContext& out_ctx, std::vector<ClassMember>& out_members) {
+    if (!ResolveMemberAccess(tab.GetText(), cursor_line, before, tab.class_index,
+                              tab.variable_type_index, out_ctx)) {
+        return false;
+    }
+
+    out_members = tab.class_index.FlattenedMembers(out_ctx.class_name);
+    if (out_members.empty()) return false;  // clase resuelta pero sin miembros conocidos
+    out_members = ClassIndex::FilterForAccess(out_members, out_ctx.kind, out_ctx.viewer_class);
+    if (out_members.empty()) return false;
+
+    // El constructor -- en AvaLang, un método declarado con el MISMO
+    // nombre que su clase (ver scripts/dog.ava: "class dog" contiene
+    // "func dog()") -- nunca es una operación válida para ofrecer acá:
+    // ni `instancia.dog()`, ni `this.dog()` desde adentro, ni siquiera
+    // `dog.dog()` contra el nombre de la clase. Se llama implícitamente
+    // al construir (`dog()`), no se vuelve a invocar después, así que
+    // aparecía en el popup como si fuera un método más de uso normal
+    // (ver imagen de referencia: "perro." ofrecía "dog()" Y "say()").
+    // FlattenedMembers ya resuelve `declared_in` como la clase donde el
+    // método vive de verdad (la propia o una base), así que comparar
+    // contra eso -- no contra `out_ctx.class_name` -- también excluye
+    // correctamente el constructor heredado si una subclase no define
+    // uno propio.
+    out_members.erase(
+        std::remove_if(out_members.begin(), out_members.end(),
+                        [](const ClassMember& m) { return m.is_method && m.name == m.declared_in; }),
+        out_members.end());
+    return !out_members.empty();
+}
+
+// Fase 5 -- mismo criterio de presentación en los dos lugares que muestran
+// miembros (el popup nativo vía PopulateMemberSuggestions y el popup
+// propio DrawDotCompletionPopup): métodos como "nombre(params)" (el mismo
+// `display` que ya arma ClassIndex, igual criterio visual que
+// FunctionSignature::display en los parameter hints), atributos como
+// texto plano.
+std::string MemberSuggestionLabel(const ClassMember& member) {
+    return member.is_method && member.signature ? member.signature->display : member.name;
+}
+
+// Si el cursor está justo después de `identificador.parcial` y
+// `identificador` se puede resolver (variable de tipo conocido, `this`
+// dentro de una clase, o un nombre de clase directo -- ver
+// ResolveMemberAccess), reemplaza las sugerencias del popup NATIVO de la
+// librería por los miembros de esa clase en vez del trie global de
+// keywords/identificadores/funciones. Devuelve true si hizo eso (el
+// caller no debe llamar también a autocomplete_trie.findSuggestions);
+// false si no se pudo resolver nada -- fallback seguro al comportamiento
+// de siempre (Fase 2/4: nunca forzar, nunca un popup vacío).
+//
+// Solo se ejecuta cuando la librería YA decidió invocar el callback (ver
+// AutoCompleteConfig::callback más abajo) -- lo cual, según
+// docs/autocomplete.md del vendorizado, solo pasa mientras
+// AutoCompleteState::inIdentifier es true. Justo al escribir el '.' eso
+// todavía es false (el '.' no es parte de un identificador), así que ese
+// instante exacto NO pasa por acá -- lo cubre DrawDotCompletionPopup, más
+// abajo, dibujado a mano.
+bool PopulateMemberSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& ac_state) {
+    TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
+    std::string before = TextBeforeCursor(tab, pos);
+
+    MemberAccessContext ctx;
+    std::vector<ClassMember> members;
+    if (!ResolveVisibleMembers(tab, pos.line, before, ctx, members)) return false;
+
+    // El popup del editor (ver AutoCompleteState::suggestions en
+    // TextEditor.h, vendorizado y fuera de este zip) solo acepta una lista
+    // plana de strings, así que la distinción método/atributo pasa por el
+    // "()" en el propio texto sugerido (MemberSuggestionLabel), no por un
+    // ícono aparte.
+    ac_state.suggestions.clear();
+    for (const auto& member : members) {
+        // Filtro por lo ya tipeado después del '.', si algo -- mismo
+        // criterio de prefijo simple que el resto del autocompletado.
+        if (!ac_state.searchTerm.empty() &&
+            member.name.compare(0, ac_state.searchTerm.size(), ac_state.searchTerm) != 0) {
+            continue;
+        }
+        ac_state.suggestions.push_back(MemberSuggestionLabel(member));
+    }
+    return true;
 }
 
 // Escanea `line_before_cursor` hacia atrás buscando el '(' de la llamada
@@ -196,9 +322,7 @@ void DrawHintCodeBox(const std::string& text, ImU32 border_color) {
 // pantalla y no intente superponer otro (ver DrawKeywordHint más abajo).
 bool DrawParameterHint(EditorTab& tab) {
     TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
-    std::string line = tab.editor.GetLineText(pos.line);
-    if (pos.column < 0 || static_cast<size_t>(pos.column) > line.size()) return false;
-    std::string before = line.substr(0, static_cast<size_t>(pos.column));
+    std::string before = TextBeforeCursor(tab, pos);
 
     CallContext ctx;
     if (!FindEnclosingCall(before, ctx)) return false;
@@ -301,10 +425,7 @@ bool DrawParameterHint(EditorTab& tab) {
 // documentación por sugerencia como los IDEs con language server.
 bool DrawKeywordHint(EditorTab& tab) {
     TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
-    std::string line = tab.editor.GetLineText(pos.line);
-    if (pos.column < 0 || static_cast<size_t>(pos.column) > line.size()) return false;
-
-    std::string word = WordEndingAtCursor(line.substr(0, static_cast<size_t>(pos.column)));
+    std::string word = WordEndingAtCursor(TextBeforeCursor(tab, pos));
     if (word.empty() || !IsIdentStart(word[0])) return false;
 
     const auto& docs = KeywordDocs();
@@ -384,6 +505,170 @@ bool DrawKeywordHint(EditorTab& tab) {
     return true;
 }
 
+// Ancho estimado del gutter de números de línea, en píxeles. La
+// librería no expone este valor (ver comentario de DrawDotCompletionPopup
+// más abajo), así que se reconstruye con la misma lógica que usa
+// cualquier gutter de números de línea: suficientes dígitos para el
+// último número de línea, más un margen chico de aire a cada lado.
+float EstimateGutterWidth(EditorTab& tab, float glyph_width) {
+    // std::count de '\n' sobre el buffer en vez de un getter dedicado de
+    // "total de líneas" -- misma técnica que ya usa este archivo en otro
+    // lado para contar líneas a partir de texto plano (ver FindLineOf,
+    // más abajo). Evita depender de que la librería vendorizada exponga
+    // un método con un nombre exacto que no se puede confirmar sin el
+    // header real (fetched vía CMake, fuera de este zip).
+    const std::string text = tab.GetText();
+    int total_lines = 1 + static_cast<int>(std::count(text.begin(), text.end(), '\n'));
+    int digits = 1;
+    for (int n = total_lines; n >= 10; n /= 10) ++digits;
+    return glyph_width * (static_cast<float>(digits) + 3.0f);  // dígitos + padding a los dos lados
+}
+
+// Posición en pantalla, best-effort, de `pos` dentro del editor de `tab`.
+// `editor_screen_min` es la esquina superior izquierda del widget del
+// editor (capturada por el caller justo antes de Render(), ver
+// DrawEditorPanel -- no depende de dónde ImGui deje internamente el
+// último item de TextEditor::Render()).
+//
+// "Best-effort" porque, como ya decía el comentario original de
+// DrawDotCompletionPopup, la librería vendorizada expone
+// GetFirstVisibleLine/GetFirstVisibleColumn y GetLineHeight/GetGlyphWidth,
+// pero NO el ancho del gutter ni el scroll horizontal en píxeles -- acá
+// se reconstruyen ambos a partir de esos cuatro valores (EstimateGutterWidth
+// arriba, y la resta directa contra la primera columna/línea visible).
+// Con la fuente monoespaciada del editor (JetBrains Mono) y sin word-wrap,
+// esto da la posición exacta en el 99% de los casos; el 1% restante
+// (por ejemplo, justo mientras la vista hace scroll suave) puede quedar
+// un frame desalineado, pero nunca peor que seguir al mouse, que es lo
+// que reemplaza.
+ImVec2 EstimateCaretScreenPos(EditorTab& tab, const TextEditor::CursorPosition& pos,
+                               const ImVec2& editor_screen_min) {
+    const float line_height = tab.editor.GetLineHeight();
+    const float glyph_width = tab.editor.GetGlyphWidth();
+    const int first_visible_line = tab.editor.GetFirstVisibleLine();
+    const int first_visible_column = tab.editor.GetFirstVisibleColumn();
+    const float gutter_width = EstimateGutterWidth(tab, glyph_width);
+
+    const float x = editor_screen_min.x + gutter_width +
+                     static_cast<float>(pos.column - first_visible_column) * glyph_width;
+    const float y = editor_screen_min.y +
+                     static_cast<float>(pos.line - first_visible_line) * line_height;
+    return ImVec2(x, y);
+}
+
+// Tapa un hueco real en el autocompletado por miembros (ver
+// PopulateMemberSuggestions más arriba y TODO_autocompletado_miembros.md):
+// ImGuiColorTextEdit (vendorizado, docs/autocomplete.md) solo dispara
+// AutoCompleteConfig::callback "al tipear" (triggerOnTyping) mientras
+// AutoCompleteState::inIdentifier es true, es decir, con el cursor DENTRO
+// de un identificador. El caracter '.' no es parte de un identificador,
+// así que justo al escribirlo la librería nunca invoca el callback en ese
+// instante exacto -- hay que escribir al menos una letra del nombre del
+// miembro para que `inIdentifier` pase a true y el trigger nativo
+// despierte solo. PopulateMemberSuggestions ya resuelve bien los
+// miembros (verificado con un test standalone, ver
+// studio/tests/member_access_test.cpp), pero nunca llega a ejecutarse en
+// ese primer instante.
+//
+// Esta función cubre exactamente ese instante: mientras el cursor esté
+// justo después de "identificador." sin nada tipeado todavía (`before`
+// termina en '.'), dibuja a mano un popup clickeable con la misma lista
+// de miembros que mostraría el popup nativo. En cuanto se escribe una
+// letra, `before` ya no termina en '.' y esta función deja de dibujar
+// nada -- el trigger nativo de la librería toma el control normalmente
+// (con su propio filtro por prefijo, vía PopulateMemberSuggestions), así
+// que los dos popups nunca están en pantalla al mismo tiempo.
+//
+// Por qué una ventana real (ImGui::Begin) y no un tooltip como
+// DrawParameterHint/DrawKeywordHint: acá el usuario tiene que poder
+// CLICKEAR una sugerencia, y los tooltips de ImGui no aceptan click ni
+// foco de teclado.
+//
+// Se ancla a la posición estimada del caret (EstimateCaretScreenPos,
+// justo debajo de la línea del '.'), NO al mouse -- antes seguía al
+// mouse en cada frame como DrawParameterHint/DrawKeywordHint, lo cual
+// era confuso acá en particular: es la única de las tres ventanas
+// pensada para clickear, y una lista clickeable que se mueve con el
+// mouse invita a hacer click en el lugar equivocado. Al quedar fija en
+// el '.', el popup no se mueve mientras no se mueva el propio caret
+// (scrollear si acaso, ver el comentario de EstimateCaretScreenPos).
+bool DrawDotCompletionPopup(EditorTab& tab, const ImVec2& editor_screen_min) {
+    TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
+    std::string before = TextBeforeCursor(tab, pos);
+    if (before.empty() || before.back() != '.') return false;  // ya se tipeó algo -- cederle el paso al trigger nativo
+
+    MemberAccessContext ctx;
+    std::vector<ClassMember> members;
+    if (!ResolveVisibleMembers(tab, pos.line, before, ctx, members)) return false;
+
+    const float line_height = tab.editor.GetLineHeight();
+    const ImVec2 caret_pos = EstimateCaretScreenPos(tab, pos, editor_screen_min);
+    ImGui::SetNextWindowPos(ImVec2(caret_pos.x, caret_pos.y + line_height), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.97f);
+    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                         ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                                         ImGuiWindowFlags_AlwaysAutoResize;
+    // NoFocusOnAppearing: clave para que aparecer NO le robe el foco de
+    // teclado al editor -- si lo hiciera, la próxima tecla que el usuario
+    // escriba (la primera letra del miembro) iría a esta ventana en vez
+    // de al editor, rompiendo justo la transición al trigger nativo que
+    // esta función existe para no interrumpir.
+    const std::string window_id = "##dot_completion_popup_" + std::to_string(tab.id);
+    if (ImGui::Begin(window_id.c_str(), nullptr, kFlags)) {
+        for (const auto& member : members) {
+            ImGui::PushID(member.name.c_str());
+
+            // Punto de color antes del nombre: la misma distinción
+            // método/atributo que ya usa MemberSuggestionLabel con el
+            // "()" del texto, pero también visible de un vistazo sin
+            // leer -- dorado (mismo tono que las funciones/built-ins en
+            // el editor, palette::kSynFunction) para métodos, celeste
+            // (palette::kInfo) para atributos. Deliberadamente NO un
+            // ícono/glyph distinto por categoría (pedido explícito):
+            // dos puntos de color alcanzan para diferenciar sin agregar
+            // ruido visual a una lista que puede tener varias filas.
+            const ImU32 dot_color = member.is_method
+                                         ? palette::U32FromHex(palette::kSynFunction)
+                                         : palette::U32FromHex(palette::kInfo);
+            constexpr float kDotRadius = 3.5f;
+            const float row_height = ImGui::GetTextLineHeightWithSpacing();
+            const ImVec2 row_start = ImGui::GetCursorScreenPos();
+            ImGui::GetWindowDrawList()->AddCircleFilled(
+                ImVec2(row_start.x + kDotRadius + 2.0f, row_start.y + row_height * 0.5f),
+                kDotRadius, dot_color);
+            ImGui::Dummy(ImVec2(kDotRadius * 2.0f + 8.0f, 0.0f));
+            ImGui::SameLine(0.0f, 0.0f);
+
+            if (ImGui::Selectable(MemberSuggestionLabel(member).c_str())) {
+                // Insertar el nombre (más "()" para métodos) justo donde
+                // está el cursor, que es exactamente donde termina el
+                // '.' -- todavía no se tipeó nada después. Mismo API que
+                // usa el resto del editor para mutar texto
+                // programáticamente (ReplaceSectionText/SetCursor), así
+                // que dispara el mismo SetChangeCallback de siempre
+                // (RebuildIndexAndTrie) sin necesitar un camino especial.
+                std::string insert_text = member.name;
+                int caret_offset = static_cast<int>(insert_text.size());
+                if (member.is_method) {
+                    insert_text += "()";
+                    // Con parámetros: dejar el caret ENTRE los paréntesis
+                    // para poder escribir el primer argumento derecho,
+                    // como hace cualquier IDE al aceptar un método con
+                    // firma. Sin parámetros: caret después de "()".
+                    bool has_params = member.signature && !member.signature->params.empty();
+                    caret_offset = static_cast<int>(insert_text.size()) - (has_params ? 1 : 0);
+                }
+                tab.editor.ReplaceSectionText(pos.line, pos.column, pos.line, pos.column, insert_text);
+                tab.editor.SetCursor(pos.line, pos.column + caret_offset);
+            }
+            ImGui::PopID();
+        }
+    }
+    ImGui::End();
+    return true;
+}
+
 // One-time setup shared by every tab, regardless of whether it starts
 // empty, from a file, or with initial demo text -- language, palette,
 // line numbers, autocomplete callback. Mirrors the old (single-buffer)
@@ -446,6 +731,7 @@ void InitTab(EditorTab& tab) {
     }, 0);
 
     tab.autocomplete_config.callback = [&tab](TextEditor::AutoCompleteState& ac_state) {
+        if (PopulateMemberSuggestions(tab, ac_state)) return;
         tab.autocomplete_trie.findSuggestions(ac_state.suggestions, ac_state.searchTerm);
     };
     tab.editor.SetAutoCompleteConfig(&tab.autocomplete_config);
@@ -1096,7 +1382,9 @@ void DrawEditorPanel(EditorState& state) {
                     // moving to inspect another panel) instead of lingering
                     // on screen tied purely to where the cursor sits in text.
                     if (ImGui::IsMouseHoveringRect(editor_min, editor_max)) {
-                        if (!DrawParameterHint(tab)) DrawKeywordHint(tab);
+                        if (!DrawParameterHint(tab)) {
+                            if (!DrawDotCompletionPopup(tab, editor_min)) DrawKeywordHint(tab);
+                        }
                     }
                 }
                 ImGui::EndTabItem();

@@ -128,6 +128,54 @@ catch e
 end
 ```
 
+## Class Members: `static` and `private`
+
+Every class member (attribute or method) is public and per-instance by
+default -- exactly like before. Two optional, independent modifiers let you
+opt out of that default, one question at a time:
+
+- `static` -- shared by every instance of the class instead of living on
+  each one individually. Accessed through the class name (`Clase.miembro`),
+  never through `this` or an instance variable.
+- `private` -- only visible/usable from inside the class's own methods.
+  A `private` member inherited from a base class is not visible to a
+  child class, even though the base class's own methods can still use it.
+
+```lua
+class Animal
+    static totalAnimales = 0     # compartido por TODAS las instancias
+    private vidaSecreta = 100    # solo Animal lo ve
+
+    energia = 10                 # sin modificador -> público, de instancia (como siempre)
+
+    func Animal(nombre)
+        this.nombre = nombre
+        Animal.totalAnimales += 1   # un static se toca por nombre de clase
+    end
+
+    func comer()
+        this.energia += 5
+        this.regenerar()           # un método private sí puede llamarse desde adentro
+    end
+
+    private func regenerar()
+        this.vidaSecreta += 1
+    end
+
+    static func especie()
+        return "animal generico"   # static func: no recibe "this"
+    end
+end
+```
+
+There's no `protected` and no method/constructor overloading by design --
+see [`DISENO_visibilidad_clases_avalang.md`](DISENO_visibilidad_clases_avalang.md)
+for the full rationale, the grammar changes, and what enforcing `private`
+means today (an Ava Studio autocompletion filter, not a VM-level runtime
+error -- see that document's §3.2 for why that's the intentional v1
+scope). A worked example covering all four modifier combinations lives in
+[`scripts/visibilidad_modificadores.ava`](scripts/visibilidad_modificadores.ava).
+
 ## Building
 
 Requires CMake >= 3.20 and a C++20 compiler. The full frontend needs the

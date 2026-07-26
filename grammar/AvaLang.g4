@@ -35,6 +35,16 @@ smallStatement
     | raiseStatement
     | yieldStatement
     | incDecStatement
+    | modifiedAssignStatement
+    ;
+
+// atributo con modificador(es): `static contador = 0`,
+// `private vidaSecreta = 100`, `static private x = 1`.
+// Reusa assignStatement tal cual (targetList '=' exprList), así que
+// admite lo mismo que ya admite una asignación común -- no hace falta
+// una regla de "declaración de atributo" separada.
+modifiedAssignStatement
+    : memberModifier+ assignStatement
     ;
 
 incDecStatement
@@ -48,6 +58,31 @@ compoundStatement
     | funcDeclaration
     | classDeclaration
     | tryStatement
+    | modifiedFuncDeclaration
+    ;
+
+// --- class member visibility/storage modifiers -------------------------
+//
+// Diseño: ver DISENO_visibilidad_clases_avalang.md, Fase A.
+//
+// Estas reglas son deliberadamente aditivas y no tocan `block`,
+// `classDeclaration` ni `statement`: sintácticamente quedan válidas en
+// cualquier lugar donde ya vale un statement (no solo dentro de una
+// clase), igual que el resto de esta gramática no distingue contexto.
+// La restricción real -- que `static`/`private` solo tengan sentido
+// dentro de un cuerpo de clase -- se valida en el compilador (ver
+// Fase C del documento de diseño), no acá. Esto evita reescribir
+// `classDeclaration`/`block` (reutilizados por funciones, if, while,
+// for, etc.) y mantiene el riesgo de romper algo existente en cero.
+memberModifier
+    : 'static'
+    | 'private'
+    ;
+
+// func con modificador(es): `static func x() ... end`,
+// `private func x() ... end`, `static private func x() ... end`.
+modifiedFuncDeclaration
+    : memberModifier+ funcDeclaration
     ;
 
 tryStatement

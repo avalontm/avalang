@@ -63,7 +63,9 @@ void CopyAll(const std::vector<ConsoleLine>& console) {
 
 } // namespace
 
-void DrawOutputPanel(OutputState& state, EngineBridge& engine) {
+std::optional<OutputFileClickRequest> DrawOutputPanel(OutputState& state, EngineBridge& engine) {
+    std::optional<OutputFileClickRequest> click_request;
+
     ImGui::Begin("Output");
 
     const auto& console = engine.Console();
@@ -147,6 +149,17 @@ void DrawOutputPanel(OutputState& state, EngineBridge& engine) {
                 } else {
                     state.selection_anchor = state.selection_cursor = i; // start a new one
                 }
+                // An Error line with a known source position (see
+                // ConsoleLine::error_line in engine_bridge.h) is
+                // clickable like a terminal's problem matcher: jump
+                // straight to the offending file/line instead of only
+                // selecting the text. Falls back to nothing (just
+                // selects) for lines with no position, e.g. an error
+                // predating source-line tracking.
+                if (line.kind == ConsoleLine::Kind::Error && line.error_line != 0) {
+                    click_request = OutputFileClickRequest{line.error_source, line.error_line,
+                                                            line.error_column, line.text};
+                }
             }
             // Dragging with the button still held extends the selection
             // to whatever line the mouse is over, same as a normal text
@@ -225,6 +238,8 @@ void DrawOutputPanel(OutputState& state, EngineBridge& engine) {
     }
 
     ImGui::End();
+
+    return click_request;
 }
 
 } // namespace studio

@@ -108,15 +108,15 @@ AVA_API AvaModule* ava_compile(AvaVM* vm, const char* source, const char* source
         module->proto = proto;
         return module;
     } catch (const AvaError& e) {
-        if (raw_vm) { raw_vm->last_error_line = e.line; raw_vm->last_error_column = e.column; }
+        if (raw_vm) { raw_vm->last_error_line = e.line; raw_vm->last_error_column = e.column; raw_vm->last_error_source = e.source; }
         if (out_error) *out_error = DupString(e.what());
         return nullptr;
     } catch (const std::exception& e) {
-        if (raw_vm) { raw_vm->last_error_line = 0; raw_vm->last_error_column = 0; }
+        if (raw_vm) { raw_vm->last_error_line = 0; raw_vm->last_error_column = 0; raw_vm->last_error_source.clear(); }
         if (out_error) *out_error = DupString(e.what());
         return nullptr;
     } catch (...) {
-        if (raw_vm) { raw_vm->last_error_line = 0; raw_vm->last_error_column = 0; }
+        if (raw_vm) { raw_vm->last_error_line = 0; raw_vm->last_error_column = 0; raw_vm->last_error_source.clear(); }
         if (out_error) *out_error = DupString("unknown error");
         return nullptr;
     }
@@ -134,11 +134,13 @@ AVA_API void ava_run(AvaVM* vm, AvaModule* module, ava_value_t* out_result, char
     } catch (const AvaError& e) {
         raw_vm->last_error_line = e.line;
         raw_vm->last_error_column = e.column;
+        raw_vm->last_error_source = e.source;
         if (out_error) *out_error = DupString(e.what());
         if (out_result) out_result->type = AVA_NIL;
     } catch (const std::exception& e) {
         raw_vm->last_error_line = 0;
         raw_vm->last_error_column = 0;
+        raw_vm->last_error_source.clear();
         if (out_error) *out_error = DupString(e.what());
         if (out_result) out_result->type = AVA_NIL;
     }
@@ -155,11 +157,13 @@ AVA_API void ava_call(AvaVM* vm, ava_value_t callable, const ava_value_t* args, 
     } catch (const AvaError& e) {
         raw_vm->last_error_line = e.line;
         raw_vm->last_error_column = e.column;
+        raw_vm->last_error_source = e.source;
         if (out_error) *out_error = DupString(e.what());
         if (out_result) out_result->type = AVA_NIL;
     } catch (const std::exception& e) {
         raw_vm->last_error_line = 0;
         raw_vm->last_error_column = 0;
+        raw_vm->last_error_source.clear();
         if (out_error) *out_error = DupString(e.what());
         if (out_result) out_result->type = AVA_NIL;
     }
@@ -181,11 +185,13 @@ AVA_API ava_value_t ava_import(AvaVM* vm, const char* module_path, const char* a
     } catch (const AvaError& e) {
         raw_vm->last_error_line = e.line;
         raw_vm->last_error_column = e.column;
+        raw_vm->last_error_source = e.source;
         if (out_error) *out_error = DupString(e.what());
         return ToC(Value::Nil());
     } catch (const std::exception& e) {
         raw_vm->last_error_line = 0;
         raw_vm->last_error_column = 0;
+        raw_vm->last_error_source.clear();
         if (out_error) *out_error = DupString(e.what());
         return ToC(Value::Nil());
     }
@@ -379,6 +385,15 @@ AVA_API int ava_last_error_line(AvaVM* vm) {
 
 AVA_API int ava_last_error_column(AvaVM* vm) {
     return vm ? reinterpret_cast<VM*>(vm)->last_error_column : 0;
+}
+
+// Caller owns the returned string and must free it with ava_string_free,
+// same convention as out_error in ava_compile/ava_run/ava_call/ava_import.
+// Returns an empty (non-null) string when the file is unknown, e.g. the
+// error happened in the same file the embedder already has open.
+AVA_API char* ava_last_error_source(AvaVM* vm) {
+    if (!vm) return DupString("");
+    return DupString(reinterpret_cast<VM*>(vm)->last_error_source);
 }
 
 struct AvaComponent {

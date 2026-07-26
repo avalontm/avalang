@@ -13,6 +13,18 @@ std::string DirOf(const std::string& file_path) {
     return pos == std::string::npos ? "" : file_path.substr(0, pos);
 }
 
+// Reads ava_last_error_source(vm) (freeing the C string it returns) and
+// falls back to `ran_source_name` when the VM didn't know the file --
+// e.g. a Proto compiled before source_name tracking existed, or a plain
+// runtime error with no frame info. A top-level error with no better
+// answer is, by definition, in the file that was run.
+std::string ReadLastErrorSource(AvaVM* vm, const std::string& ran_source_name) {
+    char* raw = ava_last_error_source(vm);
+    std::string source = raw ? raw : "";
+    if (raw) ava_string_free(raw);
+    return source.empty() ? ran_source_name : source;
+}
+
 } // namespace
 
 EngineBridge::EngineBridge() {
@@ -82,8 +94,10 @@ RunResult EngineBridge::RunScript(const std::string& source, const std::string& 
         result.message = compile_error ? compile_error : "unknown compile error";
         result.error_line = ava_last_error_line(vm_);
         result.error_column = ava_last_error_column(vm_);
+        result.error_source = ReadLastErrorSource(vm_, source_name);
         if (compile_error) ava_string_free(compile_error);
-        console_.push_back({ConsoleLine::Kind::Error, result.message});
+        console_.push_back({ConsoleLine::Kind::Error, result.message,
+                             result.error_source, result.error_line, result.error_column});
         return result;
     }
 
@@ -102,8 +116,10 @@ RunResult EngineBridge::RunScript(const std::string& source, const std::string& 
         result.message = run_error;
         result.error_line = ava_last_error_line(vm_);
         result.error_column = ava_last_error_column(vm_);
+        result.error_source = ReadLastErrorSource(vm_, source_name);
         ava_string_free(run_error);
-        console_.push_back({ConsoleLine::Kind::Error, result.message});
+        console_.push_back({ConsoleLine::Kind::Error, result.message,
+                             result.error_source, result.error_line, result.error_column});
         return result;
     }
 

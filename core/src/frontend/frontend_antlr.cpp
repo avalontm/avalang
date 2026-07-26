@@ -122,30 +122,31 @@ std::shared_ptr<Proto> CompileSource(const std::string& source, const std::strin
         // usually the root cause (later ones are often just the parser
         // getting confused after the first bad token).
         const SourceError& first = error_listener.errors.front();
-        throw CompileError(err_out.str(), static_cast<int>(first.line), static_cast<int>(first.column));
+        throw CompileError(err_out.str(), static_cast<int>(first.line), static_cast<int>(first.column),
+                            source_name);
     }
 
     if (parser.getNumberOfSyntaxErrors() > 0) {
-        throw CompileError("syntax error(s) in " + source_name);
+        throw CompileError("syntax error(s) in " + source_name, 0, 0, source_name);
     }
     
     AstBuilder builder;
     try {
         auto any_chunk = tree->accept(&builder);
         if (!any_chunk.has_value()) {
-            throw CompileError("AST building returned empty result");
+            throw CompileError("AST building returned empty result", 0, 0, source_name);
         }
         auto chunk = std::any_cast<std::shared_ptr<Chunk>>(any_chunk);
         if (!chunk) {
-            throw CompileError("AST chunk is null");
+            throw CompileError("AST chunk is null", 0, 0, source_name);
         }
         Compiler compiler;
-        auto proto = compiler.Compile(chunk);
+        auto proto = compiler.Compile(chunk, source_name);
         return proto;
     } catch (const std::bad_any_cast& e) {
-        throw CompileError("Bad any_cast during compilation: " + std::string(e.what()));
+        throw CompileError("Bad any_cast during compilation: " + std::string(e.what()), 0, 0, source_name);
     } catch (const std::exception& e) {
-        throw CompileError("Compilation error: " + std::string(e.what()));
+        throw CompileError("Compilation error: " + std::string(e.what()), 0, 0, source_name);
     }
 }
 

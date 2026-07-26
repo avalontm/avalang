@@ -13,7 +13,8 @@ namespace ava {
 
 class Compiler {
 public:
-    std::shared_ptr<Proto> Compile(const std::shared_ptr<Chunk>& chunk);
+    std::shared_ptr<Proto> Compile(const std::shared_ptr<Chunk>& chunk,
+                                    const std::string& source_name = "");
 
 private:
     struct JmpPatch {
@@ -29,6 +30,11 @@ private:
     // source for error reporting. 0 = unknown (e.g. instructions emitted
     // outside any CompileStmt call, such as an implicit trailing RETURN).
     int current_line_ = 0;
+    // Path of the file being compiled; stamped onto proto_->source_name
+    // (top-level Compile()) and onto every sub-Compiler's proto_ (lambda,
+    // free function, class method) so runtime errors can report the
+    // correct file, including inside imported modules.
+    std::string source_name_;
     uint16_t next_reg_ = 0;
     uint16_t max_reg_ = 0;
     uint16_t result_reg_ = 0;

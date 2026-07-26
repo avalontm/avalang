@@ -18,9 +18,15 @@ namespace ava {
 struct AvaError : std::runtime_error {
     int line;
     int column;
+    // Path of the source file the error originates from. Empty when the
+    // caller doesn't know it yet (e.g. constructed before the frame's
+    // Proto::source_name was propagated) or when the error has no
+    // meaningful file association.
+    std::string source;
 
-    explicit AvaError(const std::string& message, int line = 0, int column = 0)
-        : std::runtime_error(message), line(line), column(column) {}
+    explicit AvaError(const std::string& message, int line = 0, int column = 0,
+                       const std::string& source = "")
+        : std::runtime_error(message), line(line), column(column), source(source) {}
 };
 
 } // namespace ava

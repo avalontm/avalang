@@ -1,8 +1,8 @@
 class dog
-	dog()
-	
+	func dog()
+
 	end
-	
+
 	func say()
 		print("woof!!")
 	end

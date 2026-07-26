@@ -440,10 +440,24 @@ int main() {
         if (editor_state.run_requested || want_run) {
             if (const studio::EditorTab* active = editor_state.Active(); active && !active->is_welcome) {
                 studio::ClearErrorHighlights(editor_state);
-                output_state.last_run = engine.RunScript(active->GetText(), active->file_path);
+                const std::string run_source_name = active->file_path;
+                output_state.last_run = engine.RunScript(active->GetText(), run_source_name);
                 output_state.has_run_result = true;
                 if (!output_state.last_run.success) {
-                    studio::HighlightError(editor_state, active->file_path,
+                    // The failing file isn't always the one that was run --
+                    // e.g. an error inside an `import`ed module. Falls back
+                    // to run_source_name when the VM didn't know the file
+                    // (see RunResult::error_source), same as a top-level
+                    // error. Open/focus that file's tab first (no-op if
+                    // it's already the active tab) so HighlightError has
+                    // something to point at even for a module that was
+                    // never opened by hand.
+                    const std::string& err_source = output_state.last_run.error_source;
+                    const std::string& target_path = err_source.empty() ? run_source_name : err_source;
+                    if (!target_path.empty() && target_path != run_source_name) {
+                        studio::OpenFileInTab(editor_state, target_path);
+                    }
+                    studio::HighlightError(editor_state, target_path,
                                             output_state.last_run.error_line,
                                             output_state.last_run.error_column,
                                             output_state.last_run.message);
@@ -653,7 +667,23 @@ int main() {
         }
 
         // --- Output --------------------------------------------------------
-        studio::DrawOutputPanel(output_state, engine);
+        if (auto file_click = studio::DrawOutputPanel(output_state, engine)) {
+            // Clicking an older Error line in the scrollback jumps to it
+            // again, exactly like the auto-open/highlight right after a
+            // failed Run above -- open/focus the file (no-op if it's
+            // already the active tab) and highlight the position.
+            if (const studio::EditorTab* active = editor_state.Active();
+                file_click->file_path.empty() || !active || active->file_path != file_click->file_path) {
+                studio::ClearErrorHighlights(editor_state);
+                if (!file_click->file_path.empty()) {
+                    studio::OpenFileInTab(editor_state, file_click->file_path);
+                }
+            } else {
+                studio::ClearErrorHighlights(editor_state);
+            }
+            studio::HighlightError(editor_state, file_click->file_path, file_click->line,
+                                    file_click->column, file_click->message);
+        }
 
         ImGui::Render();
         int display_w, display_h;

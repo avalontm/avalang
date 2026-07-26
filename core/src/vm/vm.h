@@ -92,6 +92,16 @@ public:
     // Studio) can highlight the offending line in an editor.
     int last_error_line = 0;
     int last_error_column = 0;
+    // Path of the source file the most recent error came from (set from
+    // AvaError::source alongside last_error_line/column above). Empty
+    // when unknown, or when the error happened in the same file the
+    // embedder already has open (e.g. a top-level ava_run failure) --
+    // callers should fall back to the file they compiled/ran in that
+    // case. Lets an embedder open the *right* file -- e.g. an error
+    // raised inside an imported module -- rather than only a line
+    // number in whichever file happens to be showing. Read via
+    // ava_last_error_source.
+    std::string last_error_source;
 
 private:
     Value ExecuteFrame(size_t frame_idx);

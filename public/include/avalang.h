@@ -275,6 +275,15 @@ AVA_API void ava_string_free(char* s); /* frees strings returned via out_error, 
 AVA_API int ava_last_error_line(AvaVM* vm);
 AVA_API int ava_last_error_column(AvaVM* vm);
 
+/* Path of the source file the most recent error (see above) came from --
+ * e.g. an imported module's file when the error happened inside it,
+ * rather than the top-level script. Caller owns the returned string and
+ * must free it with ava_string_free. Empty (but non-null) when unknown,
+ * in which case a host UI should fall back to whichever file it just
+ * compiled/ran. Overwritten by this VM's next ava_compile/ava_run/
+ * ava_call/ava_import call, so read it before making another one. */
+AVA_API char* ava_last_error_source(AvaVM* vm);
+
 /* ---------------------------------------------------------------------
  * UI Component Tree API
  * ------------------------------------------------------------------- */

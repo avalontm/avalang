@@ -114,6 +114,8 @@ set(STUDIO_SOURCES
     src/fonts/embedded_font.cpp
     src/languages/avalang_language.cpp
     src/languages/function_index.cpp
+    src/languages/class_index.cpp
+    src/languages/member_access_resolver.cpp
     src/languages/builtin_signatures.cpp
     src/languages/keyword_docs.cpp
     src/util/csv.cpp

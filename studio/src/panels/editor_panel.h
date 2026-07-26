@@ -7,7 +7,9 @@
 
 #include "TextEditor.h"
 #include "design/design_document.h"
+#include "languages/class_index.h"
 #include "languages/function_index.h"
+#include "languages/member_access_resolver.h"
 #include "panels/properties_panel.h"
 
 namespace studio {
@@ -39,6 +41,10 @@ struct EditorTab {
     TextEditor::AutoCompleteConfig autocomplete_config; // must outlive editor.SetAutoCompleteConfig(&this)
     FunctionIndex function_index; // func nombre(params) locales + de imports, para
                                    // autocompletado con nombre real y parameter hints
+    ClassIndex class_index;       // clases (locales + importadas, transitivo) para el
+                                   // autocompletado por miembros ("instancia." -> say())
+    VariableTypeIndex variable_type_index; // variable -> nombre_de_clase, best-effort
+                                            // (Fase 2 de TODO_autocompletado_miembros.md)
     bool dirty = false;
 
     // True only for the startup "Welcome" tab (see OpenWelcomeTab) -- it
@@ -227,7 +233,10 @@ void ToggleTabViewMode(EditorTab& tab);
 // Draws the Code Editor panel (center dock): a VSCode-like tab strip --
 // reorderable, closable, unsaved-changes dot -- above the active tab's
 // editor (line numbers, AvaLang syntax highlighting, keyword/built-in
-// autocomplete, function parameter hints, and a keyword syntax tooltip
+// autocomplete, member ("instancia.") autocomplete -- both the library's
+// native popup via PopulateMemberSuggestions and the hand-drawn
+// DrawDotCompletionPopup that covers the instant right after typing the
+// '.' itself --, function parameter hints, and a keyword syntax tooltip
 // while typing if/while/for/... -- see DrawKeywordHint in
 // editor_panel.cpp). Also renders the close-confirmation modal when a
 // dirty tab's close was requested.

@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <memory>
 #include <atomic>
 
@@ -67,8 +68,23 @@ struct NativeObj : Object {
 
 struct ClassObj : Object {
     std::string name;
+    // Compartido por TODAS las instancias -- vive solo acá, nunca se
+    // copia dentro de un InstanceObj. Incluye los atributos declarados
+    // `static`, más las claves internas de bookkeeping ("__base__").
+    // Ver DISENO_visibilidad_clases_avalang.md, Fase C/D.
     std::unordered_map<std::string, Value> attrs;
+    // Valores por defecto de instancia: SÍ se copian a cada InstanceObj
+    // nuevo (uno por instancia, independientes entre sí). Antes de la
+    // Fase C, esto vivía mezclado dentro de `attrs`, lo que hacía que
+    // `Clase.x = valor` no compartiera estado real con instancias ya
+    // creadas -- ver value.h/vm.cpp para el detalle del bug corregido.
+    std::unordered_map<std::string, Value> instance_defaults;
     std::unordered_map<std::string, std::shared_ptr<Proto>> methods;
+    // Nombres de atributos y métodos marcados `private`. Es solo
+    // metadata: en esta fase el VM no la usa para negar acceso (ver
+    // §6 del documento de diseño -- el enforcement de `private` queda
+    // para Ava Studio en la Fase E, no para el VM).
+    std::unordered_set<std::string> private_members;
     std::vector<std::string> param_names;
     ClassObj* base_class = nullptr;
 };

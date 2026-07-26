@@ -49,6 +49,23 @@ static std::string NumberToString(double n) {
     return s;
 }
 
+// Static (non-instance) attrs live only on the class that declared them.
+// CompileClass no longer copies a subclass's base attrs into its own
+// `attrs` map (that made `Sub.x` and `Base.x` two independent copies as
+// soon as either was written to) -- instead a subclass just carries a
+// `__base__` link, and lookups walk it here to find the ClassObj that
+// actually owns `name`, so `Base.x` and `Sub.x` stay the same storage.
+static ava::ClassObj* FindClassOwningAttr(ava::ClassObj* cls, const std::string& name) {
+    ava::ClassObj* cur = cls;
+    while (cur) {
+        if (cur->attrs.find(name) != cur->attrs.end()) return cur;
+        auto base_it = cur->attrs.find("__base__");
+        if (base_it == cur->attrs.end() || base_it->second.type != ava::ValueType::Class) break;
+        cur = static_cast<ava::ClassObj*>(base_it->second.obj);
+    }
+    return nullptr;
+}
+
 static size_t ValidateIntegerIndex(double n, const char* context) {
     if (std::abs(n - std::round(n)) >= 0.0000001) {
         throw std::runtime_error(std::string(context) + ": index must be an integer, got " + NumberToString(n));
@@ -650,11 +667,16 @@ Value VM::ExecuteFrame(size_t frame_idx) {
             }
 
             case OpCode::NEWCLASS: {
+                // NOTA: igual que NEWINSTANCE, este opcode no lo emite el
+                // compilador hoy -- se mantiene consistente con los
+                // campos nuevos de ClassObj por si se llega a usar.
                 auto* cls = new ClassObj();
                 auto* class_proto = static_cast<ClassObj*>(K[in.b].obj);
                 cls->name = class_proto->name;
                 cls->attrs = class_proto->attrs;
+                cls->instance_defaults = class_proto->instance_defaults;
                 cls->methods = class_proto->methods;
+                cls->private_members = class_proto->private_members;
                 cls->param_names = class_proto->param_names;
                 Value v; v.type = ValueType::Class; v.obj = cls;
                 Retain(v);
@@ -663,11 +685,20 @@ Value VM::ExecuteFrame(size_t frame_idx) {
             }
 
             case OpCode::NEWINSTANCE: {
+                // NOTA: este opcode no lo emite el compilador actualmente
+                // (la construcción real de instancias pasa por CALL sobre
+                // un valor Class, más abajo) -- se mantiene consistente
+                // igual, por si algún día se usa.
                 auto& cls_val = frames_[frame_idx].registers[in.b];
                 auto* cls = static_cast<ClassObj*>(cls_val.obj);
                 auto* inst = new InstanceObj();
                 inst->cls = cls;
-                inst->attrs = cls->attrs;
+                // Fase D: copiar solo los valores por defecto de
+                // instancia, NO `cls->attrs` completo. Antes de este fix,
+                // los atributos `static` se copiaban acá también, así que
+                // nunca quedaban realmente compartidos entre instancias
+                // -- ver DISENO_visibilidad_clases_avalang.md, §1 y Fase D.
+                inst->attrs = cls->instance_defaults;
                 
                 Value cls_val_copy;
                 cls_val_copy.type = ValueType::Class;
@@ -758,9 +789,9 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                         Retain(v);
                         frames_[frame_idx].registers[in.a] = v;
                     } else {
-                        auto it = cls->attrs.find(attr_name->data);
-                        if (it != cls->attrs.end()) {
-                            frames_[frame_idx].registers[in.a] = it->second;
+                        auto* owner = FindClassOwningAttr(cls, attr_name->data);
+                        if (owner) {
+                            frames_[frame_idx].registers[in.a] = owner->attrs.at(attr_name->data);
                         } else {
                             frames_[frame_idx].registers[in.a] = Value::Nil();
                         }
@@ -788,8 +819,17 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                     }
                 } else if (obj.type == ValueType::Class) {
                     auto* cls = static_cast<ClassObj*>(obj.obj);
-                    cls->attrs[attr_name->data] = val;
-                    Retain(val);
+                    auto* owner = FindClassOwningAttr(cls, attr_name->data);
+                    auto& target_attrs = owner ? owner->attrs : cls->attrs;
+                    auto it = target_attrs.find(attr_name->data);
+                    if (it != target_attrs.end()) {
+                        Release(it->second);
+                        it->second = val;
+                        Retain(val);
+                    } else {
+                        target_attrs[attr_name->data] = val;
+                        Retain(val);
+                    }
                 }
                 break;
             }
@@ -809,8 +849,8 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                     CallFrame callee_frame;
                     callee_frame.proto = bound->proto;
                     callee_frame.registers.resize(std::max<size_t>(callee_frame.registers.size(), bound->proto->num_registers));
-                    for (size_t i = 0; i < all_args.size() && i + 1 < callee_frame.registers.size(); ++i) {
-                        callee_frame.registers[i + 1] = all_args[i];
+                    for (size_t i = 0; i < all_args.size() && i < callee_frame.registers.size(); ++i) {
+                        callee_frame.registers[i] = all_args[i];
                     }
                     callee_frame.argc = static_cast<uint32_t>(args.size());
                     frames_.push_back(callee_frame);
@@ -821,7 +861,10 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                     auto* cls = static_cast<ClassObj*>(callee.obj);
                     auto* inst = new InstanceObj();
                     inst->cls = cls;
-                    inst->attrs = cls->attrs;
+                    // Fase D: mismo fix que en NEWINSTANCE -- solo se
+                    // copian los defaults de instancia, los `static`
+                    // quedan compartidos únicamente en `cls->attrs`.
+                    inst->attrs = cls->instance_defaults;
                     
                     Value cls_val;
                     cls_val.type = ValueType::Class;
@@ -1140,12 +1183,20 @@ Value VM::ExecuteFrame(size_t frame_idx) {
             }
         }
     }
-    } catch (const AvaError&) {
+    } catch (AvaError& err) {
         // Already carries a real source position -- either annotated by
         // a deeper ExecuteFrame call re-throwing through the CALL opcode
         // above, or thrown directly with one (e.g. CompileSource during a
         // dynamic import). The innermost frame's position is the most
-        // useful one to show the user, so leave it untouched.
+        // useful one to show the user, so leave line/column untouched.
+        // `source` can still be empty though (e.g. a plain `throw
+        // AvaError(...)` elsewhere in the VM that only knows the line),
+        // so fill it in from this frame's Proto -- the frame that was
+        // executing when the error first surfaced -- without overwriting
+        // a file a deeper frame already attached.
+        if (err.source.empty() && frame_idx < frames_.size()) {
+            err.source = frames_[frame_idx].proto->source_name;
+        }
         throw;
     } catch (const std::exception& e) {
         // pc was already advanced past the offending instruction by the
@@ -1156,13 +1207,15 @@ Value VM::ExecuteFrame(size_t frame_idx) {
         // a source line -- column isn't tracked at this granularity, only
         // line (0 = unknown, e.g. a proto compiled before this existed).
         int line = 0;
+        std::string source;
         if (frame_idx < frames_.size()) {
             const auto& debug_lines = frames_[frame_idx].proto->debug_lines;
             const size_t pc = frames_[frame_idx].pc;
             const size_t ip = pc > 0 ? pc - 1 : 0;
             if (ip < debug_lines.size()) line = static_cast<int>(debug_lines[ip]);
+            source = frames_[frame_idx].proto->source_name;
         }
-        throw AvaError(e.what(), line, 0);
+        throw AvaError(e.what(), line, 0, source);
     }
 
     return Value::Nil();
@@ -1338,8 +1391,37 @@ Value VM::DoImport(const std::string& module_path, const std::string& alias) {
             globals_ = std::move(outer_globals);
             SetNestedNamespace(globals_, ns_parts, 0, module_dict);
         } else {
+            // Import de un solo segmento sin alias -- el caso común,
+            // `import Dog` para usar la clase `Dog` definida en
+            // dog.ava/Dog.ava -- exactamente como ya asume el editor
+            // (ClassIndex::ScanImports en
+            // studio/src/languages/class_index.cpp sigue los imports y
+            // vuelca sus clases DIRECTO al índice, sin ningún prefijo
+            // de namespace). Antes, acá se hacía
+            // `SetGlobal(module_path, module_dict)`: el global "Dog"
+            // terminaba apuntando al DICCIONARIO del módulo entero, no
+            // a la clase -- así que `Dog()` fallaba en runtime con
+            // "attempt to call a non-callable value" (un Dict no es
+            // invocable) aunque el editor lo autocompletara y coloreara
+            // como si fuera perfectamente válido (ver
+            // test.ava/scripts/dog.ava, y la Fase 5 de
+            // TODO_autocompletado_miembros.md que asume lo mismo).
+            //
+            // Fix: en vez de exponer el módulo como un único namespace
+            // bajo su propio nombre, cada definición de nivel superior
+            // del módulo (`class Dog`, cualquier `func` suelta, etc.) se
+            // vuelca directo al scope del importador -- mismo efecto
+            // que un "from Dog import *" -- así que `Dog()` referencia
+            // la clase de verdad. Los imports con punto (`import
+            // a.b.c`, arriba) y los que usan `as alias` (abajo) NO se
+            // tocan: ahí el nombre elegido a propósito por quien
+            // escribe el import sí tiene sentido como namespace
+            // explícito, en vez de volcarse a ciegas al scope de quien
+            // importa.
             globals_ = std::move(outer_globals);
-            SetGlobal(module_path, module_dict);
+            for (auto& entry : dict->entries) {
+                SetGlobal(entry.first, entry.second);
+            }
             Release(module_dict);
         }
     } else {

@@ -24,6 +24,17 @@ struct RunResult {
     // Only meaningful when !success.
     int error_line = 0;
     int error_column = 0;
+
+    // File the failure actually happened in, mirroring
+    // ava_last_error_source (see avalang.h). Empty when the VM didn't
+    // know (e.g. a proto compiled before source_name tracking existed) --
+    // callers should fall back to the file that was run in that case,
+    // since a top-level error is in that same file. Non-empty and
+    // different from the run's own source_name means the error is inside
+    // an `import`ed module: main.cpp opens *that* file's tab so the
+    // highlighted line points at the real offending code instead of
+    // wherever the import statement happens to sit.
+    std::string error_source;
 };
 
 // One line of the Output panel's execution console -- built to feel like
@@ -44,6 +55,17 @@ struct ConsoleLine {
     };
     Kind kind;
     std::string text;
+
+    // Only meaningful when kind == Error. Mirrors RunResult::error_source/
+    // error_line/error_column (see below) -- carried per-line, not just
+    // on the RunResult, so a *previous* run's error line still knows
+    // where to jump to even after a later run has overwritten
+    // OutputState::last_run. source empty + line 0 means "unknown",
+    // same convention as RunResult. The Output panel uses these to make
+    // the line clickable (see output_panel.cpp).
+    std::string error_source;
+    int error_line = 0;
+    int error_column = 0;
 };
 
 // Thin C++ wrapper around the avalang C API (public/include/avalang.h).

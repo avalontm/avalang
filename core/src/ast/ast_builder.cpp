@@ -42,6 +42,27 @@ static BinOp augOpToBinOp(const std::string& op) {
     throw std::runtime_error("unknown augop: " + op);
 }
 
+// Resuelve `memberModifier+` (ver grammar/AvaLang.g4, Fase A) a los dos
+// flags booleanos que terminan viviendo en AssignStmt/FuncDef. Rechaza el
+// mismo modificador repetido dos veces (`private private x = 1`) -- es
+// una validación semántica simple, no algo que la gramática necesite
+// resolver por sí sola.
+static void ResolveMemberModifiers(const std::vector<AvaLangParser::MemberModifierContext*>& mods,
+                                    bool& is_static, bool& is_private) {
+    is_static = false;
+    is_private = false;
+    for (auto* mod : mods) {
+        auto text = mod->getText();
+        if (text == "static") {
+            if (is_static) throw std::runtime_error("modificador 'static' repetido en la misma declaracion");
+            is_static = true;
+        } else if (text == "private") {
+            if (is_private) throw std::runtime_error("modificador 'private' repetido en la misma declaracion");
+            is_private = true;
+        }
+    }
+}
+
 std::shared_ptr<ExprNode> AstBuilder::makeString(const std::string& s) {
     return std::make_shared<StringExpr>(stripQuotes(s));
 }
@@ -298,6 +319,7 @@ std::any AstBuilder::visitSmallStatement(AvaLangParser::SmallStatementContext* c
     if (ctx->raiseStatement())    return visitRaiseStatement(ctx->raiseStatement());
     if (ctx->yieldStatement())    return visitYieldStatement(ctx->yieldStatement());
     if (ctx->incDecStatement())  return visitIncDecStatement(ctx->incDecStatement());
+    if (ctx->modifiedAssignStatement()) return visitModifiedAssignStatement(ctx->modifiedAssignStatement());
     throw std::runtime_error("unsupported small statement");
 }
 
@@ -326,6 +348,7 @@ std::any AstBuilder::visitCompoundStatement(AvaLangParser::CompoundStatementCont
     if (ctx->funcDeclaration()) return visitFuncDeclaration(ctx->funcDeclaration());
     if (ctx->classDeclaration()) return visitClassDeclaration(ctx->classDeclaration());
     if (ctx->tryStatement())   return visitTryStatement(ctx->tryStatement());
+    if (ctx->modifiedFuncDeclaration()) return visitModifiedFuncDeclaration(ctx->modifiedFuncDeclaration());
     throw std::runtime_error("unsupported compound statement");
 }
 
@@ -424,6 +447,28 @@ std::any AstBuilder::visitClassDeclaration(AvaLangParser::ClassDeclarationContex
 
     auto body = stmtsFromAny(visitBlock(ctx->block()));
     return std::make_shared<ClassDef>(name, base_class, body);
+}
+
+std::any AstBuilder::visitModifiedFuncDeclaration(AvaLangParser::ModifiedFuncDeclarationContext* ctx) {
+    bool is_static = false;
+    bool is_private = false;
+    ResolveMemberModifiers(ctx->memberModifier(), is_static, is_private);
+
+    auto func = std::any_cast<std::shared_ptr<FuncDef>>(visitFuncDeclaration(ctx->funcDeclaration()));
+    func->is_static = is_static;
+    func->is_private = is_private;
+    return func;
+}
+
+std::any AstBuilder::visitModifiedAssignStatement(AvaLangParser::ModifiedAssignStatementContext* ctx) {
+    bool is_static = false;
+    bool is_private = false;
+    ResolveMemberModifiers(ctx->memberModifier(), is_static, is_private);
+
+    auto assign = std::any_cast<std::shared_ptr<AssignStmt>>(visitAssignStatement(ctx->assignStatement()));
+    assign->is_static = is_static;
+    assign->is_private = is_private;
+    return assign;
 }
 
 std::any AstBuilder::visitTryStatement(AvaLangParser::TryStatementContext* ctx) {

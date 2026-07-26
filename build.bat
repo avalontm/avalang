@@ -7,12 +7,17 @@ REM
 REM Usage:
 REM   build.bat                build Release with the default generator
 REM   build.bat debug           build Debug instead
-
-REM   build.bat clean            wipe the build directory first
+REM   build.bat clean            delete build\ and exit -- nothing else,
+REM                              no configure/build (see below)
 REM   build.bat ninja            use Ninja instead of Visual Studio/MSBuild
 REM                              (requires ninja.exe on PATH)
 REM
 REM Flags can be combined, e.g.:  build.bat clean debug
+REM "clean" alone (no other flag) just wipes build\ and stops there --
+REM handy when you only want to reclaim disk space or force a from-scratch
+REM CMake reconfigure later. Combine it with another flag (debug/ninja) to
+REM wipe build\ first and then continue into a normal build, same as
+REM before.
 REM
 REM If the VCPKG_ROOT environment variable is set, its toolchain file is
 REM passed to CMake automatically so an antlr4-runtime installed via
@@ -24,17 +29,33 @@ set "BUILD_TYPE=Release"
 set "CLEAN=0"
 set "GENERATOR=Visual Studio 17 2022"
 set "USE_NINJA=0"
+REM Set when debug/ninja is explicitly passed, so a bare "clean" (no
+REM other flag) can be told apart from "clean" combined with one of them --
+REM see the clean-only branch right after argument parsing below.
+set "OTHER_FLAG=0"
 
 :parse_args
 if "%~1"=="" goto args_done
 if /I "%~1"=="clean"  set "CLEAN=1"
-if /I "%~1"=="debug"  set "BUILD_TYPE=Debug"
-if /I "%~1"=="ninja"  set "USE_NINJA=1"
+if /I "%~1"=="debug"  (set "BUILD_TYPE=Debug" & set "OTHER_FLAG=1")
+if /I "%~1"=="ninja"  (set "USE_NINJA=1" & set "OTHER_FLAG=1")
 if /I "%~1"=="help"   goto show_help
 if /I "%~1"=="/?"     goto show_help
 shift
 goto parse_args
 :args_done
+
+if "%CLEAN%"=="1" if "%OTHER_FLAG%"=="0" (
+    if exist "%BUILD_DIR%" (
+        echo Cleaning %BUILD_DIR% ...
+        rmdir /s /q "%BUILD_DIR%"
+        echo Done -- %BUILD_DIR%\ removed.
+    ) else (
+        echo Nothing to clean -- %BUILD_DIR%\ doesn't exist.
+    )
+    endlocal
+    exit /b 0
+)
 
 where cmake >nul 2>nul
 if errorlevel 1 (
@@ -110,30 +131,13 @@ if "%USE_NINJA%"=="1" (
 )
 echo =====================================================================
 
-REM =====================================================================
-REM Copy avalang.dll to Interop bindings for C# development
-REM =====================================================================
-set "SOURCE_DLL=%BUILD_DIR%\%BUILD_TYPE%\avalang.dll"
-set "DEST_DIR=bindings\csharp\AvaLang.Interop\runtimes\win-x64\native"
-
-if exist "%SOURCE_DLL%" (
-    if not exist "%DEST_DIR%" mkdir "%DEST_DIR%"
-    copy /Y "%SOURCE_DLL%" "%DEST_DIR%\avalang.dll" >nul
-    echo [OK] Copied avalang.dll to Interop
-) else (
-    if exist "%BUILD_DIR%\avalang.dll" (
-        if not exist "%DEST_DIR%" mkdir "%DEST_DIR%"
-        copy /Y "%BUILD_DIR%\avalang.dll" "%DEST_DIR%\avalang.dll" >nul
-        echo [OK] Copied avalang.dll to Interop
-    )
-)
-
 endlocal
 exit /b 0
 
 :show_help
 echo Usage: build.bat [clean] [debug] [ninja]
-echo   clean   wipe the build directory before configuring
+echo   clean   alone: delete build\ and exit, nothing else
+echo           combined with debug/ninja: wipe build\ first, then build
 echo   debug   build Debug instead of Release
 echo   ninja   use the Ninja generator instead of Visual Studio/MSBuild
 exit /b 0

@@ -128,6 +128,16 @@ struct ExprStmt : StmtNode {
 struct AssignStmt : StmtNode {
     std::shared_ptr<ExprNode> target;
     std::shared_ptr<ExprNode> value;
+    // Solo tienen sentido cuando esta asignación es en realidad la
+    // declaración de un atributo de clase (`static x = 0` / `private x =
+    // 0` dentro de un cuerpo de clase). Para cualquier otra asignación
+    // (variable local, top-level, etc.) quedan en false y se ignoran --
+    // ver DISENO_visibilidad_clases_avalang.md, Fase A/B: la gramática
+    // permite estos modificadores en cualquier asignación, así que es acá,
+    // en el compilador (Fase C), donde se valida que solo aparezcan dentro
+    // de una clase.
+    bool is_static = false;
+    bool is_private = false;
     AssignStmt(std::shared_ptr<ExprNode> t, std::shared_ptr<ExprNode> v)
         : target(std::move(t)), value(std::move(v)) {}
 };
@@ -196,6 +206,13 @@ struct FuncDef : StmtNode {
     std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> params;
     bool is_vararg = false;
     std::vector<std::shared_ptr<StmtNode>> body;
+    // Mismo caveat que en AssignStmt: solo tienen significado real cuando
+    // este FuncDef es un método dentro de un ClassDef. Un `static func`/
+    // `private func` a nivel de módulo es sintácticamente válido (la
+    // gramática no distingue contexto) pero semánticamente sin sentido;
+    // el compilador debe rechazarlo (Fase C).
+    bool is_static = false;
+    bool is_private = false;
     FuncDef(std::string n, std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> p,
             bool v, std::vector<std::shared_ptr<StmtNode>> b)
         : name(std::move(n)), params(std::move(p)), is_vararg(v), body(std::move(b)) {}

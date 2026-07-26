@@ -33,6 +33,12 @@ struct AVA_PROTO_API Proto {
 
     std::vector<uint32_t>   debug_lines;
     std::string             debug_name;
+    // Path of the source file this Proto was compiled from (top-level
+    // script, or the module a function/method/lambda was defined in).
+    // Empty for Protos compiled before this field existed. Used to
+    // report the correct file when an error happens inside an imported
+    // module, not just a line number (see vm.cpp).
+    std::string             source_name;
 };
 
 } // namespace ava
