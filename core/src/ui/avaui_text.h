@@ -105,6 +105,35 @@ namespace ui {
 // `id = ...` is a reserved property name: it's pulled out into
 // Component::SetId instead of landing in the generic properties list.
 
+// Whether a `{name}` route segment is required or optional (`{name?}`)
+// -- mirrors AvaLang.UI.Routing.RouteParameterKind in avalang-dotnet.
+enum class RouteParameterKind {
+    Required,
+    Optional,
+};
+
+// One `{name}` / `{name?}` / `{name:constraint}` segment inside a
+// `route "..."` template's path. `constraint` is the raw constraint
+// name as written (e.g. "int", "guid", "slug"), empty when none --
+// not resolved/validated here, see AvaComponentParser.cs::ParseConstraint
+// in avalang-dotnet for how a host turns this into an IRouteConstraint;
+// this parser just carries the name through unchanged.
+struct RouteParameter {
+    std::string name;
+    RouteParameterKind kind = RouteParameterKind::Required;
+    std::string constraint;
+};
+
+// One `route "/path/{param}"` declaration. A single component/page
+// file can have more than one (e.g. a list + detail route sharing a
+// page, as seen in avalang-dotnet's productos.avaui) -- see
+// ParsedAvaui::routes below.
+struct RouteDeclaration {
+    // Named `route_template`, not `template` -- that's a reserved word.
+    std::string route_template;
+    std::vector<RouteParameter> parameters;
+};
+
 struct ParsedAvaui {
     // Always non-null, type "page" -- the file's `properties` block
     // becomes this node's own properties (there's no separate `page`
@@ -121,6 +150,15 @@ struct ParsedAvaui {
     // Real AvaLang source -- not parsed here, the language itself
     // parses it when it runs.
     std::string methods_text;
+    // `extends "layout"` line, if present -- a top-level line (column
+    // 0), same convention as `import`/`route`. First occurrence wins,
+    // same as the .NET reference (AvaComponentParser.cs). Empty when
+    // the file doesn't extend a layout.
+    std::string extends;
+    // `route "/path/{param}"` lines, in file order. See
+    // RouteDeclaration above. Empty when the file declares no routes
+    // (e.g. a layout or an imported component, not a routable page).
+    std::vector<RouteDeclaration> routes;
 };
 
 // One node's event-prop names -- shared here so the parser and writer
@@ -137,12 +175,16 @@ bool IsEventPropertyName(const std::string& name);
 ParsedAvaui ParseAvauiText(const std::string& text);
 
 // Serializes a document back to .avaui text: the full file
-// (properties/state/view/methods, plus any `import` lines), not just
-// one section.
+// (extends/route/import lines, properties/state/view/methods), not
+// just one section. `extends`/`routes` default to "none" so existing
+// callers that only care about the other four sections keep compiling
+// unchanged.
 std::string WriteAvauiText(const Component& root,
                             const std::vector<std::pair<std::string, std::string>>& state,
                             const std::vector<std::string>& imports,
-                            const std::string& methods_text);
+                            const std::string& methods_text,
+                            const std::string& extends = "",
+                            const std::vector<RouteDeclaration>& routes = {});
 
 // --- JSON helpers for the C API boundary -----------------------------
 //
@@ -160,6 +202,14 @@ std::string StateToJson(const std::vector<std::pair<std::string, std::string>>& 
 std::vector<std::pair<std::string, std::string>> StateFromJson(const std::string& json);
 std::string ImportsToJson(const std::vector<std::string>& imports);
 std::vector<std::string> ImportsFromJson(const std::string& json);
+
+// `routes` crosses the C ABI the same way, as a JSON array of objects:
+// [{"template": "/products/{id}", "parameters": [{"name": "id",
+// "optional": false, "constraint": "int"}]}, ...]. `constraint` is
+// omitted from an object when empty, same "don't pad the wire format
+// with nothing" convention as the rest of this boundary.
+std::string RoutesToJson(const std::vector<RouteDeclaration>& routes);
+std::vector<RouteDeclaration> RoutesFromJson(const std::string& json);
 
 } // namespace ui
 } // namespace ava

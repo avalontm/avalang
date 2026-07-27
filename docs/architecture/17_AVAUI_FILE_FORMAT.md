@@ -36,6 +36,39 @@ que usa este repo, así que usar el mismo formato evita un JSON
 paralelo y hace que un `.avaui` de Ava Studio y un `.ava` de ese
 framework sean intercambiables.
 
+### `extends` / `route` (páginas)
+
+Dos líneas de nivel superior (columna 0), reservadas, opcionales,
+independientes de `import` -- pensadas para páginas (no para
+componentes importados ni layouts):
+
+- **`extends "layout"`**: la página hereda el layout `layout.avaui`
+  (resuelto por nombre, ver `PLAN_LAYOUTS.md` del lado .NET). A lo
+  sumo una es significativa por archivo -- si hay más de una, gana la
+  primera.
+- **`route "/path/{param}"`**: declara una ruta que sirve esta página
+  (file-based routing). Puede repetirse -- una misma página puede
+  responder a varias rutas (ver `productos.avaui` en `avalang-dotnet`
+  para un ejemplo real con 3). Cada segmento `{nombre}` de la
+  plantilla es un parámetro; `{nombre?}` lo marca opcional y
+  `{nombre:constraint}` le agrega una restricción (`int`, `long`,
+  `guid`, `slug`, `alpha`, ...) -- la restricción se guarda como texto
+  tal cual, no se valida en este parser.
+
+Van antes que `import`/`properties`/`state` en la convención real (ver
+`dashboard.avaui`, `admin.avaui` en `avalang-dotnet`):
+
+```
+extends "admin"
+
+route "/admin/dashboard"
+
+state
+    visitas = 128
+end
+...
+```
+
 ### Ejemplo
 
 ```
@@ -90,6 +123,10 @@ end
   simplemente el `TextEditor` mostrando el archivo `.avaui`.
 - **`properties`**: propiedades del documento/componente en sí
   (ej. `title`).
+- **`extends`/`route`**: ver sección dedicada arriba. No producen
+  nodos en el árbol de `view` -- salen como campos separados
+  (`ParsedAvaui::extends`/`::routes`), mismo tratamiento que
+  `state`/`import`/`methods`.
 - **Props de evento** (`click`, `onchange`, `oninput`, ...): se
   guardan aparte de las props de estilo, apuntando a un nombre de
   función que debe existir en `methods`. Es literalmente

@@ -264,7 +264,8 @@ std::string WriteAvauiText(const DesignNode& root, const std::string& code_behin
     std::string state_json = StateToJson(initial_state);
     std::string imports_json = ImportsToJson(imports);
 
-    char* text = ava_ui_write_avaui_text(tree, state_json.c_str(), imports_json.c_str(), code_behind.c_str());
+    char* text = ava_ui_write_avaui_text(tree, state_json.c_str(), imports_json.c_str(), code_behind.c_str(),
+                                          /*extends=*/nullptr, /*routes_json=*/nullptr);
     std::string result = text ? text : "";
     ava_ui_text_free(text);
     ava_ui_destroy_tree(tree);
@@ -280,7 +281,8 @@ bool ParseAvauiText(const std::string& text, DesignNode& out_root, std::string& 
     char* error = nullptr;
 
     AvaComponentTree* tree =
-        ava_ui_parse_avaui_text(text.c_str(), &state_json, &imports_json, &methods_text, &error);
+        ava_ui_parse_avaui_text(text.c_str(), &state_json, &imports_json, &methods_text, &error,
+                                 /*out_extends=*/nullptr, /*out_routes_json=*/nullptr);
 
     out_error = error ? error : "";
     out_code_behind = methods_text ? methods_text : "";

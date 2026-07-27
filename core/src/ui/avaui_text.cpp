@@ -68,7 +68,7 @@ bool IsSectionKeyword(const std::string& lower) {
 
 bool IsControlKeyword(const std::string& lower) {
     static const std::unordered_set<std::string> kKeywords = {
-        "if", "while", "for", "func", "return", "var", "print", "end",
+        "if", "while", "for", "func", "return", "var", "print", "end", "extends",
     };
     return kKeywords.count(lower) != 0;
 }
@@ -351,6 +351,55 @@ std::vector<std::string> ParseImportLines(const std::vector<std::string>& lines)
     return imports;
 }
 
+// `extends "layout"` -- a top-level line (column 0), same convention
+// as `import "..."`. Port of AvaComponentParser.cs's extendsMatch
+// (`^extends\s+"([^"]+)"`, first match wins -- Regex.Match, not
+// Matches). An .avaui file only ever extends one layout.
+std::string ParseExtendsLine(const std::vector<std::string>& lines) {
+    static const std::regex kExtendsRe(R"re(^extends\s+"([^"]*)"\s*$)re");
+    for (const auto& raw_line : lines) {
+        if (IndentOf(raw_line) != 0) continue;
+        std::smatch m;
+        const std::string trimmed = Trim(raw_line);
+        if (std::regex_match(trimmed, m, kExtendsRe)) {
+            return m[1].str();
+        }
+    }
+    return "";
+}
+
+// `route "/path/{param}"` -- one or more top-level lines. Port of
+// AvaComponentParser.cs's routesMatch/paramRegex: each `{name}` /
+// `{name?}` / `{name:constraint}` segment in the template becomes a
+// RouteParameter.
+std::vector<RouteDeclaration> ParseRouteLines(const std::vector<std::string>& lines) {
+    static const std::regex kRouteRe(R"re(^route\s+"([^"]*)"\s*$)re");
+    static const std::regex kParamRe(R"(\{(\w+)(\?)?(?::(\w+))?\})");
+    std::vector<RouteDeclaration> routes;
+    for (const auto& raw_line : lines) {
+        if (IndentOf(raw_line) != 0) continue;
+        const std::string trimmed = Trim(raw_line);
+        std::smatch m;
+        if (!std::regex_match(trimmed, m, kRouteRe)) continue;
+
+        RouteDeclaration route;
+        route.route_template = m[1].str();
+
+        auto begin = std::sregex_iterator(route.route_template.begin(), route.route_template.end(), kParamRe);
+        auto end = std::sregex_iterator();
+        for (auto it = begin; it != end; ++it) {
+            const std::smatch& pm = *it;
+            RouteParameter param;
+            param.name = pm[1].str();
+            param.kind = pm[2].matched ? RouteParameterKind::Optional : RouteParameterKind::Required;
+            param.constraint = pm[3].matched ? pm[3].str() : "";
+            route.parameters.push_back(std::move(param));
+        }
+        routes.push_back(std::move(route));
+    }
+    return routes;
+}
+
 std::string JoinTrimmedBlock(const std::vector<std::string>& lines) {
     // Drop leading/trailing blank lines but keep original indentation on
     // everything in between -- this is shown verbatim in a host's Code
@@ -493,14 +542,27 @@ ParsedAvaui ParseAvauiText(const std::string& text) {
     }
 
     result.imports = ParseImportLines(lines);
+    result.extends = ParseExtendsLine(lines);
+    result.routes = ParseRouteLines(lines);
     return result;
 }
 
 std::string WriteAvauiText(const Component& root,
                             const std::vector<std::pair<std::string, std::string>>& state,
                             const std::vector<std::string>& imports,
-                            const std::string& methods_text) {
+                            const std::string& methods_text,
+                            const std::string& extends,
+                            const std::vector<RouteDeclaration>& routes) {
     std::ostringstream out;
+
+    if (!extends.empty()) {
+        out << "extends " << WritePropertyValue(extends) << "\n\n";
+    }
+
+    for (const auto& route : routes) {
+        out << "route " << WritePropertyValue(route.route_template) << "\n";
+    }
+    if (!routes.empty()) out << "\n";
 
     for (const auto& imp : imports) {
         out << "import \"" << imp << "\"\n";
@@ -596,6 +658,104 @@ std::vector<std::string> ImportsFromJson(const std::string& json) {
         result.push_back(ParseJsonStringAt(json, i));
     }
     return result;
+}
+
+std::string RoutesToJson(const std::vector<RouteDeclaration>& routes) {
+    std::ostringstream out;
+    out << "[";
+    bool first_route = true;
+    for (const auto& route : routes) {
+        if (!first_route) out << ",";
+        first_route = false;
+        out << "{\"template\":";
+        AppendJsonString(out, route.route_template);
+        out << ",\"parameters\":[";
+        bool first_param = true;
+        for (const auto& param : route.parameters) {
+            if (!first_param) out << ",";
+            first_param = false;
+            out << "{\"name\":";
+            AppendJsonString(out, param.name);
+            out << ",\"optional\":" << (param.kind == RouteParameterKind::Optional ? "true" : "false");
+            if (!param.constraint.empty()) {
+                out << ",\"constraint\":";
+                AppendJsonString(out, param.constraint);
+            }
+            out << "}";
+        }
+        out << "]}";
+    }
+    out << "]";
+    return out.str();
+}
+
+// Deliberately minimal, same spirit as StateFromJson/ImportsFromJson --
+// walks the exact shape RoutesToJson produces rather than a general
+// JSON object parser. Field order within each object doesn't matter;
+// unrecognized keys are skipped.
+std::vector<RouteDeclaration> RoutesFromJson(const std::string& json) {
+    std::vector<RouteDeclaration> routes;
+    size_t i = 0;
+    while (i < json.size() && json[i] != '[') ++i;
+    if (i >= json.size()) return routes;
+    ++i; // outer '['
+
+    auto SkipWs = [&](size_t& k) {
+        while (k < json.size() && (json[k] == ',' || std::isspace(static_cast<unsigned char>(json[k])))) ++k;
+    };
+
+    while (true) {
+        SkipWs(i);
+        if (i >= json.size() || json[i] == ']') break;
+        if (json[i] != '{') { ++i; continue; }
+        ++i; // route object '{'
+
+        RouteDeclaration route;
+        while (i < json.size() && json[i] != '}') {
+            SkipWs(i);
+            if (i >= json.size() || json[i] == '}') break;
+            std::string key = ParseJsonStringAt(json, i);
+            while (i < json.size() && (json[i] == ':' || std::isspace(static_cast<unsigned char>(json[i])))) ++i;
+
+            if (key == "template") {
+                route.route_template = ParseJsonStringAt(json, i);
+            } else if (key == "parameters") {
+                while (i < json.size() && json[i] != '[') ++i;
+                if (i < json.size()) ++i; // '['
+                while (i < json.size() && json[i] != ']') {
+                    SkipWs(i);
+                    if (i >= json.size() || json[i] == ']') break;
+                    if (json[i] != '{') { ++i; continue; }
+                    ++i; // param object '{'
+                    RouteParameter param;
+                    while (i < json.size() && json[i] != '}') {
+                        SkipWs(i);
+                        if (i >= json.size() || json[i] == '}') break;
+                        std::string pkey = ParseJsonStringAt(json, i);
+                        while (i < json.size() && (json[i] == ':' || std::isspace(static_cast<unsigned char>(json[i])))) ++i;
+                        if (pkey == "name") {
+                            param.name = ParseJsonStringAt(json, i);
+                        } else if (pkey == "optional") {
+                            const bool is_true = json.compare(i, 4, "true") == 0;
+                            param.kind = is_true ? RouteParameterKind::Optional : RouteParameterKind::Required;
+                            i += is_true ? 4 : 5; // "true" or "false"
+                        } else if (pkey == "constraint") {
+                            param.constraint = ParseJsonStringAt(json, i);
+                        }
+                        SkipWs(i);
+                    }
+                    if (i < json.size() && json[i] == '}') ++i;
+                    route.parameters.push_back(std::move(param));
+                    SkipWs(i);
+                }
+                if (i < json.size() && json[i] == ']') ++i;
+            }
+            SkipWs(i);
+        }
+        if (i < json.size() && json[i] == '}') ++i;
+        routes.push_back(std::move(route));
+    }
+    return routes;
 }
 
 } // namespace ui

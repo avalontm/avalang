@@ -366,9 +366,9 @@ AVA_API void ava_ui_json_free(char* json);
  * children are the `view` block's top-level component(s) -- there is
  * no `page` keyword in the file format itself.
  *
- * The other three sections of the file don't fit that Component
- * model, so they come back as separate out-params instead of being
- * force-fit into properties:
+ * The other five sections of the file don't fit that Component model,
+ * so they come back as separate out-params instead of being force-fit
+ * into properties:
  *   out_state_json   -- the `state` block, as a flat JSON object of
  *                        string values, e.g. {"counter": "0"}.
  *   out_imports_json -- the `import "..."` lines, as a flat JSON
@@ -380,6 +380,18 @@ AVA_API void ava_ui_json_free(char* json);
  *                        source, e.g. `func onClick() ... end`) --
  *                        not parsed here, ava_compile/ava_run already
  *                        parse it when a host wants to execute it.
+ *   out_extends      -- the `extends "layout"` line's layout name, or
+ *                        an empty (non-NULL) string when the file
+ *                        doesn't extend a layout. First occurrence
+ *                        wins if more than one is present.
+ *   out_routes_json  -- the `route "/path/{param}"` line(s), as a flat
+ *                        JSON array, in file order, e.g.
+ *                        [{"template": "/products/{id}", "parameters":
+ *                        [{"name": "id", "optional": false,
+ *                        "constraint": "int"}]}]. "constraint" is
+ *                        omitted from a parameter object when the
+ *                        route didn't specify one. Empty array when
+ *                        the file declares no routes.
  *
  * Always returns a non-NULL tree and clears out_error -- an
  * unrecognized/garbage file yields a mostly-empty page instead of
@@ -397,21 +409,26 @@ AVA_API AvaComponentTree* ava_ui_parse_avaui_text(
     char** out_state_json,
     char** out_imports_json,
     char** out_methods_text,
-    char** out_error
+    char** out_error,
+    char** out_extends,
+    char** out_routes_json
 );
 
 /* Inverse of ava_ui_parse_avaui_text: serializes a Component tree plus
- * the same three side-channel sections back into one complete .avaui
- * file's text. `state_json`/`imports_json` use the same flat JSON
- * shapes documented above (pass "{}"/"[]" or NULL for none);
- * `methods_text` is emitted verbatim inside a `methods ... end` block
- * (pass "" or NULL for none). Returns a string the caller must free
- * with ava_ui_text_free. */
+ * the same five side-channel sections back into one complete .avaui
+ * file's text. `state_json`/`imports_json`/`routes_json` use the same
+ * flat JSON shapes documented above (pass "{}"/"[]"/"[]" or NULL for
+ * none); `methods_text` is emitted verbatim inside a `methods ... end`
+ * block (pass "" or NULL for none); `extends` is emitted as a leading
+ * `extends "..."` line (pass "" or NULL to omit it). Returns a string
+ * the caller must free with ava_ui_text_free. */
 AVA_API char* ava_ui_write_avaui_text(
     AvaComponentTree* tree,
     const char* state_json,
     const char* imports_json,
-    const char* methods_text
+    const char* methods_text,
+    const char* extends,
+    const char* routes_json
 );
 
 /* Frees strings returned by ava_ui_parse_avaui_text's out-params and

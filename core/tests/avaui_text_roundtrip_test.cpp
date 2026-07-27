@@ -152,9 +152,70 @@ const char* kNavbarNoBlankLine =
     "    end\n"
     "end\n";
 
+// Regression case for extends/route support (PLAN_CENTRALIZACION.md
+// Fase B/C, avalang-dotnet repo): a page that extends a layout and
+// declares more than one route, mirroring avalang-dotnet's real
+// dashboard.avaui / productos.avaui examples.
+const char* kExtendsRoutesExample =
+    "extends \"admin\"\n"
+    "\n"
+    "route \"/productos\"\n"
+    "route \"/productos/{id}\"\n"
+    "route \"/productos/{id}/edit\"\n"
+    "route \"/productos/{slug:slug}\"\n"
+    "route \"/productos/{page?}\"\n"
+    "\n"
+    "state\n"
+    "    selectedId = \"\"\n"
+    "end\n"
+    "\n"
+    "view\n"
+    "    column\n"
+    "        text\n"
+    "            value = \"Productos\"\n"
+    "        end\n"
+    "    end\n"
+    "end\n";
+
 } // namespace
 
 int main() {
+    std::cout << "=== 0. extends/route parsing ===\n";
+    ParsedAvaui er = ParseAvauiText(kExtendsRoutesExample);
+    Check(er.extends == "admin", "extends == admin");
+    Check(er.routes.size() == 5, "5 route declarations");
+    if (er.routes.size() == 5) {
+        Check(er.routes[0].route_template == "/productos", "route[0] template");
+        Check(er.routes[0].parameters.empty(), "route[0] has no params");
+        Check(er.routes[1].route_template == "/productos/{id}", "route[1] template");
+        Check(er.routes[1].parameters.size() == 1 && er.routes[1].parameters[0].name == "id" &&
+                  er.routes[1].parameters[0].kind == RouteParameterKind::Required &&
+                  er.routes[1].parameters[0].constraint.empty(),
+              "route[1] param: id, required, no constraint");
+        Check(er.routes[3].parameters.size() == 1 && er.routes[3].parameters[0].constraint == "slug",
+              "route[3] param: slug constraint");
+        Check(er.routes[4].parameters.size() == 1 &&
+                  er.routes[4].parameters[0].kind == RouteParameterKind::Optional,
+              "route[4] param: optional (page?)");
+    }
+
+    std::string er_written = WriteAvauiText(*er.root, er.state, er.imports, er.methods_text, er.extends, er.routes);
+    ParsedAvaui er_reparsed = ParseAvauiText(er_written);
+    Check(er_reparsed.extends == "admin", "round-trip: extends survives");
+    Check(er_reparsed.routes.size() == 5, "round-trip: all 5 routes survive");
+
+    std::string er_state_json = StateToJson(er.state);
+    std::string er_routes_json = RoutesToJson(er.routes);
+    auto er_routes_back = RoutesFromJson(er_routes_json);
+    Check(er_routes_back.size() == 5, "RoutesToJson/RoutesFromJson round-trip: 5 routes");
+    if (er_routes_back.size() == 5) {
+        Check(er_routes_back[3].parameters[0].constraint == "slug", "RoutesFromJson: constraint survives JSON round-trip");
+        Check(er_routes_back[4].parameters[0].kind == RouteParameterKind::Optional,
+              "RoutesFromJson: optional flag survives JSON round-trip");
+    }
+    (void)er_state_json;
+
+
     std::cout << "=== 1. Parse the section 3 example (plan doc) ===\n";
     ParsedAvaui first = ParseAvauiText(kSection3Example);
     CheckSection3Shape(first, "first parse");

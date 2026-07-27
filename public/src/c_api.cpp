@@ -562,10 +562,17 @@ static void ComponentToJson(std::ostream& os, ava::ui::Component* comp, int inde
     }
     os << ",\n" << pad << "  \"layout\": " << comp->GetLayout();
     const auto& props = comp->GetAllProperties();
-    if (!props.empty()) {
+    // Events (click/onchange/etc.) live in a separate map from regular
+    // properties on Component (see component.h: properties_ vs events_),
+    // but the C# side (NativeComponentParser.JsonToComponentNode) only
+    // knows about a single "properties" bag per node -- it has no
+    // "events" key to read. Emit both into the same JSON object so an
+    // event handler set via SetEvent() actually reaches the host instead
+    // of silently disappearing at the JSON boundary.
+    if (!props.empty() || !comp->GetAllEvents().empty()) {
         os << ",\n" << pad << "  \"properties\": {";
         bool first = true;
-        for (const auto& [k, v] : props) {
+        auto writeEntry = [&](const std::string& k, const Value& v) {
             if (!first) os << ", ";
             os << "\"" << k << "\": ";
             if (v.type == ava::ValueType::String) {
@@ -586,6 +593,12 @@ static void ComponentToJson(std::ostream& os, ava::ui::Component* comp, int inde
                 os << "null";
             }
             first = false;
+        };
+        for (const auto& [k, v] : props) {
+            writeEntry(k, v);
+        }
+        for (const auto& [k, v] : comp->GetAllEvents()) {
+            writeEntry(k, v);
         }
         os << "}";
     }
@@ -624,7 +637,9 @@ AVA_API AvaComponentTree* ava_ui_parse_avaui_text(
     char** out_state_json,
     char** out_imports_json,
     char** out_methods_text,
-    char** out_error
+    char** out_error,
+    char** out_extends,
+    char** out_routes_json
 ) {
     ava::ui::ParsedAvaui parsed = ava::ui::ParseAvauiText(text ? text : "");
 
@@ -635,6 +650,8 @@ AVA_API AvaComponentTree* ava_ui_parse_avaui_text(
     if (out_imports_json) *out_imports_json = DupString(ava::ui::ImportsToJson(parsed.imports));
     if (out_methods_text) *out_methods_text = DupString(parsed.methods_text);
     if (out_error) *out_error = DupString(""); // forgiving parser -- see avaui_text.h
+    if (out_extends) *out_extends = DupString(parsed.extends);
+    if (out_routes_json) *out_routes_json = DupString(ava::ui::RoutesToJson(parsed.routes));
 
     return tree;
 }
@@ -643,7 +660,9 @@ AVA_API char* ava_ui_write_avaui_text(
     AvaComponentTree* tree,
     const char* state_json,
     const char* imports_json,
-    const char* methods_text
+    const char* methods_text,
+    const char* extends,
+    const char* routes_json
 ) {
     if (!tree) return DupString("");
     auto root = tree->tree->GetRoot();
@@ -652,8 +671,10 @@ AVA_API char* ava_ui_write_avaui_text(
     auto state = ava::ui::StateFromJson(state_json ? state_json : "{}");
     auto imports = ava::ui::ImportsFromJson(imports_json ? imports_json : "[]");
     std::string methods = methods_text ? methods_text : "";
+    std::string extends_str = extends ? extends : "";
+    auto routes = ava::ui::RoutesFromJson(routes_json ? routes_json : "[]");
 
-    return DupString(ava::ui::WriteAvauiText(*root, state, imports, methods));
+    return DupString(ava::ui::WriteAvauiText(*root, state, imports, methods, extends_str, routes));
 }
 
 AVA_API void ava_ui_text_free(char* text) {
