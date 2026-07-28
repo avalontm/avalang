@@ -1,118 +1,122 @@
-# `data/` — tooltips y autocompletado de Ava Studio
+# `data/` — Ava Studio tooltips and autocomplete
 
-Estos dos archivos son lo que el Code Editor muestra en sus tooltips
-(`DrawKeywordHint` / `DrawParameterHint` en `panels/editor_panel.cpp`) y lo
-que alimenta el popup de autocompletado. Se editan con cualquier editor de
-texto plano — **no hace falta recompilar Ava Studio**: los cambios se ven
-la próxima vez que abrís la app, o directamente en caliente si volvés a
-Ava Studio después de guardar el archivo (se revisa la fecha de
-modificación cada vez que se necesita mostrar un tooltip).
+These two files are what the Code Editor shows in its tooltips
+(`DrawKeywordHint` / `DrawParameterHint` in `panels/editor_panel.cpp`) and
+what feeds the autocomplete popup. They're edited with any plain text
+editor — **there's no need to recompile Ava Studio**: changes show up
+the next time you open the app, or right away if you switch back to
+Ava Studio after saving the file (the modification date is checked
+every time a tooltip needs to be shown).
 
-Si alguno de los dos archivos no existe o tiene un error de formato que
-impide leerlo, Ava Studio usa una tabla de respaldo embebida en el
-ejecutable (el mismo contenido que estos CSV traen de fábrica) — nunca se
-queda sin tooltips, simplemente deja de ver tus cambios hasta que se
-arregla el archivo.
+If either file doesn't exist or has a formatting error that prevents
+reading it, Ava Studio falls back to a backup table embedded in the
+executable (the same content these CSVs ship with by default) — it
+never ends up without tooltips, it just stops seeing your changes
+until the file is fixed.
 
-**Importante:** ni `grammar/AvaLang.g4` ni el compilador leen estos
-archivos, y estos archivos tampoco generan nada en la gramática. Si
-agregás una palabra clave o una función nueva al lenguaje, hay que agregar
-la fila acá A MANO para que el editor la conozca — son dos cosas
-separadas que hoy no están conectadas.
+**Important:** neither `grammar/AvaLang.g4` nor the compiler reads
+these files, and these files don't generate anything in the grammar
+either. If you add a new keyword or function to the language, you
+have to add the row here BY HAND for the editor to know about it —
+these are two separate things that aren't connected today.
 
-## `keyword_docs.csv` — palabras clave (`if`, `while`, `try`, ...)
+## `keyword_docs.csv` — keywords (`if`, `while`, `try`, ...)
 
-Columnas: `name,syntax,example,doc`
+Columns: `name,syntax,example,doc`
 
-| Columna | Qué es | Obligatoria |
+| Column | What it is | Required |
 |---|---|---|
-| `name` | La palabra clave tal cual (`if`, `while`, ...) | sí |
-| `syntax` | El patrón abstracto de uso, con nombres de relleno como `condition` | sí |
-| `example` | Un ejemplo concreto y copiable, con valores reales en vez de nombres de relleno | no, puede quedar vacía |
-| `doc` | Una o dos frases explicando qué hace | sí |
+| `name` | The keyword as-is (`if`, `while`, ...) | yes |
+| `syntax` | The abstract usage pattern, with placeholder names like `condition` | yes |
+| `example` | A concrete, copy-pasteable example, with real values instead of placeholder names | no, can be left empty |
+| `doc` | One or two sentences explaining what it does | yes |
 
-Dentro de una celda:
-- `\n` (barra invertida + n, dos caracteres) es un salto de línea. No se
-  usan saltos de línea reales dentro de una celda.
-- Si la palabra clave acepta más de una forma de escribirse (ej. `while`
-  con o sin paréntesis), se ponen las dos separadas por `|||` (tres
-  barras verticales) dentro de la misma celda de `syntax`.
-- Si una celda tiene comas, comillas o necesita quedar clara, ponela entre
-  comillas dobles (`"..."`); una comilla doble literal adentro se escribe
-  duplicada (`""`).
+Inside a cell:
+- `\n` (backslash + n, two characters) is a line break. Real line
+  breaks are not used inside a cell.
+- If the keyword accepts more than one way of being written (e.g.
+  `while` with or without parentheses), both are put separated by
+  `|||` (three vertical bars) within the same `syntax` cell.
+- If a cell has commas, quotes, or needs to be made unambiguous,
+  wrap it in double quotes (`"..."`); a literal double quote inside
+  is written doubled (`""`).
 
-Ejemplo de fila completa:
+Example of a full row:
 
 ```csv
 while,"while condition\n    ...\nend|||while (condition)\n    ...\nend","count = 0\nwhile count < 5\n    print(count)\n    count = count + 1\nend","Repeats the block for as long as condition stays true."
 ```
 
-Dejar `example` vacío tiene sentido para palabras clave que solo se
-entienden acompañando a otra (`then`, `in`, `as`, `catch`) — el ejemplo de
-la palabra clave principal (`if`, `for`, `import`, `try`) ya las cubre.
+Leaving `example` empty makes sense for keywords that are only
+understood alongside another one (`then`, `in`, `as`, `catch`) — the
+example for the main keyword (`if`, `for`, `import`, `try`) already
+covers them.
 
-## `builtin_signatures.csv` — funciones incorporadas (`print`, `len`, `range`, ...)
+## `builtin_signatures.csv` — built-in functions (`print`, `len`, `range`, ...)
 
-Columnas: `name,params,doc`
+Columns: `name,params,doc`
 
-| Columna | Qué es | Obligatoria |
+| Column | What it is | Required |
 |---|---|---|
-| `name` | El nombre de la función | sí |
-| `params` | Lista de parámetros separados por `\|` (una sola barra) | sí, puede ser una lista vacía si no toma nada |
-| `doc` | Qué hace, y cómo llamarla si tiene más de una forma | sí |
+| `name` | The function name | yes |
+| `params` | List of parameters separated by `\|` (a single bar) | yes, can be an empty list if it takes nothing |
+| `doc` | What it does, and how to call it if it has more than one form | yes |
 
-Un parámetro que empieza con `*` (ej. `*values`) indica "acepta cero o más
-argumentos" — no hace falta ninguna columna aparte para eso, alcanza con
-el asterisco en el nombre del parámetro, igual que en la firma real.
+A parameter starting with `*` (e.g. `*values`) means "accepts zero
+or more arguments" — no separate column is needed for that, the
+asterisk in the parameter name is enough, same as in the real
+signature.
 
-Ejemplo:
+Example:
 
 ```csv
 pow,base|exponent,Returns base raised to exponent (base ** exponent).
 print,*values,"Prints every argument, converted with the same rules as str()..."
 ```
 
-## `component_catalog.csv` — componentes del Toolbox (`Button`, `TextBox`, `CheckBox`, ...)
+## `component_catalog.csv` — Toolbox components (`Button`, `TextBox`, `CheckBox`, ...)
 
-Columnas: `type,display_name,is_container,properties`
+Columns: `type,display_name,is_container,properties`
 
-| Columna | Qué es | Obligatoria |
+| Column | What it is | Required |
 |---|---|---|
-| `type` | El tipo tal cual lo usa AvaComponent (`button`, `stack`, ...) | sí |
-| `display_name` | La etiqueta que se ve en el Toolbox (`Button`, `Stack`, ...) | sí |
-| `is_container` | `true` o `false` -- si acepta que otros componentes se suelten adentro | sí |
-| `properties` | Propiedades por defecto de una instancia nueva, como `key=default` separados por `\|` (una sola barra) | no, puede quedar vacía (containers como `column`/`row`/`stack`/`flex`) |
+| `type` | The type as used by AvaComponent (`button`, `stack`, ...) | yes |
+| `display_name` | The label shown in the Toolbox (`Button`, `Stack`, ...) | yes |
+| `is_container` | `true` or `false` -- whether it accepts other components being dropped inside | yes |
+| `properties` | Default properties for a new instance, as `key=default` separated by `\|` (a single bar) | no, can be left empty (containers like `column`/`row`/`stack`/`flex`) |
 
-Ejemplo de fila completa:
+Example of a full row:
 
 ```csv
 button,Button,false,value=Button|enabled=true
 ```
 
-Los valores por defecto de hoy son palabras simples, booleanos o cadenas
-vacías -- si algún default necesitara contener literalmente `|` o `=`, esta
-columna no lo soporta todavía (no hay escape definido para eso).
+Today's default values are simple words, booleans, or empty
+strings -- if a default ever needed to literally contain `|` or `=`,
+this column doesn't support that yet (no escaping is defined for
+it).
 
-Si un `.avaui` referencia un `type` que no está en este CSV (por ejemplo,
-de una versión más nueva de Ava Studio), `FindComponentType` devuelve
-`nullptr` y el Designer Canvas cae al fallback de texto plano en vez de
-fallar -- ver `panels/designer_canvas.cpp`.
+If a `.avaui` references a `type` that isn't in this CSV (for
+example, from a newer version of Ava Studio), `FindComponentType`
+returns `nullptr` and the Designer Canvas falls back to plain text
+instead of failing -- see `panels/designer_canvas.cpp`.
 
-## Cómo agregar una palabra clave o función nueva
+## How to add a new keyword or function
 
-1. Agregala primero donde corresponda en el lenguaje real: la gramática
-   (`grammar/AvaLang.g4`) para una palabra clave, o
+1. Add it first wherever it belongs in the actual language: the
+   grammar (`grammar/AvaLang.g4`) for a keyword, or
    `core/src/builtins/builtin_natives.h/.cpp` + `RegisterBuiltinGlobals`
-   para una función.
-2. Agregala también a `studio/src/languages/avalang_language.cpp`
-   (`lang.keywords` o `lang.identifiers`) para que se coloree y entre al
-   autocompletado — este paso sigue siendo C++, no está en el CSV.
-3. Agregá la fila correspondiente acá (`keyword_docs.csv` o
-   `builtin_signatures.csv`) para que tenga tooltip. Este paso sí es solo
-   texto, sin recompilar.
+   for a function.
+2. Also add it to `studio/src/languages/avalang_language.cpp`
+   (`lang.keywords` or `lang.identifiers`) so it gets highlighted and
+   shows up in autocomplete — this step is still C++, it's not in
+   the CSV.
+3. Add the corresponding row here (`keyword_docs.csv` or
+   `builtin_signatures.csv`) so it has a tooltip. This step really is
+   just text, no recompiling needed.
 
-Si en algún momento se arma un generador desde la gramática
-(`tools/dump_docs.cpp` ya existe para volcar la tabla de fábrica a estos
-CSV, pero no lee la gramática todavía), el paso 3 dejaría de ser manual
-para las palabras clave. Ver `autocompletado-avalang.md` para el contexto
-completo de esa idea.
+If a generator from the grammar is ever built
+(`tools/dump_docs.cpp` already exists to dump the factory table to
+these CSVs, but it doesn't read the grammar yet), step 3 would stop
+being manual for keywords. See `autocompletado-avalang.md` for the
+full context on that idea.

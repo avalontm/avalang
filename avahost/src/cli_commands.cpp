@@ -11,8 +11,8 @@
 #include "core/logger.h"
 #include "plugin/plugin_loader.h"
 #include "runtime/runtime_host.h"
-#include "web/app.h"
-#include "web/router.h"
+#include "web/server/app.h"
+#include "web/routing/router.h"
 
 namespace fs = std::filesystem;
 

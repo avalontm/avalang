@@ -1,45 +1,44 @@
 # Ava Studio
 
-Ava Studio es el editor de escritorio donde se diseña y se escribe
-todo lo que después AvaHost pone en un navegador.
+Ava Studio is the desktop editor where everything that AvaHost
+later puts in a browser is designed and written.
 
-Es el punto de partida del ecosistema: un lugar donde puedes armar
-tus pantallas arrastrando y acomodando elementos visualmente, y a la
-vez tener a mano un editor de código con resaltado propio para
-AvaLang, pensado para que ambos mundos — el visual y el escrito — se
-sientan como una sola herramienta, no como dos programas distintos
-pegados con cinta adhesiva.
+It's the starting point of the ecosystem: a place where you can
+build your screens by dragging and arranging elements visually,
+while also having a code editor with its own syntax highlighting
+for AvaLang close at hand, designed so both worlds — the visual
+and the written — feel like a single tool, not two separate
+programs taped together.
 
 ![Ava Studio](../images/avastudio.png)
 
-## ¿Qué resuelve?
+## What it solves
 
-Diseñar una pantalla y programar su comportamiento suelen ser dos
-tareas separadas, muchas veces en dos programas distintos. Ava
-Studio las junta:
+Designing a screen and coding its behavior are usually two separate
+tasks, often in two different programs. Ava Studio brings them
+together:
 
-- **Lienzo de diseño**, donde armas la pantalla acomodando
-  componentes (botones, textos, imágenes, contenedores) y ves al
-  instante cómo va quedando.
-- **Editor de código**, para la lógica detrás de cada pantalla —
-  qué pasa cuando alguien hace clic en un botón, qué datos se
-  guardan, cómo se comunican las distintas partes de la app.
-- **Catálogo de componentes**, con lo disponible para usar en el
-  diseño, y una vista rápida de qué hace cada palabra clave del
-  lenguaje mientras escribes.
+- **Design canvas**, where you build the screen by arranging
+  components (buttons, text, images, containers) and see how it
+  looks instantly.
+- **Code editor**, for the logic behind each screen — what happens
+  when someone clicks a button, what data gets saved, how the
+  different parts of the app communicate.
+- **Component catalog**, showing what's available to use in the
+  design, plus a quick view of what each keyword of the language
+  does as you type.
 
-## Pensado para acompañar todo el proceso
+## Built to accompany the whole process
 
-No es solo para el primer boceto: la idea es que se use durante todo
-el desarrollo, desde la primera pantalla hasta el ajuste fino antes
-de publicar, con el mismo proyecto abierto de principio a fin.
+It's not just for the first sketch: the idea is that it's used
+throughout development, from the first screen to the final polish
+before publishing, with the same project open from start to finish.
 
-## Para quién es
+## Who it's for
 
-Para quien prefiere ver lo que está construyendo mientras lo
-construye, en vez de imaginarse el resultado leyendo únicamente
-código.
+For anyone who prefers to see what they're building as they build
+it, instead of imagining the result by reading code alone.
 
 ---
 
-⬅️ [Volver al menú principal](../README.md)
+⬅️ [Back to the main menu](../README.md)

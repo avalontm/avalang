@@ -1,47 +1,47 @@
 # AvaHost
 
-AvaHost es la pieza que convierte una app escrita en AvaLang en un
-sitio web real, disponible en un navegador.
+AvaHost is the piece that turns an app written in AvaLang into a
+real website, available in a browser.
 
-Piensa en él como el "servidor" del ecosistema: toma las páginas que
-diseñaste, las convierte en HTML, sirve las imágenes/estilos/scripts
-que las acompañan, y responde cuando alguien visita una dirección
-como `/` o `/productos`. Cumple el mismo rol que herramientas como
-PHP, ASP.NET Core o Node.js cumplen para otros lenguajes, pero
-pensado desde cero para AvaLang y para AvaUI, el sistema de pantallas
-del ecosistema.
+Think of it as the "server" of the ecosystem: it takes the pages you
+designed, converts them into HTML, serves the images/styles/scripts
+that go along with them, and responds when someone visits an address
+like `/` or `/products`. It fills the same role that tools like
+PHP, ASP.NET Core, or Node.js fill for other languages, but built
+from scratch for AvaLang and for AvaUI, the ecosystem's screen
+system.
 
-## ¿Qué resuelve?
+## What it solves
 
-Cuando alguien visita tu sitio, alguien tiene que decidir qué
-pantalla mostrar, armar el documento final que llega al navegador, y
-entregar todo lo demás (una imagen, una hoja de estilos, una fuente)
-tal cual está guardado. AvaHost se encarga de las tres cosas:
+When someone visits your site, something has to decide which
+screen to show, assemble the final document that reaches the
+browser, and deliver everything else (an image, a stylesheet, a
+font) exactly as it's stored. AvaHost handles all three:
 
-- **Encuentra la pantalla correcta** según la dirección visitada,
-  simplemente por cómo están organizadas y nombradas tus pantallas
-  en el proyecto — no hace falta llevar un listado aparte de qué
-  dirección corresponde a qué archivo.
-- **Arma la página final**, incluyendo el encabezado de tu sitio, el
-  pie de página, y cualquier elemento que se repita en varias
-  pantallas, sin que tengas que copiarlo y pegarlo en cada una.
-- **Sirve todo lo demás** — imágenes, estilos, íconos — directo y
-  rápido, sin pasar por el motor de AvaLang.
+- **Finds the right screen** based on the visited address, simply
+  from how your screens are organized and named in the project —
+  no need to keep a separate list of which address maps to which
+  file.
+- **Assembles the final page**, including your site's header,
+  footer, and any element that repeats across several screens,
+  without you having to copy and paste it into each one.
+- **Serves everything else** — images, styles, icons — directly and
+  fast, without going through the AvaLang engine.
 
-## Pensado para el día a día
+## Built for day-to-day work
 
-Mientras estás construyendo el sitio, AvaHost puede quedar mirando
-tus archivos y refrescar el navegador solo apenas guardas un cambio,
-para no tener que ir y venir manualmente. Y cuando el sitio ya está
-listo para publicarse, ese mismo proyecto se hospeda tal cual, sin
-pasos extra de conversión.
+While you're building the site, AvaHost can watch your files and
+refresh the browser as soon as you save a change, so you don't have
+to go back and forth manually. And once the site is ready to
+publish, that same project gets hosted as-is, with no extra
+conversion steps.
 
-## Para quién es
+## Who it's for
 
-Para cualquiera que ya construyó algo en AvaLang / Ava Studio y
-quiere que otras personas lo vean en un navegador — sin tener que
-aprender un framework web aparte ni salir del ecosistema.
+For anyone who has already built something in AvaLang / Ava Studio
+and wants other people to see it in a browser — without having to
+learn a separate web framework or step outside the ecosystem.
 
 ---
 
-⬅️ [Volver al menú principal](../README.md)
+⬅️ [Back to the main menu](../README.md)

@@ -9,8 +9,8 @@
 #include <string>
 
 #include "core/logger.h"
-#include "web/http_types.h"
-#include "web/socket.h"
+#include "web/protocol/http_types.h"
+#include "web/transport/socket.h"
 
 namespace avahost {
 

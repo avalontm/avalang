@@ -15,9 +15,9 @@
 #include "rendering/html_renderer.h"
 #include "runtime/runtime_host.h"
 #include "watch/file_watcher.h"
-#include "web/http_server.h"
-#include "web/router.h"
-#include "web/static_file_server.h"
+#include "web/server/http_server.h"
+#include "web/routing/router.h"
+#include "web/static/static_file_server.h"
 
 namespace avahost {
 

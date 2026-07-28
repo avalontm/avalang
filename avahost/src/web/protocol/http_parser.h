@@ -4,7 +4,7 @@
 // what a dev server / simple app host needs to receive from a browser.
 #include <string>
 
-#include "web/http_types.h"
+#include "web/protocol/http_types.h"
 
 namespace avahost {
 

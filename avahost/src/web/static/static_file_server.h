@@ -4,7 +4,7 @@
 #include <optional>
 #include <string>
 
-#include "web/http_types.h"
+#include "web/protocol/http_types.h"
 
 namespace avahost {
 

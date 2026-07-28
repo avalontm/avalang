@@ -1,6 +1,6 @@
-#include "web/http_server.h"
+#include "web/server/http_server.h"
 
-#include "web/http_parser.h"
+#include "web/protocol/http_parser.h"
 
 namespace avahost {
 

@@ -3,173 +3,188 @@
 ## imguicolortextedit_interpolation.patch
 
 `ImGuiColorTextEdit` (goossens fork, `studio/CMakeLists.txt` -> `FetchContent`)
-no soporta:
+doesn't support:
 
-1. Un color propio para el contenido de `{expr}` dentro de un f-string
-   (`$"..."`) -- todo el string, interpolación incluida, se pinta con un
-   único `Color::string`. No hay hook (`customTokenizer`) que se invoque
-   *dentro* de un estado de string, solo a nivel de texto normal.
-2. De paso, encontramos que el estado `inOtherString` de la librería (el
-   que se usa para strings delimitados por secuencias custom, como nuestro
-   `$"..."`) tiene un bug propio: pinta el contenido con `Color::comment`
-   en vez de `Color::string`.
+1. A dedicated color for the content of `{expr}` inside an f-string
+   (`$"..."`) -- the whole string, interpolation included, is painted
+   with a single `Color::string`. There's no hook (`customTokenizer`)
+   that gets invoked *inside* a string state, only at the plain-text
+   level.
+2. Along the way, we found that the library's own `inOtherString`
+   state (the one used for strings delimited by custom sequences,
+   like our `$"..."`) has its own bug: it paints the content with
+   `Color::comment` instead of `Color::string`.
 
-Este patch:
-- Agrega `Color::interpolation` al enum y a las paletas dark/light por
-  defecto (Ava Studio las pisa igual en `InitEditorPanel`).
-- Hace que el estado `inOtherString` cuente el anidamiento de `{`/`}` y
-  pinte ese rango con `Color::interpolation`; una `"` dentro de una
-  interpolación abierta ya no cierra el string antes de tiempo.
-- De paso corrige el bug de arriba (color `comment` -> `string`).
+This patch:
+- Adds `Color::interpolation` to the enum and to the default
+  dark/light palettes (Ava Studio overrides them anyway in
+  `InitEditorPanel`).
+- Makes the `inOtherString` state track `{`/`}` nesting and paint
+  that range with `Color::interpolation`; a `"` inside an open
+  interpolation no longer closes the string early.
+- Along the way, fixes the bug above (`comment` -> `string` color).
 
-## Limitaciones conocidas (documentadas, no bugs sorpresa)
-- El conteo de `{}` es por línea (se resetea en cada línea nueva). Un
-  f-string con una interpolación que cruza un salto de línea sin cerrar
-  (`{` en una línea, `}` en la siguiente) va a colorear mal la línea
-  siguiente. No debería ocurrir con el uso normal de FSTRING en AvaLang.
-- El contenido *dentro* de `{...}` se pinta entero con
-  `Color::interpolation`, sin volver a tokenizar como código AvaLang (o
-  sea, un string anidado dentro de la interpolación, `{f("x")}`, no se
-  recolorea como string). Hacerlo bien requeriría un sub-lexer recursivo;
-  fuera de alcance de este parche.
+## Known limitations (documented, not surprise bugs)
+- `{}` counting is per line (it resets on every new line). An
+  f-string with an interpolation that spans a line break without
+  closing (`{` on one line, `}` on the next) will color the
+  following line incorrectly. This shouldn't happen with normal
+  FSTRING usage in AvaLang.
+- The content *inside* `{...}` is painted entirely with
+  `Color::interpolation`, without being re-tokenized as AvaLang code
+  (i.e. a nested string inside the interpolation, `{f("x")}`, isn't
+  recolored as a string). Doing this properly would require a
+  recursive sub-lexer; out of scope for this patch.
 
-## Por qué un patch y no un fork
-`studio/CMakeLists.txt` fija `GIT_TAG master` (ver PROGRESS.md/AvaStudio.md
-sobre pin de versión). Un patch aplicado vía `PATCH_COMMAND` en
-`FetchContent_Declare` es más fácil de mantener/revisar que forkear el
-repo entero para este único cambio. Si algún día pinean un commit hash
-específico y ese commit cambia estas líneas, el patch puede dejar de
-aplicar limpio -- en ese caso, CMake va a fallar en el paso de
-configuración con un error de `git apply`, no en silencio.
+## Why a patch and not a fork
+`studio/CMakeLists.txt` pins `GIT_TAG master` (see PROGRESS.md/AvaStudio.md
+about version pinning). A patch applied via `PATCH_COMMAND` in
+`FetchContent_Declare` is easier to maintain/review than forking the
+entire repo for this one change. If a specific commit hash ever gets
+pinned and that commit changes these lines, the patch may stop
+applying cleanly -- in that case, CMake will fail at the configure
+step with a `git apply` error, not silently.
 
 ## imguicolortextedit_bold_keywords.patch
 
-`ImGuiColorTextEdit` toma un único `ImFont` por llamada a `Render()`
-(`font = ImGui::GetFont()`, ver `renderText()`) y lo usa para *todos* los
-glyphs sin importar su `Color::...` -- no hay forma de pedirle "esto en
-bold, esto en regular" sin tocar la librería, ni vía `Language` ni vía
-`customTokenizer` (ese hook solo devuelve un `Color`, no un peso de
-fuente).
+`ImGuiColorTextEdit` takes a single `ImFont` per call to `Render()`
+(`font = ImGui::GetFont()`, see `renderText()`) and uses it for *all*
+glyphs regardless of their `Color::...` -- there's no way to ask for
+"this in bold, this in regular" without touching the library, neither
+via `Language` nor via `customTokenizer` (that hook only returns a
+`Color`, not a font weight).
 
-Este patch agrega:
-- `TextEditor::SetBoldFont(ImFont*)` y `SetBoldColors(std::initializer_list<Color>)`
-  -- una segunda fuente opcional (`boldFont`) y un set de qué
-  `Color::...` deben usarla (`boldColors`, un
+This patch adds:
+- `TextEditor::SetBoldFont(ImFont*)` and `SetBoldColors(std::initializer_list<Color>)`
+  -- an optional second font (`boldFont`) and a set of which
+  `Color::...` values should use it (`boldColors`, a
   `std::array<bool, Color::count>`).
-- En `renderText()`, el `else` final que llama a `font->RenderChar(...)`
-  ahora elige `boldFont` en vez de `font` cuando `boldColors[glyph.color]`
-  es `true`. Si `boldFont` es `nullptr` (no se llamó `SetBoldFont`) o el
-  color no está marcado, el comportamiento es idéntico a upstream.
+- In `renderText()`, the final `else` that calls
+  `font->RenderChar(...)` now picks `boldFont` instead of `font` when
+  `boldColors[glyph.color]` is `true`. If `boldFont` is `nullptr`
+  (`SetBoldFont` was never called) or the color isn't marked, the
+  behavior is identical to upstream.
 
-Ava Studio lo usa en `InitEditorPanel()` para que `keyword`/`declaration`
-(if/while/func/true/false/nil/...) se rendericen con JetBrains Mono Bold
-mientras el resto del código (strings, identificadores, comments) se
-queda en la fuente regular -- ver `src/panels/editor_panel.cpp` y
-`src/fonts/embedded_font.{h,cpp}` para de dónde sale esa segunda fuente.
+Ava Studio uses this in `InitEditorPanel()` so that
+`keyword`/`declaration` (if/while/func/true/false/nil/...) render
+with JetBrains Mono Bold while the rest of the code (strings,
+identifiers, comments) stays in the regular font -- see
+`src/panels/editor_panel.cpp` and `src/fonts/embedded_font.{h,cpp}`
+for where that second font comes from.
 
-### Por qué no "todo el código en bold" en vez de esto
-Se evaluó y se descartó: bold en todo el texto del editor no necesita
-patch (alcanza con un `PushFont`/`PopFont` de ImGui alrededor de
-`editor.Render()`), pero un peso uniforme en todo el código cansa la
-vista en sesiones largas y reduce el contraste entre letras parecidas a
-16px (`rn` vs `m`, `cl` vs `d`). Bold selectivo en keywords da el énfasis
-que se buscaba sin ese costo -- a cambio de necesitar este patch.
+### Why not "bold the whole code" instead of this
+This was evaluated and dropped: bold across all editor text doesn't
+need a patch (a `PushFont`/`PopFont` from ImGui around
+`editor.Render()` is enough), but a uniform weight across all code
+tires the eye in long sessions and reduces contrast between
+similar-looking letters at 16px (`rn` vs `m`, `cl` vs `d`). Selective
+bold on keywords gives the emphasis that was wanted without that
+cost -- at the cost of needing this patch.
 
-## Fix 2026-07: `Color` se movió dentro de la clase (GIT_TAG master)
+## Fix 2026-07: `Color` moved inside the class (GIT_TAG master)
 
-Como se advertía arriba, al fijar `GIT_TAG master` un cambio upstream que
-reordena el archivo puede romper el patch en silencio (aplica limpio con
-`git apply` porque el contexto del hunk no cambió, pero el resultado no
-compila). Eso pasó acá: `imguicolortextedit_bold_keywords.patch` insertaba
-`SetBoldFont()`/`SetBoldColors(std::initializer_list<Color>)` justo
-después de `Render()` (cerca de la línea 120 del header), asumiendo que
-`Color` ya estaba declarado en ese punto de la clase. Upstream movió la
-sección `enum class Color` más abajo (ahora después de
-`GetLightPalette()`, ~línea 330+), así que para cuando el compilador
-llegaba a `SetBoldColors(std::initializer_list<Color>)` el tipo `Color`
-todavía no existía → `error C2065: 'Color': identificador no declarado`
-(MSVC) al compilar `text_editor.vcxproj`.
+As warned above, pinning `GIT_TAG master` means an upstream change
+that reorders the file can silently break the patch (`git apply`
+applies cleanly because the hunk's context didn't change, but the
+result doesn't compile). That's what happened here:
+`imguicolortextedit_bold_keywords.patch` inserted
+`SetBoldFont()`/`SetBoldColors(std::initializer_list<Color>)` right
+after `Render()` (around line 120 of the header), assuming `Color`
+was already declared at that point in the class. Upstream moved the
+`enum class Color` section further down (now after
+`GetLightPalette()`, ~line 330+), so by the time the compiler
+reached `SetBoldColors(std::initializer_list<Color>)` the `Color`
+type didn't exist yet -> `error C2065: 'Color': undeclared
+identifier` (MSVC) when compiling `text_editor.vcxproj`.
 
-Arreglo: el patch ahora inserta `SetBoldFont()`/`SetBoldColors()`
-inmediatamente después de `GetLightPalette()` -- es decir, después de que
-`enum class Color` y `class Palette` ya estén completamente declarados --
-en vez de justo después de `Render()`. El resto del patch (el cambio en
-`renderText()` de `TextEditor.cpp` y los campos `boldFont`/`boldColors`
-en la sección `protected`, que ya vivían después de `Color`) no cambió.
+Fix: the patch now inserts `SetBoldFont()`/`SetBoldColors()`
+immediately after `GetLightPalette()` -- i.e. after `enum class
+Color` and `class Palette` are already fully declared -- instead of
+right after `Render()`. The rest of the patch (the change in
+`renderText()` in `TextEditor.cpp` and the `boldFont`/`boldColors`
+fields in the `protected` section, which already lived after
+`Color`) didn't change.
 
-Si esto vuelve a romperse por el mismo motivo, el síntoma es siempre el
-mismo: `git apply` no falla, pero MSVC/GCC tira "identificador no
-declarado" sobre `Color` en la línea donde se insertó `SetBoldColors`.
-Solución: mover el bloque insertado a un punto de la clase que quede
-*después* de la declaración de `enum class Color` en el header actual de
-upstream (buscar `enum class Color : char` en `TextEditor.h`).
+If this breaks again for the same reason, the symptom is always the
+same: `git apply` doesn't fail, but MSVC/GCC throws "undeclared
+identifier" on `Color` at the line where `SetBoldColors` was
+inserted. Fix: move the inserted block to a point in the class that
+comes *after* the `enum class Color` declaration in upstream's
+current header (look for `enum class Color : char` in
+`TextEditor.h`).
 
 ## imguicolortextedit_doc_comment.patch
 
-`ImGuiColorTextEdit` solo conoce un color plano, `Color::comment`, para
-todo lo que matchea `Language::singleLineComment` -- no hay forma de que
-un bloque de doc-comment (`##` en AvaLang) se pinte distinto de un
-comentario común (`#`), ni de resaltar un token específico (`@param
-nombre`) dentro de ese bloque, sin tocar la librería.
+`ImGuiColorTextEdit` only knows a single flat color,
+`Color::comment`, for anything matching
+`Language::singleLineComment` -- there's no way for a doc-comment
+block (`##` in AvaLang) to be painted differently from a regular
+comment (`#`), nor to highlight a specific token (`@param name`)
+inside that block, without touching the library.
 
-Este patch agrega:
-- `Color::docComment` y `Color::docParamTag` al enum y a las paletas
-  dark/light por defecto (Ava Studio las pisa igual en
-  `InitEditorPanel`, ver `src/panels/editor_panel.cpp`).
-- `Language::docCommentPrefix` (AvaLang lo fija en `"##"`, ver
-  `src/languages/avalang_language.cpp`), chequeado en
-  `Colorizer::update` **antes** que `singleLineComment` -- tiene que ir
-  antes porque `"##"` también matchea el prefijo más corto `"#"`, y el
-  chequeo original que hubiera matcheado primero.
-- Dentro de ese bloque, un escaneo palabra por palabra que busca
-  `@param` y repinta ese tag (más el nombre de parámetro que le sigue,
-  si hay uno) con `Color::docParamTag`, dejando el resto del bloque en
+This patch adds:
+- `Color::docComment` and `Color::docParamTag` to the enum and to
+  the default dark/light palettes (Ava Studio overrides them anyway
+  in `InitEditorPanel`, see `src/panels/editor_panel.cpp`).
+- `Language::docCommentPrefix` (AvaLang sets it to `"##"`, see
+  `src/languages/avalang_language.cpp`), checked in
+  `Colorizer::update` **before** `singleLineComment` -- it has to go
+  first because `"##"` also matches the shorter `"#"` prefix, and
+  the original check would have matched first.
+- Inside that block, a word-by-word scan that looks for `@param` and
+  repaints that tag (plus the parameter name that follows it, if
+  any) with `Color::docParamTag`, leaving the rest of the block in
   `Color::docComment`.
-- `Autocomplete::updateState` ahora también cuenta `docComment` y
-  `docParamTag` como "estoy en un comentario" (antes solo miraba
-  `Color::comment`), para no ofrecer autocompletado adentro de un
-  bloque de doc-comment -- mismo comportamiento que ya tenía un `#`
-  común.
+- `Autocomplete::updateState` now also counts `docComment` and
+  `docParamTag` as "I'm inside a comment" (it previously only looked
+  at `Color::comment`), so autocomplete isn't offered inside a
+  doc-comment block -- same behavior it already had for a regular
+  `#`.
 
-### Por qué un prefijo nuevo (`docCommentPrefix`) y no reusar `singleLineCommentAlt`
-La librería ya tiene `singleLineCommentAlt`, un segundo prefijo de
-comentario de una línea -- pero lo pinta con el mismo `Color::comment`
-de siempre (ver el branch correspondiente en `Colorizer::update`), no
-da un color propio. Reusarlo hubiera significado parchear ese branch
-igual, así que se agregó un campo dedicado con semántica más clara
-(`docCommentPrefix`, en vez de "el prefijo alternativo, pero esta vez sí
-coloreado distinto").
+### Why a new prefix (`docCommentPrefix`) instead of reusing `singleLineCommentAlt`
+The library already has `singleLineCommentAlt`, a second single-line
+comment prefix -- but it paints it with the same old
+`Color::comment` (see the corresponding branch in
+`Colorizer::update`), it doesn't give it its own color. Reusing it
+would have meant patching that branch anyway, so a dedicated field
+with clearer semantics was added instead
+(`docCommentPrefix`, rather than "the alternate prefix, but this
+time actually colored differently").
 
-## Fix 2026-07: `GIT_TAG` pineado a `Legacy` en vez de `master`
+## Fix 2026-07: `GIT_TAG` pinned to `Legacy` instead of `master`
 
-`master` empezó a driftear (upstream está reescribiendo el editor desde cero
-en su rama `future`; su propio README dice que en algún momento `master` va
-a saltar a esa arquitectura nueva, "rompiendo compatibilidad hacia atrás").
-Antes de eso, un cambio menor en `master` ya alcanzó a correr las líneas de
-`TextEditor.cpp` alrededor de `Colorizer::update` (~línea 3647) lo suficiente
-como para que `git apply` fallara con "patch does not apply" al aplicar
-`imguicolortextedit_interpolation.patch` (primer hunk, `@@ -3647,...`).
+`master` started drifting (upstream is rewriting the editor from
+scratch on its `future` branch; its own README says that at some
+point `master` will jump to that new architecture, "breaking
+backwards compatibility"). Before that, a minor change on `master`
+had already shifted the lines of `TextEditor.cpp` around
+`Colorizer::update` (~line 3647) enough that `git apply` failed with
+"patch does not apply" when applying
+`imguicolortextedit_interpolation.patch` (first hunk, `@@
+-3647,...`).
 
-`studio/CMakeLists.txt` ahora fija `GIT_TAG Legacy` -- el tag de release que
-el propio autor (goossens) publicó como snapshot congelado de la
-arquitectura vieja (commit `efd42a4`, 2026-05-03), antes de arrancar la
-reescritura. Esto arregla el fallo de hoy y evita que un futuro flip de
-`master` a la arquitectura nueva rompa el build en silencio (o de plano deje
-de compilar, dado que los parches tocan clases internas como `Colorizer`,
-`Color`, `Language`).
+`studio/CMakeLists.txt` now pins `GIT_TAG Legacy` -- the release tag
+that the author (goossens) himself published as a frozen snapshot of
+the old architecture (commit `efd42a4`, 2026-05-03), before starting
+the rewrite. This fixes today's failure and prevents a future flip
+from `master` to the new architecture from silently breaking the
+build (or outright failing to compile, since the patches touch
+internal classes like `Colorizer`, `Color`, `Language`).
 
-Si esto se rompe de nuevo más adelante: revisar si upstream movió el tag
-`Legacy` (no debería, es un release fijo) o si hace falta actualizar los
-tres parches a mano contra el nuevo estado de `TextEditor.cpp`/`.h` en ese
-tag -- ver la sección "Fix 2026-07: `Color` se movió..." más arriba para un
-ejemplo de cómo se diagnosticó/arregló la última vez.
+If this breaks again later: check whether upstream moved the
+`Legacy` tag (it shouldn't, it's a fixed release) or whether the
+three patches need to be manually updated against the new state of
+`TextEditor.cpp`/`.h` at that tag -- see the "Fix 2026-07: `Color`
+moved..." section above for an example of how this was
+diagnosed/fixed last time.
 
-## Orden de aplicación
-`CMakeLists.txt` aplica los dos patches en una sola llamada a
-`git apply` (acepta varios archivos y los aplica en orden sobre el clon
-limpio): primero `imguicolortextedit_interpolation.patch`, después
-`imguicolortextedit_bold_keywords.patch`. No se pisan -- tocan zonas
-distintas del archivo (colorizer/paleta el primero, `renderText()` y la
-clase `TextEditor` el segundo) -- pero si algún día se agrega un tercer
-patch, mantené el orden y probá `git apply patch1 patch2 patch3` a mano
-sobre un clone limpio antes de subirlo (ver AvaStudio.md).
+## Application order
+`CMakeLists.txt` applies the two patches in a single call to
+`git apply` (it accepts multiple files and applies them in order on
+the clean clone): first `imguicolortextedit_interpolation.patch`,
+then `imguicolortextedit_bold_keywords.patch`. They don't overlap --
+they touch different parts of the file (colorizer/palette for the
+first, `renderText()` and the `TextEditor` class for the second) --
+but if a third patch is ever added, keep the order and test
+`git apply patch1 patch2 patch3` by hand on a clean clone before
+pushing it (see AvaStudio.md).

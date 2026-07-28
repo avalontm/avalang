@@ -1,11 +1,11 @@
-#include "web/app.h"
+#include "web/server/app.h"
 
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 
-#include "web/url_codec.h"
+#include "web/protocol/url_codec.h"
 
 namespace fs = std::filesystem;
 

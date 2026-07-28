@@ -27,13 +27,13 @@ set(AVAHOST_SOURCES
     src/core/logger.cpp
     src/runtime/runtime_host.cpp
     src/rendering/html_renderer.cpp
-    src/web/socket.cpp
-    src/web/http_parser.cpp
-    src/web/http_server.cpp
-    src/web/router.cpp
-    src/web/url_codec.cpp
-    src/web/static_file_server.cpp
-    src/web/app.cpp
+    src/web/transport/socket.cpp
+    src/web/protocol/http_parser.cpp
+    src/web/protocol/url_codec.cpp
+    src/web/server/http_server.cpp
+    src/web/routing/router.cpp
+    src/web/static/static_file_server.cpp
+    src/web/server/app.cpp
     src/config/app_config.cpp
     src/config/app_manifest.cpp
     src/watch/file_watcher.cpp
