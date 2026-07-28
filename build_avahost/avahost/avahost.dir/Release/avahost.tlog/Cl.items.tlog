@@ -1,0 +1,16 @@
+D:\_CODE_\avalang\avahost\src\core\logger.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\logger.obj
+D:\_CODE_\avalang\avahost\src\runtime\runtime_host.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\runtime_host.obj
+D:\_CODE_\avalang\avahost\src\rendering\html_renderer.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\html_renderer.obj
+D:\_CODE_\avalang\avahost\src\web\socket.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\socket.obj
+D:\_CODE_\avalang\avahost\src\web\http_parser.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\http_parser.obj
+D:\_CODE_\avalang\avahost\src\web\http_server.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\http_server.obj
+D:\_CODE_\avalang\avahost\src\web\router.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\router.obj
+D:\_CODE_\avalang\avahost\src\web\url_codec.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\url_codec.obj
+D:\_CODE_\avalang\avahost\src\web\static_file_server.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\static_file_server.obj
+D:\_CODE_\avalang\avahost\src\web\app.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\app.obj
+D:\_CODE_\avalang\avahost\src\config\app_config.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\app_config.obj
+D:\_CODE_\avalang\avahost\src\config\app_manifest.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\app_manifest.obj
+D:\_CODE_\avalang\avahost\src\watch\file_watcher.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\file_watcher.obj
+D:\_CODE_\avalang\avahost\src\plugin\plugin_loader.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\plugin_loader.obj
+D:\_CODE_\avalang\avahost\src\cli_commands.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\cli_commands.obj
+D:\_CODE_\avalang\avahost\src\main.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\main.obj

@@ -1,0 +1,20 @@
+^D:\_CODE_\AVALANG\BUILD_AVAHOST\CMAKEFILES\9353D47824650C82DD2FD634F9CD5F54\AVALANGLEXER.CPP.RULE
+setlocal
+"C:\Program Files\Common Files\Oracle\Java\javapath\java.exe" -jar D:/_CODE_/avalang/third_party/antlr-4.13.2-complete.jar -Dlanguage=Cpp -visitor -o D:/_CODE_/avalang/build_avahost/generated D:/_CODE_/avalang/grammar/AvaLang.g4
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\_CODE_\AVALANG\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/_CODE_/avalang -BD:/_CODE_/avalang/build_avahost --check-stamp-file D:/_CODE_/avalang/build_avahost/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

@@ -1,6 +1,5 @@
 # Build outputs
 build/
-build_avahost/
 build_studio/
 bin/
 dist/

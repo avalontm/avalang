@@ -1,0 +1,29 @@
+view
+    column
+        class = "min-h-screen flex flex-col"
+
+        row
+            class = "flex items-center justify-between p-4 border-b border-gray-200"
+
+            text
+                text = "AvaHost"
+                class = "font-semibold text-lg"
+            end
+            link
+                text = "Home"
+                href = "/"
+                class = "text-blue-600 hover:underline"
+            end
+        end
+
+        slot
+
+        row
+            class = "p-4 border-t border-gray-200 text-sm text-gray-500"
+
+            text
+                text = "AvaHost 0.1"
+            end
+        end
+    end
+end
