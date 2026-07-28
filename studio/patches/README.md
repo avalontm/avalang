@@ -140,6 +140,30 @@ igual, así que se agregó un campo dedicado con semántica más clara
 (`docCommentPrefix`, en vez de "el prefijo alternativo, pero esta vez sí
 coloreado distinto").
 
+## Fix 2026-07: `GIT_TAG` pineado a `Legacy` en vez de `master`
+
+`master` empezó a driftear (upstream está reescribiendo el editor desde cero
+en su rama `future`; su propio README dice que en algún momento `master` va
+a saltar a esa arquitectura nueva, "rompiendo compatibilidad hacia atrás").
+Antes de eso, un cambio menor en `master` ya alcanzó a correr las líneas de
+`TextEditor.cpp` alrededor de `Colorizer::update` (~línea 3647) lo suficiente
+como para que `git apply` fallara con "patch does not apply" al aplicar
+`imguicolortextedit_interpolation.patch` (primer hunk, `@@ -3647,...`).
+
+`studio/CMakeLists.txt` ahora fija `GIT_TAG Legacy` -- el tag de release que
+el propio autor (goossens) publicó como snapshot congelado de la
+arquitectura vieja (commit `efd42a4`, 2026-05-03), antes de arrancar la
+reescritura. Esto arregla el fallo de hoy y evita que un futuro flip de
+`master` a la arquitectura nueva rompa el build en silencio (o de plano deje
+de compilar, dado que los parches tocan clases internas como `Colorizer`,
+`Color`, `Language`).
+
+Si esto se rompe de nuevo más adelante: revisar si upstream movió el tag
+`Legacy` (no debería, es un release fijo) o si hace falta actualizar los
+tres parches a mano contra el nuevo estado de `TextEditor.cpp`/`.h` en ese
+tag -- ver la sección "Fix 2026-07: `Color` se movió..." más arriba para un
+ejemplo de cómo se diagnosticó/arregló la última vez.
+
 ## Orden de aplicación
 `CMakeLists.txt` aplica los dos patches en una sola llamada a
 `git apply` (acepta varios archivos y los aplica en orden sobre el clon

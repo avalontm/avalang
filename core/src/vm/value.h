@@ -9,7 +9,7 @@
 #include <memory>
 #include <atomic>
 
-#include "avalang.h"
+#include "../../../public/include/avalang.h"
 
 namespace ava {
 

@@ -11,7 +11,7 @@ Designer de Ava Studio.
 
 - Definir la extensión (`.avaui`) y por qué no es JSON.
 - Definir la sintaxis de los bloques `state`, `view`, `methods`,
-  `properties` e `import`.
+  `metadata` e `import`.
 - Servir de referencia para el parser/writer canónico
   (`core/src/ui/avaui_text.*`, ver `10_AVAUI.md`).
 
@@ -26,7 +26,7 @@ Los archivos de UI de AvaLang usan la extensión **`.avaui`** (no
 ### El formato es texto AvaLang, no JSON
 
 `.avaui` es texto plano en sintaxis AvaLang con bloques
-`state`/`view`/`methods` (y `properties`/`import`, reservados), no
+`state`/`view`/`methods` (y `metadata`/`import`, reservados), no
 JSON. Esta decisión reemplazó una propuesta original en JSON -- ver
 `docs/history/ARCHITECTURE_DECISIONS.md` (ADR-002) y
 `docs/history/DESIGNER_VIEW_SESSIONS.md` para el detalle histórico de
@@ -55,7 +55,7 @@ componentes importados ni layouts):
   `guid`, `slug`, `alpha`, ...) -- la restricción se guarda como texto
   tal cual, no se valida en este parser.
 
-Van antes que `import`/`properties`/`state` en la convención real (ver
+Van antes que `import`/`metadata`/`state` en la convención real (ver
 `dashboard.avaui`, `admin.avaui` en `avalang-dotnet`):
 
 ```
@@ -74,7 +74,7 @@ end
 ```
 import "components/navbar"
 
-properties
+metadata
     title = "Mi App"
 end
 
@@ -121,8 +121,15 @@ end
   Ava Studio (ver `16_STUDIO.md` sección 2) -- mismo rol que un `.frm`
   de VB6 con su sección `Private Sub ... End Sub`, pero acá es
   simplemente el `TextEditor` mostrando el archivo `.avaui`.
-- **`properties`**: propiedades del documento/componente en sí
-  (ej. `title`).
+- **`metadata`**: propiedades del documento/componente en sí
+  (ej. `title`). AvaHost (`avahost/src/rendering/html_renderer.cpp`,
+  `BuildPageMeta`) reconoce además, todas opcionales salvo `title`:
+  `description`, `image`, `url`, `siteName`, `ogType` (default
+  `"website"`), `twitterCard` (default `"summary_large_image"` si hay
+  `image`, si no `"summary"`) -- generan `<title>` más los `<meta>` de
+  Open Graph/Twitter Card necesarios para que el link se vea bien al
+  compartirlo (WhatsApp, Twitter/X, Slack, etc.). En una página con
+  `extends`, este bloque vive en la página, no en el layout.
 - **`extends`/`route`**: ver sección dedicada arriba. No producen
   nodos en el árbol de `view` -- salen como campos separados
   (`ParsedAvaui::extends`/`::routes`), mismo tratamiento que

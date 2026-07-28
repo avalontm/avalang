@@ -6,22 +6,20 @@
 #include <unordered_map>
 #include <vector>
 #include <memory>
+#include <stdexcept>
+#include <cstdint>
 
 #include "value.h"
 #include "proto.h"
 #include "closure.h"
 #include "module.h"
 #include "coroutine.h"
-
-#ifdef _WIN32
-  #define AVA_API __declspec(dllexport)
-#else
-  #define AVA_API __attribute__((visibility("default")))
-#endif
+#include "vm_helpers.h"
+#include "../../../public/include/avalang.h"
 
 namespace ava {
 
-class AVA_API VM {
+class VM {
 public:
     VM();
     ~VM();
@@ -103,8 +101,74 @@ public:
     // ava_last_error_source.
     std::string last_error_source;
 
+    struct ExceptionHandler {
+        size_t catch_pc;
+    };
+
+// Internal implementation friends - allow access to private members from vm_internal implementations
+    friend void OpAdd(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpSub(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpMul(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpDiv(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpIdiv(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpMod(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpPow(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpNeg(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpNot(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpInc(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpDec(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+
+    friend void OpEq(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpEqK(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpNeK(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpNe(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpLt(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpLe(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpGt(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpGe(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+
+    friend void OpNewList(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpListAppend(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpNewDict(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpGetIndex(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpSetIndex(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+
+    friend void OpNewClass(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpNewInstance(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpGetAttr(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpSetAttr(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+
+    friend void OpCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpReturn(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpClosure(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpGetUpval(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpSetUpval(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend Value OpBaseCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+
+    friend void OpSlice(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+
+    friend void OpTry(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpTryEnd(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpCatch(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpRaise(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpArgc(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+
+    friend void OpYield(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpResume(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+
+    friend void HandleFrameError(VM& vm, size_t frame_idx, const std::exception& e);
+
 private:
     Value ExecuteFrame(size_t frame_idx);
+    // FASE 1 (async/await) fix: reanuda ejecucion desde el frame MAS
+    // PROFUNDO de frames_ (no siempre frame 0), y cuando ese frame termina
+    // normalmente (no suspendido), propaga su resultado hacia el frame
+    // padre usando CallFrame::ret_slot y sigue ejecutando el padre desde
+    // donde habia quedado -- en vez de reejecutar frame 0 desde su pc
+    // (que ya avanzo de largo el CALL, perdiendose el resto de la cadena
+    // de frames intermedios). Usado por resume()/RESUME para reanudar
+    // corrutinas con yields anidados en funciones auxiliares.
+    Value ResumeFromTop();
 
     PrintSink print_sink_;
     AlertSink alert_sink_;
@@ -119,9 +183,6 @@ private:
 
     Value pending_exception_;
     bool try_had_exception_ = false;
-    struct ExceptionHandler {
-        size_t catch_pc;
-    };
     std::vector<ExceptionHandler> exception_handlers_;
 
     std::vector<Coroutine*> coroutine_resumers_;

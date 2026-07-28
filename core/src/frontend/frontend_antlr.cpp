@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <sstream>
+#include <fstream>
 
 namespace ava {
 
@@ -117,10 +118,6 @@ std::shared_ptr<Proto> CompileSource(const std::string& source, const std::strin
         for (const auto& err : error_listener.errors) {
             err_out << formatError(source_name, err, normalized_source);
         }
-        // Multiple syntax errors can be collected, but only one source
-        // position can be reported upstream -- use the first, since it's
-        // usually the root cause (later ones are often just the parser
-        // getting confused after the first bad token).
         const SourceError& first = error_listener.errors.front();
         throw CompileError(err_out.str(), static_cast<int>(first.line), static_cast<int>(first.column),
                             source_name);
@@ -148,6 +145,16 @@ std::shared_ptr<Proto> CompileSource(const std::string& source, const std::strin
     } catch (const std::exception& e) {
         throw CompileError("Compilation error: " + std::string(e.what()), 0, 0, source_name);
     }
+}
+
+std::shared_ptr<Proto> CompileFile(const std::string& file_path) {
+    std::ifstream file(file_path);
+    if (!file.is_open()) {
+        throw std::runtime_error("Could not open file: " + file_path);
+    }
+    std::string source((std::istreambuf_iterator<char>(file)),
+                       std::istreambuf_iterator<char>());
+    return CompileSource(source, file_path);
 }
 
 } // namespace ava

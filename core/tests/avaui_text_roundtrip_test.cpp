@@ -104,7 +104,7 @@ void CheckSection3Shape(const ParsedAvaui& parsed, const std::string& label) {
 const char* kSection3Example =
     "import \"components/navbar\"\n"
     "\n"
-    "properties\n"
+    "metadata\n"
     "    title = \"Mi App\"\n"
     "end\n"
     "\n"

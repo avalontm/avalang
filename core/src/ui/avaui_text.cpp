@@ -61,7 +61,7 @@ bool IsBlank(const std::string& line) { return Trim(line).empty(); }
 
 bool IsSectionKeyword(const std::string& lower) {
     static const std::unordered_set<std::string> kKeywords = {
-        "properties", "state", "import", "imports", "services", "methods", "lifecycle", "view",
+        "metadata", "state", "import", "imports", "services", "methods", "lifecycle", "view",
     };
     return kKeywords.count(lower) != 0;
 }
@@ -519,7 +519,7 @@ ParsedAvaui ParseAvauiText(const std::string& text) {
     result.root = std::make_shared<Component>("page");
 
     for (const RawSection& section : SplitTopLevelSections(lines)) {
-        if (section.keyword == "properties") {
+        if (section.keyword == "metadata") {
             for (auto& [key, value] : ParsePropertyLines(section.content_lines)) {
                 if (LowerCopy(key) == "id") {
                     result.root->SetId(value);
@@ -572,7 +572,7 @@ std::string WriteAvauiText(const Component& root,
     const auto& root_props = root.GetAllProperties();
     const bool has_page_properties = !root.GetId().empty() || !root_props.empty();
     if (has_page_properties) {
-        out << "properties\n";
+        out << "metadata\n";
         if (!root.GetId().empty()) out << "    id = " << WritePropertyValue(root.GetId()) << "\n";
         for (const auto& [key, value] : root_props) {
             out << "    " << key << " = " << WritePropertyValue(ValueToDisplayString(value)) << "\n";

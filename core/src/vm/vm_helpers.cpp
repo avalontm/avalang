@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <cmath>
 #include <string>
+#include "vm_helpers.h"
 
 #ifdef _WIN32
 #include <direct.h>
@@ -83,4 +84,21 @@ std::string GetCurrentWorkingDir() {
     return std::string(buff);
 }
 
+// Static (non-instance) attrs live only on the class that declared them.
+// CompileClass no longer copies a subclass's base attrs into its own
+// `attrs` map (that made `Sub.x` and `Base.x` two independent copies as
+// soon as either was written to) -- instead a subclass just carries a
+// `__base__` link, and lookups walk it here to find the ClassObj that
+// actually owns `name`, so `Base.x` and `Sub.x` stay the same storage.
+ClassObj* FindClassOwningAttr(ClassObj* cls, const std::string& name) {
+    ClassObj* cur = cls;
+    while (cur) {
+        if (cur->attrs.find(name) != cur->attrs.end()) return cur;
+        auto base_it = cur->attrs.find("__base__");
+        if (base_it == cur->attrs.end() || base_it->second.type != ValueType::Class) break;
+        cur = static_cast<ClassObj*>(base_it->second.obj);
+    }
+    return nullptr;
 }
+
+} // namespace ava

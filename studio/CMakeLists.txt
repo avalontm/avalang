@@ -90,10 +90,20 @@ target_link_libraries(imgui_docking PUBLIC glfw)
 # apply fails loudly (breaks the CMake configure step) if any patch
 # can't apply cleanly, rather than silently falling back to the
 # unpatched library.
+# NOTE (2026-07): pinned to the "Legacy" release tag (commit efd42a4) instead
+# of GIT_TAG master. Upstream is mid-rewrite -- their README states master
+# will eventually flip to a new, backwards-incompatible architecture once
+# it's tested, and even before that, master drifted enough to shift
+# TextEditor.cpp's line numbers and break the patch hunks below ("patch does
+# not apply" at TextEditor.cpp:3647). The "Legacy" tag is upstream's own
+# snapshot of the pre-rewrite architecture ("most backwards compatible with
+# the various forks" per their release notes), so pinning to it fixes today's
+# apply failure and stops master's eventual rewrite from silently breaking
+# this build later. See patches/README.md.
 FetchContent_Declare(
     imguicolortextedit
     GIT_REPOSITORY https://github.com/goossens/ImGuiColorTextEdit.git
-    GIT_TAG        master
+    GIT_TAG        Legacy
     GIT_SHALLOW    TRUE
     PATCH_COMMAND  git apply --ignore-whitespace
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_interpolation.patch

@@ -1,0 +1,82 @@
+#pragma once
+// AvaHost.Configuration -- loads main.ava's resource `import` lines.
+//
+// This is NOT AvaLang's real `import module.name` statement (grammar
+// `importStatement: 'import' NAME ('.' NAME)*`, resolved through the
+// compiler and ava_import()). This is a host-only manifest line:
+//
+//   import "css/app.css"
+//   import "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"
+//
+// .js imports (e.g. import "js/some-lib.js") are supported for the
+// rare third-party JS *library* a project genuinely needs, but are
+// NOT part of the default manifest and are never scaffolded by
+// `avahost new`. App logic is written in AvaLang (.ava/.avaui) and
+// run by the AvaLang runtime -- it is not hand-written browser JS.
+//
+// main.ava is read as plain text by AvaHost -- never compiled, never
+// passed to the AvaLang core. A quoted string after `import` is never
+// valid AvaLang grammar, so there is no ambiguity with real imports
+// even if main.ava later also carries real AvaLang bootstrap code.
+#include <string>
+#include <vector>
+
+namespace avahost {
+
+struct ResourceImport {
+    // Exactly what followed `import "..."` -- a project-relative path
+    // (e.g. "css/app.css") or a full URL (starts with "http://" or
+    // "https://").
+    std::string location;
+
+    bool IsUrl() const;
+
+    // ".css" -> <link rel="stylesheet"> in <head>, always emitted
+    // after any bare-URL head script (e.g. Tailwind) regardless of
+    // declaration order in main.ava -- see BuildHeadTags.
+    bool IsStylesheet() const;
+
+    // ".js" -> <script src="..."> at the end of <body> (doesn't block
+    // first paint). For a genuine third-party JS library a project
+    // needs -- NOT a place to write app logic; that's AvaLang's job.
+    bool IsBodyScript() const;
+
+    // Anything else -- a bare CDN URL with no extension, e.g. the
+    // Tailwind Play CDN -- <script> in <head>. These generate CSS at
+    // runtime by scanning the DOM, so running them late (end of body)
+    // causes a flash of unstyled content; loading them in <head>
+    // avoids that, same as Tailwind's own docs recommend.
+    bool IsHeadScript() const;
+};
+
+struct AppManifest {
+    std::vector<ResourceImport> resources;
+};
+
+// Returns the manifest a fresh `avahost new` project ships with:
+// css/app.css and the Tailwind CDN script -- no .js entry, since app
+// logic belongs in AvaLang, not hand-written JS (see header comment
+// above). Used both to generate main.ava's initial content and as the
+// fallback when a project has no main.ava at all.
+AppManifest DefaultAppManifest();
+
+// Reads projectRoot/main.ava and parses its `import "..."` lines in
+// declaration order. Blank lines and `#` comments (AvaLang's line
+// comment syntax) are ignored. If main.ava does not exist, returns
+// DefaultAppManifest() so a project without one still renders working
+// <link>/<script> tags.
+AppManifest LoadAppManifest(const std::string& projectRoot);
+
+// Builds <head> tags in two passes, regardless of main.ava's
+// declaration order: bare-URL CDN imports (e.g. Tailwind) first, then
+// <link rel="stylesheet"> for .css imports -- guarantees CSS always
+// loads after Tailwind while staying in <head> (no flash of unstyled
+// content), all as plain server-rendered tags, no runtime JS involved.
+// For RenderOptions::extraHead.
+std::string BuildHeadTags(const AppManifest& manifest);
+
+// Builds the <script src="..."> tags for .js imports, in declaration
+// order, for RenderOptions::extraBodyEnd.
+std::string BuildBodyEndTags(const AppManifest& manifest);
+
+} // namespace avahost

@@ -19,6 +19,10 @@ struct CompileError : AvaError {
 // available, or frontend_stub.cpp otherwise (see CMakeLists.txt).
 std::shared_ptr<Proto> CompileSource(const std::string& source, const std::string& source_name);
 
+// Compiles an AvaLang source file into a top-level Proto ready for VM::Run.
+// Reads the file and calls CompileSource.
+std::shared_ptr<Proto> CompileFile(const std::string& file_path);
+
 } // namespace ava
 
 #endif // AVA_FRONTEND_FRONTEND_H

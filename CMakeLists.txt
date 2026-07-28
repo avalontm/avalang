@@ -11,6 +11,7 @@ set(ENV{VCPKG_TARGET_TRIPLET} x64-windows-static-md)
 option(AVA_BUILD_SHARED "Build avalang as a shared library (.dll/.so)" ON)
 option(AVA_BUILD_CLI "Build the standalone ava_cli (compile/run scripts)" ON)
 option(AVA_BUILD_STUDIO "Build ava_studio, the ImGui-based IDE shell (fetches GLFW + Dear ImGui via CMake FetchContent)" OFF)
+option(AVA_BUILD_AVAHOST "Build avahost, the native C++ app hosting platform (links directly against avalang)" OFF)
 
 # ---------------------------------------------------------------------
 # ANTLR4 C++ runtime (optional at configure time)
@@ -92,7 +93,20 @@ endif()
 # ---------------------------------------------------------------------
 set(CORE_SOURCES
     core/src/vm/value.cpp
+    core/src/vm/vm_helpers.cpp
     core/src/vm/vm.cpp
+    core/src/vm/vm_core.cpp
+    core/src/vm/vm_call.cpp
+    core/src/vm/vm_file.cpp
+    core/src/vm/vm_import.cpp
+    core/src/vm/vm_arith.cpp
+    core/src/vm/vm_compare.cpp
+    core/src/vm/vm_containers.cpp
+    core/src/vm/vm_classes.cpp
+    core/src/vm/vm_call_op.cpp
+    core/src/vm/vm_slice.cpp
+    core/src/vm/vm_exceptions.cpp
+    core/src/vm/vm_errors.cpp
     core/src/vm/module.cpp
     core/src/vm/coroutine.cpp
     core/src/builtins/builtin_strings.cpp
@@ -196,4 +210,13 @@ install(FILES public/include/avalang.h DESTINATION include)
 # ---------------------------------------------------------------------
 if(AVA_BUILD_STUDIO)
     add_subdirectory(studio)
+endif()
+
+# ---------------------------------------------------------------------
+# AvaHost (optional -- native C++ app hosting platform, off by default
+# for the same reason ava_studio is: a plain `cmake ..` should not
+# suddenly need network access to fetch nlohmann/json)
+# ---------------------------------------------------------------------
+if(AVA_BUILD_AVAHOST)
+    add_subdirectory(avahost)
 endif()
