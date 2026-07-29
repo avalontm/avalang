@@ -4,19 +4,14 @@
 #include <cmath>
 #include <string>
 #include "vm_helpers.h"
+#include "vm_platform_accessor.h"
 
 #ifdef _WIN32
-#include <direct.h>
-#include <windows.h>
 #define PATH_SEPARATOR_CHAR '\\'
 #define PATH_SEPARATOR "\\"
-#define GET_CURRENT_DIR _getcwd
 #else
-#include <unistd.h>
-#include <sys/stat.h>
 #define PATH_SEPARATOR_CHAR '/'
 #define PATH_SEPARATOR "/"
-#define GET_CURRENT_DIR getcwd
 #endif
 
 namespace ava {
@@ -66,22 +61,12 @@ std::string JoinPath(const std::string& a, const std::string& b) {
     return a + PATH_SEPARATOR + b;
 }
 
-#ifdef _WIN32
 bool FileExists(const std::string& path) {
-    DWORD attrs = GetFileAttributesA(path.c_str());
-    return (attrs != INVALID_FILE_ATTRIBUTES);
+    return VmPlatformAccessor::Get().FileSystem().Exists(path);
 }
-#else
-bool FileExists(const std::string& path) {
-    struct stat st;
-    return stat(path.c_str(), &st) == 0;
-}
-#endif
 
 std::string GetCurrentWorkingDir() {
-    char buff[4096];
-    GET_CURRENT_DIR(buff, sizeof(buff));
-    return std::string(buff);
+    return VmPlatformAccessor::Get().Environment().GetCurrentDirectory();
 }
 
 // Static (non-instance) attrs live only on the class that declared them.

@@ -1,4 +1,5 @@
 #include "vm_extern.h"
+#include "vm_platform_accessor.h"
 
 #include "value.h"
 
@@ -14,16 +15,6 @@
 #include <ffi.h>
 #endif
 
-#if defined(_WIN32)
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-#endif
-#endif
-
 namespace ava {
 
 namespace fs = std::filesystem;
@@ -34,7 +25,7 @@ namespace {
 // "sqlite"). Nunca se descargan -- viven lo que vive el proceso, igual
 // que el resto de los "prototipos" del compilador/VM.
 std::mutex g_lib_mutex;
-std::unordered_map<std::string, void*> g_loaded_libs;
+std::unordered_map<std::string, platform::ILibraryHandle*> g_loaded_libs;
 
 // Nombre lógico -> candidatos de nombre de archivo por plataforma. Ver
 // EXTERN_FFI_DESIGN.md, sección "Platform Resolution".
@@ -60,22 +51,11 @@ std::vector<std::string> CandidateFileNames(const std::string& logical) {
 // razonable de encontrar `modules/` al lado del binario.
 fs::path ExecutableDir() {
     std::error_code ec;
-#if defined(_WIN32)
-    char buf[MAX_PATH];
-    DWORD len = GetModuleFileNameA(nullptr, buf, MAX_PATH);
-    if (len == 0 || len == MAX_PATH) return fs::current_path(ec);
-    return fs::path(std::string(buf, len)).parent_path();
-#elif defined(__APPLE__)
-    char buf[4096];
-    uint32_t size = sizeof(buf);
-    if (_NSGetExecutablePath(buf, &size) != 0) return fs::current_path(ec);
-    auto real = fs::canonical(fs::path(buf), ec);
-    return ec ? fs::path(buf).parent_path() : real.parent_path();
-#else
-    auto link = fs::read_symlink("/proc/self/exe", ec);
-    if (ec) return fs::current_path(ec);
-    return link.parent_path();
-#endif
+    std::string exe_dir = VmPlatformAccessor::Get().FileSystem().GetExecutableDirectory();
+    if (exe_dir.empty()) {
+        return fs::current_path(ec);
+    }
+    return fs::path(exe_dir);
 }
 
 // Carpeta por defecto donde buscar DLLs/.so/.dylib de módulos nativos,
@@ -129,16 +109,14 @@ fs::path FindInModulesDir(const fs::path& root, const std::vector<std::string>& 
     return {};
 }
 
-void* LoadFromPath(const fs::path& full_path) {
+// Load a library from an absolute path. Returns an opaque handle managed
+// by the PAL's ILibraryLoader. Caller must track and eventually Unload() it.
+platform::ILibraryHandle* LoadFromPath(const fs::path& full_path) {
     if (full_path.empty()) return nullptr;
-#if defined(_WIN32)
-    return static_cast<void*>(LoadLibraryA(full_path.string().c_str()));
-#else
-    return dlopen(full_path.string().c_str(), RTLD_NOW | RTLD_GLOBAL);
-#endif
+    return VmPlatformAccessor::Get().Libraries().Load(full_path.string());
 }
 
-void* LoadNativeLibrary(const std::string& logical_name) {
+platform::ILibraryHandle* LoadNativeLibrary(const std::string& logical_name) {
     std::lock_guard<std::mutex> lock(g_lib_mutex);
     auto it = g_loaded_libs.find(logical_name);
     if (it != g_loaded_libs.end()) return it->second;
@@ -148,13 +126,11 @@ void* LoadNativeLibrary(const std::string& logical_name) {
     // 1) Busqueda "de siempre": PATH, carpeta del ejecutable (Windows
     // ya la busca sola), rutas de sistema. Cubre libs del sistema
     // (kernel32, user32) sin tener que tocar nada.
-    void* handle = nullptr;
+    platform::ILibraryHandle* handle = nullptr;
     for (auto& candidate : candidates) {
         handle = LoadFromPath(candidate); // string relativo -> misma
                                             // resolucion que LoadLibraryA/
-                                            // dlopen de siempre (fs::path
-                                            // de un string relativo no
-                                            // agrega nada).
+                                            // dlopen de siempre
         if (handle) break;
     }
 
@@ -172,24 +148,17 @@ void* LoadNativeLibrary(const std::string& logical_name) {
     return handle;
 }
 
-void* ResolveSymbol(void* handle, const std::string& name) {
+void* ResolveSymbol(platform::ILibraryHandle* handle, const std::string& name) {
     if (!handle) return nullptr;
-#if defined(_WIN32)
-    return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(handle), name.c_str()));
-#else
-    return dlsym(handle, name.c_str());
-#endif
+    return handle->ResolveSymbol(name);
 }
 
 std::string PlatformLoadError() {
-#if defined(_WIN32)
-    return "codigo de error Win32: " + std::to_string(GetLastError()) +
-           " (revisar tambien " + ModulesRoot().string() + ")";
-#else
-    const char* err = dlerror();
-    return (err ? std::string(err) : std::string("(sin detalle)")) +
-           " (revisar tambien " + ModulesRoot().string() + ")";
-#endif
+    // Error details now come from the platform's ILibraryLoader implementation.
+    // For better error messages, ILibraryLoader could be extended with error()
+    // method in Phase 5+. For now, we provide a generic message with the modules
+    // search path.
+    return "(ver tambien " + ModulesRoot().string() + " para modulos nativos personalizados)";
 }
 
 } // namespace
@@ -208,7 +177,7 @@ extern "C" ava_value_t ava_extern_call(AvaVM*, const ava_value_t* c_args, size_t
         "Instala libffi (p.ej. 'vcpkg install libffi') y reconfigura para habilitar llamadas "
         "nativas reales. Ver EXTERN_FFI_TODO.md.");
 #else
-    void* handle = LoadNativeLibrary(meta->library);
+    platform::ILibraryHandle* handle = LoadNativeLibrary(meta->library);
     if (!handle) {
         throw std::runtime_error(
             "extern: no se pudo cargar la libreria \"" + meta->library + "\" (para " + where +

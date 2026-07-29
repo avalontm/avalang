@@ -127,6 +127,7 @@ set(CORE_SOURCES
     core/src/vm/vm_exceptions.cpp
     core/src/vm/vm_errors.cpp
     core/src/vm/vm_extern.cpp
+    core/src/vm/vm_platform_accessor.cpp
     core/src/vm/module.cpp
     core/src/vm/coroutine.cpp
     core/src/builtins/builtin_strings.cpp
@@ -147,6 +148,57 @@ set(CORE_SOURCES
     core/src/ui/avaui_text.cpp
     ${FRONTEND_SOURCES}
 )
+
+# ---------------------------------------------------------------------
+# Platform Abstraction Layer backend (compile-time selection, no runtime
+# OS detection -- see core/platform/PAL.md).
+#   Windows -> core/platform/windows (Phase 3/4, functional)
+#   Linux   -> core/platform/linux   (Phase 5, STUB)
+#   macOS   -> core/platform/macos   (Phase 6, STUB)
+# ---------------------------------------------------------------------
+if(WIN32)
+    set(PLATFORM_SOURCES
+        core/platform/windows/WinFileSystem.cpp
+        core/platform/windows/WinThread.cpp
+        core/platform/windows/WinMutex.cpp
+        core/platform/windows/WinClock.cpp
+        core/platform/windows/WinLibrary.cpp
+        core/platform/windows/WinConsole.cpp
+        core/platform/windows/WinEnvironment.cpp
+        core/platform/windows/WinProcess.cpp
+        core/platform/windows/WinPlatform.cpp
+    )
+elseif(APPLE)
+    set(PLATFORM_SOURCES
+        core/platform/macos/MacFileSystem.cpp
+        core/platform/macos/MacThread.cpp
+        core/platform/macos/MacMutex.cpp
+        core/platform/macos/MacClock.cpp
+        core/platform/macos/MacLibrary.cpp
+        core/platform/macos/MacConsole.cpp
+        core/platform/macos/MacEnvironment.cpp
+        core/platform/macos/MacProcess.cpp
+        core/platform/macos/MacPlatform.cpp
+    )
+    message(STATUS "avalang: macOS PAL backend is a STUB (Phase 6 not implemented yet)")
+elseif(UNIX)
+    set(PLATFORM_SOURCES
+        core/platform/linux/LinFileSystem.cpp
+        core/platform/linux/LinThread.cpp
+        core/platform/linux/LinMutex.cpp
+        core/platform/linux/LinClock.cpp
+        core/platform/linux/LinLibrary.cpp
+        core/platform/linux/LinConsole.cpp
+        core/platform/linux/LinEnvironment.cpp
+        core/platform/linux/LinProcess.cpp
+        core/platform/linux/LinPlatform.cpp
+    )
+    message(STATUS "avalang: Linux PAL backend is a STUB (Phase 5 not implemented yet)")
+else()
+    message(FATAL_ERROR "avalang: unsupported target platform (no PAL backend available)")
+endif()
+
+list(APPEND CORE_SOURCES ${PLATFORM_SOURCES})
 
 # ---------------------------------------------------------------------
 # Public library (core + C API)

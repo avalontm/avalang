@@ -1,28 +1,17 @@
 #include "module.h"
+#include "vm_platform_accessor.h"
 #include <fstream>
 #include <sstream>
 
 #ifdef _WIN32
-#include <direct.h>
-#include <windows.h>
-#define GetCurrentDir _getcwd
 #define PATH_SEPARATOR "\\"
 #define PATH_SEPARATOR_CHAR '\\'
 #else
-#include <unistd.h>
-#include <sys/stat.h>
-#define GetCurrentDir getcwd
 #define PATH_SEPARATOR "/"
 #define PATH_SEPARATOR_CHAR '/'
 #endif
 
 namespace ava {
-
-static std::string GetCurrentWorkingDir() {
-    char buff[4096];
-    GetCurrentDir(buff, sizeof(buff));
-    return std::string(buff);
-}
 
 static std::string JoinPath(const std::string& a, const std::string& b) {
     if (a.empty()) return b;
@@ -32,26 +21,12 @@ static std::string JoinPath(const std::string& a, const std::string& b) {
     return a + PATH_SEPARATOR + b;
 }
 
-#ifdef _WIN32
 static bool FileExists(const std::string& path) {
-    DWORD attrs = GetFileAttributesA(path.c_str());
-    return (attrs != INVALID_FILE_ATTRIBUTES);
-}
-#else
-static bool FileExists(const std::string& path) {
-    struct stat st;
-    return stat(path.c_str(), &st) == 0;
-}
-#endif
-
-static std::string GetFileDir(const std::string& path) {
-    size_t pos = path.find_last_of("/\\");
-    if (pos == std::string::npos) return ".";
-    return path.substr(0, pos);
+    return VmPlatformAccessor::Get().FileSystem().Exists(path);
 }
 
 ModuleResolver::ModuleResolver() {
-    std::string cwd = GetCurrentWorkingDir();
+    std::string cwd = VmPlatformAccessor::Get().Environment().GetCurrentDirectory();
     AddSearchPath(cwd);
 }
 
