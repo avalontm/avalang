@@ -21,9 +21,9 @@ public:
     T__38 = 39, T__39 = 40, T__40 = 41, T__41 = 42, T__42 = 43, T__43 = 44, 
     T__44 = 45, T__45 = 46, T__46 = 47, T__47 = 48, T__48 = 49, T__49 = 50, 
     T__50 = 51, T__51 = 52, T__52 = 53, T__53 = 54, T__54 = 55, T__55 = 56, 
-    T__56 = 57, T__57 = 58, T__58 = 59, T__59 = 60, T__60 = 61, AVA_LANG = 62, 
-    INC = 63, DEC = 64, IDIV = 65, NAME = 66, NUMBER = 67, STRING = 68, 
-    FSTRING = 69, NEWLINE = 70, COMMENT = 71, WS = 72, LINE_JOIN = 73
+    T__56 = 57, T__57 = 58, T__58 = 59, T__59 = 60, T__60 = 61, T__61 = 62, 
+    AVA_LANG = 63, INC = 64, DEC = 65, IDIV = 66, NAME = 67, NUMBER = 68, 
+    STRING = 69, FSTRING = 70, NEWLINE = 71, COMMENT = 72, WS = 73, LINE_JOIN = 74
   };
 
   explicit AvaLangLexer(antlr4::CharStream *input);

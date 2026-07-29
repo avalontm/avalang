@@ -415,7 +415,11 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   <ItemGroup>
     <ClCompile Include="D:\_CODE_\avalang\avahost\src\core\logger.cpp" />
     <ClCompile Include="D:\_CODE_\avalang\avahost\src\runtime\runtime_host.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\avahost\src\runtime\state_binder.cpp" />
     <ClCompile Include="D:\_CODE_\avalang\avahost\src\rendering\html_renderer.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\avahost\src\rendering\event_binder.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\avahost\src\component\component_resolver.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\avahost\src\component\dotted_path.cpp" />
     <ClCompile Include="D:\_CODE_\avalang\avahost\src\web\transport\socket.cpp" />
     <ClCompile Include="D:\_CODE_\avalang\avahost\src\web\protocol\http_parser.cpp" />
     <ClCompile Include="D:\_CODE_\avalang\avahost\src\web\protocol\url_codec.cpp" />

@@ -30,7 +30,11 @@ namespace ui {
 // implementations this is meant to eventually obsolete -- see PROGRESS.md
 // for the migration status of each caller.
 //
-// File shape (see the plan doc for the full worked example):
+// File shape (see the plan doc for the full worked example). Five
+// canonical top-level blocks -- `properties` / `state` / `view` /
+// `code` / `style` -- chosen (2026 AvaUI architecture revision, see
+// docs/architecture/17_AVAUI_FILE_FORMAT.md) to keep every file
+// readable without needing a visual designer:
 //
 //   import "components/navbar"
 //
@@ -54,38 +58,80 @@ namespace ui {
 //               fontSize = 32
 //           end
 //
-//           button
-//               text = "Guardar"
-//               click = btnGuardar_Click
+//           button Guardar
+//               properties
+//                   text = "Guardar"
+//               end
 //           end
 //       end
 //   end
 //
-//   methods
-//       func btnGuardar_Click()
-//           -- handler
+//   code
+//       func OnGuardarClick()
+//           -- handler, auto-bound to the "Guardar" button's click
+//           -- event purely by naming convention -- see
+//           -- "Automatic event binding" below. No `click = ...` prop
+//           -- needed in `view`.
 //       end
 //   end
 //
-// Every top-level block (`properties`/`state`/`view`/`methods`) starts
-// at column 0 and is closed by a matching `end` also at column 0 --
-// same convention the .NET reference relies on, made explicit here
-// since our splitter accepts it as the *primary* terminator (falling
-// back to "next section keyword" or end-of-file too, so a hand-edited
-// file that's missing a closing `end` still loads instead of failing
-// outright).
+//   style
+//       background = "#FFFFFF"
+//   end
+//
+// `properties` replaces the older, since-retired `metadata` keyword
+// (still parsed as a synonym for backward compatibility with existing
+// .avaui files, but no longer written -- WriteAvauiText always emits
+// `properties`). Likewise `code` replaces `methods` (same
+// forward-canonical / backward-compatible treatment). Both renames
+// exist purely to reduce the number of concepts a user has to learn:
+// one block holds the component's public config, one holds every
+// runnable line of logic (including lifecycle functions -- see
+// below), full stop.
+//
+// Automatic event binding: `view` never needs an explicit `click = fn`
+// property for the common case. If a component has an id (the bare
+// word right after its type, e.g. `button Guardar`) and `code` defines
+// a function named `On` + PascalCase(id) + PascalCase(event) (e.g.
+// `OnGuardarClick` for a `click` on id `Guardar`), the parser binds it
+// automatically -- see AutoBindEvents in avaui_text.cpp for the exact
+// per-type event(s) checked (button -> click, input/textfield/select
+// -> change, form -> submit, ...). An explicit event prop (`click =
+// someOtherFn`) in `view` always takes precedence when present, so
+// this is purely a convenience default, never a restriction.
+//
+// Lifecycle functions: `code` may define `OnLoad`, `OnShow`, `OnHide`,
+// `OnUnload` (docs/architecture/17_AVAUI_FILE_FORMAT.md, "Ciclo de
+// vida"). All four are optional -- a component that doesn't need one
+// simply omits it. AvaHost (server-side rendering) calls `OnLoad`
+// once before rendering a page; `OnShow`/`OnHide`/`OnUnload` describe
+// behavior for a live/interactive host (Ava Studio's preview, or any
+// future stateful client runtime) and are a no-op for a plain
+// request/response render, since there's no persistent page instance
+// to show/hide/unload in that context.
+//
+// Every top-level block (`properties`/`state`/`view`/`code`/`style`)
+// starts at column 0 and is closed by a matching `end` also at column
+// 0 -- same convention the .NET reference relies on, made explicit
+// here since our splitter accepts it as the *primary* terminator
+// (falling back to "next section keyword" or end-of-file too, so a
+// hand-edited file that's missing a closing `end` still loads instead
+// of failing outright).
 //
 // `view` is parsed by indentation into a Component tree -- a type
-// keyword alone on its line (`button`, `column`, ...) opens a block
-// closed by `end` at the same indent; `key = value` lines inside it
-// become properties (or events, for the fixed list of event prop
-// names below); a bare `Word()` line (empty parens, PascalCase by
-// convention) is a call to an imported component and becomes a leaf
-// node with that exact type -- see ComponentResolver.cs in the .NET
-// prototype for how that gets resolved to a real subtree there; this
-// parser doesn't resolve it (no import-resolution wiring yet on either
-// host -- see plan section 9.2 point 1), it just keeps the call node
-// so the file round-trips instead of losing it.
+// keyword alone on its line (`button`, `column`, ...), optionally
+// followed by a bare identifier (the component's `id`, e.g. `button
+// Guardar`), opens a block closed by `end` at the same indent; `key =
+// value` lines inside it become properties (or events, for the fixed
+// list of event prop names below -- explicit events remain supported
+// as a manual override, see "Automatic event binding" above); a bare
+// `Word()` line (empty parens, PascalCase by convention) is a call to
+// an imported component and becomes a leaf node with that exact type
+// -- see ComponentResolver.cs in the .NET prototype for how that gets
+// resolved to a real subtree there; this parser doesn't resolve it (no
+// import-resolution wiring yet on either host -- see plan section 9.2
+// point 1), it just keeps the call node so the file round-trips
+// instead of losing it.
 //
 // Property values: every value is stored as a Value::String holding
 // the exact display text -- a value entirely wrapped in "double
@@ -144,13 +190,28 @@ struct ParsedAvaui {
     // header comment above) -- same "display-ready string" convention
     // used by every property value in this parser.
     std::vector<std::pair<std::string, std::string>> state;
-    // `import "..."` lines, verbatim and in file order. Not resolved.
+    // The `style` block, key/value in file order, same string
+    // convention as `state`. Not yet threaded across the C ABI
+    // (public/include/avalang.h) or into a host's rendering pipeline
+    // -- landed here first since every host's *parser* goes through
+    // this one function; wiring it into AvaHost's HTML renderer /
+    // Ava Studio's design surface is a follow-up (see
+    // docs/architecture/AVAHOST_PROGRESS.md).
+    std::vector<std::pair<std::string, std::string>> style;
+    // `import components.navbar` lines (dotted path, no quotes), verbatim
+    // and in file order. Not resolved -- resolution (dotted path ->
+    // filesystem path, from project root) is a host concern.
     std::vector<std::string> imports;
-    // The `methods` block, verbatim text (the `func ... end` bodies).
-    // Real AvaLang source -- not parsed here, the language itself
-    // parses it when it runs.
+    // The `code` block (or the legacy `methods` keyword -- both parse
+    // into this same field), verbatim text (the `func ... end`
+    // bodies). Real AvaLang source -- not parsed here, the language
+    // itself parses it when it runs. Field name kept as
+    // `methods_text` rather than renamed to `code_text` so every
+    // existing caller (AvaHost, Ava Studio) keeps compiling unchanged
+    // -- only the on-disk keyword changed, not this in-memory shape.
     std::string methods_text;
-    // `extends "layout"` line, if present -- a top-level line (column
+    // `extends layouts.main` line (dotted path, no quotes), if present --
+    // a top-level line (column
     // 0), same convention as `import`/`route`. First occurrence wins,
     // same as the .NET reference (AvaComponentParser.cs). Empty when
     // the file doesn't extend a layout.
@@ -175,16 +236,20 @@ bool IsEventPropertyName(const std::string& name);
 ParsedAvaui ParseAvauiText(const std::string& text);
 
 // Serializes a document back to .avaui text: the full file
-// (extends/route/import lines, properties/state/view/methods), not
-// just one section. `extends`/`routes` default to "none" so existing
-// callers that only care about the other four sections keep compiling
+// (extends/route/import lines, properties/state/view/code/style), not
+// just one section. Always writes the canonical `properties`/`code`
+// keywords (never the legacy `metadata`/`methods` names, even if that
+// document was originally parsed from a file using them).
+// `extends`/`routes`/`style` default to "none"/empty so existing
+// callers that only care about the other sections keep compiling
 // unchanged.
 std::string WriteAvauiText(const Component& root,
                             const std::vector<std::pair<std::string, std::string>>& state,
                             const std::vector<std::string>& imports,
                             const std::string& methods_text,
                             const std::string& extends = "",
-                            const std::vector<RouteDeclaration>& routes = {});
+                            const std::vector<RouteDeclaration>& routes = {},
+                            const std::vector<std::pair<std::string, std::string>>& style = {});
 
 // --- JSON helpers for the C API boundary -----------------------------
 //

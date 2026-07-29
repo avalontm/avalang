@@ -134,8 +134,100 @@ public:
     // filename-convention routing instead (plan section 11).
     std::vector<RouteTemplate> ParseRouteDeclarations(const std::string& text) const;
 
+    // --- State / code-behind / event bridge (Fase 2, plan section 20 --
+    // docs/architecture/AVAHOST_PROGRESS.md rows 9/10) --------------------
+    // These four methods are the only place outside ParseAvaUiFile/
+    // RunScript* that reach into this VM's globals -- kept here rather
+    // than in avahost/src/runtime/state_binder.h or
+    // avahost/src/rendering/event_binder.h (which drive them) per this
+    // file's own header comment: RuntimeHost is the one layer allowed
+    // to touch ava_compile/ava_run/ava_set_global directly.
+
+    // Binds `stateJson` (shape: ava::ui::StateToJson's output, i.e.
+    // {"key":"raw text value", ...} -- see AvaUiDocument::stateJson)
+    // as globals on this VM, inferring bool/number/string the same way
+    // Ava Studio's design/state_eval.cpp's BuildStateVM does for its
+    // own per-call VM. Per-request (plan Fase 2 decision A): call once
+    // per request with the page's (+ imported components', merged by
+    // ComponentResolver) `state` block -- it always overwrites whatever
+    // the previous request left on this reused VM's globals for the
+    // same keys.
+    void BindState(const std::string& stateJson);
+
+    // Compiles+runs `methodsText` (the page's `code`/`methods` block,
+    // verbatim) against this VM so every top-level `func Name(...) ...
+    // end` becomes a callable global -- same model as Studio's
+    // BindCodeBehind. Call after BindState, before InvokeHandler, so a
+    // handler body sees this request's state. Best-effort: a
+    // compile/run error here is swallowed silently (nothing sensible to
+    // surface for a `code` block failing mid-request; the page still
+    // renders with whatever state BindState set).
+    void BindCodeBehind(const std::string& methodsText);
+
+    // Calls `handlerName()` (zero-arg) against this VM -- e.g. the
+    // "OnGuardarClick" a button's `data-handler` attribute names (see
+    // avahost/src/rendering/event_binder.h). A handler is expected to
+    // mutate `state` globals directly (`counter = counter + 1`), same
+    // model AvaLang.UI already uses elsewhere. Returns false and fills
+    // `outError` on a compile or runtime error.
+    bool InvokeHandler(const std::string& handlerName, std::string& outError);
+
+    // Same as InvokeHandler, but first checks whether `handlerName` was
+    // actually defined by the page/layout's `code` block (as an
+    // AVA_FUNCTION global) and simply no-ops (returns true, outError
+    // untouched) when it wasn't -- the model lifecycle hooks need,
+    // since `OnLoad`/`OnShow`/`OnHide`/`OnUnload` are all optional per
+    // docs/architecture/17_AVAUI_FILE_FORMAT.md ("Ciclo de vida") and a
+    // page that never defines `OnLoad` must render exactly like today,
+    // not fail the request. Call after BindCodeBehind.
+    bool InvokeHandlerIfDefined(const std::string& handlerName, std::string& outError);
+
+    // Evaluates `rawValue` (a property's verbatim source text, e.g.
+    // `title` or a plain string literal like `"Guardar"`) as an
+    // expression against this VM's current globals and returns its
+    // display text. Falls back to `rawValue` unchanged when it doesn't
+    // compile/run, or evaluates to Nil (the common case: a bare string
+    // literal isn't a valid identifier) -- same fallback rule as
+    // Studio's EvalPropertyExpr. Used as HtmlRenderer::RenderOptions::
+    // evalText so rendered markup reflects current state instead of
+    // raw source text.
+    std::string EvalPropertyExpr(const std::string& rawValue);
+
+    // Reads this VM's *current* globals back out for every key present
+    // in `templateStateJson` (typically the same stateJson a prior
+    // BindState call used), producing an updated JSON blob in the same
+    // shape (StateToJson's {"key":"raw text value", ...}). Used by
+    // AvaHostApp to persist state across requests (see app.cpp's
+    // stateCache_): after BindState + BindCodeBehind + a handler
+    // Dispatch mutates `counter`, this captures the mutated value so
+    // the *next* request's BindState starts from it instead of the
+    // page's original `state` block default. A key whose current global
+    // isn't a plain bool/number/string (Nil -- never set, or some other
+    // type) keeps whatever `templateStateJson` already had for it,
+    // rather than losing the value.
+    std::string ExportStateJson(const std::string& templateStateJson);
+
+    // Redirects everything the VM prints (via `print(...)`) into an
+    // internal buffer for the duration between this call and the
+    // matching EndConsoleCapture() -- on top of, not instead of, the
+    // normal stdout output (see EndConsoleCapture). Used by
+    // AvaHostApp to relay whatever a page's `OnLoad`/event handlers
+    // printed into the *browser's* console (web/server/app.cpp's
+    // BuildConsoleScript) -- plain `print()` alone only ever reached
+    // the server's own terminal, which the person looking at the page
+    // in a browser can't see. Call once per request, right before
+    // BindState/BindCodeBehind/DispatchLifecycle/InvokeHandler run.
+    void BeginConsoleCapture();
+
+    // Stops capturing (restores the plain stdout-only sink) and
+    // returns everything printed since the matching
+    // BeginConsoleCapture call -- one `print(...)` call's text per
+    // line, same shape RunScriptCapturingOutput produces.
+    std::string EndConsoleCapture();
+
 private:
     AvaVM* vm_ = nullptr;
+    std::string consoleCaptureBuffer_;
 };
 
 } // namespace avahost

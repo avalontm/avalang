@@ -61,7 +61,16 @@ bool IsBlank(const std::string& line) { return Trim(line).empty(); }
 
 bool IsSectionKeyword(const std::string& lower) {
     static const std::unordered_set<std::string> kKeywords = {
-        "metadata", "state", "import", "imports", "services", "methods", "lifecycle", "view",
+        // Canonical (2026 AvaUI architecture revision -- see
+        // avaui_text.h header comment and
+        // docs/architecture/17_AVAUI_FILE_FORMAT.md):
+        "properties", "state", "view", "code", "style",
+        // Legacy aliases, still parsed for backward compatibility with
+        // existing .avaui files -- see the "metadata"/"code" handling
+        // in ParseAvauiText below. WriteAvauiText never emits these.
+        "metadata", "methods",
+        // Reserved, not acted on yet.
+        "import", "imports", "services", "lifecycle",
     };
     return kKeywords.count(lower) != 0;
 }
@@ -73,6 +82,10 @@ bool IsControlKeyword(const std::string& lower) {
     return kKeywords.count(lower) != 0;
 }
 
+// Canonical list of recognized event-prop names -- must stay in sync
+// with studio/src/design/avaui_text.cpp's own EventPropertyNames()
+// (that file keeps its own copy since IsEventPropertyName is part of
+// its public API too -- see that file's comment).
 const std::unordered_set<std::string>& EventPropNames() {
     static const std::unordered_set<std::string> kEventProps = {
         "click", "onclick", "onchange", "oninput", "onfocus", "onblur",
@@ -82,23 +95,122 @@ const std::unordered_set<std::string>& EventPropNames() {
     return kEventProps;
 }
 
+// --- Automatic event binding (naming convention) ---------------------
+// See avaui_text.h header comment, "Automatic event binding". No
+// config needed from the user: if a component has an `id` and `code`
+// defines a function named `On` + PascalCase(id) + PascalCase(event),
+// it's wired up as that event's handler, unless an explicit event prop
+// already claimed the same event name in `view`.
+
+std::string PascalCase(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    bool start_of_word = true;
+    for (char c : s) {
+        if (c == '_' || c == '-' || std::isspace(static_cast<unsigned char>(c))) {
+            start_of_word = true;
+            continue;
+        }
+        if (start_of_word) {
+            out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+            start_of_word = false;
+        } else {
+            out.push_back(c);
+        }
+    }
+    return out;
+}
+
+// The one or two events worth guessing a handler name for, per
+// built-in component type -- deliberately a short list of the
+// interaction every one of these types is actually used for, not the
+// full EventPropNames() set (guessing a handler for every possible
+// event on every component would mean scanning `code` for a lot of
+// names that will almost never exist).
+const std::vector<std::string>& DefaultEventsForType(const std::string& lower_type) {
+    static const std::vector<std::string> kClick = {"click"};
+    static const std::vector<std::string> kChange = {"change"};
+    static const std::vector<std::string> kSubmit = {"submit"};
+    static const std::vector<std::string> kNone = {};
+    if (lower_type == "button") return kClick;
+    if (lower_type == "input" || lower_type == "textfield" || lower_type == "textbox" ||
+        lower_type == "checkbox" || lower_type == "select" || lower_type == "dropdown" ||
+        lower_type == "slider" || lower_type == "switch" || lower_type == "toggle") {
+        return kChange;
+    }
+    if (lower_type == "form") return kSubmit;
+    return kNone;
+}
+
+// `code`'s func names, harvested once per document (not per node) --
+// AutoBindEvents just needs to know which names exist, not their
+// bodies (those still run wherever the language's own compiler parses
+// them; this file never executes AvaLang code).
+std::unordered_set<std::string> CollectFunctionNames(const std::string& code_text) {
+    static const std::regex kFuncRe(R"(^\s*func\s+(\w+)\s*\()");
+    std::unordered_set<std::string> names;
+    for (const auto& line : SplitLines(code_text)) {
+        std::smatch m;
+        if (std::regex_search(line, m, kFuncRe)) {
+            names.insert(m[1].str());
+        }
+    }
+    return names;
+}
+
+void AutoBindEvents(Component& node, const std::unordered_set<std::string>& function_names) {
+    if (!node.GetId().empty()) {
+        const std::string pascal_id = PascalCase(node.GetId());
+        for (const std::string& event : DefaultEventsForType(LowerCopy(node.GetType()))) {
+            if (node.HasEvent(event)) continue; // explicit binding in `view` wins
+            const std::string candidate = "On" + pascal_id + PascalCase(event);
+            if (function_names.count(candidate)) {
+                node.SetEvent(event, Value::String(candidate));
+            }
+        }
+    }
+    for (const auto& child : node.GetChildren()) {
+        AutoBindEvents(*child, function_names);
+    }
+}
+
 // --- Property value quoting (see avaui_text.h header comment) -------------
 
 std::string UnquoteIfString(const std::string& raw) {
     std::string v = Trim(raw);
     if (v.size() >= 2 && v.front() == '"' && v.back() == '"') {
-        std::string inner = v.substr(1, v.size() - 2);
-        std::string out;
-        out.reserve(inner.size());
-        for (size_t i = 0; i < inner.size(); ++i) {
-            if (inner[i] == '\\' && i + 1 < inner.size() && inner[i + 1] == '"') {
-                out.push_back('"');
-                ++i;
-            } else {
-                out.push_back(inner[i]);
+        // Starting and ending with '"' isn't enough on its own -- an
+        // expression like `"No encontramos '" + request.path + "'"`
+        // (string concatenation bookended by two separate literals)
+        // also starts and ends with '"', but is NOT one single string
+        // literal. Naively stripping just the first/last char used to
+        // corrupt it into `No encontramos '" + request.path + "'` --
+        // quotes and all -- which then failed to compile as an
+        // expression and got displayed raw instead of evaluated.
+        // Only treat this as one literal when the opening and closing
+        // '"' actually pair up: no unescaped '"' anywhere strictly
+        // between them.
+        bool isSingleLiteral = true;
+        for (size_t i = 1; i + 1 < v.size(); ++i) {
+            if (v[i] == '"' && v[i - 1] != '\\') {
+                isSingleLiteral = false;
+                break;
             }
         }
-        return out;
+        if (isSingleLiteral) {
+            std::string inner = v.substr(1, v.size() - 2);
+            std::string out;
+            out.reserve(inner.size());
+            for (size_t i = 0; i < inner.size(); ++i) {
+                if (inner[i] == '\\' && i + 1 < inner.size() && inner[i + 1] == '"') {
+                    out.push_back('"');
+                    ++i;
+                } else {
+                    out.push_back(inner[i]);
+                }
+            }
+            return out;
+        }
     }
     return v; // number, bool, bare identifier, or a fuller expression -- kept as-is
 }
@@ -181,6 +293,15 @@ std::vector<std::shared_ptr<Component>> ParseViewLines(const std::vector<std::st
 std::shared_ptr<Component> TryParseComponent(const std::vector<std::string>& lines, size_t& index) {
     static const std::regex kCallRe(R"(^(\w+)\s*\(\s*\)\s*$)");
     static const std::regex kBareWordRe(R"(^(\w+)$)");
+    // `type Id` on one line -- e.g. `button Guardar` -- a shorthand for
+    // `button` + `id = "Guardar"`, so a hand-written file can name a
+    // component without a separate properties line for the common
+    // case (see avaui_text.h header comment, "Automatic event
+    // binding": this is also what makes `id` available for
+    // AutoBindEvents to key off of without extra typing). Only two
+    // bare words, no `=`, so this never shadows a `key = value`
+    // property line or a `Type()` call.
+    static const std::regex kTypeAndIdRe(R"(^(\w+)\s+(\w+)$)");
     static const std::regex kPropRe(R"(^(\w+)\s*=\s*(.+)$)");
 
     const std::string line = Trim(lines[index]);
@@ -201,12 +322,22 @@ std::shared_ptr<Component> TryParseComponent(const std::vector<std::string>& lin
         return std::make_shared<Component>(type_original);
     }
 
+    std::string type_original;
+    std::string inline_id;
     std::smatch bare_match;
-    if (!std::regex_match(line, bare_match, kBareWordRe)) return nullptr;
-    const std::string type_original = bare_match[1].str();
+    std::smatch type_id_match;
+    if (std::regex_match(line, bare_match, kBareWordRe)) {
+        type_original = bare_match[1].str();
+    } else if (std::regex_match(line, type_id_match, kTypeAndIdRe)) {
+        type_original = type_id_match[1].str();
+        inline_id = type_id_match[2].str();
+    } else {
+        return nullptr;
+    }
     if (IsControlKeyword(LowerCopy(type_original))) return nullptr;
 
     auto node = std::make_shared<Component>(type_original);
+    if (!inline_id.empty()) node->SetId(inline_id);
 
     const size_t start_indent = IndentOf(lines[index]);
     size_t j = index + 1;
@@ -337,8 +468,16 @@ std::vector<RawSection> SplitTopLevelSections(const std::vector<std::string>& li
     return sections;
 }
 
+// `import components.navbar` -- a dotted path, unquoted, resolved
+// from the project root by AvaHost/Studio (path segments joined with
+// "/", ".avaui" appended -- e.g. "components.navbar" ->
+// "<projectRoot>/components/navbar.avaui"). Distinct from AvaLang's
+// real `import module.name` compiled statement (grammar
+// `importStatement`, resolved through ava_import()) -- this is a
+// .avaui-file-only convention for pulling in another .avaui as a
+// component, parsed here as plain text just like `extends`.
 std::vector<std::string> ParseImportLines(const std::vector<std::string>& lines) {
-    static const std::regex kImportRe(R"re(^import\s+"([^"]*)"\s*$)re");
+    static const std::regex kImportRe(R"re(^import\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*$)re");
     std::vector<std::string> imports;
     for (const auto& raw_line : lines) {
         if (IndentOf(raw_line) != 0) continue;
@@ -351,12 +490,13 @@ std::vector<std::string> ParseImportLines(const std::vector<std::string>& lines)
     return imports;
 }
 
-// `extends "layout"` -- a top-level line (column 0), same convention
-// as `import "..."`. Port of AvaComponentParser.cs's extendsMatch
-// (`^extends\s+"([^"]+)"`, first match wins -- Regex.Match, not
-// Matches). An .avaui file only ever extends one layout.
+// `extends layouts.main` -- a dotted path, unquoted, same convention
+// and resolution rule as `import` above (see comment there). Always
+// includes the folder segment (e.g. "layouts") -- there's no bare
+// `extends main` shorthand. An .avaui file only ever extends one
+// layout.
 std::string ParseExtendsLine(const std::vector<std::string>& lines) {
-    static const std::regex kExtendsRe(R"re(^extends\s+"([^"]*)"\s*$)re");
+    static const std::regex kExtendsRe(R"re(^extends\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*$)re");
     for (const auto& raw_line : lines) {
         if (IndentOf(raw_line) != 0) continue;
         std::smatch m;
@@ -519,7 +659,10 @@ ParsedAvaui ParseAvauiText(const std::string& text) {
     result.root = std::make_shared<Component>("page");
 
     for (const RawSection& section : SplitTopLevelSections(lines)) {
-        if (section.keyword == "metadata") {
+        // "metadata" is the retired name for this same block --
+        // accepted here so existing .avaui files keep loading; see
+        // avaui_text.h header comment.
+        if (section.keyword == "properties" || section.keyword == "metadata") {
             for (auto& [key, value] : ParsePropertyLines(section.content_lines)) {
                 if (LowerCopy(key) == "id") {
                     result.root->SetId(value);
@@ -529,11 +672,15 @@ ParsedAvaui ParseAvauiText(const std::string& text) {
             }
         } else if (section.keyword == "state") {
             result.state = ParsePropertyLines(section.content_lines);
+        } else if (section.keyword == "style") {
+            result.style = ParsePropertyLines(section.content_lines);
         } else if (section.keyword == "view") {
             for (auto& child : ParseViewLines(section.content_lines)) {
                 result.root->AddChild(child);
             }
-        } else if (section.keyword == "methods") {
+        } else if (section.keyword == "code" || section.keyword == "methods") {
+            // "methods" is the retired name for this same block, same
+            // backward-compatibility treatment as "metadata" above.
             result.methods_text = JoinTrimmedBlock(section.content_lines);
         }
         // "imports"/"services"/"lifecycle" are reserved but not acted on
@@ -544,6 +691,14 @@ ParsedAvaui ParseAvauiText(const std::string& text) {
     result.imports = ParseImportLines(lines);
     result.extends = ParseExtendsLine(lines);
     result.routes = ParseRouteLines(lines);
+
+    // Fill in any `click = ...`-style handler that a hand-written file
+    // left implicit, purely by matching `code`'s function names
+    // against the naming convention -- see AutoBindEvents above. Runs
+    // after the whole tree + `code` block are both known, and never
+    // overrides an explicit event prop already parsed into the tree.
+    AutoBindEvents(*result.root, CollectFunctionNames(result.methods_text));
+
     return result;
 }
 
@@ -552,11 +707,12 @@ std::string WriteAvauiText(const Component& root,
                             const std::vector<std::string>& imports,
                             const std::string& methods_text,
                             const std::string& extends,
-                            const std::vector<RouteDeclaration>& routes) {
+                            const std::vector<RouteDeclaration>& routes,
+                            const std::vector<std::pair<std::string, std::string>>& style) {
     std::ostringstream out;
 
     if (!extends.empty()) {
-        out << "extends " << WritePropertyValue(extends) << "\n\n";
+        out << "extends " << extends << "\n\n";
     }
 
     for (const auto& route : routes) {
@@ -565,14 +721,14 @@ std::string WriteAvauiText(const Component& root,
     if (!routes.empty()) out << "\n";
 
     for (const auto& imp : imports) {
-        out << "import \"" << imp << "\"\n";
+        out << "import " << imp << "\n";
     }
     if (!imports.empty()) out << "\n";
 
     const auto& root_props = root.GetAllProperties();
     const bool has_page_properties = !root.GetId().empty() || !root_props.empty();
     if (has_page_properties) {
-        out << "metadata\n";
+        out << "properties\n";
         if (!root.GetId().empty()) out << "    id = " << WritePropertyValue(root.GetId()) << "\n";
         for (const auto& [key, value] : root_props) {
             out << "    " << key << " = " << WritePropertyValue(ValueToDisplayString(value)) << "\n";
@@ -595,7 +751,15 @@ std::string WriteAvauiText(const Component& root,
     out << "end\n";
 
     if (!methods_text.empty()) {
-        out << "\nmethods\n" << methods_text << "\nend\n";
+        out << "\ncode\n" << methods_text << "\nend\n";
+    }
+
+    if (!style.empty()) {
+        out << "\nstyle\n";
+        for (const auto& [key, value] : style) {
+            out << "    " << key << " = " << WritePropertyValue(value) << "\n";
+        }
+        out << "end\n";
     }
 
     return out.str();

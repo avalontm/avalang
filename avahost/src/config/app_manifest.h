@@ -1,5 +1,5 @@
 #pragma once
-// AvaHost.Configuration -- loads main.ava's resource `import` lines.
+// AvaHost.Configuration -- loads app.ava's resource `import` lines.
 //
 // This is NOT AvaLang's real `import module.name` statement (grammar
 // `importStatement: 'import' NAME ('.' NAME)*`, resolved through the
@@ -14,10 +14,10 @@
 // `avahost new`. App logic is written in AvaLang (.ava/.avaui) and
 // run by the AvaLang runtime -- it is not hand-written browser JS.
 //
-// main.ava is read as plain text by AvaHost -- never compiled, never
+// app.ava is read as plain text by AvaHost -- never compiled, never
 // passed to the AvaLang core. A quoted string after `import` is never
 // valid AvaLang grammar, so there is no ambiguity with real imports
-// even if main.ava later also carries real AvaLang bootstrap code.
+// even if app.ava later also carries real AvaLang bootstrap code.
 #include <string>
 #include <vector>
 
@@ -33,7 +33,7 @@ struct ResourceImport {
 
     // ".css" -> <link rel="stylesheet"> in <head>, always emitted
     // after any bare-URL head script (e.g. Tailwind) regardless of
-    // declaration order in main.ava -- see BuildHeadTags.
+    // declaration order in app.ava -- see BuildHeadTags.
     bool IsStylesheet() const;
 
     // ".js" -> <script src="..."> at the end of <body> (doesn't block
@@ -56,18 +56,18 @@ struct AppManifest {
 // Returns the manifest a fresh `avahost new` project ships with:
 // css/app.css and the Tailwind CDN script -- no .js entry, since app
 // logic belongs in AvaLang, not hand-written JS (see header comment
-// above). Used both to generate main.ava's initial content and as the
-// fallback when a project has no main.ava at all.
+// above). Used both to generate app.ava's initial content and as the
+// fallback when a project has no app.ava at all.
 AppManifest DefaultAppManifest();
 
-// Reads projectRoot/main.ava and parses its `import "..."` lines in
+// Reads projectRoot/app.ava and parses its `import "..."` lines in
 // declaration order. Blank lines and `#` comments (AvaLang's line
-// comment syntax) are ignored. If main.ava does not exist, returns
+// comment syntax) are ignored. If app.ava does not exist, returns
 // DefaultAppManifest() so a project without one still renders working
 // <link>/<script> tags.
 AppManifest LoadAppManifest(const std::string& projectRoot);
 
-// Builds <head> tags in two passes, regardless of main.ava's
+// Builds <head> tags in two passes, regardless of app.ava's
 // declaration order: bare-URL CDN imports (e.g. Tailwind) first, then
 // <link rel="stylesheet"> for .css imports -- guarantees CSS always
 // loads after Tailwind while staying in <head> (no flash of unstyled

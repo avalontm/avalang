@@ -74,6 +74,7 @@ private:
                                uint16_t param_reg_base);
     void CompileClass(const ClassDef* cls);
     void CompileImport(const ImportStmt* stmt);
+    void CompileExtern(const ExternStmt* stmt);
     void CompileTry(const TryStmt* stmt);
     void CompileRaise(const RaiseStmt* stmt);
     void CompileYield(const YieldStmt* stmt);

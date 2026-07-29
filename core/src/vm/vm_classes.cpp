@@ -119,6 +119,16 @@ void OpGetAttr(CallFrame& frame, const Instr& in, const std::vector<Value>& K, V
                 frame.registers[in.a] = Value::Nil();
             }
         }
+    } else if (obj.type == ValueType::Module) {
+        // Namespace de un bloque `extern` (ver EXTERN_FFI_DESIGN.md / Fase 2).
+        // No hay herencia ni "this": es solo un mapa nombre -> Native.
+        auto* mod = static_cast<ModuleObj*>(obj.obj);
+        auto it = mod->attrs.find(attr_name->data);
+        if (it != mod->attrs.end()) {
+            frame.registers[in.a] = it->second;
+        } else {
+            frame.registers[in.a] = Value::Nil();
+        }
     } else {
         frame.registers[in.a] = Value::Nil();
     }

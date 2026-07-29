@@ -21,9 +21,9 @@ public:
     T__38 = 39, T__39 = 40, T__40 = 41, T__41 = 42, T__42 = 43, T__43 = 44, 
     T__44 = 45, T__45 = 46, T__46 = 47, T__47 = 48, T__48 = 49, T__49 = 50, 
     T__50 = 51, T__51 = 52, T__52 = 53, T__53 = 54, T__54 = 55, T__55 = 56, 
-    T__56 = 57, T__57 = 58, T__58 = 59, T__59 = 60, T__60 = 61, AVA_LANG = 62, 
-    INC = 63, DEC = 64, IDIV = 65, NAME = 66, NUMBER = 67, STRING = 68, 
-    FSTRING = 69, NEWLINE = 70, COMMENT = 71, WS = 72, LINE_JOIN = 73
+    T__56 = 57, T__57 = 58, T__58 = 59, T__59 = 60, T__60 = 61, T__61 = 62, 
+    AVA_LANG = 63, INC = 64, DEC = 65, IDIV = 66, NAME = 67, NUMBER = 68, 
+    STRING = 69, FSTRING = 70, NEWLINE = 71, COMMENT = 72, WS = 73, LINE_JOIN = 74
   };
 
   enum {
@@ -37,13 +37,15 @@ public:
     RuleLocalStatement = 22, RuleRaiseStatement = 23, RuleYieldStatement = 24, 
     RuleIfStatement = 25, RuleElifClause = 26, RuleElseClause = 27, RuleWhileStatement = 28, 
     RuleForStatement = 29, RuleFuncDeclaration = 30, RuleClassDeclaration = 31, 
-    RuleClassHeritage = 32, RuleParamList = 33, RuleParam = 34, RuleTargetList = 35, 
-    RuleTarget = 36, RuleExprList = 37, RuleExpr = 38, RuleShortLambdaExpr = 39, 
-    RuleLambdaExpr = 40, RuleOrExpr = 41, RuleAndExpr = 42, RuleNotExpr = 43, 
-    RuleComparison = 44, RuleCompOp = 45, RuleAdditive = 46, RuleMultiplicative = 47, 
-    RuleUnary = 48, RulePower = 49, RulePostfix = 50, RuleTrailer = 51, 
-    RuleSliceRange = 52, RuleArgList = 53, RuleArg = 54, RulePrimary = 55, 
-    RuleListLiteral = 56, RuleDictLiteral = 57, RuleDictEntry = 58
+    RuleClassHeritage = 32, RuleExternStatement = 33, RuleExternFuncDeclaration = 34, 
+    RuleExternParamList = 35, RuleExternParam = 36, RuleParamList = 37, 
+    RuleParam = 38, RuleTargetList = 39, RuleTarget = 40, RuleExprList = 41, 
+    RuleExpr = 42, RuleShortLambdaExpr = 43, RuleLambdaExpr = 44, RuleOrExpr = 45, 
+    RuleAndExpr = 46, RuleNotExpr = 47, RuleComparison = 48, RuleCompOp = 49, 
+    RuleAdditive = 50, RuleMultiplicative = 51, RuleUnary = 52, RulePower = 53, 
+    RulePostfix = 54, RuleTrailer = 55, RuleSliceRange = 56, RuleArgList = 57, 
+    RuleArg = 58, RulePrimary = 59, RuleListLiteral = 60, RuleDictLiteral = 61, 
+    RuleDictEntry = 62
   };
 
   explicit AvaLangParser(antlr4::TokenStream *input);
@@ -96,6 +98,10 @@ public:
   class FuncDeclarationContext;
   class ClassDeclarationContext;
   class ClassHeritageContext;
+  class ExternStatementContext;
+  class ExternFuncDeclarationContext;
+  class ExternParamListContext;
+  class ExternParamContext;
   class ParamListContext;
   class ParamContext;
   class TargetListContext;
@@ -265,6 +271,7 @@ public:
     ClassDeclarationContext *classDeclaration();
     TryStatementContext *tryStatement();
     ModifiedFuncDeclarationContext *modifiedFuncDeclaration();
+    ExternStatementContext *externStatement();
 
     virtual void enterRule(antlr4::tree::ParseTreeListener *listener) override;
     virtual void exitRule(antlr4::tree::ParseTreeListener *listener) override;
@@ -669,6 +676,76 @@ public:
   };
 
   ClassHeritageContext* classHeritage();
+
+  class  ExternStatementContext : public antlr4::ParserRuleContext {
+  public:
+    ExternStatementContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *STRING();
+    antlr4::tree::TerminalNode *NAME();
+    std::vector<antlr4::tree::TerminalNode *> NEWLINE();
+    antlr4::tree::TerminalNode* NEWLINE(size_t i);
+    std::vector<ExternFuncDeclarationContext *> externFuncDeclaration();
+    ExternFuncDeclarationContext* externFuncDeclaration(size_t i);
+
+    virtual void enterRule(antlr4::tree::ParseTreeListener *listener) override;
+    virtual void exitRule(antlr4::tree::ParseTreeListener *listener) override;
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  ExternStatementContext* externStatement();
+
+  class  ExternFuncDeclarationContext : public antlr4::ParserRuleContext {
+  public:
+    ExternFuncDeclarationContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *NAME();
+    ExternParamListContext *externParamList();
+    std::vector<antlr4::tree::TerminalNode *> NEWLINE();
+    antlr4::tree::TerminalNode* NEWLINE(size_t i);
+
+    virtual void enterRule(antlr4::tree::ParseTreeListener *listener) override;
+    virtual void exitRule(antlr4::tree::ParseTreeListener *listener) override;
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  ExternFuncDeclarationContext* externFuncDeclaration();
+
+  class  ExternParamListContext : public antlr4::ParserRuleContext {
+  public:
+    ExternParamListContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    std::vector<ExternParamContext *> externParam();
+    ExternParamContext* externParam(size_t i);
+    antlr4::tree::TerminalNode *NAME();
+
+    virtual void enterRule(antlr4::tree::ParseTreeListener *listener) override;
+    virtual void exitRule(antlr4::tree::ParseTreeListener *listener) override;
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  ExternParamListContext* externParamList();
+
+  class  ExternParamContext : public antlr4::ParserRuleContext {
+  public:
+    ExternParamContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *NAME();
+
+    virtual void enterRule(antlr4::tree::ParseTreeListener *listener) override;
+    virtual void exitRule(antlr4::tree::ParseTreeListener *listener) override;
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  ExternParamContext* externParam();
 
   class  ParamListContext : public antlr4::ParserRuleContext {
   public:

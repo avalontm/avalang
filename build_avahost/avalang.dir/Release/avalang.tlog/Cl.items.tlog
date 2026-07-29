@@ -13,6 +13,7 @@ D:\_CODE_\avalang\core\src\vm\vm_call_op.cpp;D:\_CODE_\avalang\build_avahost\ava
 D:\_CODE_\avalang\core\src\vm\vm_slice.cpp;D:\_CODE_\avalang\build_avahost\avalang.dir\Release\vm_slice.obj
 D:\_CODE_\avalang\core\src\vm\vm_exceptions.cpp;D:\_CODE_\avalang\build_avahost\avalang.dir\Release\vm_exceptions.obj
 D:\_CODE_\avalang\core\src\vm\vm_errors.cpp;D:\_CODE_\avalang\build_avahost\avalang.dir\Release\vm_errors.obj
+D:\_CODE_\avalang\core\src\vm\vm_extern.cpp;D:\_CODE_\avalang\build_avahost\avalang.dir\Release\vm_extern.obj
 D:\_CODE_\avalang\core\src\vm\module.cpp;D:\_CODE_\avalang\build_avahost\avalang.dir\Release\module.obj
 D:\_CODE_\avalang\core\src\vm\coroutine.cpp;D:\_CODE_\avalang\build_avahost\avalang.dir\Release\coroutine.obj
 D:\_CODE_\avalang\core\src\builtins\builtin_strings.cpp;D:\_CODE_\avalang\build_avahost\avalang.dir\Release\builtin_strings.obj
@@ -21,6 +22,7 @@ D:\_CODE_\avalang\core\src\builtins\builtin_dicts.cpp;D:\_CODE_\avalang\build_av
 D:\_CODE_\avalang\core\src\builtins\builtin_coroutine.cpp;D:\_CODE_\avalang\build_avahost\avalang.dir\Release\builtin_coroutine.obj
 D:\_CODE_\avalang\core\src\builtins\builtin_registry.cpp;D:\_CODE_\avalang\build_avahost\avalang.dir\Release\builtin_registry.obj
 D:\_CODE_\avalang\core\src\builtins\builtin_natives.cpp;D:\_CODE_\avalang\build_avahost\avalang.dir\Release\builtin_natives.obj
+D:\_CODE_\avalang\core\src\builtins\builtin_mem.cpp;D:\_CODE_\avalang\build_avahost\avalang.dir\Release\builtin_mem.obj
 D:\_CODE_\avalang\core\src\builtins\builtin_init.cpp;D:\_CODE_\avalang\build_avahost\avalang.dir\Release\builtin_init.obj
 D:\_CODE_\avalang\core\src\ui\component.cpp;D:\_CODE_\avalang\build_avahost\avalang.dir\Release\component.obj
 D:\_CODE_\avalang\core\src\ui\tree.cpp;D:\_CODE_\avalang\build_avahost\avalang.dir\Release\tree.obj

@@ -28,7 +28,7 @@ bool EndsWith(const std::string& s, const std::string& suffix) {
 
 // Parses one `import "location"` line. Returns false if the line
 // isn't an import line at all (blank, comment, anything else --
-// main.ava may grow real AvaLang bootstrap code around these lines in
+// app.ava may grow real AvaLang bootstrap code around these lines in
 // the future, so unrecognized lines are just skipped, not errors).
 bool ParseImportLine(const std::string& rawLine, std::string& outLocation) {
     std::string line = Trim(rawLine);
@@ -118,9 +118,9 @@ AppManifest DefaultAppManifest() {
 }
 
 AppManifest LoadAppManifest(const std::string& projectRoot) {
-    fs::path path = fs::path(projectRoot) / "main.ava";
+    fs::path path = fs::path(projectRoot) / "app.ava";
     std::ifstream file(path);
-    if (!file) return DefaultAppManifest(); // no main.ava -- fall back, don't fail startup
+    if (!file) return DefaultAppManifest(); // no app.ava -- fall back, don't fail startup
 
     AppManifest manifest;
     std::string line;
@@ -144,7 +144,7 @@ std::string BuildHeadTags(const AppManifest& manifest) {
         }
     }
     // Pass 2: stylesheets, always after pass 1 -- guarantees CSS loads
-    // after Tailwind regardless of the order main.ava declares things
+    // after Tailwind regardless of the order app.ava declares things
     // in, while staying in <head> so there's no flash of unstyled
     // content. No runtime JS needed for this -- AvaHost decides the
     // order server-side, same as it decides everything else.

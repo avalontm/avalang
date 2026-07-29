@@ -1,6 +1,10 @@
 D:\_CODE_\avalang\avahost\src\core\logger.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\logger.obj
 D:\_CODE_\avalang\avahost\src\runtime\runtime_host.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\runtime_host.obj
+D:\_CODE_\avalang\avahost\src\runtime\state_binder.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\state_binder.obj
 D:\_CODE_\avalang\avahost\src\rendering\html_renderer.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\html_renderer.obj
+D:\_CODE_\avalang\avahost\src\rendering\event_binder.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\event_binder.obj
+D:\_CODE_\avalang\avahost\src\component\component_resolver.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\component_resolver.obj
+D:\_CODE_\avalang\avahost\src\component\dotted_path.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\dotted_path.obj
 D:\_CODE_\avalang\avahost\src\web\transport\socket.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\socket.obj
 D:\_CODE_\avalang\avahost\src\web\protocol\http_parser.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\http_parser.obj
 D:\_CODE_\avalang\avahost\src\web\protocol\url_codec.cpp;D:\_CODE_\avalang\build_avahost\avahost\avahost.dir\Release\url_codec.obj

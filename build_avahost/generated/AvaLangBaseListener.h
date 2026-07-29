@@ -115,6 +115,18 @@ public:
   virtual void enterClassHeritage(AvaLangParser::ClassHeritageContext * /*ctx*/) override { }
   virtual void exitClassHeritage(AvaLangParser::ClassHeritageContext * /*ctx*/) override { }
 
+  virtual void enterExternStatement(AvaLangParser::ExternStatementContext * /*ctx*/) override { }
+  virtual void exitExternStatement(AvaLangParser::ExternStatementContext * /*ctx*/) override { }
+
+  virtual void enterExternFuncDeclaration(AvaLangParser::ExternFuncDeclarationContext * /*ctx*/) override { }
+  virtual void exitExternFuncDeclaration(AvaLangParser::ExternFuncDeclarationContext * /*ctx*/) override { }
+
+  virtual void enterExternParamList(AvaLangParser::ExternParamListContext * /*ctx*/) override { }
+  virtual void exitExternParamList(AvaLangParser::ExternParamListContext * /*ctx*/) override { }
+
+  virtual void enterExternParam(AvaLangParser::ExternParamContext * /*ctx*/) override { }
+  virtual void exitExternParam(AvaLangParser::ExternParamContext * /*ctx*/) override { }
+
   virtual void enterParamList(AvaLangParser::ParamListContext * /*ctx*/) override { }
   virtual void exitParamList(AvaLangParser::ParamListContext * /*ctx*/) override { }
 

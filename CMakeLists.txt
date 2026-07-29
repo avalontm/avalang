@@ -51,6 +51,25 @@ set(GRAMMAR_DIR ${CMAKE_SOURCE_DIR}/grammar)
 set(GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${GENERATED_DIR})
 
+# ---------------------------------------------------------------------
+# libffi (optional at configure time) -- usado por el sistema `extern`
+# (FFI) para invocar funciones nativas con firma resuelta en runtime.
+# Ver EXTERN_FFI_DESIGN.md / EXTERN_FFI_TODO.md, Fase 3.
+# Si no se encuentra, `extern` sigue compilando/corriendo pero
+# `Alias.Func(...)` falla con un error explícito en vez de invocar la
+# función real. Instalar con `vcpkg install libffi` y reconfigurar.
+# ---------------------------------------------------------------------
+find_path(LIBFFI_INCLUDE_DIR NAMES ffi.h)
+find_library(LIBFFI_LIBRARY NAMES ffi libffi)
+if(LIBFFI_INCLUDE_DIR AND LIBFFI_LIBRARY)
+    set(AVA_HAVE_LIBFFI TRUE)
+    message(STATUS "avalang: libffi encontrado (${LIBFFI_LIBRARY}) -- extern (FFI) habilitado")
+else()
+    set(AVA_HAVE_LIBFFI FALSE)
+    message(STATUS "avalang: libffi NO encontrado -- extern (FFI) compilara pero no podra "
+                    "invocar funciones nativas reales. 'vcpkg install libffi' y reconfigurar.")
+endif()
+
 if(antlr4-runtime_FOUND AND JAVA_EXECUTABLE AND ANTLR4_JAR)
     set(AVA_HAVE_ANTLR TRUE)
     message(STATUS "avalang: antlr4-runtime found, building full frontend")
@@ -107,6 +126,7 @@ set(CORE_SOURCES
     core/src/vm/vm_slice.cpp
     core/src/vm/vm_exceptions.cpp
     core/src/vm/vm_errors.cpp
+    core/src/vm/vm_extern.cpp
     core/src/vm/module.cpp
     core/src/vm/coroutine.cpp
     core/src/builtins/builtin_strings.cpp
@@ -115,6 +135,7 @@ set(CORE_SOURCES
     core/src/builtins/builtin_coroutine.cpp
     core/src/builtins/builtin_registry.cpp
     core/src/builtins/builtin_natives.cpp
+    core/src/builtins/builtin_mem.cpp
     core/src/builtins/builtin_init.cpp
     core/src/ui/component.cpp
     core/src/ui/tree.cpp
@@ -176,6 +197,19 @@ if(AVA_HAVE_ANTLR)
 endif()
 
 target_compile_definitions(avalang PRIVATE AVA_BUILDING_LIBRARY)
+
+if(AVA_HAVE_LIBFFI)
+    target_include_directories(avalang PRIVATE ${LIBFFI_INCLUDE_DIR})
+    target_link_libraries(avalang PRIVATE ${LIBFFI_LIBRARY})
+    target_compile_definitions(avalang PRIVATE AVA_HAVE_LIBFFI)
+endif()
+if(UNIX AND NOT APPLE)
+    # dlopen/dlsym en glibc viejas requiere -ldl explicito (algunas
+    # toolchains modernas ya lo integran en libc, pero enlazarlo no hace
+    # daño y evita romper en distros mas viejas).
+    target_link_libraries(avalang PRIVATE dl)
+endif()
+
 # NOTE: symbol visibility is intentionally left at the compiler default
 # (not hidden) so internal headers (core/src/vm/*.h) remain linkable from
 # tests/ and from ava_cli, which both use VM internals directly rather

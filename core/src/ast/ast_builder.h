@@ -38,6 +38,8 @@ public:
     std::any visitIncDecStatement(AvaLangParser::IncDecStatementContext* ctx) override;
     std::any visitModifiedFuncDeclaration(AvaLangParser::ModifiedFuncDeclarationContext* ctx) override;
     std::any visitModifiedAssignStatement(AvaLangParser::ModifiedAssignStatementContext* ctx) override;
+    std::any visitExternStatement(AvaLangParser::ExternStatementContext* ctx) override;
+    std::any visitExternFuncDeclaration(AvaLangParser::ExternFuncDeclarationContext* ctx) override;
 
     std::any visitExprList(AvaLangParser::ExprListContext* ctx) override;
     std::any visitShortLambdaExprAlt(AvaLangParser::ShortLambdaExprAltContext* ctx) override;

@@ -1,5 +1,9 @@
 #include "runtime/runtime_host.h"
 
+#include <cctype>
+#include <cstdio>
+#include <cstdlib>
+#include <sstream>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -7,6 +11,39 @@
 using nlohmann::json;
 
 namespace avahost {
+
+namespace {
+
+// Mirrors Ava Studio's design/state_eval.cpp anonymous-namespace
+// LooksNumeric exactly (same digits/one-dot/optional-leading-sign
+// grammar) -- kept as its own copy here since AvaHost and Studio don't
+// share a common internal library across that boundary.
+bool LooksNumeric(const std::string& v) {
+    if (v.empty()) return false;
+    size_t i = 0;
+    if (v[i] == '+' || v[i] == '-') ++i;
+    if (i >= v.size()) return false;
+    bool hasDigits = false;
+    bool hasDot = false;
+    for (; i < v.size(); ++i) {
+        if (std::isdigit(static_cast<unsigned char>(v[i]))) {
+            hasDigits = true;
+        } else if (v[i] == '.' && !hasDot) {
+            hasDot = true;
+        } else {
+            return false;
+        }
+    }
+    return hasDigits;
+}
+
+std::string NumberToDisplayString(double n) {
+    std::ostringstream oss;
+    oss << n;
+    return oss.str();
+}
+
+} // namespace
 
 RuntimeHost::AvaUiDocument::~AvaUiDocument() {
     if (tree) ava_ui_destroy_tree(tree);
@@ -209,6 +246,230 @@ bool RuntimeHost::RunScriptCapturingOutput(const std::string& source, const std:
     ava_vm_set_print_callback(vm_, nullptr, nullptr);
 
     return success;
+}
+
+void RuntimeHost::BindState(const std::string& stateJson) {
+    if (!vm_) return;
+
+    json parsed;
+    try {
+        parsed = json::parse(stateJson);
+    } catch (const json::exception&) {
+        return; // malformed state -- fail soft, same spirit as ParseRouteDeclarations
+    }
+    if (!parsed.is_object()) return;
+
+    for (auto it = parsed.begin(); it != parsed.end(); ++it) {
+        // AvaUiDocument::stateJson's values are always strings (the
+        // `state` block's raw source text -- see ava::ui::StateToJson),
+        // but tolerate a non-string value defensively rather than throw.
+        const std::string raw = it.value().is_string() ? it.value().get<std::string>() : it.value().dump();
+
+        ava_value_t value{};
+        if (raw == "true" || raw == "false") {
+            value.type = AVA_BOOL;
+            value.as.b = (raw == "true") ? 1 : 0;
+        } else if (LooksNumeric(raw)) {
+            value.type = AVA_NUMBER;
+            value.as.n = std::strtod(raw.c_str(), nullptr);
+        } else {
+            // Not released after this set -- same convention
+            // SetRequestContext above already uses for this VM.
+            value = ava_string_create(vm_, raw.data(), raw.size());
+        }
+        ava_set_global(vm_, it.key().c_str(), value);
+    }
+}
+
+void RuntimeHost::BindCodeBehind(const std::string& methodsText) {
+    if (!vm_ || methodsText.empty()) return;
+
+    char* compileError = nullptr;
+    AvaModule* module = ava_compile(vm_, methodsText.c_str(), "<avaui-code>", &compileError);
+    if (!module) {
+        // Best-effort, per header comment -- a `code` block that
+        // doesn't compile leaves this request with no handlers bound,
+        // not a broken response.
+        if (compileError) ava_string_free(compileError);
+        return;
+    }
+
+    ava_value_t result{};
+    char* runError = nullptr;
+    ava_run(vm_, module, &result, &runError);
+    ava_module_destroy(module);
+    if (runError) ava_string_free(runError);
+}
+
+bool RuntimeHost::InvokeHandler(const std::string& handlerName, std::string& outError) {
+    if (!vm_ || handlerName.empty()) return false;
+
+    // No parens/args support in v0.1 -- every handler AvaHost calls is
+    // the zero-arg form (`func OnGuardarClick()`), same model
+    // EventBinder's data-handler attributes assume.
+    const std::string source = "__avahost_invoke__ = " + handlerName + "()";
+
+    char* compileError = nullptr;
+    AvaModule* module = ava_compile(vm_, source.c_str(), "<avahost-handler-call>", &compileError);
+    if (!module) {
+        if (compileError) {
+            outError = compileError;
+            ava_string_free(compileError);
+        } else {
+            outError = "unknown compile error invoking " + handlerName;
+        }
+        return false;
+    }
+
+    ava_value_t result{};
+    char* runError = nullptr;
+    ava_run(vm_, module, &result, &runError);
+    ava_module_destroy(module);
+    if (runError) {
+        outError = runError;
+        ava_string_free(runError);
+        return false;
+    }
+
+    // Discard the return value -- handlers are called for their
+    // mutation of `state` globals, not for a result (matches Studio's
+    // InvokeHandler).
+    ava_value_t invokeResult = ava_get_global(vm_, "__avahost_invoke__");
+    if (invokeResult.type == AVA_STRING) ava_value_release(vm_, invokeResult);
+    return true;
+}
+
+bool RuntimeHost::InvokeHandlerIfDefined(const std::string& handlerName, std::string& outError) {
+    if (!vm_ || handlerName.empty()) return true;
+
+    // Peek the global without invoking it -- a page/layout that never
+    // defines this lifecycle function (the common case) must render
+    // exactly as if this call never happened, not surface a "call to
+    // undefined function" runtime error from InvokeHandler.
+    ava_value_t existing = ava_get_global(vm_, handlerName.c_str());
+    bool isFunction = (existing.type == AVA_FUNCTION);
+    ava_value_release(vm_, existing);
+    if (!isFunction) return true;
+
+    return InvokeHandler(handlerName, outError);
+}
+
+std::string RuntimeHost::EvalPropertyExpr(const std::string& rawValue) {
+    if (!vm_ || rawValue.empty()) return rawValue;
+
+    // Wrapped in parens so an expression like `"Counter: " + counter`
+    // (or a plain literal/identifier) always lands as a single RHS --
+    // same trick as Studio's EvalPropertyExpr, and same
+    // `__avahost_eval__` naming convention to keep collision with a
+    // real `state` var astronomically unlikely.
+    const std::string source = "__avahost_eval__ = (" + rawValue + ")";
+
+    char* compileError = nullptr;
+    AvaModule* module = ava_compile(vm_, source.c_str(), "<avaui-prop>", &compileError);
+    if (!module) {
+        // Common case: rawValue is a plain string literal that isn't a
+        // valid bare expression on its own (e.g. contains spaces) --
+        // fall back to showing it as-is.
+        if (compileError) ava_string_free(compileError);
+        return rawValue;
+    }
+
+    ava_value_t result{};
+    char* runError = nullptr;
+    ava_run(vm_, module, &result, &runError);
+    ava_module_destroy(module);
+    if (runError) {
+        ava_string_free(runError);
+        return rawValue;
+    }
+
+    ava_value_t value = ava_get_global(vm_, "__avahost_eval__");
+    switch (value.type) {
+        case AVA_BOOL:
+            return value.as.b ? "true" : "false";
+        case AVA_NUMBER:
+            return NumberToDisplayString(value.as.n);
+        case AVA_STRING: {
+            size_t len = 0;
+            const char* data = ava_string_data(vm_, value, &len);
+            std::string display(data, len);
+            ava_value_release(vm_, value);
+            return display;
+        }
+        case AVA_NIL:
+            // Plain string literal / not-yet-defined identifier -- the
+            // common case, see header comment.
+            return rawValue;
+        default:
+            // List/Dict/Function/etc. aren't meaningful as rendered
+            // text -- fall back rather than show "" or a handle.
+            ava_value_release(vm_, value);
+            return rawValue;
+    }
+}
+
+std::string RuntimeHost::ExportStateJson(const std::string& templateStateJson) {
+    if (!vm_) return templateStateJson;
+
+    json parsed;
+    try {
+        parsed = json::parse(templateStateJson.empty() ? "{}" : templateStateJson);
+    } catch (const json::exception&) {
+        return templateStateJson; // malformed -- nothing sensible to export, keep as-is
+    }
+    if (!parsed.is_object()) return templateStateJson;
+
+    json out = json::object();
+    for (auto it = parsed.begin(); it != parsed.end(); ++it) {
+        ava_value_t value = ava_get_global(vm_, it.key().c_str());
+        switch (value.type) {
+            case AVA_BOOL:
+                out[it.key()] = value.as.b ? "true" : "false";
+                break;
+            case AVA_NUMBER:
+                out[it.key()] = NumberToDisplayString(value.as.n);
+                break;
+            case AVA_STRING: {
+                size_t len = 0;
+                const char* data = ava_string_data(vm_, value, &len);
+                out[it.key()] = std::string(data, len);
+                ava_value_release(vm_, value);
+                break;
+            }
+            default:
+                // Nil (never set as a global, e.g. BindState skipped
+                // because the source didn't compile) or a non-scalar
+                // type -- fall back to whatever templateStateJson
+                // already had rather than losing the value entirely.
+                out[it.key()] = it.value().is_string() ? it.value().get<std::string>() : it.value().dump();
+                break;
+        }
+    }
+    return out.dump();
+}
+
+void RuntimeHost::BeginConsoleCapture() {
+    consoleCaptureBuffer_.clear();
+    if (!vm_) return;
+    ava_vm_set_print_callback(
+        vm_,
+        [](const char* utf8, size_t len, void* userData) {
+            // Both destinations: append to the buffer (relayed to the
+            // browser console once the render finishes -- see
+            // AvaHostApp::BuildConsoleScript) AND keep writing straight
+            // to stdout, exactly like the default sink (VM::Print) did,
+            // so the server terminal's output doesn't change.
+            static_cast<std::string*>(userData)->append(utf8, len);
+            std::fwrite(utf8, 1, len, stdout);
+        },
+        &consoleCaptureBuffer_);
+}
+
+std::string RuntimeHost::EndConsoleCapture() {
+    if (vm_) ava_vm_set_print_callback(vm_, nullptr, nullptr);
+    std::string out = std::move(consoleCaptureBuffer_);
+    consoleCaptureBuffer_.clear();
+    return out;
 }
 
 } // namespace avahost

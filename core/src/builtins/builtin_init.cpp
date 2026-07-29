@@ -40,6 +40,13 @@ BUILTIN_API void RegisterBuiltinGlobals(AvaVM* vm) {
     // Required by every `import` statement -- see builtin_import's doc
     // comment in builtin_natives.h for why this must be registered here.
     raw_vm->RegisterNative("__import__", builtin_import, nullptr);
+
+    // Memoria cruda para decodificar retornos de `extern` que en C son
+    // char*/char** (ver builtin_mem.cpp) -- p.ej. mysql_error() o un
+    // MYSQL_ROW.
+    raw_vm->RegisterNative("mem_is_null", builtin_mem_is_null, nullptr);
+    raw_vm->RegisterNative("mem_peek_string", builtin_mem_peek_string, nullptr);
+    raw_vm->RegisterNative("mem_peek_ptr", builtin_mem_peek_ptr, nullptr);
 }
 
 // Declared in builtin.h but (per grep across this snapshot) never

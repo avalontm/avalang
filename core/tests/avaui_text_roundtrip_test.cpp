@@ -258,6 +258,97 @@ int main() {
               "navbar case: still 2 children after a full write/re-parse round-trip");
     }
 
+    std::cout << "\n=== 6. New canonical blocks: properties/code/style + inline `type Id` + auto-bind ===\n";
+    static const std::string kNewArchitectureExample = R"(properties
+    title = "Mi App"
+end
+
+state
+    counter = 0
+end
+
+view
+    column
+        button Guardar
+            properties
+                text = "Guardar"
+            end
+        end
+    end
+end
+
+code
+    func OnGuardarClick()
+        counter = counter + 1
+    end
+end
+
+style
+    background = "#FFFFFF"
+end
+)";
+    ParsedAvaui newArch = ParseAvauiText(kNewArchitectureExample);
+    Check(PropStr(*newArch.root, "title") == "Mi App", "properties block (canonical) parsed into root properties");
+    Check(!newArch.state.empty() && newArch.state[0].first == "counter", "state block still parses alongside properties");
+    Check(newArch.style.size() == 1 && newArch.style[0].first == "background",
+          "style block parses into ParsedAvaui::style");
+    Check(newArch.methods_text.find("OnGuardarClick") != std::string::npos,
+          "code block (canonical) parsed into methods_text");
+    Check(!newArch.root->GetChildren().empty() && !newArch.root->GetChildren()[0]->GetChildren().empty(),
+          "view has column > button");
+    if (!newArch.root->GetChildren().empty() && !newArch.root->GetChildren()[0]->GetChildren().empty()) {
+        const Component& button = *newArch.root->GetChildren()[0]->GetChildren()[0];
+        Check(button.GetId() == "Guardar", "inline `button Guardar` sets id without an explicit id= property");
+        Check(EventStr(button, "click") == "OnGuardarClick",
+              "AutoBindEvents wired click -> OnGuardarClick purely by naming convention (no click= in view)");
+    }
+
+    std::cout << "\n=== 7. Legacy `metadata`/`methods` keywords still parse (backward compatibility) ===\n";
+    static const std::string kLegacyExample = R"(metadata
+    title = "Old App"
+end
+
+view
+    button Enviar
+    end
+end
+
+methods
+    func OnEnviarClick()
+    end
+end
+)";
+    ParsedAvaui legacy = ParseAvauiText(kLegacyExample);
+    Check(PropStr(*legacy.root, "title") == "Old App", "legacy metadata block still parses into root properties");
+    Check(legacy.methods_text.find("OnEnviarClick") != std::string::npos, "legacy methods block still parses");
+    if (!legacy.root->GetChildren().empty()) {
+        Check(EventStr(*legacy.root->GetChildren()[0], "click") == "OnEnviarClick",
+              "auto-bind also works for a legacy metadata/methods file");
+    }
+    std::string legacy_written = WriteAvauiText(*legacy.root, legacy.state, legacy.imports, legacy.methods_text);
+    Check(legacy_written.find("properties\n") != std::string::npos, "writer upgrades legacy metadata -> properties on save");
+    Check(legacy_written.find("code\n") != std::string::npos, "writer upgrades legacy methods -> code on save");
+
+    std::cout << "\n=== 8. Explicit event prop still overrides the auto-bind guess ===\n";
+    static const std::string kExplicitOverride = R"(view
+    button Guardar
+        click = SomeOtherHandler
+    end
+end
+
+code
+    func OnGuardarClick()
+    end
+    func SomeOtherHandler()
+    end
+end
+)";
+    ParsedAvaui explicitOverride = ParseAvauiText(kExplicitOverride);
+    if (!explicitOverride.root->GetChildren().empty()) {
+        Check(EventStr(*explicitOverride.root->GetChildren()[0], "click") == "SomeOtherHandler",
+              "explicit click= prop wins over the OnGuardarClick naming-convention guess");
+    }
+
     std::cout << "\n=== Summary: " << (g_failures == 0 ? "ALL CHECKS PASSED" : "FAILURES PRESENT") << " ===\n";
     return g_failures == 0 ? 0 : 1;
 }

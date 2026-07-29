@@ -26,7 +26,8 @@ enum class ValueType : uint8_t {
     Coroutine,
     Native,
     Bound,
-    Exception
+    Exception,
+    Module
 };
 
 struct Object {
@@ -94,6 +95,17 @@ struct InstanceObj : Object {
     std::unordered_map<std::string, Value> attrs;
 };
 
+// Namespace creado por un bloque `extern "lib" as Alias ... end`
+// (ver EXTERN_FFI_DESIGN.md). `attrs` mapea nombre de función declarada ->
+// Value de tipo Native cuyo NativeObj::user_data apunta a un
+// ExternFuncMeta (ver vm/vm_extern.h). No es instanciable (a diferencia de
+// Class) ni tiene métodos con `this`: es solo un contenedor de funciones.
+struct ModuleObj : Object {
+    std::string name;   // alias, p.ej. "Kernel"
+    std::string library; // nombre lógico de librería, p.ej. "kernel32"
+    std::unordered_map<std::string, Value> attrs;
+};
+
 // A single dynamically-typed value. Ref-counted objects (String/List/Dict/
 // Function/Instance/Class/Coroutine/Native) are stored as an Object* behind
 // a manual ref count; Value itself is cheap to copy (16 bytes: tag + union).
@@ -132,6 +144,7 @@ struct Value {
             case ValueType::Native:
             case ValueType::Bound:
             case ValueType::Exception:
+            case ValueType::Module:
                 return true;
             default:
                 return false;

@@ -50,6 +50,15 @@ ava_value_t builtin_range(AvaVM* vm, const ava_value_t* args, size_t count, void
 // "attempt to call a non-callable value".
 ava_value_t builtin_import(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 
+// Helpers de memoria cruda para decodificar valores de retorno de
+// funciones `extern` que en C devuelven punteros (char*, arrays de
+// punteros, etc). Ver builtin_mem.cpp -- pensados para casos como el
+// cliente de MySQL (mysql_error, MYSQL_ROW) donde el valor util no es
+// el puntero en si sino lo que apunta.
+ava_value_t builtin_mem_is_null(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_mem_peek_string(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_mem_peek_ptr(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+
 #ifdef __cplusplus
 }
 #endif

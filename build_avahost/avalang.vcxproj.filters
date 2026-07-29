@@ -46,6 +46,9 @@
     <ClCompile Include="D:\_CODE_\avalang\core\src\vm\vm_errors.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\core\src\vm\vm_extern.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="D:\_CODE_\avalang\core\src\vm\module.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -68,6 +71,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="D:\_CODE_\avalang\core\src\builtins\builtin_natives.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\core\src\builtins\builtin_mem.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="D:\_CODE_\avalang\core\src\builtins\builtin_init.cpp">

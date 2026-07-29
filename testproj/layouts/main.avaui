@@ -1,0 +1,20 @@
+import components.navbar
+import components.footer
+
+view
+    column
+        class = "min-h-screen grid grid-rows-[auto_1fr_auto]"
+
+        Navbar()
+
+        column
+            class = "flex flex-col items-center justify-center w-full max-w-2xl mx-auto p-8 gap-4 text-center"
+
+            slot
+                class = "min-h-screen"
+            end
+        end
+
+        Footer()
+    end
+end

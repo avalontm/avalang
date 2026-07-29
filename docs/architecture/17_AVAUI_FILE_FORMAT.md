@@ -10,8 +10,10 @@ Designer de Ava Studio.
 ## Responsibilities
 
 - Definir la extensión (`.avaui`) y por qué no es JSON.
-- Definir la sintaxis de los bloques `state`, `view`, `methods`,
-  `metadata` e `import`.
+- Definir la sintaxis de los bloques canónicos: `properties`, `state`, 
+  `view`, `code`, `style` e `import`.
+- Documentar bloques legacy (`metadata`, `methods`) soportados para
+  lectura pero nunca emitidos en escritura.
 - Servir de referencia para el parser/writer canónico
   (`core/src/ui/avaui_text.*`, ver `10_AVAUI.md`).
 
@@ -74,7 +76,7 @@ end
 ```
 import "components/navbar"
 
-metadata
+properties
     title = "Mi App"
 end
 
@@ -95,59 +97,95 @@ view
             fontSize = 32
         end
 
-        button
+        button Guardar
             text = "Guardar"
-            click = btnGuardar_Click
         end
     end
 end
 
-methods
-    func btnGuardar_Click()
-        -- handler
+code
+    func OnGuardarClick()
+        -- se enlaza automáticamente por convención
     end
 end
 ```
 
-### Bloques
+### Bloques Canónicos
 
-- **`view`**: el árbol de componentes tal cual -- esto es lo que dibuja
-  el lienzo (`ComputeLayout` + `designer_canvas.cpp`, ver `12_LAYOUT.md`
-  y `16_STUDIO.md`). Mapea directo a `DesignNode`/`Component`: `type`,
-  `id`, `properties`, `events`, `children`.
-- **`state`**: variables iniciales del documento.
-- **`methods`**: el code-behind real, en sintaxis AvaLang normal
-  (`func nombre(params) ... end`). Es lo que se ve al presionar F7 en
-  Ava Studio (ver `16_STUDIO.md` sección 2) -- mismo rol que un `.frm`
-  de VB6 con su sección `Private Sub ... End Sub`, pero acá es
-  simplemente el `TextEditor` mostrando el archivo `.avaui`.
-- **`metadata`**: propiedades del documento/componente en sí
-  (ej. `title`). AvaHost (`avahost/src/rendering/html_renderer.cpp`,
-  `BuildPageMeta`) reconoce además, todas opcionales salvo `title`:
-  `description`, `image`, `url`, `siteName`, `ogType` (default
-  `"website"`), `twitterCard` (default `"summary_large_image"` si hay
-  `image`, si no `"summary"`) -- generan `<title>` más los `<meta>` de
-  Open Graph/Twitter Card necesarios para que el link se vea bien al
-  compartirlo (WhatsApp, Twitter/X, Slack, etc.). En una página con
-  `extends`, este bloque vive en la página, no en el layout.
-- **`extends`/`route`**: ver sección dedicada arriba. No producen
-  nodos en el árbol de `view` -- salen como campos separados
-  (`ParsedAvaui::extends`/`::routes`), mismo tratamiento que
-  `state`/`import`/`methods`.
-- **Props de evento** (`click`, `onchange`, `oninput`, ...): se
-  guardan aparte de las props de estilo, apuntando a un nombre de
-  función que debe existir en `methods`. Es literalmente
-  `DesignNode::events`.
-- **Llamada a un componente importado**: `Navbar()` -- PascalCase, sin
-  bloque `... end` propio en el sitio de la llamada. El árbol real de
-  `Navbar` vive en `components/navbar.avaui` y se resuelve al cargar
-  (`component_resolver.cpp`, ver `16_STUDIO.md`).
+- **`properties`**: propiedades del documento/componente en sí (ej. `title`). 
+  Para páginas, AvaHost (`avahost/src/rendering/html_renderer.cpp`, 
+  `BuildPageMeta`) reconoce: `title` (requerida), `description`, `image`, 
+  `url`, `siteName`, `ogType` (default `"website"`), `twitterCard` (default 
+  `"summary_large_image"` si hay `image`, si no `"summary"`) -- generan 
+  `<title>` más los `<meta>` de Open Graph/Twitter Card para compartir en 
+  redes. En una página con `extends`, este bloque vive en la página, no en 
+  el layout. **Es lo que se emite siempre en `WriteAvauiText()`**.
+- **`state`**: variables iniciales del documento/componente. Se guardan como
+  pares `[key]=[value]` en `ParsedAvaui::state`.
+- **`view`**: el árbol de componentes -- esto es lo que dibuja el lienzo 
+  (`ComputeLayout` + `designer_canvas.cpp`, ver `12_LAYOUT.md` y 
+  `16_STUDIO.md`). Mapea directo a `Component`: `type`, `id`, `properties`, 
+  `events`, `children`. Soporta sintaxis abreviada: `button Guardar` 
+  equivale a `button end { id = "Guardar" }`.
+- **`code`**: el code-behind real, en sintaxis AvaLang normal (`func nombre(params) ... end`). 
+  Contiene:
+  - Funciones de ciclo de vida (`OnLoad`, `OnShow`, `OnHide`, `OnUnload`)
+  - Manejadores de eventos (automáticamente enlazados por convención: `OnIdEventName`)
+  - Métodos auxiliares y lógica de negocio
+  
+  Es lo que se ve al presionar F7 en Ava Studio (ver `16_STUDIO.md` sección 2) -- 
+  mismo rol que un `.frm` de VB6 con su sección `Private Sub ... End Sub`.
+  
+- **`style`**: definición de apariencia visual del componente. Se guarda como 
+  pares `[key]=[value]` en `ParsedAvaui::style`, mismo formato que `state`.
+  Puede contener: colores, tamaños, bordes, fuentes, temas, animaciones visuales.
+
+- **`extends`/`route`**: ver sección dedicada arriba. No producen nodos en 
+  el árbol de `view` -- salen como campos separados (`ParsedAvaui::extends`/`::routes`).
+
+### Bloques Legacy (soportados en lectura, nunca en escritura)
+
+- **`metadata`**: alias antiguo de `properties`. Se lee pero `WriteAvauiText()` 
+  nunca lo emite -- siempre emite `properties` en su lugar.
+- **`methods`**: alias antiguo de `code`. Se lee pero `WriteAvauiText()` 
+  nunca lo emite -- siempre emite `code` en su lugar.
+
+### Automatic Event Binding (Auto-bind)
+
+Si un componente tiene un `id` (incluyendo sintaxis abreviada `button Guardar`) 
+y existe una función en `code` que sigue la convención `On{PascalId}{PascalEvent}`, 
+se enlaza automáticamente **sin necesidad de escribir `click = ...` explícitamente**:
+
+```
+button Guardar        -- id implícito: "Guardar"
+end
+
+code
+    func OnGuardarClick()   -- se enlaza automáticamente
+        -- handler aquí
+    end
+end
+```
+
+Un `click = OnGuardarClick` explícito en `view` siempre gana (toma precedencia) 
+sobre el auto-bind. Esto simplifica la sintaxis común manteniendo control fino cuando 
+se necesita.
+
+### Llamadas a Componentes Importados
+
+`Navbar()` -- PascalCase, sin bloque `... end` propio en el sitio de la llamada. 
+El árbol real de `Navbar` vive en `components/navbar.avaui` y se resuelve al 
+cargar (`component_resolver.cpp`, ver `16_STUDIO.md`).
 
 ## Public Interfaces
 
-- `core/src/ui/avaui_text.{h,cpp}` -- parser/writer canónico (ver
-  `10_AVAUI.md` sección "Qué existe hoy vs qué es roadmap" para su
-  estado de convergencia con el parser propio de Studio).
+- `core/src/ui/avaui_text.{h,cpp}` -- parser/writer canónico:
+  - `ParseAvauiText(const std::string& text)`: parseea `.avaui` a `ParsedAvaui` 
+    (estructura con `root`, `state`, `style`, `methods_text`, `imports`, `extends`, `routes`).
+  - `WriteAvauiText(...)`: emite `ParsedAvaui` de vuelta a texto, siempre usando 
+    bloques canónicos (`properties`, `state`, `view`, `code`, `style`).
+  - `IsEventPropertyName(...)`: detecta nombres de evento válidos.
+  - Helpers: `StateToJson`, `ImportsToJson`, `RoutesToJson`, etc.
 
 ## Dependencies
 
@@ -158,12 +196,19 @@ end
 
 ## Future Evolution
 
-- Resolución completa de `state`/`methods` de un componente importado
-  (`Navbar()`) -- hoy `component_resolver.cpp` resuelve la estructura
-  pero no todo lo demás.
+- Cruzar el bloque `style` a través del C ABI (`avalang.h`/`c_api.cpp`) para 
+  que AvaHost y Studio puedan leer/escribirlo completamente.
+- Ejecutar funciones de ciclo de vida (`OnLoad`, `OnShow`, `OnHide`, `OnUnload`) 
+  en AvaHost a través del request handler.
+- Resolución completa de `state`/`code` de un componente importado 
+  (`Navbar()`) -- hoy `component_resolver.cpp` resuelve la estructura visual 
+  pero no ejecuta su lógica ni maneja bindings de eventos.
 
 ## Open Questions
 
-Ninguna abierta específica de este documento -- ver `10_AVAUI.md`
-sección 8 para las preguntas abiertas de la arquitectura de AvaUI en
-general.
+- ¿Cómo manejar herencia de `style` entre componentes importados (layouts, 
+  temas globales)?
+- ¿Soportar propiedades polimórficas (ej., `properties` que acepten 
+  sobrescrituras de subcomponentes)?
+- Ver `10_AVAUI.md` sección 8 para preguntas abiertas de arquitectura AvaUI 
+  en general.

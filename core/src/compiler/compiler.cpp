@@ -1,4 +1,5 @@
 #include "compiler.h"
+#include "../vm/vm_extern.h"
 #include <stdexcept>
 
 namespace ava {
@@ -646,6 +647,11 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
 
     if (auto* i = dynamic_cast<ImportStmt*>(stmt.get())) {
         CompileImport(i);
+        return;
+    }
+
+    if (auto* ext = dynamic_cast<ExternStmt*>(stmt.get())) {
+        CompileExtern(ext);
         return;
     }
 
@@ -1398,6 +1404,47 @@ void Compiler::CompileImport(const ImportStmt* stmt) {
     Emit(OpCode::CALL, import_reg, 2, 1);
     
     FreeRegs(4);
+}
+
+void Compiler::CompileExtern(const ExternStmt* stmt) {
+    // Fase 2 (ver EXTERN_FFI_DESIGN.md / EXTERN_FFI_TODO.md): el bloque
+    // `extern` genera un namespace (ModuleObj) con una función Native por
+    // cada declaración -- pero esa Native todavía no resuelve contra la
+    // librería real (eso es Fase 3). Llamar a `Alias.Func()` hoy falla
+    // con un error explícito en vez de compilar a nada / crashear.
+    auto* mod = new ModuleObj();
+    mod->name = stmt->alias;
+    mod->library = stmt->library;
+
+    for (auto& fn : stmt->functions) {
+        auto* meta = new ExternFuncMeta();
+        meta->library = stmt->library;
+        meta->alias = stmt->alias;
+        meta->func_name = fn.name;
+        meta->arity = fn.params.size();
+        meta->is_vararg = fn.is_vararg;
+
+        auto* native = new NativeObj();
+        native->fn = ava_extern_call;
+        native->user_data = meta;
+
+        Value fn_val;
+        fn_val.type = ValueType::Native;
+        fn_val.obj = native;
+        mod->attrs[fn.name] = fn_val;
+    }
+
+    Value mod_val;
+    mod_val.type = ValueType::Module;
+    mod_val.obj = mod;
+
+    auto mod_idx = AddConstant(mod_val);
+    auto reg = AllocReg();
+    Emit(OpCode::LOADK, reg, mod_idx);
+
+    auto alias_idx = AddConstant(MakeString(stmt->alias));
+    Emit(OpCode::SETGLOBAL, reg, alias_idx);
+    FreeRegs(1);
 }
 
 void Compiler::CompileTry(const TryStmt* stmt) {

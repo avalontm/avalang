@@ -32,9 +32,15 @@ namespace {
 // core parser's own list (core/src/ui/avaui_text.cpp) and the .NET
 // reference's AvaComponentParser.cs::EventProps.
 const std::vector<std::string>& EventPropertyNames() {
+    // Kept identical to the core parser's own EventPropNames()
+    // (core/src/ui/avaui_text.cpp) -- these two lists had drifted
+    // apart (this one was missing onmouseenter/onmouseleave/onload/
+    // onerror and had a stray "onhover", which isn't a real DOM event
+    // name -- onmouseenter/onmouseleave are the correct pair).
     static const std::vector<std::string> names = {
-        "click", "onclick", "onchange", "oninput", "onsubmit",
-        "onfocus", "onblur", "onkeydown", "onkeyup", "onhover",
+        "click", "onclick", "onchange", "oninput", "onfocus", "onblur",
+        "onkeydown", "onkeyup", "onmouseenter", "onmouseleave",
+        "onsubmit", "onload", "onerror",
     };
     return names;
 }

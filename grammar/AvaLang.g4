@@ -59,6 +59,7 @@ compoundStatement
     | classDeclaration
     | tryStatement
     | modifiedFuncDeclaration
+    | externStatement
     ;
 
 // --- class member visibility/storage modifiers -------------------------
@@ -183,6 +184,29 @@ classDeclaration
 
 classHeritage
     : ':' NAME
+    ;
+
+// --- extern (FFI) -------------------------------------------------------
+//
+// Diseño: ver EXTERN_FFI_DESIGN.md.
+// `extern "lib" as Alias func Foo(a, b) func Bar() end` -- bloque de solo
+// declaraciones (sin cuerpo), resuelto por el runtime contra una
+// librería nativa. Requiere alias obligatorio (ver diseño, sección
+// "Why Alias Is Mandatory").
+externStatement
+    : 'extern' STRING 'as' NAME (NEWLINE)* externFuncDeclaration* 'end'
+    ;
+
+externFuncDeclaration
+    : 'func' NAME '(' externParamList? ')' (NEWLINE)*
+    ;
+
+externParamList
+    : externParam (',' externParam)* (',' '*' NAME)?
+    ;
+
+externParam
+    : NAME
     ;
 
 paramList

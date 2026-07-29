@@ -26,7 +26,11 @@ FetchContent_MakeAvailable(json)
 set(AVAHOST_SOURCES
     src/core/logger.cpp
     src/runtime/runtime_host.cpp
+    src/runtime/state_binder.cpp
     src/rendering/html_renderer.cpp
+    src/rendering/event_binder.cpp
+    src/component/component_resolver.cpp
+    src/component/dotted_path.cpp
     src/web/transport/socket.cpp
     src/web/protocol/http_parser.cpp
     src/web/protocol/url_codec.cpp

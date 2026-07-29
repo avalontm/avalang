@@ -255,6 +255,23 @@ struct LambdaExpr : ExprNode {
         : name(std::move(n)), defaults(std::move(d)), body(std::move(b)), is_vararg(v) {}
 };
 
+// Declaración de una función dentro de un bloque `extern` (sin cuerpo,
+// resuelta contra la librería nativa por el runtime). Ver
+// EXTERN_FFI_DESIGN.md.
+struct ExternFuncDecl {
+    std::string name;
+    std::vector<std::string> params;
+    bool is_vararg = false;
+};
+
+struct ExternStmt : StmtNode {
+    std::string library;   // p.ej. "kernel32" (nombre lógico/logico de archivo)
+    std::string alias;     // p.ej. "Kernel" -- namespace obligatorio
+    std::vector<ExternFuncDecl> functions;
+    ExternStmt(std::string lib, std::string a, std::vector<ExternFuncDecl> f)
+        : library(std::move(lib)), alias(std::move(a)), functions(std::move(f)) {}
+};
+
 struct YieldStmt : StmtNode {
     std::vector<std::shared_ptr<ExprNode>> values;
     explicit YieldStmt(std::vector<std::shared_ptr<ExprNode>> v = {}) : values(std::move(v)) {}

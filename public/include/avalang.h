@@ -57,7 +57,8 @@ typedef enum AvaValueType {
     AVA_COROUTINE,
     AVA_NATIVE,
     AVA_BOUND,
-    AVA_EXCEPTION
+    AVA_EXCEPTION,
+    AVA_MODULE
 } AvaValueType;
 
 typedef struct AvaRef { uint64_t id; } AvaRef;
@@ -342,8 +343,13 @@ AVA_API const char* ava_ui_tree_to_json(AvaComponentTree* tree);
 AVA_API void ava_ui_json_free(char* json);
 
 /* ---------------------------------------------------------------------
- * .avaui text format (parser/writer for the state/view/methods syntax
- * described in docs/architecture/08_DESIGNER_VIEW_PLAN.md section 3).
+ * .avaui text format (parser/writer for the properties/state/view/
+ * code/style syntax described in
+ * docs/architecture/17_AVAUI_FILE_FORMAT.md). The on-disk keywords
+ * `properties` and `code` replaced the older `metadata`/`methods`
+ * names (both still parse, for backward compatibility with existing
+ * .avaui files, but are never written back) -- see
+ * core/src/ui/avaui_text.h's header comment for the full rationale.
  *
  * Centralizes the grammar here (core/src/ui/avaui_text.{h,cpp}, plain
  * ava::ui::Component underneath, same as ava_ui_create_tree's model)
@@ -376,10 +382,12 @@ AVA_API void ava_ui_json_free(char* json);
  *                        (no import-resolution wiring exists yet on
  *                        either host -- see the plan doc's section
  *                        9.2 point 1).
- *   out_methods_text -- the `methods` block, verbatim (real AvaLang
- *                        source, e.g. `func onClick() ... end`) --
- *                        not parsed here, ava_compile/ava_run already
- *                        parse it when a host wants to execute it.
+ *   out_methods_text -- the `code` block (or the legacy `methods`
+ *                        keyword -- both parse into this same
+ *                        out-param), verbatim (real AvaLang source,
+ *                        e.g. `func OnLoad() ... end`) -- not parsed
+ *                        here, ava_compile/ava_run already parse it
+ *                        when a host wants to execute it.
  *   out_extends      -- the `extends "layout"` line's layout name, or
  *                        an empty (non-NULL) string when the file
  *                        doesn't extend a layout. First occurrence

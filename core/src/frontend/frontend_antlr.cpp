@@ -102,15 +102,30 @@ std::shared_ptr<Proto> CompileSource(const std::string& source, const std::strin
     
     antlr4::ANTLRInputStream input(normalized_source);
     AvaLangLexer lexer(&input);
-    
+
+    // ANTLR attaches a ConsoleErrorListener to every
+    // lexer/parser by default, which prints "line N:M ..." straight to
+    // stderr on every syntax error -- independent of the
+    // AvaLangErrorListener below, which already captures the same
+    // errors into `errors` and turns them into a proper CompileError
+    // the caller can handle. Left in place, that default listener means
+    // any *expected*, silently-recovered compile failure (e.g. AvaHost's
+    // RuntimeHost::EvalPropertyExpr speculatively compiling every .avaui
+    // property text as an expression, most of which -- CSS class lists,
+    // plain sentences -- aren't valid expressions and are meant to fall
+    // back to raw text) spams the console on every request. Removing the
+    // default listeners here doesn't lose any error information: it was
+    // always duplicated with what AvaLangErrorListener already captures.
+    lexer.removeErrorListeners();
     AvaLangErrorListener error_listener(source_name, normalized_source);
     lexer.addErrorListener(&error_listener);
-    
+
     antlr4::CommonTokenStream tokens(&lexer);
-    
+
     AvaLangParser parser(&tokens);
+    parser.removeErrorListeners();
     parser.addErrorListener(&error_listener);
-    
+
     auto* tree = parser.chunk();
 
     if (!error_listener.errors.empty()) {

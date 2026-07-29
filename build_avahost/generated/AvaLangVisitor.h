@@ -85,6 +85,14 @@ public:
 
     virtual std::any visitClassHeritage(AvaLangParser::ClassHeritageContext *context) = 0;
 
+    virtual std::any visitExternStatement(AvaLangParser::ExternStatementContext *context) = 0;
+
+    virtual std::any visitExternFuncDeclaration(AvaLangParser::ExternFuncDeclarationContext *context) = 0;
+
+    virtual std::any visitExternParamList(AvaLangParser::ExternParamListContext *context) = 0;
+
+    virtual std::any visitExternParam(AvaLangParser::ExternParamContext *context) = 0;
+
     virtual std::any visitParamList(AvaLangParser::ParamListContext *context) = 0;
 
     virtual std::any visitParam(AvaLangParser::ParamContext *context) = 0;

@@ -2,6 +2,7 @@
 // AvaHost.Rendering.Html -- Component Tree -> HTML. Pages never emit
 // HTML directly (plan section "Component Driven"); this is the only
 // place that knows how an AvaComponent maps to markup.
+#include <functional>
 #include <string>
 
 #include "avalang.h"
@@ -18,6 +19,17 @@ struct RenderOptions {
     std::string title = "AvaHost App";
     std::string extraHead;    // raw HTML injected into <head>, e.g. <link> tags
     std::string extraBodyEnd; // raw HTML injected right before </body>, e.g. <script> tags
+
+    // Fase 2 module 3 (runtime/state_binder.h): when set, every
+    // property's raw source text is passed through this before being
+    // rendered, so `value = counter` (a `state` variable) or
+    // `"Total: " + counter` shows the current bound/mutated value
+    // instead of the literal source text. Left null (the default)
+    // renders every property's raw text verbatim -- the same behavior
+    // as before state binding existed, so a caller with no VM/state to
+    // bind against (e.g. `avahost build`'s static preview, if it never
+    // wires one up) doesn't need to special-case anything.
+    std::function<std::string(const std::string&)> evalText;
 };
 
 class HtmlRenderer {
@@ -48,6 +60,18 @@ private:
     std::string RenderComponentImpl(AvaComponent* component, const std::string* slotContent) const;
     std::string RenderChildren(AvaComponent* component, const std::string* slotContent) const;
     std::string RenderAttributes(AvaComponent* component) const;
+
+    // RenderOptions::evalText for the render currently in progress --
+    // set at the top of RenderDocument/RenderDocumentWithLayout (the
+    // only two entry points that receive a RenderOptions) and read by
+    // every recursive RenderComponentImpl/RenderAttributes call below
+    // them, the same threading pattern slotContent already uses for
+    // layout substitution. Mutable so the public RenderComponent(...)
+    // const entry point (used standalone, e.g. by hot-reload partial
+    // updates later) can still run with no evaluator (raw text,
+    // unchanged behavior) without needing a non-const overload.
+    mutable std::function<std::string(const std::string&)> evalText_;
+    std::string EvalText(const std::string& raw) const { return evalText_ ? evalText_(raw) : raw; }
 };
 
 } // namespace avahost

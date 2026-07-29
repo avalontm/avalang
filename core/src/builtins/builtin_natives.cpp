@@ -52,6 +52,7 @@ std::string TypeName(const Value& v) {
         case ValueType::Native:    return "native";
         case ValueType::Bound:     return "bound";
         case ValueType::Exception: return "exception";
+        case ValueType::Module:    return "module";
         default:                   return "unknown";
     }
 }
@@ -99,6 +100,10 @@ std::string ToDisplayString(const Value& v) {
         case ValueType::Class: {
             auto* cls = static_cast<ClassObj*>(v.obj);
             return "<class " + cls->name + ">";
+        }
+        case ValueType::Module: {
+            auto* mod = static_cast<ModuleObj*>(v.obj);
+            return "<extern " + mod->name + ">";
         }
         default:
             return "<" + TypeName(v) + ">";

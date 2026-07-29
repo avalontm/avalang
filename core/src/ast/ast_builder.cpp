@@ -192,6 +192,10 @@ std::shared_ptr<StmtNode> AstBuilder::stmtFromAny(const std::any& a) {
         auto yield_stmt = std::any_cast<std::shared_ptr<YieldStmt>>(a);
         return yield_stmt;
     } catch (...) {}
+    try {
+        auto extern_stmt = std::any_cast<std::shared_ptr<ExternStmt>>(a);
+        return extern_stmt;
+    } catch (...) {}
     return nullptr;
 }
 
@@ -349,6 +353,7 @@ std::any AstBuilder::visitCompoundStatement(AvaLangParser::CompoundStatementCont
     if (ctx->classDeclaration()) return visitClassDeclaration(ctx->classDeclaration());
     if (ctx->tryStatement())   return visitTryStatement(ctx->tryStatement());
     if (ctx->modifiedFuncDeclaration()) return visitModifiedFuncDeclaration(ctx->modifiedFuncDeclaration());
+    if (ctx->externStatement()) return visitExternStatement(ctx->externStatement());
     throw std::runtime_error("unsupported compound statement");
 }
 
@@ -458,6 +463,34 @@ std::any AstBuilder::visitModifiedFuncDeclaration(AvaLangParser::ModifiedFuncDec
     func->is_static = is_static;
     func->is_private = is_private;
     return func;
+}
+
+std::any AstBuilder::visitExternFuncDeclaration(AvaLangParser::ExternFuncDeclarationContext* ctx) {
+    ExternFuncDecl decl;
+    decl.name = ctx->NAME()->getText();
+    if (ctx->externParamList()) {
+        for (auto* p : ctx->externParamList()->externParam()) {
+            decl.params.push_back(p->NAME()->getText());
+        }
+        if (ctx->externParamList()->NAME()) {
+            decl.is_vararg = true;
+        }
+    }
+    return decl;
+}
+
+std::any AstBuilder::visitExternStatement(AvaLangParser::ExternStatementContext* ctx) {
+    // stripQuotes espera el texto crudo del token STRING (con comillas);
+    // ver definición arriba, usada igual para importStatement/StringExpr.
+    auto library = stripQuotes(ctx->STRING()->getText());
+    auto alias = ctx->NAME()->getText();
+
+    std::vector<ExternFuncDecl> functions;
+    for (auto* fd : ctx->externFuncDeclaration()) {
+        functions.push_back(std::any_cast<ExternFuncDecl>(visitExternFuncDeclaration(fd)));
+    }
+
+    return std::make_shared<ExternStmt>(library, alias, functions);
 }
 
 std::any AstBuilder::visitModifiedAssignStatement(AvaLangParser::ModifiedAssignStatementContext* ctx) {

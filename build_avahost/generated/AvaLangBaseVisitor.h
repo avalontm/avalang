@@ -147,6 +147,22 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitExternStatement(AvaLangParser::ExternStatementContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitExternFuncDeclaration(AvaLangParser::ExternFuncDeclarationContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitExternParamList(AvaLangParser::ExternParamListContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitExternParam(AvaLangParser::ExternParamContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitParamList(AvaLangParser::ParamListContext *ctx) override {
     return visitChildren(ctx);
   }

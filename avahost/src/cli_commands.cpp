@@ -106,8 +106,23 @@ int CmdNew(const std::vector<std::string>& args) {
         "    \"pluginsDir\": \"plugins\"\n"
         "}\n");
 
+    // app.ava -- recursos globales que se cargan en TODAS las páginas
+    // (ver config/app_manifest.h). Se lee como texto plano, nunca se
+    // compila. Orden de declaración: Tailwind primero, después el CSS
+    // propio del proyecto -- aunque BuildHeadTags ya lo garantiza en
+    // <head> sin importar el orden acá (Tailwind siempre antes que los
+    // <link> de stylesheet), dejarlo en ese orden en el archivo hace
+    // explícito para quien lo lea que app.css puede sobreescribir
+    // utilidades de Tailwind si hace falta.
+    WriteFile(root / "app.ava",
+        "# Recursos globales de la app -- se cargan en <head> de todas\n"
+        "# las páginas .avaui, en este orden (Tailwind primero para que\n"
+        "# css/app.css pueda sobreescribir sus utilidades si hace falta).\n"
+        "import \"https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4\"\n"
+        "import \"css/app.css\"\n");
+
     WriteFile(root / "routes" / "index.avaui",
-        "extends \"main\"\n\n"
+        "extends layouts.main\n\n"
         "properties\n"
         "    # Variables generales del componente para usar en código\n"
         "end\n\n"

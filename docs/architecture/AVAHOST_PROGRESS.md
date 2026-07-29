@@ -19,6 +19,7 @@ Leyenda: ✅ funciona hoy · ⬜ falta (bloquea o limita el uso real)
 | 8 | ⬜ | **Import de componentes** (`import "components/x"` + `X()`) | El parser reconoce la sintaxis pero **no la resuelve**: `Navbar()` queda como nodo vacío y se renderiza como `<div></div>` sin contenido. Falta el paso de resolución en el render path de AvaHost (hoy solo existe, parcial, en Ava Studio). |
 | 9 | ⬜ | **Eventos / `methods`** (`click`, handlers) | Se parsean (`doc.methodsText`) pero no están conectados al manejo de requests — falta portar el "state/event bridge" del Designer de Ava Studio (`design/state_eval.cpp`). |
 | 10 | ⬜ | **Estado reactivo (`state` block)** | Las variables iniciales se parsean (`stateJson`) pero no hay binding real: cambiar `state` en el servidor no re-renderiza nada todavía. |
+| 11 | ✅ | **Ciclo de vida (`OnLoad`)** | `RenderAvaUiRoute` llama `OnLoad()` de la página una vez por render (GET o POST de evento), si está definido en `code` — no-op si no existe. `OnShow`/`OnHide`/`OnUnload` siguen siendo no-op en AvaHost por diseño (requieren una instancia de página persistente, que este host no tiene). |
 
 ## Prioridad sugerida para "funciona al menos por ahora"
 
