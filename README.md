@@ -1,10 +1,12 @@
 # The AvaLang Ecosystem
 
+📖 **[Visit the Wiki](docs/wiki/README.md)** for guides, tutorials, and in-depth documentation.
+
 This repository brings together the core projects that make up the AvaLang ecosystem. Together they provide everything needed to design, build, and host applications using a single, unified technology stack.
 
 From the first visual prototype to a running web application, every stage is designed to work seamlessly within the same ecosystem.
 
-![General architecture](images/diagram.png)
+![General architecture](docs/images/diagram.png)
 
 ---
 
