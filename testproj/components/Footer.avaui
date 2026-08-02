@@ -1,9 +1,0 @@
-view
-    row
-        class = "w-full p-4 border-t border-gray-200 text-sm text-gray-500 justify-center"
-
-        text
-            text = "AvaHost 0.1"
-        end
-    end
-end

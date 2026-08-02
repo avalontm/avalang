@@ -7,302 +7,39 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Force vcpkg to use static-md triplet where antlr4-runtime is installed
 set(VCPKG_TARGET_TRIPLET x64-windows-static-md)
 set(ENV{VCPKG_TARGET_TRIPLET} x64-windows-static-md)
+list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/vcpkg/installed/x64-windows-static-md")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 option(AVA_BUILD_SHARED "Build avalang as a shared library (.dll/.so)" ON)
 option(AVA_BUILD_CLI "Build the standalone ava_cli (compile/run scripts)" ON)
 option(AVA_BUILD_STUDIO "Build ava_studio, the ImGui-based IDE shell (fetches GLFW + Dear ImGui via CMake FetchContent)" OFF)
 option(AVA_BUILD_AVAHOST "Build avahost, the native C++ app hosting platform (links directly against avalang)" OFF)
+option(AVA_BUILD_UI "Build avalang.ui.dll, the platform-independent UI framework (Phase 1: Core Architecture only)" ON)
 
-# ---------------------------------------------------------------------
-# ANTLR4 C++ runtime (optional at configure time)
-#
-# If antlr4-runtime is not found, the core VM / C API / CLI still build
-# and link, using a stub frontend that reports a clear error instead of
-# compiling scripts. This lets you build and explore the project today
-# without installing ANTLR4 first; install it and reconfigure to enable
-# ava_compile() for real.
-# ---------------------------------------------------------------------
-# Add static-md triplet path BEFORE find_package so it can find the installed antlr4
-list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/vcpkg/installed/x64-windows-static-md")
+# ANTLR4 y libffi son opcionales en tiempo de configure: si no se
+# encuentran, avalang igual compila (frontend stub / extern sin FFI
+# real). Ver cmake/FindAntlr4Jar.cmake y cmake/FindLibFFI.cmake.
+include(FindAntlr4Jar)
+include(FindLibFFI)
 
-find_program(JAVA_EXECUTABLE java)
-find_package(antlr4-runtime QUIET)
-message(STATUS "AvaLang debug: VCPKG_TARGET_TRIPLET = '${VCPKG_TARGET_TRIPLET}'")
-message(STATUS "AvaLang debug: CMAKE_PREFIX_PATH     = '${CMAKE_PREFIX_PATH}'")
-message(STATUS "AvaLang debug: antlr4-runtime_FOUND = '${antlr4-runtime_FOUND}'")
-message(STATUS "AvaLang debug: antlr4-runtime_DIR   = '${antlr4-runtime_DIR}'")
-find_file(ANTLR4_JAR
-    NAMES antlr4-complete.jar antlr-4.13.2-complete.jar antlr-4.13.1-complete.jar antlr-4.11.1-complete.jar
-    PATHS /usr/local/lib /usr/share/java ${CMAKE_SOURCE_DIR}/third_party
-)
+add_subdirectory(runtime/avalang)
 
-# Fallback: si el nombre exacto no matcheó (p.ej. se subió la version de ANTLR
-# en install.bat y no se actualizo la lista NAMES de arriba), buscamos
-# cualquier antlr-*-complete.jar en third_party/ para no volver a romper esto.
-if(NOT ANTLR4_JAR)
-    file(GLOB _ava_antlr_jar_candidates "${CMAKE_SOURCE_DIR}/third_party/antlr-*-complete.jar")
-    if(_ava_antlr_jar_candidates)
-        list(GET _ava_antlr_jar_candidates 0 ANTLR4_JAR)
-        message(STATUS "AvaLang debug: ANTLR4_JAR resuelto por fallback glob -> '${ANTLR4_JAR}'")
-    endif()
-endif()
-
-set(GRAMMAR_DIR ${CMAKE_SOURCE_DIR}/grammar)
-set(GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
-file(MAKE_DIRECTORY ${GENERATED_DIR})
-
-# ---------------------------------------------------------------------
-# libffi (optional at configure time) -- usado por el sistema `extern`
-# (FFI) para invocar funciones nativas con firma resuelta en runtime.
-# Ver EXTERN_FFI_DESIGN.md / EXTERN_FFI_TODO.md, Fase 3.
-# Si no se encuentra, `extern` sigue compilando/corriendo pero
-# `Alias.Func(...)` falla con un error explícito en vez de invocar la
-# función real. Instalar con `vcpkg install libffi` y reconfigurar.
-# ---------------------------------------------------------------------
-find_path(LIBFFI_INCLUDE_DIR NAMES ffi.h)
-find_library(LIBFFI_LIBRARY NAMES ffi libffi)
-if(LIBFFI_INCLUDE_DIR AND LIBFFI_LIBRARY)
-    set(AVA_HAVE_LIBFFI TRUE)
-    message(STATUS "avalang: libffi encontrado (${LIBFFI_LIBRARY}) -- extern (FFI) habilitado")
-else()
-    set(AVA_HAVE_LIBFFI FALSE)
-    message(STATUS "avalang: libffi NO encontrado -- extern (FFI) compilara pero no podra "
-                    "invocar funciones nativas reales. 'vcpkg install libffi' y reconfigurar.")
-endif()
-
-if(antlr4-runtime_FOUND AND JAVA_EXECUTABLE AND ANTLR4_JAR)
-    set(AVA_HAVE_ANTLR TRUE)
-    message(STATUS "avalang: antlr4-runtime found, building full frontend")
-
-    add_custom_command(
-        OUTPUT
-            ${GENERATED_DIR}/AvaLangLexer.cpp
-            ${GENERATED_DIR}/AvaLangParser.cpp
-            ${GENERATED_DIR}/AvaLangBaseListener.cpp
-        COMMAND ${JAVA_EXECUTABLE} -jar ${ANTLR4_JAR}
-                -Dlanguage=Cpp
-                -visitor
-                -o ${GENERATED_DIR}
-                ${GRAMMAR_DIR}/AvaLang.g4
-        DEPENDS ${GRAMMAR_DIR}/AvaLang.g4
-        COMMENT "Generating ANTLR4 C++ parser from AvaLang.g4"
-    )
-
-    set(GENERATED_SOURCES
-        ${GENERATED_DIR}/AvaLangLexer.cpp
-        ${GENERATED_DIR}/AvaLangParser.cpp
-        ${GENERATED_DIR}/AvaLangBaseListener.cpp
-    )
-    set(FRONTEND_SOURCES
-        core/src/frontend/denter.cpp
-        core/src/frontend/frontend_antlr.cpp
-        core/src/ast/ast_builder.cpp
-        core/src/compiler/compiler.cpp
-        ${GENERATED_SOURCES}
-    )
-else()
-    set(AVA_HAVE_ANTLR FALSE)
-    message(STATUS "avalang: antlr4-runtime NOT found, building with stub frontend "
-                    "(ava_compile() will report a clear error; VM/C-API/CLI still build)")
-    set(FRONTEND_SOURCES core/src/frontend/frontend_stub.cpp)
-endif()
-
-# ---------------------------------------------------------------------
-# Core library sources (PRIVATE - do not export)
-# ---------------------------------------------------------------------
-set(CORE_SOURCES
-    core/src/vm/value.cpp
-    core/src/vm/vm_helpers.cpp
-    core/src/vm/vm.cpp
-    core/src/vm/vm_core.cpp
-    core/src/vm/vm_call.cpp
-    core/src/vm/vm_file.cpp
-    core/src/vm/vm_import.cpp
-    core/src/vm/vm_arith.cpp
-    core/src/vm/vm_compare.cpp
-    core/src/vm/vm_containers.cpp
-    core/src/vm/vm_classes.cpp
-    core/src/vm/vm_call_op.cpp
-    core/src/vm/vm_slice.cpp
-    core/src/vm/vm_exceptions.cpp
-    core/src/vm/vm_errors.cpp
-    core/src/vm/vm_extern.cpp
-    core/src/vm/vm_platform_accessor.cpp
-    core/src/vm/module.cpp
-    core/src/vm/coroutine.cpp
-    core/src/builtins/builtin_strings.cpp
-    core/src/builtins/builtin_lists.cpp
-    core/src/builtins/builtin_dicts.cpp
-    core/src/builtins/builtin_coroutine.cpp
-    core/src/builtins/builtin_registry.cpp
-    core/src/builtins/builtin_natives.cpp
-    core/src/builtins/builtin_mem.cpp
-    core/src/builtins/builtin_init.cpp
-    core/src/ui/component.cpp
-    core/src/ui/tree.cpp
-    core/src/ui/layout.cpp
-    core/src/ui/property.cpp
-    core/src/ui/event.cpp
-    core/src/ui/registry.cpp
-    core/src/ui/builtins.cpp
-    core/src/ui/avaui_text.cpp
-    ${FRONTEND_SOURCES}
-)
-
-# ---------------------------------------------------------------------
-# Platform Abstraction Layer backend (compile-time selection, no runtime
-# OS detection -- see core/platform/PAL.md).
-#   Windows -> core/platform/windows (Phase 3/4, functional)
-#   Linux   -> core/platform/linux   (Phase 5, STUB)
-#   macOS   -> core/platform/macos   (Phase 6, STUB)
-# ---------------------------------------------------------------------
-if(WIN32)
-    set(PLATFORM_SOURCES
-        core/platform/windows/WinFileSystem.cpp
-        core/platform/windows/WinThread.cpp
-        core/platform/windows/WinMutex.cpp
-        core/platform/windows/WinClock.cpp
-        core/platform/windows/WinLibrary.cpp
-        core/platform/windows/WinConsole.cpp
-        core/platform/windows/WinEnvironment.cpp
-        core/platform/windows/WinProcess.cpp
-        core/platform/windows/WinPlatform.cpp
-    )
-elseif(APPLE)
-    set(PLATFORM_SOURCES
-        core/platform/macos/MacFileSystem.cpp
-        core/platform/macos/MacThread.cpp
-        core/platform/macos/MacMutex.cpp
-        core/platform/macos/MacClock.cpp
-        core/platform/macos/MacLibrary.cpp
-        core/platform/macos/MacConsole.cpp
-        core/platform/macos/MacEnvironment.cpp
-        core/platform/macos/MacProcess.cpp
-        core/platform/macos/MacPlatform.cpp
-    )
-    message(STATUS "avalang: macOS PAL backend is a STUB (Phase 6 not implemented yet)")
-elseif(UNIX)
-    set(PLATFORM_SOURCES
-        core/platform/linux/LinFileSystem.cpp
-        core/platform/linux/LinThread.cpp
-        core/platform/linux/LinMutex.cpp
-        core/platform/linux/LinClock.cpp
-        core/platform/linux/LinLibrary.cpp
-        core/platform/linux/LinConsole.cpp
-        core/platform/linux/LinEnvironment.cpp
-        core/platform/linux/LinProcess.cpp
-        core/platform/linux/LinPlatform.cpp
-    )
-    message(STATUS "avalang: Linux PAL backend is a STUB (Phase 5 not implemented yet)")
-else()
-    message(FATAL_ERROR "avalang: unsupported target platform (no PAL backend available)")
-endif()
-
-list(APPEND CORE_SOURCES ${PLATFORM_SOURCES})
-
-# ---------------------------------------------------------------------
-# Public library (core + C API)
-# ---------------------------------------------------------------------
-set(PUBLIC_SOURCES
-    ${CORE_SOURCES}
-    public/src/c_api.cpp
-)
-
-if(AVA_BUILD_SHARED)
-    add_library(avalang SHARED ${PUBLIC_SOURCES})
-else()
-    add_library(avalang STATIC ${PUBLIC_SOURCES})
-endif()
-
-target_include_directories(avalang
-    PUBLIC
-        ${CMAKE_SOURCE_DIR}/public/include
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/core/src
-        ${CMAKE_SOURCE_DIR}/public/src
-        ${CMAKE_SOURCE_DIR}/public/include
-        ${GENERATED_DIR}
-)
-
-if(AVA_HAVE_ANTLR)
-    # El paquete de vcpkg "antlr4-runtime" NO expone un target llamado
-    # antlr4-runtime; expone antlr4_static (triplets estaticos, p.ej.
-    # x64-windows-static-md) o antlr4_shared (triplets dinamicos).
-    if(TARGET antlr4_static)
-        set(_ava_antlr_target antlr4_static)
-    elseif(TARGET antlr4_shared)
-        set(_ava_antlr_target antlr4_shared)
-    else()
-        message(FATAL_ERROR "avalang: antlr4-runtime_FOUND es TRUE pero no existe ni "
-                             "el target antlr4_static ni antlr4_shared. Revisa la version "
-                             "del paquete vcpkg instalado.")
-    endif()
-    message(STATUS "AvaLang debug: usando target ANTLR = '${_ava_antlr_target}'")
-
-    target_link_libraries(avalang PRIVATE ${_ava_antlr_target})
-    target_compile_definitions(avalang PRIVATE AVA_HAVE_ANTLR)
-    if(_ava_antlr_target STREQUAL "antlr4_static")
-        # Requerido para que antlr4-runtime.h no marque sus clases como
-        # dllimport (lo cual rompe el link contra una lib estatica).
-        target_compile_definitions(avalang PRIVATE ANTLR4CPP_STATIC)
-    endif()
-endif()
-
-target_compile_definitions(avalang PRIVATE AVA_BUILDING_LIBRARY)
-
-if(AVA_HAVE_LIBFFI)
-    target_include_directories(avalang PRIVATE ${LIBFFI_INCLUDE_DIR})
-    target_link_libraries(avalang PRIVATE ${LIBFFI_LIBRARY})
-    target_compile_definitions(avalang PRIVATE AVA_HAVE_LIBFFI)
-endif()
-if(UNIX AND NOT APPLE)
-    # dlopen/dlsym en glibc viejas requiere -ldl explicito (algunas
-    # toolchains modernas ya lo integran en libc, pero enlazarlo no hace
-    # daño y evita romper en distros mas viejas).
-    target_link_libraries(avalang PRIVATE dl)
-endif()
-
-# NOTE: symbol visibility is intentionally left at the compiler default
-# (not hidden) so internal headers (core/src/vm/*.h) remain linkable from
-# tests/ and from ava_cli, which both use VM internals directly rather
-# than going through the C API. External bindings should still only rely
-# on public/include/avalang.h -- the internal headers are not a stable contract.
-
-# ---------------------------------------------------------------------
-# CLI (native reference host, useful for testing scripts without a binding)
-# ---------------------------------------------------------------------
 if(AVA_BUILD_CLI)
-    add_executable(ava_cli public/src/main.cpp)
-    target_link_libraries(ava_cli PRIVATE avalang)
-    target_include_directories(ava_cli PRIVATE
-        ${CMAKE_SOURCE_DIR}/core/src
-        ${CMAKE_SOURCE_DIR}/public/src
-        ${CMAKE_SOURCE_DIR}/public/include
-    )
+    add_subdirectory(runtime/avacli)
 endif()
 
-# No tests - use scripts to test
-
-install(TARGETS avalang
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    RUNTIME DESTINATION bin
-)
-install(FILES public/include/avalang.h DESTINATION include)
-
 # ---------------------------------------------------------------------
-# Ava Studio (optional -- off by default so a plain `cmake ..` doesn't
-# suddenly need internet access to fetch GLFW/ImGui)
+# Subproyectos opcionales (OFF por defecto para que un `cmake ..` plano
+# no necesite red para bajar GLFW/ImGui/nlohmann-json vía FetchContent).
 # ---------------------------------------------------------------------
 if(AVA_BUILD_STUDIO)
-    add_subdirectory(studio)
+    add_subdirectory(runtime/avastudio)
 endif()
 
-# ---------------------------------------------------------------------
-# AvaHost (optional -- native C++ app hosting platform, off by default
-# for the same reason ava_studio is: a plain `cmake ..` should not
-# suddenly need network access to fetch nlohmann/json)
-# ---------------------------------------------------------------------
+if(AVA_BUILD_UI)
+    add_subdirectory(runtime/avaui)
+endif()
+
 if(AVA_BUILD_AVAHOST)
-    add_subdirectory(avahost)
+    add_subdirectory(runtime/avahost)
 endif()

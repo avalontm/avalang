@@ -1,0 +1,231 @@
+extends layouts.main
+
+properties
+    title = "Controles"
+end
+
+state
+    showDialog = false
+    confirmResult = "(sin acción todavía)"
+    inputChanges = 0
+    comboChanges = 0
+    comboValue = "b"
+    textValue = ""
+    checkValue = false
+    radioValue = true
+end
+
+view
+ scrollview
+            direction = "vertical"
+    
+            padding = 12
+    column
+        fill = "true"
+        padding = 20
+        gap = 20
+
+        text
+            text = "Controles de prueba (avaui)"
+            fontSize = 32
+        end
+
+        text
+            text = "Text"
+        end
+
+        label
+            text = "Label"
+        end
+
+        button
+            id = "TestButton"
+            text = "Button"
+            click = OnButtonClick()
+        end
+
+        link
+            text = "Link"
+            href = "/"
+            textColor = "2563EB"
+        end
+
+        container
+            padding = 12
+            borderWidth = 1
+            borderColor = "E5E7EB"
+
+            text
+                text = "Container"
+            end
+        end
+
+        row
+            gap = 12
+            padding = 12
+            borderWidth = 1
+            borderColor = "E5E7EB"
+
+            text
+                text = "Row"
+            end
+        end
+
+        column
+            gap = 12
+            padding = 12
+            borderWidth = 1
+            borderColor = "E5E7EB"
+
+            text
+                text = "Column"
+            end
+        end
+
+        textbox
+            id = "TestTextBox"
+            text = textValue
+            placeholder = "TextBox"
+            change = OnTextChange()
+        end
+
+        text
+            text = "inputChanges: " + inputChanges
+        end
+
+        checkbox
+            id = "TestCheckbox"
+            label = "CheckBox"
+            isChecked = checkValue
+            change = OnCheckChange()
+        end
+
+        radiobutton
+            id = "TestRadio"
+            label = "RadioButton"
+            isSelected = radioValue
+            change = OnRadioChange()
+        end
+
+        combobox
+            id = "TestCombo"
+            selectedValue = comboValue
+            change = OnComboChange()
+
+            option
+                value = "a"
+                label = "Opción A"
+            end
+
+            option
+                value = "b"
+                label = "Opción B"
+            end
+
+            option
+                value = "c"
+                label = "Opción C"
+            end
+        end
+
+        icon
+            source = "@icons/star.svg"
+        end
+
+        image
+            source = "@icons/star.svg"
+        end
+
+        button
+            id = "OpenDialog"
+            text = "Eliminar elemento"
+            click = OnOpenDialog()
+        end
+
+        text
+            text = "Resultado: " + confirmResult
+        end
+
+        dialog
+            id = "ConfirmDialog"
+            title = "Confirmar acción"
+            isOpen = showDialog
+            dismissible = false
+
+            column
+                gap = 16
+                padding = 24
+
+                text
+                    text = "Eliminar elemento"
+                    fontSize = 18
+                end
+
+                text
+                    text = "Esta acción no se puede deshacer. ¿Deseas continuar?"
+                    fontSize = 14
+                    textColor = "6B7280"
+                end
+
+                row
+                    gap = 12
+
+                    button
+                        id = "CancelConfirm"
+                        text = "Cancelar"
+                        backgroundColor = "F3F4F6"
+                        textColor = "111827"
+                        click = OnCancelConfirm()
+                    end
+
+                    button
+                        id = "AcceptConfirm"
+                        text = "Aceptar"
+                        backgroundColor = "DC2626"
+                        click = OnAcceptConfirm()
+                    end
+                end
+            end
+        end
+    end
+	end
+end
+
+code
+    func OnButtonClick()
+    end
+
+    func OnTextChange()
+        inputChanges++
+    end
+
+    func OnComboChange()
+        comboChanges++
+    end
+
+    func OnCheckChange()
+        checkValue = not checkValue
+    end
+
+    func OnRadioChange()
+        radioValue = not radioValue
+    end
+
+    func OnOpenDialog()
+        showDialog = true
+    end
+
+    # Aceptar: aquí es donde iría la acción real (llamar a un
+    # servicio, borrar el elemento, etc). Por ahora solo deja
+    # constancia del resultado y cierra el modal.
+    func OnAcceptConfirm()
+        confirmResult = "Elemento eliminado ✔"
+        showDialog = false
+    end
+
+    # Cancelar: no hace nada más que cerrar el modal, sin tocar
+    # ningún estado relacionado con la acción.
+    func OnCancelConfirm()
+        showDialog = false
+    end
+end

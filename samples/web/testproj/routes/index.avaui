@@ -1,0 +1,64 @@
+extends layouts.main
+
+properties
+    title = "My App"
+end
+
+state
+    counter = 0
+end
+
+view
+    column
+        fill = "true"
+        padding = 20
+        gap = 16
+
+        text
+            text = "Count: " + counter
+            fontSize = 32
+        end
+
+        row
+            gap = 12
+
+            button
+                id = "Decrease"
+                text = "-"
+                click = OnDecreaseClick()
+            end
+
+            button
+                id = "Increase"
+                text = "+"
+                click = OnIncreaseClick()
+            end
+
+            button
+                id = "Clear"
+                text = "Clear"
+                click = OnClearClick()
+            end
+        end
+
+        link
+            text = "Ver página de controles de test"
+            href = "/controls"
+            textColor = "2563EB"
+        end
+    end
+end
+
+code
+    func OnDecreaseClick()
+        counter--
+    end
+
+    func OnIncreaseClick()
+        counter++
+    end
+
+    func OnClearClick()
+        counter = 0
+    end
+end

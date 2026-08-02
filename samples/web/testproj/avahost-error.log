@@ -1,0 +1,33 @@
+----- AvaHost log opened 2026-08-01 12:00:45 -----
+[2026-08-01 12:00:48] [ERR] CRASH while handling GET / -- native crash (access violation, code 0xc0000005) at address 0x7ffd3b2316f1
+[2026-08-01 12:00:48] [ERR] CRASH while handling GET /favicon.ico -- native crash (access violation, code 0xc0000005) at address 0x7ffd824568c3
+----- AvaHost log opened 2026-08-01 12:40:28 -----
+[2026-08-01 12:40:29] [ERR] avaui render failed for D:\_CODE_\Avalon\samples\web\testproj\routes\index.avaui: bad allocation during stage [export component props (post-OnLoad, page)]
+----- AvaHost log opened 2026-08-01 12:48:13 -----
+----- AvaHost log opened 2026-08-01 12:52:58 -----
+----- AvaHost log opened 2026-08-01 13:03:13 -----
+----- AvaHost log opened 2026-08-01 13:12:44 -----
+----- AvaHost log opened 2026-08-01 14:28:50 -----
+[2026-08-01 14:28:53] [ERR] avaui render failed for D:\_CODE_\Avalon\samples\web\testproj\routes\index.avaui: layout parse error in D:\_CODE_\Avalon\samples\web\testproj\layouts\main.avaui: unterminated component block (expected 'end' at column 12) (line 14)
+[2026-08-01 14:28:53] [ERR] avaui render failed for D:\_CODE_\Avalon\samples\web\testproj\layouts\404.avaui: layout parse error in D:\_CODE_\Avalon\samples\web\testproj\layouts\main.avaui: unterminated component block (expected 'end' at column 12) (line 14)
+----- AvaHost log opened 2026-08-01 14:32:57 -----
+----- AvaHost log opened 2026-08-01 14:43:10 -----
+----- AvaHost log opened 2026-08-01 14:52:33 -----
+----- AvaHost log opened 2026-08-01 15:02:58 -----
+----- AvaHost log opened 2026-08-01 15:11:56 -----
+----- AvaHost log opened 2026-08-01 15:36:55 -----
+----- AvaHost log opened 2026-08-01 16:21:07 -----
+----- AvaHost log opened 2026-08-01 16:37:06 -----
+----- AvaHost log opened 2026-08-01 16:47:32 -----
+----- AvaHost log opened 2026-08-01 18:19:09 -----
+----- AvaHost log opened 2026-08-01 18:57:07 -----
+----- AvaHost log opened 2026-08-01 19:45:16 -----
+----- AvaHost log opened 2026-08-01 20:10:04 -----
+----- AvaHost log opened 2026-08-01 20:48:09 -----
+----- AvaHost log opened 2026-08-01 21:44:33 -----
+----- AvaHost log opened 2026-08-01 22:12:40 -----
+----- AvaHost log opened 2026-08-01 22:49:55 -----
+----- AvaHost log opened 2026-08-01 23:03:17 -----
+----- AvaHost log opened 2026-08-01 23:13:56 -----
+----- AvaHost log opened 2026-08-02 00:04:48 -----
+----- AvaHost log opened 2026-08-02 00:09:26 -----

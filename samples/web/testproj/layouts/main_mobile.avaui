@@ -1,0 +1,18 @@
+import components.navbar_mobile
+import components.footer_mobile
+
+view
+    column
+        Navbar_mobile()
+
+        column
+            grow = true
+            padding = 16
+            gap = 12
+
+            slot()
+        end
+
+        Footer_mobile()
+    end
+end

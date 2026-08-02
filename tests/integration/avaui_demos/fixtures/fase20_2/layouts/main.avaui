@@ -1,0 +1,15 @@
+view
+    column
+        stack
+            label
+                value = "HEADER from layout"
+            end
+        end
+        slot
+        stack
+            label
+                value = "FOOTER from layout"
+            end
+        end
+    end
+end

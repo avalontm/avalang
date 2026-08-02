@@ -1,0 +1,19 @@
+# scripts/sleep_async_demo.ava
+#
+# Fase 5 (Async Runtime) - sub-fase 5.3: await real sobre coroutines,
+# ligado a ITimer via sleep_async(). No es azucar sintactico `await` (eso
+# queda para una sub-fase futura si se decide agregar la palabra clave),
+# pero SI es una suspension y resume reales de una coroutine disparados
+# por el PAL, no cooperativos-sincronicos como los tests de yield puro.
+
+func worker()
+    print("worker: antes del delay")
+    yield
+    print("worker: despues del delay (resume real via timer)")
+end
+
+co = coroutine(worker)
+resume(co)              # corre hasta el yield
+print("main: coroutine suspendida, agendando resume en 300ms")
+sleep_async(co, 300)    # el PAL (ITimer) dispara el resume real
+print("main: fin del script principal")

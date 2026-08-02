@@ -1,0 +1,9 @@
+extends layouts.main
+
+view
+    column
+        label
+            value = "Page content here"
+        button
+            text = "Action"
+end

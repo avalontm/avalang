@@ -1,0 +1,30 @@
+view
+    column
+        padding = 16
+        gap = 12
+        borderWidth = 1
+        borderColor = "E5E7EB"
+
+        text
+            text = "AvaHost"
+            fontSize = 18
+            align = "center"
+        end
+
+        row
+            gap = 16
+
+            link
+                text = "Home"
+                href = "/"
+                textColor = "2563EB"
+            end
+
+            link
+                text = "About"
+                href = "/about"
+                textColor = "2563EB"
+            end
+        end
+    end
+end

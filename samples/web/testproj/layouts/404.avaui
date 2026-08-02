@@ -1,0 +1,29 @@
+extends layouts.main
+
+properties
+    title = "Página no encontrada"
+end
+
+view
+    column
+        fill = "true"
+        padding = 20
+        gap = 12
+
+        text
+            text = "404"
+            fontSize = 48
+        end
+
+        text
+            text = "No encontramos '" + request.path + "'"
+            fontSize = 18
+        end
+
+        link
+            text = "Volver al inicio"
+            href = "/"
+            textColor = "2563EB"
+        end
+    end
+end

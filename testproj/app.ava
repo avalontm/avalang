@@ -1,5 +1,0 @@
-# Recursos globales de la app -- se cargan en <head> de todas
-# las páginas .avaui, en este orden (Tailwind primero para que
-# css/app.css pueda sobreescribir sus utilidades si hace falta).
-import "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"
-import "css/app.css"

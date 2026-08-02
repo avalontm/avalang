@@ -1,0 +1,17 @@
+# scripts/clear_timeout_demo.ava
+#
+# Fase 5 (Async Runtime) - sub-fase 5.4: cancelacion de timers.
+
+print("inicio")
+
+h = set_timeout(func()
+    print("esto NO deberia imprimirse -- se cancela antes de disparar")
+end, 200)
+
+clear_timeout(h)
+
+set_timeout(func()
+    print("este SI corre (no se cancelo)")
+end, 50)
+
+print("fin del script principal")

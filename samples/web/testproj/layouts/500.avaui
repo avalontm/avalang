@@ -1,0 +1,22 @@
+properties
+    title = "Error en servidor"
+end
+
+view
+    column
+        fill = "true"
+        padding = 20
+        gap = 12
+
+        text
+            text = "404"
+            fontSize = 48
+        end
+
+        text
+            text = "Error en servidor"
+            fontSize = 18
+        end
+
+    end
+end

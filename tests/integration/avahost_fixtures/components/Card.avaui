@@ -1,0 +1,11 @@
+view
+    stack
+        label
+            value = "Default card title"
+        end
+        button
+            text = "Default card button"
+            backgroundColor = "#222222"
+        end
+    end
+end

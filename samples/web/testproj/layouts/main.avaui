@@ -1,0 +1,18 @@
+import components.navbar
+import components.footer
+
+view
+    column
+        Navbar()
+
+        column
+            grow = true
+            padding = 32
+            gap = 16
+
+            slot()
+        end
+
+        Footer()
+    end
+end

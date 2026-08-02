@@ -1,0 +1,20 @@
+# scripts/set_timeout_demo.ava
+#
+# Fase 5 (Async Runtime) - sub-fase 5.2: dispatcher de delayed execution
+# sobre el PAL (ITimer -> WinTimer). set_timeout(callback, delayMs)
+# agenda callback para correr mas tarde sin bloquear con sleep().
+#
+# El proceso se mantiene vivo hasta que corren (ver el event loop en
+# public/src/main.cpp), igual que setTimeout en Node.js.
+
+print("inicio")
+
+set_timeout(func()
+    print("callback A (100ms)")
+end, 100)
+
+set_timeout(func()
+    print("callback B (10ms, deberia imprimir antes que A)")
+end, 10)
+
+print("fin del script principal (los callbacks todavia no corrieron)")

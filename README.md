@@ -13,6 +13,7 @@ From the first visual prototype to a running web application, every stage is des
 |    | Project                            | Description                                                                            |
 | -- | ---------------------------------- | -------------------------------------------------------------------------------------- |
 | 🧠 | **[AvaLang](AVALANG.md)**          | The programming language, compiler, virtual machine, and runtime.                      |
+| 🧩 | **[AvaUI](runtime/avaui/README.md)** | The UI framework: layout engine, render tree, and the `.avaui` component format.      |
 | 🎨 | **[Ava Studio](studio/README.md)** | The visual IDE used to design, build, and manage Ava applications.                     |
 | 🌐 | **[AvaHost](avahost/README.md)**   | The official hosting platform responsible for running AvaLang applications on the Web. |
 
@@ -25,6 +26,7 @@ Each project contains its own documentation with implementation details and deve
 The ecosystem is built around clear responsibilities.
 
 * **AvaLang** provides the language, compiler, bytecode, virtual machine, and Stable C API.
+* **AvaUI** provides the layout engine, render tree, and component model applications are built from.
 * **Ava Studio** offers a modern visual development environment for creating applications.
 * **AvaHost** hosts, executes, and renders Ava applications for the Web.
 
@@ -63,7 +65,26 @@ The AvaLang ecosystem is built around the following principles:
 
 ---
 
-# Open Development
+# Project Structure
+
+The repository was recently reorganized from a flat layout into a single `Avalon/` hierarchy, grouping every runtime project under one root instead of scattering them as independent top-level folders:
+
+```text
+Avalon/
+├── runtime/
+│   ├── avalang/     AvaLang core: compiler, bytecode, VM, platform layer
+│   ├── avaui/       AvaUI: parser, layout engine, render tree, controls
+│   ├── avahost/     AvaHost: web/SSR host, HTML renderer bridge
+│   ├── avastudio/   Ava Studio: ImGui-based C++ IDE
+│   ├── avacli/      Command-line tooling
+│   ├── bindings/    Language/API bindings
+│   ├── renderers/   Renderer backends (HTML, GDI, ...)
+│   └── libraries/   Shared/vendored third-party libraries
+├── samples/         Example AvaLang/AvaUI applications
+└── scripts/         Build, test, format, release, and CI scripts
+```
+
+All CMake files, `.bat` build scripts, and `#include` paths were updated to match this structure. See `AVALAND_STRUCT.md` for the full breakdown of each folder's responsibilities.
 
 The project is developed in the open.
 

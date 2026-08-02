@@ -1,0 +1,18 @@
+state
+    counter = 3
+end
+
+code
+    func OnLoad()
+        counter = counter + 1
+    end
+end
+
+view
+    column
+        label
+            value = "Counter widget"
+        button
+            text = "Click to increment"
+            click = "OnLoad"
+end

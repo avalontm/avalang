@@ -1,0 +1,1 @@
+.\build_avahost\runtime\avahost\Release\avahost.exe run --project .\samples\web\testproj

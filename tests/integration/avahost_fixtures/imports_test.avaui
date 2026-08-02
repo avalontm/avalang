@@ -1,0 +1,10 @@
+import components.card
+
+view
+    column
+        Card()
+        label
+            value = "After card"
+        end
+    end
+end

@@ -1,0 +1,42 @@
+extends layouts.main
+
+properties
+    title = "About"
+end
+
+state
+    clicks = 0
+end
+
+view
+    column
+        fill = "true"
+        padding = 20
+        gap = 16
+
+        text
+            text = "About AvaHost"
+            fontSize = 32
+        end
+
+        text
+            text = "Página de prueba para validar navegación entre rutas."
+        end
+
+        text
+            text = "Clicks en esta página: " + clicks
+        end
+
+        button
+            id = "PingAbout"
+            text = "Ping (evento en /about)"
+            click = OnPingAboutClick()
+        end
+    end
+end
+
+code
+    func OnPingAboutClick()
+        clicks++
+    end
+end

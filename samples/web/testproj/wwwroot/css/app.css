@@ -1,0 +1,30 @@
+/* Project-specific CSS -- not loaded by default.
+   AvaUI styles and sizes components natively, through the
+   LayoutEngine's own properties (row/column, padding, gap,
+   align, width, height, borderWidth/borderColor, fontSize,
+   textColor, backgroundColor), rendered identically by
+   GdiRenderer (desktop) and HTMLRenderer (web). It does not
+   use Tailwind or hand-written CSS -- see
+   docs/AVAUI_NATIVE_RENDERING_FIX_PLAN.md.
+
+   This file exists only as a place for CSS you explicitly opt
+   into by adding `import "css/app.css"` to app.ava -- it is
+   not linked automatically. */
+
+.ava-button:hover:not(:disabled) {
+    filter: brightness(0.95);
+}
+
+.ava-button:active:not(:disabled) {
+    filter: brightness(0.9);
+}
+
+.ava-button:focus-visible {
+    outline: 2px solid #0078D4;
+    outline-offset: 2px;
+}
+
+.ava-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
