@@ -137,17 +137,23 @@ set(STUDIO_SOURCES
     src/design/component_resolver.cpp
     src/design/layout_engine.cpp
     src/design/state_eval.cpp
+    src/design/live_render_bridge.cpp
+    src/design/imgui_renderer.cpp
     src/engine/engine_bridge.cpp
     src/panels/explorer_panel.cpp
     src/panels/editor_panel.cpp
     src/panels/properties_panel.cpp
     src/panels/preview_panel.cpp
-    src/panels/output_panel.cpp
+    src/panels/terminal_panel.cpp
+    src/panels/logs_panel.cpp
     src/panels/titlebar_panel.cpp
     src/panels/toolbox_panel.cpp
     src/panels/designer_canvas.cpp
+    src/panels/pending_edits_panel.cpp
     src/platform/win32_titlebar.cpp
     src/branding/logo_texture.cpp
+    src/plugins/plugin_host.cpp
+    src/plugins/plugin_ui_bridge.cpp
 )
 
 if(WIN32)
@@ -173,9 +179,10 @@ target_include_directories(ava_studio PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/third_party
     ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
+    ${CMAKE_SOURCE_DIR}/runtime/avaui/src
 )
 
-target_link_libraries(ava_studio PRIVATE avalang imgui_docking text_editor)
+target_link_libraries(ava_studio PRIVATE avalang imgui_docking text_editor avalang_ui)
 
 # data/keyword_docs.csv, data/builtin_signatures.csv and
 # data/component_catalog.csv -- the editable
@@ -205,3 +212,11 @@ else()
     find_package(OpenGL REQUIRED)
     target_link_libraries(ava_studio PRIVATE OpenGL::GL)
 endif()
+
+# --- Sample plugins (Fase 0, see PLAN_agente_ia_openrouter.md) --------
+# Built after the ava_studio target above since each plugin's
+# POST_BUILD copy step targets "$<TARGET_FILE_DIR:ava_studio>/plugins".
+# Real plugins (ai_agent, Fase 1+) get their own add_subdirectory line
+# here the same way once they exist.
+add_subdirectory(plugins/hello_world)
+add_subdirectory(plugins/ai_agent)

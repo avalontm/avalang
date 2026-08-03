@@ -42,10 +42,10 @@ void DrawNode(const EngineBridge::PreviewNode& node, std::optional<PropertiesSta
 
 } // namespace
 
-std::optional<PropertiesState> DrawPreviewPanel(const EngineBridge::PreviewNode& root) {
+std::optional<PropertiesState> DrawPreviewPanel(const EngineBridge::PreviewNode& root, bool* p_open) {
     std::optional<PropertiesState> selected;
 
-    ImGui::Begin("Preview");
+    ImGui::Begin("Preview", p_open);
     ImGui::TextDisabled("Component Tree (demo -- see note in engine_bridge.cpp)");
     ImGui::Separator();
     DrawNode(root, selected);

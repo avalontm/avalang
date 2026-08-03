@@ -1,4 +1,5 @@
 #include "parser/AvauiParser.h"
+#include "parser/AvauiPropertyCoercion.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -107,88 +108,13 @@ std::pair<std::string, std::string> SplitProperty(const Line& line) {
     return {key, value};
 }
 
-std::string Unquote(const std::string& s) {
-    if (s.size() >= 2 && s.front() == '"' && s.back() == '"') {
-        return s.substr(1, s.size() - 2);
-    }
-    return s;
-}
-
-bool LooksLikeNumber(const std::string& s, double* out) {
-    if (s.empty()) return false;
-    char* end = nullptr;
-    double v = std::strtod(s.c_str(), &end);
-    if (end != s.c_str() + s.size()) return false;
-    *out = v;
-    return true;
-}
-
-PropertyValue InferValue(const std::string& raw) {
-    if (raw.size() >= 2 && raw.front() == '"' && raw.back() == '"') {
-        return PropertyValue(Unquote(raw));
-    }
-    if (raw == "true") return PropertyValue(true);
-    if (raw == "false") return PropertyValue(false);
-    double num;
-    if (LooksLikeNumber(raw, &num)) return PropertyValue(num);
-    // Anything else (bareword identifier, "a" + b concatenation,
-    // unresolved expression) -- Phase 14 does not evaluate
-    // expressions/state bindings, so it is kept as opaque text. See
-    // AvauiParser.h class comment ("Semantic gaps" / soft fallback).
-    return PropertyValue(raw);
-}
-
-// A handful of property names the spec/real .avaui files use that
-// don't match the name the current (frozen, Phase 13) engine reads --
-// see docs/architecture/17_AVAUI_FILE_FORMAT.md's own example
-// (`gap`, `value`) vs. ui/src/layout/LayoutProperties.h (`spacing`)
-// and ui/src/render_tree/RenderTree.cpp (`text`). Discovered gap,
-// called out in docs/AVAUI_FASE14_PARSER.md. Rather than silently
-// produce a tree that lays out/renders wrong, both the name
-// as-authored and the name the engine actually reads get set.
-const std::unordered_map<std::string, std::string> kPropertyAliases = {
-    {"gap", "spacing"},
-    {"value", "text"},
-};
-
-// Spec keywords (lowercase, as written in .avaui) -> the PascalCase
-// TypeName LayoutEngine/RenderTree recognize. Anything not in this map
-// passes through with only its first letter capitalized -- a
-// deliberate soft fallback, not an error: LayoutEngine already treats
-// any unrecognized TypeName as a generic Stack-like container (see
-// LayoutEngine.h) and RenderTree already treats one as a generic
-// Container (see RenderTree.cpp). A component call like `Navbar()`
-// keeps its own PascalCase name unchanged.
-const std::unordered_map<std::string, std::string> kTypeNames = {
-    {"page", "Page"},         {"container", "Container"},
-    {"row", "Row"},           {"column", "Column"},
-    {"stack", "Stack"},       {"text", "Text"},
-    {"label", "Label"},       {"button", "Button"},
-    {"image", "Image"},       {"input", "TextBox"},
-    {"checkbox", "CheckBox"}, {"icon", "Icon"},
-    {"link", "Link"},         {"textbox", "TextBox"},
-    {"combobox", "ComboBox"}, {"radiobutton", "RadioButton"},
-    {"radio", "RadioButton"}, {"dialog", "Dialog"},
-    {"scrollview", "ScrollView"}, {"scroll", "ScrollView"},
-};
-
-std::string CanonicalTypeName(const std::string& asWritten) {
-    auto it = kTypeNames.find(asWritten);
-    if (it != kTypeNames.end()) return it->second;
-    if (asWritten.empty()) return asWritten;
-    std::string result = asWritten;
-    result[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(result[0])));
-    return result;
-}
-
-void SetPropertyWithAlias(IComponent* component, const std::string& name,
-                           const PropertyValue& value) {
-    component->SetProperty(name, value);
-    auto alias = kPropertyAliases.find(name);
-    if (alias != kPropertyAliases.end() && alias->second != name) {
-        component->SetProperty(alias->second, value);
-    }
-}
+// Unquote/LooksLikeNumber/InferValue/CanonicalTypeName/
+// SetPropertyWithAlias (y los mapas kPropertyAliases/kTypeNames que
+// usaban) fueron extraídos a parser/AvauiPropertyCoercion.h/.cpp
+// (Fase 1 de AVAUI_DESIGNER_REAL_RENDER_PLAN.md) para que Ava Studio's
+// live_render_bridge use exactamente la misma lógica de inferencia de
+// tipo/alias sin duplicarla. Siguen resolviendo aquí sin calificar
+// porque ambos archivos comparten el namespace avalang::ui::parser.
 
 // True if `text` is a no-body component reference call, e.g.
 // "Navbar()" -- a name immediately followed by "(" ... ")" (any

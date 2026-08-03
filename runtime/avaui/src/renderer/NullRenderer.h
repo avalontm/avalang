@@ -60,6 +60,16 @@ protected:
         const std::string& clickHandler,
         const std::string& className
     ) override;
+
+    void OnDrawLink(
+        float x, float y,
+        const char* text,
+        float fontSize, const char* fontName,
+        const Color& color,
+        const std::string& href,
+        const std::string& clickHandler,
+        const std::string& className
+    ) override;
 };
 
 } // namespace ui

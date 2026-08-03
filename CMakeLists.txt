@@ -32,12 +32,15 @@ endif()
 # Subproyectos opcionales (OFF por defecto para que un `cmake ..` plano
 # no necesite red para bajar GLFW/ImGui/nlohmann-json vía FetchContent).
 # ---------------------------------------------------------------------
-if(AVA_BUILD_STUDIO)
-    add_subdirectory(runtime/avastudio)
-endif()
-
 if(AVA_BUILD_UI)
     add_subdirectory(runtime/avaui)
+endif()
+
+if(AVA_BUILD_STUDIO)
+    if(NOT AVA_BUILD_UI)
+        message(FATAL_ERROR "AVA_BUILD_STUDIO requires AVA_BUILD_UI (ava_studio links avalang_ui, see AVAUI_DESIGNER_REAL_RENDER_PLAN.md Fase 2)")
+    endif()
+    add_subdirectory(runtime/avastudio)
 endif()
 
 if(AVA_BUILD_AVAHOST)

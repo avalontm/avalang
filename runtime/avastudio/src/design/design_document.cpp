@@ -67,6 +67,40 @@ void AppendHandlerStub(DesignDocument& doc, const std::string& name) {
     doc.code_behind += "func " + name + "(sender, e)\n    -- TODO: " + name + "\nend\n";
 }
 
+// Fase 6: looks up a node by its user-facing `id` (not node_uid) --
+// what a tool call from the agent refers to, since node_uid is an
+// ephemeral in-memory handle the model never sees. Depth-first,
+// first match, root included. `id` must be non-empty: matching on a
+// blank id would ambiguously hit every unnamed node in the tree.
+DesignNode* FindNodeByIdMutable(DesignNode& root, const std::string& id) {
+    if (id.empty()) return nullptr;
+    if (root.id == id) return &root;
+    for (DesignNode& child : root.children) {
+        if (DesignNode* found = FindNodeByIdMutable(child, id)) return found;
+    }
+    return nullptr;
+}
+
+// Shared by AddComponentNode/EditComponentNode below: replaces the
+// value of any property whose key is already present, appends any
+// that isn't -- same "patch, don't replace wholesale" behavior the
+// Properties panel's own kAddProperty/kValue edits give a node one
+// field at a time (see main.cpp's PropertyEditKind switch), just
+// applied to a batch of fields in one call instead of one per edit.
+void UpsertProperties(DesignNode& node, const std::vector<PropertyRow>& properties) {
+    for (const PropertyRow& incoming : properties) {
+        bool found = false;
+        for (PropertyRow& existing : node.properties) {
+            if (existing.key == incoming.key) {
+                existing.value = incoming.value;
+                found = true;
+                break;
+            }
+        }
+        if (!found) node.properties.push_back(incoming);
+    }
+}
+
 } // namespace
 
 std::string GenerateNodeUid() {
@@ -272,6 +306,38 @@ std::string EnsureClickHandler(DesignDocument& doc, const std::string& uid) {
     AppendHandlerStub(doc, handler);
     doc.dirty = true;
     return handler;
+}
+
+std::string AddComponentNode(DesignDocument& doc, const std::string& parent_id, const std::string& type,
+                              const std::string& id, const std::vector<PropertyRow>& properties) {
+    DesignNode* parent = parent_id.empty() ? &doc.root : FindNodeByIdMutable(doc.root, parent_id);
+    if (!parent) return ""; // parent_id given but no node has that id
+
+    const ComponentTypeInfo* parent_info = FindComponentType(parent->type);
+    if (!parent_info || !parent_info->is_container) return ""; // not a valid drop target
+
+    if (!FindComponentType(type)) return ""; // unknown component type -- refuse rather than guess
+
+    DesignNode node = MakeNode(type); // seeds default_properties + fresh node_uid
+    node.id = id;
+    UpsertProperties(node, properties);
+
+    const std::string new_uid = node.node_uid;
+    parent->children.push_back(std::move(node));
+    doc.dirty = true;
+    return new_uid;
+}
+
+bool EditComponentNode(DesignDocument& doc, const std::string& node_id, const std::vector<PropertyRow>& properties,
+                        const std::string* new_id) {
+    DesignNode* node = FindNodeByIdMutable(doc.root, node_id);
+    if (!node) return false;
+
+    UpsertProperties(*node, properties);
+    if (new_id) node->id = *new_id;
+
+    doc.dirty = true;
+    return true;
 }
 
 } // namespace studio::design

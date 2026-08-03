@@ -35,7 +35,12 @@ struct ExplorerResult {
     std::optional<std::pair<std::string, std::string>> file_renamed;
 };
 
-// Draws the Explorer panel (left dock).
-ExplorerResult DrawExplorerPanel(ExplorerState& state);
+// Draws the Explorer panel (left dock). `p_open`: same convention as
+// ImGui::Begin's own p_open -- pass the address of this panel's runtime
+// visibility flag (see main.cpp's `panel_open` map) so the tab gets a
+// close ("x") button and clicking it flips the flag to false, the same
+// way the View menu's checkbox does. nullptr (the default) draws the
+// panel with no close button, same as before this parameter existed.
+ExplorerResult DrawExplorerPanel(ExplorerState& state, bool* p_open = nullptr);
 
 } // namespace studio

@@ -73,5 +73,18 @@ void NullRenderer::OnDrawButton(
     (void)clickHandler; (void)className;
 }
 
+void NullRenderer::OnDrawLink(
+    float x, float y,
+    const char* text,
+    float fontSize, const char* fontName,
+    const Color& color,
+    const std::string& href,
+    const std::string& clickHandler,
+    const std::string& className
+) {
+    (void)x; (void)y; (void)text; (void)fontSize; (void)fontName;
+    (void)color; (void)href; (void)clickHandler; (void)className;
+}
+
 } // namespace ui
 } // namespace avalang

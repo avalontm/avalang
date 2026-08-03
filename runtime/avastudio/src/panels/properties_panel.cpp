@@ -131,7 +131,7 @@ std::optional<PropertyEdit> DrawEditableRowTable(const char* table_id, std::vect
 
 } // namespace
 
-std::optional<PropertyEdit> DrawPropertiesPanel(PropertiesState& state) {
+std::optional<PropertyEdit> DrawPropertiesPanel(PropertiesState& state, bool* p_open) {
     std::optional<PropertyEdit> committed;
 
     // Persist the two "add new key" text buffers across frames --
@@ -146,7 +146,7 @@ std::optional<PropertyEdit> DrawPropertiesPanel(PropertiesState& state) {
     static std::string add_property_key;
     static std::string add_event_key;
 
-    ImGui::Begin("Properties");
+    ImGui::Begin("Properties", p_open);
 
     if (state.selected_component_type.empty()) {
         ImGui::TextDisabled("Seleccioná un componente en el canvas para ver y editar sus propiedades.");

@@ -23,10 +23,11 @@ namespace studio {
 constexpr const char* kNodeMoveDragDropId = "AVAUI_NODE_MOVE";
 
 // Draws the Design canvas for one open .avaui document: computes
-// layout via design::ComputeLayout, draws each DesignNode as a
-// wireframe rectangle (type/id label, no real per-control styling
-// yet -- see 08_DESIGNER_VIEW_PLAN.md section 8, question 2), and
-// handles three interactions:
+// layout via the real avaui pipeline (LayoutEngine, see
+// design/live_render_bridge.h -- design::ComputeLayout is now only the
+// fallback, see designer_canvas.cpp's DrawNode), draws each DesignNode
+// with its real widget look (SceneCommandWalker::Walk, Fase 4.2) plus
+// a selection/hover/drop-zone overlay, and handles three interactions:
 //
 //   - Click a rectangle -> doc.selected_uid is updated and a
 //     PropertiesState is returned (same struct/shape DrawPreviewPanel

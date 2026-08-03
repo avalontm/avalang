@@ -176,6 +176,29 @@ void RenderCommandSink::DrawButton(
     Emit(cmd);
 }
 
+void RenderCommandSink::DrawLink(
+    float x, float y,
+    const char* text,
+    float fontSize, const char* fontName,
+    const Color& color,
+    const std::string& href,
+    const std::string& clickHandler,
+    const std::string& className
+) {
+    RenderCommand cmd;
+    cmd.type = RenderCommandType::DrawLink;
+    cmd.drawLink.x = x;
+    cmd.drawLink.y = y;
+    cmd.drawLink.text = text;
+    cmd.drawLink.fontSize = fontSize;
+    cmd.drawLink.fontName = fontName;
+    cmd.drawLink.color = color;
+    cmd.drawLink.href = href;
+    cmd.drawLink.clickHandler = clickHandler;
+    cmd.drawLink.className = className;
+    Emit(cmd);
+}
+
 std::unique_ptr<IRenderCommandSink> IRenderCommandSink::Create() {
     return std::make_unique<RenderCommandSink>();
 }

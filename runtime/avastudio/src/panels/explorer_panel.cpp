@@ -348,10 +348,10 @@ void DrawDirectory(const fs::path& dir, ExplorerState& state, ExplorerResult& re
 
 } // namespace
 
-ExplorerResult DrawExplorerPanel(ExplorerState& state) {
+ExplorerResult DrawExplorerPanel(ExplorerState& state, bool* p_open) {
     ExplorerResult result;
 
-    ImGui::Begin("Explorer");
+    ImGui::Begin("Explorer", p_open);
     ImGui::TextDisabled("%s", state.root_dir.c_str());
     ImGui::Separator();
     DrawDirectory(state.root_dir, state, result);

@@ -10,7 +10,7 @@
 namespace studio {
 
 // Result of a compile+run cycle. Kept mainly so callers (main.cpp) can
-// check success/failure without scanning the console; the Output panel
+// check success/failure without scanning the console; the Terminal panel
 // itself now reads the full scrollback from EngineBridge::Console()
 // instead of just the last result (see below).
 struct RunResult {
@@ -37,7 +37,7 @@ struct RunResult {
     std::string error_source;
 };
 
-// One line of the Output panel's execution console -- built to feel like
+// One line of the Terminal panel's execution console -- built to feel like
 // a real terminal (stdout as the script prints it, plus markers for run
 // boundaries and results) instead of a static "last result" label.
 struct ConsoleLine {
@@ -60,9 +60,9 @@ struct ConsoleLine {
     // error_line/error_column (see below) -- carried per-line, not just
     // on the RunResult, so a *previous* run's error line still knows
     // where to jump to even after a later run has overwritten
-    // OutputState::last_run. source empty + line 0 means "unknown",
+    // TerminalState::last_run. source empty + line 0 means "unknown",
     // same convention as RunResult. The Output panel uses these to make
-    // the line clickable (see output_panel.cpp).
+    // the line clickable (see terminal_panel.cpp).
     std::string error_source;
     int error_line = 0;
     int error_column = 0;
@@ -109,7 +109,7 @@ public:
     const std::vector<ConsoleLine>& Console() const { return console_; }
     void ClearConsole() { console_.clear(); }
 
-    // Called by the Output panel's console input box when the user
+    // Called by the Terminal panel's console input box when the user
     // presses Enter. Echoes the text into the console like a terminal
     // would.
     //

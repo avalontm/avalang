@@ -2,6 +2,7 @@
 #define AVA_UI_BASE_RENDERER_H
 
 #include "renderer/IRenderer.h"
+#include "Export.h"
 #include <stack>
 #include <memory>
 #include <string>
@@ -9,7 +10,7 @@
 namespace avalang {
 namespace ui {
 
-class BaseRenderer : public IRenderer {
+class AVA_UI_API BaseRenderer : public IRenderer {
 public:
     BaseRenderer(int width, int height);
     ~BaseRenderer() override = default;
@@ -64,6 +65,16 @@ public:
         const Color& fillColor,
         const Color& borderColor, float borderWidth, float borderRadius,
         bool disabled,
+        const std::string& clickHandler = std::string(),
+        const std::string& className = std::string()
+    ) override;
+
+    void DrawLink(
+        float x, float y,
+        const char* text,
+        float fontSize, const char* fontName,
+        const Color& color,
+        const std::string& href,
         const std::string& clickHandler = std::string(),
         const std::string& className = std::string()
     ) override;
@@ -140,6 +151,16 @@ protected:
         const Color& fillColor,
         const Color& borderColor, float borderWidth, float borderRadius,
         bool disabled,
+        const std::string& clickHandler,
+        const std::string& className
+    ) = 0;
+
+    virtual void OnDrawLink(
+        float x, float y,
+        const char* text,
+        float fontSize, const char* fontName,
+        const Color& color,
+        const std::string& href,
         const std::string& clickHandler,
         const std::string& className
     ) = 0;

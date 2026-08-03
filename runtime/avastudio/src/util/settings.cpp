@@ -69,6 +69,17 @@ StudioSettings LoadSettings() {
         std::string value = Trim(line.substr(eq + 1));
         if (key == "modules_path") {
             settings.modules_path = value;
+        } else if (key == "disabled_plugin") {
+            // One "disabled_plugin=<file_name>" line per disabled
+            // plugin, rather than a single comma-joined value -- a
+            // file name can't contain '\n', so this never needs
+            // escaping, unlike a comma-separated list would if a
+            // plugin file name ever had a comma in it.
+            if (!value.empty()) settings.disabled_plugins.push_back(value);
+        } else if (key == "closed_panel") {
+            // One "closed_panel=<panel name>" line per closed plugin
+            // panel -- see StudioSettings::closed_panels.
+            if (!value.empty()) settings.closed_panels.push_back(value);
         }
     }
     return settings;
@@ -82,6 +93,14 @@ void SaveSettings(const StudioSettings& settings) {
     std::ofstream file(SettingsPath(), std::ios::trunc);
     if (!file) return;
     file << "modules_path=" << settings.modules_path << "\n";
+    for (const std::string& name : settings.disabled_plugins) {
+        if (name.empty()) continue;
+        file << "disabled_plugin=" << name << "\n";
+    }
+    for (const std::string& name : settings.closed_panels) {
+        if (name.empty()) continue;
+        file << "closed_panel=" << name << "\n";
+    }
 }
 
 } // namespace studio

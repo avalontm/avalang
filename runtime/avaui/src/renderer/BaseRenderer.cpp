@@ -87,6 +87,18 @@ void BaseRenderer::ProcessCommands(const std::vector<RenderCommand>& commands) {
                 );
                 break;
 
+            case RenderCommandType::DrawLink:
+                OnDrawLink(
+                    cmd.drawLink.x, cmd.drawLink.y,
+                    cmd.drawLink.text,
+                    cmd.drawLink.fontSize, cmd.drawLink.fontName,
+                    cmd.drawLink.color,
+                    cmd.drawLink.href,
+                    cmd.drawLink.clickHandler,
+                    cmd.drawLink.className
+                );
+                break;
+
             case RenderCommandType::Translate:
                 Translate(cmd.transform.x, cmd.transform.y);
                 break;
@@ -166,6 +178,18 @@ void BaseRenderer::DrawButton(
     OnDrawButton(x, y, width, height, text, fontSize, fontName, textColor,
                  fillColor, borderColor, borderWidth, borderRadius, disabled,
                  clickHandler, className);
+}
+
+void BaseRenderer::DrawLink(
+    float x, float y,
+    const char* text,
+    float fontSize, const char* fontName,
+    const Color& color,
+    const std::string& href,
+    const std::string& clickHandler,
+    const std::string& className
+) {
+    OnDrawLink(x, y, text, fontSize, fontName, color, href, clickHandler, className);
 }
 
 void BaseRenderer::PushClipRect(float x, float y, float width, float height) {

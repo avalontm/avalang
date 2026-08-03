@@ -340,5 +340,51 @@ void HTMLRenderer::OnDrawButton(
     html_ << ">" << (text ? text : "") << "</button>\n";
 }
 
+void HTMLRenderer::OnDrawLink(
+    float x, float y,
+    const char* text,
+    float fontSize, const char* fontName,
+    const Color& color,
+    const std::string& href,
+    const std::string& clickHandler,
+    const std::string& className
+) {
+    // Minimal attribute-safe escape for href -- same rationale as
+    // EscapeHtmlText in SceneCommandWalker.cpp: href is normally a
+    // developer-authored string from the .avaui source, not
+    // end-user input, but escaping the one character that could break
+    // out of the "..." attribute (a literal quote) costs nothing.
+    std::string safeHref;
+    safeHref.reserve(href.size());
+    for (char c : href) {
+        if (c == '"') {
+            safeHref += "&quot;";
+        } else {
+            safeHref += c;
+        }
+    }
+
+    const bool hasClass = !className.empty();
+    html_ << "<a href=\"" << safeHref << "\"";
+    if (hasClass) {
+        html_ << " class=\"" << className << "\" style=\"";
+    } else {
+        html_ << " class=\"ava-element ava-link\" style=\"";
+        html_ << "left: " << x << "px; top: " << y << "px; "
+              << "white-space: nowrap; text-decoration: none; "
+              << "font-size: " << fontSize << "px; "
+              << "font-family: " << (fontName ? fontName : "Arial") << "; "
+              << "color: " << ColorToHex(color) << "; ";
+    }
+    html_ << "opacity: " << currentOpacity_ << "; "
+          << GetTransformCSS() << " "
+          << GetClipCSS()
+          << "\"";
+    if (!clickHandler.empty()) {
+        html_ << " data-event=\"click\" data-handler=\"" << clickHandler << "\"";
+    }
+    html_ << ">" << (text ? text : "") << "</a>\n";
+}
+
 } // namespace ui
 } // namespace avalang

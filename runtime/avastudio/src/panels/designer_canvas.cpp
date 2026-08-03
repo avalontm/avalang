@@ -1,17 +1,26 @@
 #include "panels/designer_canvas.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
+#include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "design/component_catalog.h"
 #include "design/component_resolver.h"
+#include "design/imgui_renderer.h"
 #include "design/layout_engine.h"
+#include "design/live_render_bridge.h"
 #include "design/state_eval.h"
+#include "commands/RenderCommandSink.h"
+#include "commands/SceneCommandWalker.h"
 #include "imgui.h"
 #include "palette.h"
 #include "panels/toolbox_panel.h"
@@ -101,6 +110,19 @@ struct DesignerVmCacheEntry {
     std::optional<design::ComponentResolver> resolver;
     std::optional<design::DesignNode> resolved_root;
     std::unordered_set<std::string> real_uids;
+
+    // Fase 4.1 (AVAUI_DESIGNER_REAL_RENDER_PLAN.md): the real avaui
+    // pipeline output for this tab's `root_to_draw`, rebuilt under the
+    // SAME `needs_rebuild` condition as everything above PLUS whenever
+    // the canvas viewport size changes (layout depends on it, unlike
+    // the VM/resolver). `imgui_renderer` is reconstructed alongside
+    // `live_render` since BaseRenderer stores width/height at
+    // construction time; it has no other state worth preserving across
+    // rebuilds.
+    studio::design::LiveRenderResult live_render;
+    std::unique_ptr<avalang::ui::ImGuiRenderer> imgui_renderer;
+    int live_render_w = -1;
+    int live_render_h = -1;
 };
 
 std::unordered_map<int, DesignerVmCacheEntry> g_designer_vm_cache;
@@ -120,6 +142,81 @@ struct CanvasDeleteRequest {
     std::string node_uid;
 };
 CanvasDeleteRequest g_canvas_delete_request;
+
+// "poder redimensionar arrastrando el handle" -- tracks an in-progress
+// resize drag started from one of the selection frame's handles (see
+// the resize-handle block in DrawNode). Same single-global-slot
+// pattern as CanvasDeleteRequest just above: only one resize can be
+// happening anywhere in the app at a time, so there's nothing to key
+// by tab -- ImGui's own active-item tracking already guarantees only
+// one handle can be the drag source in a given frame. `start_width`/
+// `start_height` are captured once, the frame the drag begins (via
+// ImGui::IsItemActivated()), from whatever the control's width/height
+// was at that instant -- either an existing explicit "width"/"height"
+// property, or (nothing set yet) its current live/estimated size --
+// so the very first drag frame doesn't jump the control to some
+// default size before the user has moved the mouse at all. Every
+// following frame while active just re-applies start + the total
+// mouse delta since activation (ImGui::GetMouseDragDelta), so the
+// control tracks the cursor exactly rather than drifting from
+// re-basing off a per-frame delta.
+struct ResizeDragState {
+    bool active = false;
+    std::string node_uid;
+    bool resize_x = false; // adjust "width"
+    bool resize_y = false; // adjust "height"
+    float start_width = 0.0f;
+    float start_height = 0.0f;
+};
+ResizeDragState g_resize_drag;
+
+// Reads `key` (e.g. "width") off `properties` as a number, same
+// convention PropertyRow already uses everywhere else (display-ready
+// string, parsed on demand) -- returns false (leaving `out`
+// untouched) if the key isn't present or isn't a valid number, so
+// callers can fall back to whatever size the control would otherwise
+// have.
+bool TryGetNumericProperty(const std::vector<PropertyRow>& properties, const char* key, float* out) {
+    for (const PropertyRow& row : properties) {
+        if (row.key != key) continue;
+        try {
+            size_t consumed = 0;
+            const float value = std::stof(row.value, &consumed);
+            if (consumed == 0) return false;
+            *out = value;
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+    return false;
+}
+
+// Writes `value` into `properties` under `key`, updating the existing
+// PropertyRow if one's already there (so resizing an already-sized
+// control doesn't leave a stale duplicate) or appending a new one.
+// Rounded to whole pixels -- avaui's own LayoutEngine reads "width"/
+// "height" as plain numbers (see LayoutEngineImpl.cpp), and whole
+// pixels is what the Properties panel's own numeric fields show for
+// every other size-like value, so a dragged size looks the same
+// whether it came from the handle or was typed in by hand.
+void SetSizeProperty(std::vector<PropertyRow>& properties, const char* key, float value) {
+    const std::string text = std::to_string(static_cast<int>(std::lround(value)));
+    for (PropertyRow& row : properties) {
+        if (row.key == key) {
+            row.value = text;
+            return;
+        }
+    }
+    properties.push_back(PropertyRow{key, text});
+}
+
+// Minimum size a drag can shrink a control to -- purely to stop a fast
+// drag from collapsing a control to 0/negative px (which would then
+// clamp oddly in avaui's own LayoutEngine, or vanish from the canvas
+// entirely with no visible handle left to drag back out from).
+constexpr float kMinResizeDimension = 12.0f;
+
 
 // Fase 10.1: los trampolines de la consola de Preview que vivian aca
 // (PreviewLogTrampoline/PreviewAlertTrampoline/PreviewNavigateTrampoline,
@@ -168,6 +265,52 @@ constexpr float kNodeMarginMax = 12.0f;
 // Purely a designer_canvas.cpp concern, same "cosmetic, doesn't touch
 // layout_engine.cpp's math" spirit as kNodeMargin above.
 constexpr float kHeaderHeight = 20.0f;
+
+// The always-on corner "type chip" (see is_container's chip-drawing
+// branch in DrawNode) -- hoisted to file scope so the real-content
+// container-rect padding below (kRealContainerPadTop) can share the
+// exact same numbers instead of a second, driftable copy.
+constexpr float kChipPadX = 5.0f;
+constexpr float kChipPadY = 2.0f;
+constexpr float kChipHeight = 15.0f;
+
+// BUGFIX (reported: the corner chip -- and the container's own top
+// edge -- painting over its real content at deeper nesting levels,
+// e.g. a "row" chip sitting on top of the first button in that row).
+// Root cause: once a container's rect comes from real content
+// (BoundsFromRealLeafRects, or the empty-container own-rect
+// fallback -- see DrawNode's rect resolution), the box is TIGHT
+// around its children, with none of the slack design::ComputeLayout's
+// old, coarser math used to leave above them. The margin logic just
+// below (kNodeMargin et al) then insets INWARD from whatever rect
+// it's given -- and that inset GROWS with depth (kNodeMarginPerDepth),
+// so a fixed pad here that looked fine for a shallow "column" still
+// got eaten away to nothing (or negative, i.e. actual overlap) a
+// couple of levels deeper, e.g. a "row" nested inside that "column".
+// kRealContainerPadSide is sized so that even at the worst case --
+// kNodeMarginMax eating into it -- there's still a few px of visible
+// gap left on every side; kRealContainerPadTop is just that same
+// margin plus room for the chip itself, so the two stay in lockstep
+// as margin grows/shrinks with depth instead of drifting apart. Only
+// containers get padded outward this way -- leaves stay exactly on
+// their real rect, unpadded.
+constexpr float kRealContainerPadSide = kNodeMarginMax + 4.0f;
+constexpr float kRealContainerPadTop = kChipHeight + kRealContainerPadSide;
+
+// BUGFIX (reported: selection frame reads as glued to/inside the
+// control, confusable with its own label text at small sizes -- e.g.
+// a "Clear" button). Root cause: for a real-rendered leaf
+// (skip_leaf_wireframe below), p0/p1 is the control's true rect
+// SHRUNK inward by kNodeMargin -- that inset exists to separate
+// adjacent wireframe siblings, not to describe where a selection
+// outline should sit. Drawing the selection border/handles at that
+// inset rect put the frame a few px INSIDE the real button's edge
+// instead of around it. kSelectionPad is the classic VB6/Delphi-style
+// gap between a selected control's true bounds and the selection
+// chrome drawn around it -- applied on top of the control's actual
+// (unshrunk) rect, never the wireframe-inset one, so the frame always
+// reads as clearly outside the control with visible breathing room.
+constexpr float kSelectionPad = 4.0f;
 
 // Builds the PropertiesState the rest of the app already knows how to
 // display (properties_panel.h) from a selected DesignNode -- same
@@ -343,6 +486,59 @@ void HandleDropTarget(const design::DesignNode& node, design::DesignDocument& do
                 if (design::DesignNode* real = design::FindNodeByUid(doc.root, node.node_uid)) {
                     real->children.push_back(design::MakeNode(dropped_type));
                     doc.dirty = true;
+                }
+            }
+        } else {
+            // BUGFIX (reported: "after the first control lands inside a
+            // row/column, dropping any more from the Toolbox stops
+            // working"). Root cause: a container's own drop-catching
+            // area is EITHER its header strip OR the leftover empty
+            // body below its real children (see the
+            // "##node_body_drop_area" InvisibleButton further down) --
+            // once a container has a child, that child's OWN hit-area
+            // (a leaf, is_container == false here) sits on top of and
+            // usually covers most/all of the container's real-content
+            // bounding box (see BoundsFromRealLeafRects above), leaving
+            // little or no genuinely empty pixel left for the
+            // body-filler to catch a second drop on. A leaf target used
+            // to just silently ignore a kToolboxDragDropId payload
+            // entirely (only kNodeMoveDragDropId, for reordering an
+            // already-placed node, was accepted here) -- so hovering
+            // the existing child while dragging a NEW component from
+            // the Toolbox did nothing at all.
+            //
+            // Fix: a leaf now also accepts a fresh Toolbox drop,
+            // inserting the new node as its SIBLING (before/after,
+            // same top/bottom-half band as the kNodeMoveDragDropId
+            // reorder case just above) instead of discarding it --
+            // dropping on the top half of an existing child places the
+            // new control right before it, the bottom half right after,
+            // so repeated drops onto/around the same child keep growing
+            // the row/column instead of stalling after one.
+            if (ImGui::AcceptDragDropPayload(kToolboxDragDropId, ImGuiDragDropFlags_AcceptPeekOnly)) {
+                const design::DropZone zone = ComputeDropZone(ImGui::GetMousePos().y, p0, p1, is_container);
+                ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                const ImU32 highlight = palette::U32FromHex(palette::kPrimary);
+                if (zone == design::DropZone::kAfter) {
+                    draw_list->AddLine(ImVec2(p0.x, p1.y), ImVec2(p1.x, p1.y), highlight, 3.0f);
+                } else {
+                    draw_list->AddLine(ImVec2(p0.x, p0.y), ImVec2(p1.x, p0.y), highlight, 3.0f);
+                }
+            }
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kToolboxDragDropId)) {
+                const std::string dropped_type(static_cast<const char*>(payload->Data));
+                if (design::DesignNode* parent = design::FindParentOfUid(doc.root, node.node_uid)) {
+                    std::vector<design::DesignNode>& siblings = parent->children;
+                    const auto it = std::find_if(siblings.begin(), siblings.end(),
+                                                  [&](const design::DesignNode& n) {
+                                                      return n.node_uid == node.node_uid;
+                                                  });
+                    if (it != siblings.end()) {
+                        const design::DropZone zone = ComputeDropZone(ImGui::GetMousePos().y, p0, p1, is_container);
+                        const auto index = (it - siblings.begin()) + (zone == design::DropZone::kAfter ? 1 : 0);
+                        siblings.insert(siblings.begin() + index, design::MakeNode(dropped_type));
+                        doc.dirty = true;
+                    }
                 }
             }
         }
@@ -668,6 +864,83 @@ bool DrawRealWidget(const design::DesignNode& node, const std::string& evaluated
     return handled;
 }
 
+// The bounding box, in the REAL avaui coordinate space, of a
+// container's subtree -- i.e. what its border/chrome/hit-area SHOULD
+// be if it's meant to line up with the real widgets SceneCommandWalker
+// already painted this frame.
+//
+// VERTICAL extent comes purely from unioning LEAF entries in
+// `uid_to_rect` (never a container's own entry): per
+// LayoutEngineImpl::Compute, a container whose cross/main axis
+// resolved to Stretch with nothing intrinsic to size against on that
+// axis gets a rect that fills its entire parent slot -- e.g. a
+// "column" with no explicit height, the sole child of a "page", fills
+// the page's FULL remaining height. Real and correct for the running
+// app, but exactly the "balloons to the parent's full remaining
+// height" case the old BUGFIX comment (git blame) worked around: an
+// invisible rect covering everything below/around the container's
+// actual visible content, silently eating clicks meant for a sibling
+// or nested node underneath. Unioning real LEAVES instead sidesteps
+// that on the Y axis -- the box's height becomes the actual footprint
+// of its real content.
+//
+// HORIZONTAL extent instead unions the container's OWN uid_to_rect
+// entry (when present) together with its leaves' X range. Unlike
+// height, a Row/Column's WIDTH normally comes from real horizontal
+// Stretch against its parent (LayoutProperties.h's ReadAlignment
+// default) -- e.g. a "row" of buttons inside a "column" really does
+// span the column's full content width in the running app, not just
+// the width its buttons happen to occupy. Dropping that (leaf-only
+// bounds on X too, same as Y) made every container's box only as wide
+// as its tightest child, at odds with both the real rendered app AND
+// with "a row/column should span 100% horizontally" -- so X trusts
+// the engine's own answer, Y doesn't. The union (rather than a flat
+// override) is defensive: if a container's own width somehow doesn't
+// fully cover its leaves' X range (e.g. horizontally-overflowing
+// content), the box still never clips tighter than the real content.
+//
+// Returns std::nullopt for a container with no real leaf descendants
+// yet (nothing painted to bound around -- caller falls back to the
+// container's own uid_to_rect entry, and failing that to
+// design::ComputeLayout, same as an empty container always needed).
+std::optional<design::Rect> BoundsFromRealLeafRects(
+        const design::DesignNode& node,
+        const std::unordered_map<std::string, avalang::ui::LayoutRect>& uid_to_rect) {
+    float min_x = std::numeric_limits<float>::max();
+    float min_y = std::numeric_limits<float>::max();
+    float max_x = std::numeric_limits<float>::lowest();
+    float max_y = std::numeric_limits<float>::lowest();
+    bool found = false;
+
+    std::function<void(const design::DesignNode&)> visit = [&](const design::DesignNode& n) {
+        if (n.children.empty()) {
+            const auto it = uid_to_rect.find(n.node_uid);
+            if (it != uid_to_rect.end()) {
+                const avalang::ui::LayoutRect& lr = it->second;
+                min_x = std::min(min_x, static_cast<float>(lr.x));
+                min_y = std::min(min_y, static_cast<float>(lr.y));
+                max_x = std::max(max_x, static_cast<float>(lr.x + lr.width));
+                max_y = std::max(max_y, static_cast<float>(lr.y + lr.height));
+                found = true;
+            }
+            return;
+        }
+        for (const design::DesignNode& child : n.children) visit(child);
+    };
+    visit(node);
+
+    if (!found) return std::nullopt;
+
+    const auto own_it = uid_to_rect.find(node.node_uid);
+    if (own_it != uid_to_rect.end()) {
+        const avalang::ui::LayoutRect& own = own_it->second;
+        min_x = std::min(min_x, static_cast<float>(own.x));
+        max_x = std::max(max_x, static_cast<float>(own.x + own.width));
+    }
+
+    return design::Rect{min_x, min_y, max_x - min_x, max_y - min_y};
+}
+
 // Recursively draws one node's rect (using the already-computed
 // layout) plus its children, updates `out_selected` on click, and
 // wires up HandleDropTarget for containers. `origin` is the canvas's
@@ -684,16 +957,111 @@ bool DrawRealWidget(const design::DesignNode& node, const std::string& evaluated
 // real (editable, droppable) vs. part of an imported component's own
 // file (`real_uids.empty()` means "nothing was resolved this frame,
 // treat every node as real" -- see CollectUids's caller).
+// A Dialog is design-time non-visual: it never sits "in place" in the
+// canvas the way a Button or Column does (see the comment where this is
+// used, in DrawNode's children loop, and DrawDialogTray below). `node.type`
+// holds the as-written AvaLang type name (lowercase, matches DrawRealWidget's
+// checks above), not the CanonicalTypeName() the real avaui pipeline uses.
+bool IsDialogNode(const design::DesignNode& node) { return node.type == "dialog"; }
+
 void DrawNode(design::DesignNode& node, const design::LayoutResult& layout, ImVec2 origin,
               design::DesignDocument& doc, const std::unordered_set<std::string>& real_uids,
               std::optional<PropertiesState>& out_selected, int tab_id,
               std::string* out_generated_handler, AvaVM* state_vm,
               std::unordered_map<std::string, std::string>* eval_cache,
-              const std::string& project_root,
+              const std::string& project_root, bool live_render_painted,
+              const std::unordered_map<std::string, avalang::ui::LayoutRect>* uid_to_rect = nullptr,
               float extra_offset_y = 0.0f, int depth = 0) {
-    const auto it = layout.rects.find(node.node_uid);
-    if (it == layout.rects.end()) return; // shouldn't happen -- ComputeLayout visits every node
-    const design::Rect& r = it->second;
+    // Moved up from further below (was right before the fill/border
+    // draw) -- the rect-resolution fix right after this needs to know
+    // is_container BEFORE picking a rect source, see that comment.
+    const design::ComponentTypeInfo* info = design::FindComponentType(node.type);
+    const bool is_container = info != nullptr && info->is_container;
+
+    // Fase 4.3 (AVAUI_DESIGNER_REAL_RENDER_PLAN.md): `uid_to_rect` --
+    // live_render.uidToRect, from the SAME real avaui LayoutEngine run
+    // that SceneCommandWalker::Walk already painted from in 4.2 -- is
+    // the primary source of a LEAF's rect, so its overlay/hit-area
+    // lines up with the real widget underneath instead of disagreeing
+    // with it (the known, documented gap 4.2 left open).
+    //
+    // (4.3) Leaves use uid_to_rect directly: a leaf's real widget rect
+    // IS what should be clickable/selectable, no separate box to keep
+    // in sync.
+    //
+    // Containers used to skip uid_to_rect entirely (see git blame for
+    // the original "BUGFIX after 4.3 shipped" note) because avaui's
+    // LayoutEngine sizes an unconstrained container to FILL its parent
+    // -- using that raw rect for a container's hit-area made it
+    // balloon to the parent's full remaining height, silently eating
+    // clicks meant for a sibling/nested node underneath. The fix back
+    // then was to fall back to design::ComputeLayout (Studio's own,
+    // separately-implemented layout engine) for every container. That
+    // traded one bug for another: ComputeLayout doesn't know this
+    // component's real padding/spacing/text-measured intrinsic sizes,
+    // so its container rects routinely disagreed with where the real
+    // children actually got painted -- controls appearing offset from
+    // or spilling outside their own container's border.
+    //
+    // BoundsFromRealLeafRects (below) fixes both at once: a container's
+    // box is now the bounding box of its own real LEAF descendants'
+    // uid_to_rect entries -- same coordinate system leaves already
+    // draw in, so it can't disagree with them, and it auto-fits to
+    // content instead of ballooning (since it's built from leaves, not
+    // the container's own possibly-Stretched rect). `layout`
+    // (design::ComputeLayout) remains only the last-resort fallback
+    // for what neither uid_to_rect source covers: an empty container
+    // with no real leaves yet and no rect of its own, the tab_id < 0
+    // uncached path (4.1 never builds a live_render there), and a
+    // live_render build that failed this frame -- same "still show
+    // SOMETHING" spirit as DrawRealWidget's fallback role in 4.2.
+    design::Rect r{};
+    bool have_rect = false;
+    if (uid_to_rect != nullptr && !is_container) {
+        const auto lr_it = uid_to_rect->find(node.node_uid);
+        if (lr_it != uid_to_rect->end()) {
+            r = design::Rect{static_cast<float>(lr_it->second.x), static_cast<float>(lr_it->second.y),
+                              static_cast<float>(lr_it->second.width), static_cast<float>(lr_it->second.height)};
+            have_rect = true;
+        }
+    }
+    // Container rect, see BoundsFromRealLeafRects and the comment
+    // block above for the full reasoning.
+    if (!have_rect && uid_to_rect != nullptr && is_container) {
+        if (const auto bounds = BoundsFromRealLeafRects(node, *uid_to_rect)) {
+            r = *bounds;
+            have_rect = true;
+        } else {
+            // Empty container (nothing real painted under it yet) --
+            // still needs a visible/droppable box, so fall back to its
+            // own real rect if avaui produced one for it.
+            const auto own_it = uid_to_rect->find(node.node_uid);
+            if (own_it != uid_to_rect->end()) {
+                r = design::Rect{static_cast<float>(own_it->second.x), static_cast<float>(own_it->second.y),
+                                  static_cast<float>(own_it->second.width), static_cast<float>(own_it->second.height)};
+                have_rect = true;
+            }
+        }
+        if (have_rect) {
+            // See kRealContainerPadTop/kRealContainerPadSide's comment:
+            // pad this real-content rect outward so the corner chip and
+            // border below have room to sit without cutting into the
+            // real children this box wraps.
+            r.x -= kRealContainerPadSide;
+            r.y -= kRealContainerPadTop;
+            r.w += kRealContainerPadSide * 2.0f;
+            r.h += kRealContainerPadTop + kRealContainerPadSide;
+        }
+    }
+    if (!have_rect) {
+        // Last-resort fallback: no live_render this frame (tab_id < 0
+        // uncached path, or a build that failed -- see uid_to_rect's
+        // header comment), so Studio's own approximate layout is all
+        // there is to draw from.
+        const auto it = layout.rects.find(node.node_uid);
+        if (it == layout.rects.end()) return; // shouldn't happen -- ComputeLayout visits every node
+        r = it->second;
+    }
 
     // Fase 7: `extra_offset_y` accumulates one kHeaderHeight per
     // CONTAINER ancestor between this node and the canvas root (see the
@@ -738,83 +1106,247 @@ void DrawNode(design::DesignNode& node, const design::LayoutResult& layout, ImVe
     // Fill so empty containers (no visible children yet) are still
     // clickable/droppable, not just an invisible zero-content area --
     // slightly tinted for containers vs leaves so nesting reads at a
-    // glance in the wireframe.
-    const design::ComponentTypeInfo* info = design::FindComponentType(node.type);
-    const bool is_container = info != nullptr && info->is_container;
+    // glance in the wireframe. (`info`/`is_container` computed at the
+    // top of this function now, see the rect-resolution bugfix there.)
     const ImU32 fill = is_container ? palette::U32FromHex(palette::kSurface, 0.6f)
                                      : palette::U32FromHex(palette::kCard, 0.9f);
+    // BUGFIX (reported: container chrome -- border, corner chip -- as
+    // visually loud as an actual control, when it should read as
+    // secondary/structural). A container's unselected border now gets
+    // its own, more transparent color instead of sharing `kBorder` at
+    // full opacity with leaf wireframes -- see kSelectionPad/the
+    // is_container branch below for the matching change to a
+    // SELECTED container's outline.
     const ImU32 border = selected ? palette::U32FromHex(palette::kPrimary)
-                                   : palette::U32FromHex(palette::kBorder);
+                                   : (is_container ? palette::U32FromHex(palette::kBorder, 0.45f)
+                                                    : palette::U32FromHex(palette::kBorder));
 
-    draw_list->AddRectFilled(p0, p1, fill, 2.0f);
-    draw_list->AddRect(p0, p1, border, 2.0f, 0, selected ? 2.0f : 1.0f);
-
-    // Fase 10 (diagnóstico punto 4: "el único feedback de selección es
-    // el color del borde... sin overlay, sin handles"): a soft outer
-    // glow just outside the node's own rect, plus small corner handles
-    // -- same visual language most vector/design tools use for "this is
-    // the selected object", on top of (not instead of) the existing
-    // border-color change.
-    if (selected) {
-        constexpr float kHaloPad = 3.0f;
-        constexpr float kHandle = 5.0f;
-        const ImVec2 h0(p0.x - kHaloPad, p0.y - kHaloPad);
-        const ImVec2 h1(p1.x + kHaloPad, p1.y + kHaloPad);
-        draw_list->AddRect(h0, h1, palette::U32FromHex(palette::kPrimary, 0.35f), 3.0f, 0, 1.5f);
-        const ImVec2 corners[4] = {h0, ImVec2(h1.x, h0.y), ImVec2(h0.x, h1.y), h1};
-        for (const ImVec2& c : corners) {
-            draw_list->AddRectFilled(ImVec2(c.x - kHandle * 0.5f, c.y - kHandle * 0.5f),
-                                      ImVec2(c.x + kHandle * 0.5f, c.y + kHandle * 0.5f),
-                                      palette::U32FromHex(palette::kPrimary));
+    // Fase 4.2 (AVAUI_DESIGNER_REAL_RENDER_PLAN.md): once the real
+    // avaui pipeline painted this frame (SceneCommandWalker::Walk, see
+    // DrawDesignerCanvas), a LEAF's own visual comes from that real
+    // widget, painted UNDER this overlay pass -- the old opaque
+    // wireframe fill+border would just cover it, so it's skipped for
+    // leaves in that case. Containers keep their border/header
+    // regardless (see skip_body_fill just below for why the FILL part
+    // is different) -- same reasoning `is_container` already used
+    // above. When `live_render_painted` is false (build failed, or the
+    // tab_id < 0 uncached path -- see cache_entry_for_live_render's
+    // comment), every node keeps the old wireframe so the canvas still
+    // shows something instead of blank leaves.
+    const bool skip_leaf_wireframe = live_render_painted && !is_container;
+    // BUGFIX (reported: container chrome painting over its own real
+    // children): once live_render_painted, a container's children were
+    // already painted for real by SceneCommandWalker::Walk BEFORE this
+    // overlay pass runs (see DrawDesignerCanvas). The container's own
+    // AddRectFilled body-fill below used to still be drawn unconditionally
+    // for every container (only leaves were exempted, via
+    // skip_leaf_wireframe above) -- painted using Studio's OWN layout
+    // (design::ComputeLayout), which sizes an unconstrained container/root
+    // to fill its full available rect. That opaque/semi-opaque fill then
+    // sat ON TOP of the real widgets underneath (e.g. a `row` of buttons
+    // inside a `column` inside `page`), washing them out or hiding them
+    // entirely -- worst for the root `page`, whose fill always spans the
+    // entire canvas. The border+header strip are just outlines/thin bands
+    // and don't obscure content, so those stay for every container
+    // regardless; only the full-body fill is skipped once real pixels are
+    // already there underneath it.
+    const bool skip_body_fill = live_render_painted && is_container;
+    if (!skip_leaf_wireframe) {
+        if (!skip_body_fill) {
+            draw_list->AddRectFilled(p0, p1, fill, 2.0f);
         }
-
-        // Usability fix (companion to the hover-stealing fix above):
-        // once a click could actually reach a small/blank leaf like an
-        // empty `Text`, the halo alone wasn't enough to tell WHAT got
-        // selected -- it reads almost the same whether `page` or a tiny
-        // child inside it is selected, especially when that child has
-        // no visible content yet. A small floating tag with the node's
-        // type (and id, if any) pinned just above its top-left corner
-        // removes the ambiguity at a glance, the same way Figma/Chrome
-        // DevTools label the current selection. Drawn last (after the
-        // halo/handles) so it's always on top; flips to sit just BELOW
-        // the top-left corner instead when there isn't room above it
-        // (e.g. the very first node at the top of the canvas), so it's
-        // never clipped out of view.
-        std::string tag = node.type;
-        if (!node.id.empty()) tag += " · " + node.id;
-        const ImVec2 tag_text_size = ImGui::CalcTextSize(tag.c_str());
-        constexpr float kTagPadX = 6.0f;
-        constexpr float kTagPadY = 3.0f;
-        constexpr float kTagGap = 4.0f;
-        const ImVec2 tag_size(tag_text_size.x + kTagPadX * 2.0f, tag_text_size.y + kTagPadY * 2.0f);
-        const bool room_above = (h0.y - kTagGap - tag_size.y) >= 0.0f;
-        const ImVec2 tag_p0 = room_above ? ImVec2(h0.x, h0.y - kTagGap - tag_size.y)
-                                          : ImVec2(h0.x, h0.y + kTagGap);
-        const ImVec2 tag_p1(tag_p0.x + tag_size.x, tag_p0.y + tag_size.y);
-        draw_list->AddRectFilled(tag_p0, tag_p1, palette::U32FromHex(palette::kPrimary), 3.0f);
-        draw_list->AddText(ImVec2(tag_p0.x + kTagPadX, tag_p0.y + kTagPadY),
-                            palette::U32FromHex(palette::kBackground), tag.c_str());
+        // The plain (unselected-style) border only -- once selected,
+        // the padded selection frame drawn below replaces it, so we
+        // don't end up with two borders (a tight one here plus a
+        // padded one further out) fighting for attention.
+        if (!selected) {
+            draw_list->AddRect(p0, p1, border, 2.0f, 0, 1.0f);
+        }
     }
 
-    // Fase 7: a container gets its own header strip -- a visually
-    // distinct band (slightly lighter than its body fill, with a
-    // separator line under it) across the top kHeaderHeight px of its
-    // rect. This is drawn regardless of whether the container actually
-    // has children (an empty container still benefits from the same
-    // affordance/consistency), and doubles as the container's
-    // exclusive hit-area below (see the InvisibleButton sizing further
-    // down) -- children are drawn/hit-tested starting BELOW this strip
-    // (see the recursive DrawNode call at the end of this function),
-    // so a container's own header never competes with a child's hit
-    // area for the same pixels the way the pre-Fase-7 full-rect
-    // InvisibleButton did.
-    const float header_bottom = std::min(p1.y, p0.y + kHeaderHeight);
+    // Selection chrome, VB6-style: small solid square handles directly
+    // on a frame drawn AROUND the control -- 4 corners + 4 edge
+    // midpoints, 8 total -- the classic "selected control" look from
+    // VB6/Delphi-era visual editors.
+    //
+    // BUGFIX (reported: frame reads as glued to/inside the control,
+    // confusable with its own text at small sizes): this used to draw
+    // directly on p0/p1 -- for a real-rendered leaf, that's the
+    // control's true rect shrunk inward by kNodeMargin (meant to
+    // separate wireframe siblings, not to place a selection outline),
+    // so the frame sat a few px INSIDE the real button instead of
+    // around it. Fix: compute a dedicated selection rect from the
+    // control's actual (unshrunk) bounds -- raw_p0/raw_p1 for a
+    // real-rendered leaf, since that's its true painted edge, or the
+    // already-legible p0/p1 wireframe rect otherwise -- then pad it
+    // outward by kSelectionPad so the frame always sits clearly
+    // OUTSIDE the control with a visible gap, never touching it.
+    if (selected) {
+        const ImVec2 base_sel_p0 = skip_leaf_wireframe ? raw_p0 : p0;
+        const ImVec2 base_sel_p1 = skip_leaf_wireframe ? raw_p1 : p1;
+        const ImVec2 sel_p0(base_sel_p0.x - kSelectionPad, base_sel_p0.y - kSelectionPad);
+        const ImVec2 sel_p1(base_sel_p1.x + kSelectionPad, base_sel_p1.y + kSelectionPad);
+
+        // BUGFIX (reported: a selected CONTAINER reads as loud/heavy as
+        // a selected CONTROL -- same thick frame, same 8 resize-looking
+        // handles -- when it's really just "this is the active node in
+        // the tree", not "here's an editable widget"). A container was
+        // already never resizable this way (see the `!is_container`
+        // guard further down, unchanged), so drawing the full handle
+        // set on one was actively misleading on top of being visually
+        // loud. Containers now get a plain, lower-alpha, no-handle
+        // outline instead -- still clearly "this one's selected", just
+        // subordinate to however a selected CONTROL looks.
+        if (is_container) {
+            const ImU32 container_selected_border = palette::U32FromHex(palette::kPrimary, 0.5f);
+            draw_list->AddRect(sel_p0, sel_p1, container_selected_border, 3.0f, 0, 1.5f);
+        } else {
+            draw_list->AddRect(sel_p0, sel_p1, border, 2.0f, 0, 2.0f);
+    
+            constexpr float kHandle = 6.0f;
+            constexpr float kHandleHalf = kHandle * 0.5f;
+            const float mid_x = (sel_p0.x + sel_p1.x) * 0.5f;
+            const float mid_y = (sel_p0.y + sel_p1.y) * 0.5f;
+            // Skip the edge-midpoint handles (keep only the 4 corners) once
+            // the node is too small for 3 handles to fit along a side
+            // without overlapping -- same idea VB6 itself used for tiny
+            // controls, rather than letting handles collide into a blob.
+            const bool wide_enough = (sel_p1.x - sel_p0.x) >= kHandle * 3.0f;
+            const bool tall_enough = (sel_p1.y - sel_p0.y) >= kHandle * 3.0f;
+            std::vector<ImVec2> handles = {sel_p0, sel_p1, ImVec2(sel_p1.x, sel_p0.y), ImVec2(sel_p0.x, sel_p1.y)};
+            if (wide_enough) {
+                handles.push_back(ImVec2(mid_x, sel_p0.y));
+                handles.push_back(ImVec2(mid_x, sel_p1.y));
+            }
+            if (tall_enough) {
+                handles.push_back(ImVec2(sel_p0.x, mid_y));
+                handles.push_back(ImVec2(sel_p1.x, mid_y));
+            }
+            const ImU32 handle_fill = palette::U32FromHex(palette::kBackground);
+            const ImU32 handle_border = palette::U32FromHex(palette::kPrimary);
+            for (const ImVec2& c : handles) {
+                const ImVec2 hp0(c.x - kHandleHalf, c.y - kHandleHalf);
+                const ImVec2 hp1(c.x + kHandleHalf, c.y + kHandleHalf);
+                draw_list->AddRectFilled(hp0, hp1, handle_fill);
+                draw_list->AddRect(hp0, hp1, handle_border, 0.0f, 0, 1.0f);
+            }
+    
+            // "poder redimencionar un control": the bottom-right corner and
+            // the right/bottom edge-midpoint handles double as real
+            // drag-to-resize controls -- corner adjusts width+height
+            // together, the two edges adjust just one dimension, same
+            // split VB6 itself used. Only for a real, editable leaf: a
+            // container auto-fits to its children (an explicit size here
+            // would just be silently ignored/fought over by that), and a
+            // synthetic node (an imported component's own file, see
+            // `synthetic` above) has no DesignNode in this doc to write
+            // into. Top/left handles stay purely visual, same as before --
+            // this is a flow layout (each node's top-left corner comes
+            // from its parent/siblings, not from the node itself), so
+            // there's no "anchor" a top/left drag could resize away from
+            // without also repositioning the control, which is a
+            // meaningfully bigger feature than resize.
+            if (!synthetic) {
+                const auto ResizeHandle = [&](const char* str_id, ImVec2 center, ImGuiMouseCursor cursor, bool adjust_x,
+                                              bool adjust_y) {
+                    // Hit-zone a couple px larger than the drawn glyph --
+                    // easier to land the drag on without the cursor
+                    // needing pixel-perfect precision.
+                    constexpr float kHitHalf = kHandleHalf + 3.0f;
+                    ImGui::SetCursorScreenPos(ImVec2(center.x - kHitHalf, center.y - kHitHalf));
+                    ImGui::InvisibleButton(str_id, ImVec2(kHitHalf * 2.0f, kHitHalf * 2.0f));
+                    if (ImGui::IsItemHovered() || ImGui::IsItemActive()) {
+                        ImGui::SetMouseCursor(cursor);
+                    }
+                    if (ImGui::IsItemActivated()) {
+                        // Baseline for this drag: whatever explicit
+                        // width/height the node already has, or (nothing
+                        // set yet) its current on-screen size -- so the
+                        // control doesn't jump to some default the instant
+                        // the drag starts, only what the user drags it to.
+                        float start_w = base_sel_p1.x - base_sel_p0.x;
+                        float start_h = base_sel_p1.y - base_sel_p0.y;
+                        TryGetNumericProperty(node.properties, "width", &start_w);
+                        TryGetNumericProperty(node.properties, "height", &start_h);
+                        g_resize_drag = ResizeDragState{true, node.node_uid, adjust_x, adjust_y, start_w, start_h};
+                    }
+                    if (ImGui::IsItemActive() && g_resize_drag.active && g_resize_drag.node_uid == node.node_uid) {
+                        const ImVec2 total_delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f);
+                        if (adjust_x) {
+                            SetSizeProperty(node.properties, "width",
+                                            std::max(kMinResizeDimension, g_resize_drag.start_width + total_delta.x));
+                        }
+                        if (adjust_y) {
+                            SetSizeProperty(node.properties, "height",
+                                            std::max(kMinResizeDimension, g_resize_drag.start_height + total_delta.y));
+                        }
+                        doc.dirty = true;
+                    }
+                    if (ImGui::IsItemDeactivated() && g_resize_drag.node_uid == node.node_uid) {
+                        g_resize_drag.active = false;
+                    }
+                };
+                ResizeHandle("##resize_se", sel_p1, ImGuiMouseCursor_ResizeNWSE, true, true);
+                ResizeHandle("##resize_e", ImVec2(sel_p1.x, mid_y), ImGuiMouseCursor_ResizeEW, true, false);
+                ResizeHandle("##resize_s", ImVec2(mid_x, sel_p1.y), ImGuiMouseCursor_ResizeNS, false, true);
+            }
+        }
+    }
+
+
+
+    // BUGFIX (reported: header band overlapping real controls, and only
+    // containers being selectable -- never buttons/leaves inside them):
+    // the Fase 7 header strip below reserves kHeaderHeight px of layout
+    // space per container ANCESTOR (via child_offset_y at the bottom of
+    // this function) and shifts every descendant down by that much for
+    // BOTH drawing and hit-testing. That's self-consistent in the old
+    // wireframe-only world, where a container's own rect (design::
+    // ComputeLayout) and its children's rects come from that exact same
+    // offset-aware coordinate space.
+    //
+    // But once live_render_painted is true, a LEAF's rect instead comes
+    // from uid_to_rect -- real, absolute coordinates from avaui's own
+    // layout engine, which reserves NO header gap at all (Studio's
+    // header strip doesn't exist in a real running app). Piling the
+    // Fase 7 header offset on top of those already-correct real
+    // coordinates pushes each leaf further and further from where it
+    // was actually painted (one kHeaderHeight per container ancestor,
+    // compounding with nesting depth) -- which is exactly what the
+    // screenshot showed: the header band visually overlapping the real
+    // content above it, AND every leaf's invisible-button hit area
+    // drifting down into empty space below where it's actually drawn,
+    // so clicks over a real button/text never landed on that leaf's
+    // hit area at all -- only a container's own (undrifted, still
+    // full-width) header band happened to catch them, making
+    // containers look like the only selectable thing on the canvas.
+    //
+    // Fix: once real content is painted underneath, a container's own
+    // "always clickable, never covered by a child" affordance becomes a
+    // small corner CHIP instead of a full-width space-reserving band --
+    // it draws on top of a small top-left corner of the container
+    // (same idea as the selection tag above, just always-on rather than
+    // selected-only), and nothing below this function reserves any
+    // space for it. Children keep their real, undrifted positions.
+    const bool header_reserves_space = is_container && !live_render_painted;
+    const float header_bottom = header_reserves_space ? std::min(p1.y, p0.y + kHeaderHeight) : p0.y;
+    ImVec2 chip_p0{}, chip_p1{};
     if (is_container) {
-        draw_list->AddRectFilled(p0, ImVec2(p1.x, header_bottom), palette::U32FromHex(palette::kBorder, 0.55f),
-                                  2.0f, ImDrawFlags_RoundCornersTop);
-        draw_list->AddLine(ImVec2(p0.x, header_bottom), ImVec2(p1.x, header_bottom),
-                            palette::U32FromHex(palette::kBorder), 1.0f);
+        if (header_reserves_space) {
+            draw_list->AddRectFilled(p0, ImVec2(p1.x, header_bottom), palette::U32FromHex(palette::kBorder, 0.55f),
+                                      2.0f, ImDrawFlags_RoundCornersTop);
+            draw_list->AddLine(ImVec2(p0.x, header_bottom), ImVec2(p1.x, header_bottom),
+                                palette::U32FromHex(palette::kBorder), 1.0f);
+        } else {
+            const ImVec2 chip_text_size = ImGui::CalcTextSize(node.type.c_str());
+            const float chip_w = std::min(chip_text_size.x + kChipPadX * 2.0f, std::max(p1.x - p0.x, 1.0f));
+            chip_p0 = p0;
+            chip_p1 = ImVec2(p0.x + chip_w, std::min(p1.y, p0.y + kChipHeight));
+            draw_list->AddRectFilled(chip_p0, chip_p1, palette::U32FromHex(palette::kBorder, 0.45f), 2.0f,
+                                      ImDrawFlags_RoundCornersBottomRight);
+            draw_list->AddText(ImVec2(chip_p0.x + kChipPadX, chip_p0.y + kChipPadY),
+                                palette::U32FromHex(palette::kTextDisabled), node.type.c_str());
+        }
     }
 
     // Empty-state hint: a blank container (no children yet) used to be
@@ -912,8 +1444,24 @@ void DrawNode(design::DesignNode& node, const design::LayoutResult& layout, ImVe
     // edit still shows up in the real control the very next frame, no
     // extra plumbing. Containers are untouched here (`is_container`):
     // their own affordance is the header strip, not a widget.
-    bool widget_drawn = false;
-    if (!is_container) {
+    // Fase 4.2: when the real avaui pipeline already painted this frame
+    // (`live_render_painted`), a leaf's actual look comes from that --
+    // SceneCommandWalker::Walk ran once for the whole tree in
+    // DrawDesignerCanvas, BEFORE this overlay recursion, so its output
+    // is already on the draw list under everything drawn from here on.
+    // DrawRealWidget (the old per-node ImGui-widget approximation) is
+    // now only the FALLBACK for when there's no live_render to paint
+    // from (build failed, or the tab_id < 0 uncached path -- see
+    // DrawDesignerCanvas). Known gap either way until Fase 5
+    // (AVAUI_DESIGNER_REAL_RENDER_PLAN.md): `evaluated_display` (the
+    // state-bound value Fase 6 computed above) is NOT what the real
+    // pipeline shows today -- BuildLiveRender copies `node.properties`
+    // literally, it doesn't resolve `state` bindings yet, so a node
+    // like `text = counter` shows the literal string "counter" via the
+    // Walk, same documented gap as InferValue's "no evalúa
+    // expresiones".
+    bool widget_drawn = live_render_painted && !is_container;
+    if (!widget_drawn && !is_container) {
         const ImVec2 widget_p0(p0.x + 2.0f, p0.y + 2.0f);
         const ImVec2 widget_p1(std::max(widget_p0.x, p1.x - 2.0f), std::max(widget_p0.y, p1.y - 2.0f));
         widget_drawn = DrawRealWidget(node, evaluated_display, widget_p0, widget_p1, project_root);
@@ -946,15 +1494,16 @@ void DrawNode(design::DesignNode& node, const design::LayoutResult& layout, ImVe
     // ANY click inside a container with at least one child landed on
     // that child, never on the container itself -- there was no pixel
     // of the container left to claim it. The fix: a container's hit
-    // area is its header strip ONLY (`hit_p1` below, capped at
-    // kHeaderHeight) -- children start drawing/hit-testing BELOW that
-    // strip (see the recursive call's `extra_offset_y` at the end of
-    // this function), so the header is real, exclusive screen space
-    // that no child ever occupies, regardless of how many children the
-    // container has or how they're nested. A leaf keeps its full rect
-    // as its hit area (unchanged) -- it has no children to compete
-    // with in the first place.
-    const ImVec2 hit_p1 = is_container ? ImVec2(p1.x, header_bottom) : p1;
+    // area is exclusive screen space no child ever occupies -- the
+    // header strip when it reserves layout space (`header_reserves_
+    // space`, the non-live-rendered wireframe fallback), or just the
+    // small corner chip when it doesn't (see the chip/header-space
+    // split above) -- so a container's own affordance never competes
+    // with a child's hit area for the same pixels the way the
+    // pre-Fase-7 full-rect InvisibleButton did. A leaf keeps its full
+    // rect as its hit area (unchanged) -- it has no children to
+    // compete with in the first place.
+    const ImVec2 hit_p1 = !is_container ? p1 : (header_reserves_space ? ImVec2(p1.x, header_bottom) : chip_p1);
     ImGui::SetCursorScreenPos(p0);
     ImGui::InvisibleButton("##node_hit_area",
                             ImVec2(std::max(hit_p1.x - p0.x, 1.0f), std::max(hit_p1.y - p0.y, 1.0f)));
@@ -1010,6 +1559,22 @@ void DrawNode(design::DesignNode& node, const design::LayoutResult& layout, ImVe
                         // en el árbol pudo depender del mismo global
                         // que el handler tocó.
                         eval_cache->clear();
+                        // Fase 4.4 (AVAUI_DESIGNER_REAL_RENDER_PLAN.md):
+                        // verified -- doesn't ALSO need to invalidate
+                        // cache_entry_for_live_render's `live_render`
+                        // here. BuildLiveRender (Fase 2) copies
+                        // node.properties literally into the
+                        // ComponentTree; it doesn't bind `state` at
+                        // all yet (same gap InferValue already had for
+                        // display-prop expressions), so nothing a
+                        // handler mutates in `state_vm`'s globals can
+                        // change what live_render would produce even on
+                        // a rebuild. Revisit together with Fase 5
+                        // ("State bindings en el preview real") when
+                        // BuildLiveRender actually reads `state` --
+                        // that's the point this eval_cache->clear()
+                        // needs a live_render invalidation right next
+                        // to it, not before.
                     }
                     // Anexo 9.18 limitación 2 ("un error de runtime en el
                     // handler no tiene dónde mostrarse") -- sigue sin
@@ -1176,14 +1741,30 @@ void DrawNode(design::DesignNode& node, const design::LayoutResult& layout, ImVe
     // Fase 7: children of a container start below its header strip --
     // `child_offset_y` is `extra_offset_y` (this node's own accumulated
     // shift from ITS ancestors) plus kHeaderHeight when THIS node is a
-    // container (its header claims that space from its children, not
-    // from itself -- see the header comment on `extra_offset_y` at the
-    // top of this function). A leaf has no children to recurse into,
-    // so this is a no-op for it either way.
-    const float child_offset_y = extra_offset_y + (is_container ? kHeaderHeight : 0.0f);
+    // container whose header actually reserves layout space (its
+    // header claims that space from its children, not from itself --
+    // see the header comment on `extra_offset_y` at the top of this
+    // function). Once live_render_painted, `header_reserves_space` is
+    // false (see the chip/header-space split above), so this adds
+    // nothing -- children's real (uid_to_rect) coordinates already
+    // don't leave any such gap, and offsetting them here would just
+    // drift them away from where they were actually painted. A leaf
+    // has no children to recurse into, so this is a no-op for it
+    // either way.
+    const float child_offset_y = extra_offset_y + (header_reserves_space ? kHeaderHeight : 0.0f);
     for (design::DesignNode& child : node.children) {
+        // A Dialog is a non-visual-at-design-time component: LayoutEngine
+        // (LayoutEngineImpl.cpp's IsDialog special case) always centers
+        // it on the whole ROOT viewport regardless of isOpen, because
+        // that's the correct place for it once it's actually open at
+        // runtime. Drawing it inline here with that same rect would mean
+        // every Dialog in the tree -- open or (far more often) closed --
+        // renders as a big box centered over the entire canvas, on top of
+        // everything else. Dialogs are pulled into DrawDialogTray's
+        // separate strip below the canvas instead; see IsDialogNode.
+        if (IsDialogNode(child)) continue;
         DrawNode(child, layout, origin, doc, real_uids, out_selected, tab_id, out_generated_handler, state_vm,
-                 eval_cache, project_root, child_offset_y, depth + 1);
+                 eval_cache, project_root, live_render_painted, uid_to_rect, child_offset_y, depth + 1);
     }
 }
 
@@ -1256,6 +1837,71 @@ float DrawBreadcrumbBar(design::DesignNode& root_to_draw, design::DesignDocument
             }
         }
         ImGui::EndDisabled();
+        ImGui::PopID();
+    }
+    return ImGui::GetFrameHeightWithSpacing();
+}
+
+// Dialogos ocultos (fix): every Dialog anywhere in `node`'s subtree,
+// however deep -- collected as a flat list (label + node_uid) rather
+// than raw DesignNode pointers so it stays valid even if the caller
+// mutates the tree between collecting and drawing (same "look it up
+// again by uid on click" caution DrawBreadcrumbBar already uses).
+// Recurses into every node (dialog or not) so a Dialog nested inside a
+// Container, and even a Dialog nested inside another Dialog, both
+// still show up in the tray.
+struct DialogTrayEntry {
+    std::string label;
+    std::string node_uid;
+};
+
+void CollectDialogNodes(design::DesignNode& node, std::vector<DialogTrayEntry>& out) {
+    for (design::DesignNode& child : node.children) {
+        if (IsDialogNode(child)) {
+            std::string label = child.id.empty() ? child.type : (child.type + " (" + child.id + ")");
+            out.push_back({label, child.node_uid});
+        }
+        CollectDialogNodes(child, out);
+    }
+}
+
+// Dialogos ocultos (fix), Fase 1: a Dialog never sits "in place" in the
+// canvas the way a visible control does -- LayoutEngine always centers
+// it on the whole page viewport regardless of isOpen (see IsDialogNode's
+// comment), so there's no single sensible spot to draw it inline. This
+// draws a VB6/WinForms-style "non-visual components" tray instead: one
+// clickable chip per Dialog in the tree, below the canvas, completely
+// out of the layout flow. Clicking a chip selects that Dialog (feeds
+// Properties, same shape as a normal canvas click). Opening a Dialog's
+// own content in an isolated full-canvas edit mode (double-click a
+// chip -> breadcrumb into it, like `Componente()` imports already let
+// you inspect a resolved subtree) is the planned Fase 2 -- not in this
+// pass. Returns the height used, 0 when the tree has no Dialog at all
+// (same zero-reservation convention as DrawBreadcrumbBar).
+float DrawDialogTray(design::DesignNode& root_to_draw, design::DesignDocument& doc, int tab_id,
+                      std::optional<PropertiesState>& out_selected) {
+    std::vector<DialogTrayEntry> dialogs;
+    CollectDialogNodes(root_to_draw, dialogs);
+    if (dialogs.empty()) return 0.0f;
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("Dialogs (non-visual):");
+    for (size_t i = 0; i < dialogs.size(); ++i) {
+        ImGui::SameLine();
+        ImGui::PushID(static_cast<int>(i));
+        const bool is_selected = (doc.selected_uid == dialogs[i].node_uid);
+        if (is_selected) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        }
+        if (ImGui::SmallButton(dialogs[i].label.c_str())) {
+            doc.selected_uid = dialogs[i].node_uid;
+            if (design::DesignNode* real = design::FindNodeByUid(doc.root, dialogs[i].node_uid)) {
+                out_selected = ToPropertiesState(*real, /*editable=*/true, tab_id);
+            }
+        }
+        if (is_selected) {
+            ImGui::PopStyleColor();
+        }
         ImGui::PopID();
     }
     return ImGui::GetFrameHeightWithSpacing();
@@ -1345,6 +1991,12 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
     AvaVM* state_vm = nullptr;
     std::unordered_map<std::string, std::string>* eval_cache = nullptr;
     design::DesignNode* root_to_draw = &doc.root;
+    // Fase 4.1: only set for tab_id >= 0 -- the live_render rebuild
+    // below needs the canvas viewport size, which isn't known until
+    // after BeginChild/GetContentRegionAvail further down, so it can't
+    // happen inside the tab_id>=0 block above like the VM/resolver do.
+    DesignerVmCacheEntry* cache_entry_for_live_render = nullptr;
+    bool tree_state_rebuilt_this_frame = false;
     std::unordered_set<std::string> local_real_uids; // only used on the tab_id < 0 path
     const std::unordered_set<std::string>* real_uids = &local_real_uids;
     // Only engaged on the tab_id < 0 path -- see the comment above
@@ -1356,6 +2008,7 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
         DesignerVmCacheEntry& entry = g_designer_vm_cache[tab_id];
         const bool needs_rebuild =
             entry.vm == nullptr || entry.last_dirty != doc.dirty || entry.cached_project_root != project_root;
+        tree_state_rebuilt_this_frame = needs_rebuild;
         if (needs_rebuild) {
             if (entry.vm) ava_vm_destroy(entry.vm);
             entry.vm = design::BuildStateVM(doc);
@@ -1399,6 +2052,7 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
         eval_cache = &entry.eval_cache;
         root_to_draw = entry.resolved_root ? &*entry.resolved_root : &doc.root;
         real_uids = &entry.real_uids;
+        cache_entry_for_live_render = &entry;
     } else {
         if (!project_root.empty()) {
             local_resolver.emplace(project_root);
@@ -1420,9 +2074,16 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
     // it's cheap: 0px (no reservation at all) whenever nothing is
     // selected -- "don't reserve space you're not using".
     const float breadcrumb_height = DrawBreadcrumbBar(*root_to_draw, doc, *real_uids, tab_id, selected);
+    // Dialogos ocultos (fix): drawn right after the breadcrumb, above the
+    // scrolling canvas child -- a fixed strip, not part of the
+    // scrollable design surface, same reasoning as the breadcrumb bar
+    // itself (see DrawDialogTray's own comment for why Dialogs live
+    // here instead of inline in the canvas).
+    const float dialog_tray_height = DrawDialogTray(*root_to_draw, doc, tab_id, selected);
     ImVec2 canvas_size = size;
-    if (breadcrumb_height > 0.0f) {
-        canvas_size.y = std::max(size.y - breadcrumb_height, 1.0f);
+    const float reserved_height = breadcrumb_height + dialog_tray_height;
+    if (reserved_height > 0.0f) {
+        canvas_size.y = std::max(size.y - reserved_height, 1.0f);
     }
 
     ImGui::BeginChild("##DesignerCanvas", canvas_size, true, ImGuiWindowFlags_HorizontalScrollbar);
@@ -1454,9 +2115,43 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const design::Rect canvas_rect{0.0f, 0.0f, std::max(avail.x, 1.0f), std::max(avail.y, 1.0f)};
 
+    if (cache_entry_for_live_render != nullptr) {
+        DesignerVmCacheEntry& entry = *cache_entry_for_live_render;
+        const int vw = static_cast<int>(canvas_rect.w);
+        const int vh = static_cast<int>(canvas_rect.h);
+        const bool live_render_stale = !entry.live_render.ok || entry.live_render_w != vw ||
+                                        entry.live_render_h != vh || tree_state_rebuilt_this_frame;
+        if (live_render_stale) {
+            entry.live_render = studio::design::BuildLiveRender(*root_to_draw, vw, vh);
+            entry.live_render_w = vw;
+            entry.live_render_h = vh;
+            entry.imgui_renderer = std::make_unique<avalang::ui::ImGuiRenderer>(vw, vh);
+        }
+    }
+
+    // Fase 4.2: paint the REAL widgets for the whole tree in one pass,
+    // using the real avaui pipeline's own SceneGraph -- BEFORE DrawNode
+    // below, which from here on only draws the selection/hover/drop-
+    // zone overlay on top (see DrawNode's `live_render_painted`
+    // handling). Fase 4.3: DrawNode's overlay rects now come from this
+    // SAME live_render (uidToRect below), not design::ComputeLayout, so
+    // the overlay lines up with what was just painted here -- the
+    // temporary mismatch 4.2 documented is resolved as of 4.3.
+    bool live_render_painted = false;
+    if (cache_entry_for_live_render != nullptr && cache_entry_for_live_render->live_render.ok &&
+        cache_entry_for_live_render->live_render.sceneGraph && cache_entry_for_live_render->imgui_renderer) {
+        DesignerVmCacheEntry& entry = *cache_entry_for_live_render;
+        entry.imgui_renderer->SetTarget(ImGui::GetWindowDrawList(), origin);
+        avalang::ui::RenderCommandSink sink;
+        avalang::ui::SceneCommandWalker::Walk(*entry.live_render.sceneGraph, sink, *entry.imgui_renderer);
+        live_render_painted = true;
+    }
+
     const design::LayoutResult layout = design::ComputeLayout(*root_to_draw, canvas_rect);
+    const std::unordered_map<std::string, avalang::ui::LayoutRect>* uid_to_rect =
+        live_render_painted ? &cache_entry_for_live_render->live_render.uidToRect : nullptr;
     DrawNode(*root_to_draw, layout, origin, doc, *real_uids, selected, tab_id, out_generated_handler, state_vm,
-             eval_cache, project_root);
+             eval_cache, project_root, live_render_painted, uid_to_rect);
 
     // Keep Properties showing the CURRENTLY selected node's live data
     // on every call, not just the one frame a click happened. Before

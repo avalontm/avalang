@@ -65,6 +65,7 @@ set(AVA_UI_SOURCES
     src/renderer/HTMLRenderer.cpp
     # Phase 14 -- Parser .avaui -> ComponentTree
     src/parser/AvauiParser.cpp
+    src/parser/AvauiPropertyCoercion.cpp
     # Phase 14 -- Scene Graph -> Render Commands walker (this phase's
     # own end-to-end deliverable needs it; see AvauiParser.cpp header
     # comment and docs/AVAUI_FASE13_INTERFACE_FREEZE.md)

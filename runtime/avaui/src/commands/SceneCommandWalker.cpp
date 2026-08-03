@@ -157,15 +157,26 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
         // that ancestor's `overflow: auto` <div> (done by drawSubtree
         // below, not by this flat pass -- that path skips scrolled
         // descendants entirely via AncestorIsScrolled).
-        if (const render::IRenderNode* scrollAncestor = NearestScrollAncestor(node)) {
-            const auto scrollRect = scrollAncestor->Rect();
-            x -= static_cast<float>(scrollRect.x);
-            y -= static_cast<float>(scrollRect.y);
+        //
+        // Gated on SupportsScrollRegions(): this offset only makes sense
+        // for a renderer that actually nests children inside a real DOM
+        // containing block (HTMLRenderer). A flat-canvas renderer
+        // (ImGuiRenderer, GdiRenderer) paints every rect in the same
+        // absolute space with no such nesting -- subtracting the
+        // ScrollView's own origin there just shifts every descendant off
+        // its real on-screen position (usually up/left, out of view),
+        // which read as "the ScrollView doesn't render anything".
+        if (renderer.SupportsScrollRegions()) {
+            if (const render::IRenderNode* scrollAncestor = NearestScrollAncestor(node)) {
+                const auto scrollRect = scrollAncestor->Rect();
+                x -= static_cast<float>(scrollRect.x);
+                y -= static_cast<float>(scrollRect.y);
+            }
         }
         const std::string& handler = renderNode->ClickHandler();
         const std::string& cssClass = renderNode->ClassName();
 
-        if (renderNode->Type() == render::RenderNodeType::ScrollView) {
+        if (renderNode->Type() == render::RenderNodeType::ScrollView && renderer.SupportsScrollRegions()) {
             Color fillColor = renderNode->ShouldFill()
                                    ? common::ParseColor(renderNode->BackgroundColor())
                                    : Color{0, 0, 0, 0};
@@ -241,20 +252,25 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
         }
 
         if (renderNode->Type() == render::RenderNodeType::Link) {
-            std::string color = renderNode->ForegroundColor();
-            if (!color.empty() && color[0] != '#') color = "#" + color;
-            std::string html = "<a class=\"ava-element ava-link\" href=\"" + renderNode->Href() +
-                                "\" style=\"position:absolute; left:" + std::to_string(x) +
-                                "px; top:" + std::to_string(y) + "px; white-space:nowrap; " +
-                                "font-size:" + std::to_string(renderNode->FontSize()) +
-                                "px; font-family:" + renderNode->FontName() + "; " +
-                                (color.empty() ? "" : ("color:" + color + "; ")) +
-                                "text-decoration:none;\"";
-            if (!handler.empty()) {
-                html += " data-event=\"click\" data-handler=\"" + handler + "\"";
-            }
-            html += ">" + renderNode->Text() + "</a>";
-            sink.DrawHtmlFragment(html);
+            textStorage.push_back(renderNode->Text());
+            textStorage.push_back(renderNode->FontName());
+            const std::string& text = textStorage[textStorage.size() - 2];
+            const std::string& fontName = textStorage.back();
+
+            // Same default a plain <a> gets from every browser's UA
+            // stylesheet when no color is set explicitly -- classic
+            // "link blue" (#0000EE), not common::ParseColor's generic
+            // black fallback (that one's meant for Button/Text, where
+            // "no color set" should just mean plain body text). Kept
+            // explicit here so all three backends (HTML/ImGui/Gdi)
+            // agree on what an unstyled Link looks like, instead of
+            // only the browser knowing.
+            const std::string& fgColor = renderNode->ForegroundColor();
+            Color textColor = fgColor.empty() ? Color{0, 0, 238, 255} : common::ParseColor(fgColor);
+
+            sink.DrawLink(x, y, text.c_str(),
+                          static_cast<float>(renderNode->FontSize()), fontName.c_str(),
+                          textColor, renderNode->Href(), handler, cssClass);
             return;
         }
 
@@ -425,7 +441,7 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
                 drawSubtree(child, false);
             }
             const render::IRenderNode* rn = node ? node->GetRenderNode() : nullptr;
-            if (rn && rn->Type() == render::RenderNodeType::ScrollView) {
+            if (rn && rn->Type() == render::RenderNodeType::ScrollView && renderer.SupportsScrollRegions()) {
                 sink.DrawHtmlFragment("</div>");
             }
         };

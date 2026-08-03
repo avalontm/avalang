@@ -20,6 +20,7 @@ enum class RenderCommandType : std::uint8_t {
     DrawEllipse,
     DrawHtmlFragment,
     DrawButton,
+    DrawLink,
 };
 
 struct Color {
@@ -87,6 +88,17 @@ struct RenderCommand {
         std::string clickHandler;
         std::string className;
     } drawButton;
+
+    struct {
+        float x, y;
+        const char* text;
+        float fontSize;
+        const char* fontName;
+        Color color;
+        std::string href;
+        std::string clickHandler;
+        std::string className;
+    } drawLink;
 };
 
 } // namespace ui

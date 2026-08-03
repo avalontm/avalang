@@ -1,11 +1,14 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace studio {
 
 struct EditorState; // defined in panels/editor_panel.h
 struct StudioSettings; // defined in util/settings.h
+struct PluginInfo; // defined in plugins/plugin_host.h
+struct RegisteredPanel; // defined in plugins/plugin_host.h
 
 // Bounding box of a drawn UI element in screen coordinates -- the same
 // space as ImGui::GetItemRectMin/Max() on the main viewport. main.cpp
@@ -28,9 +31,10 @@ struct TitleBarResult {
     // clicking them as "drag the titlebar" and the click never reaches
     // ImGui -- see the comment above UpdateHitRegions().
     ScreenRect file_menu_rect;
+    ScreenRect view_menu_rect;
     ScreenRect run_menu_rect;
     ScreenRect about_rect;
-    // True while the File or Run dropdown is open. Windows swallows clicks
+    // True while the File, View, or Run dropdown is open. Windows swallows clicks
     // on the parts of the titlebar strip that aren't registered as extra
     // hit regions (it treats them as HTCAPTION / "drag the window" before
     // the click ever reaches ImGui), so a click meant to dismiss an open
@@ -59,6 +63,27 @@ struct TitleBarResult {
     // (util::SaveSettings).
     bool modules_browse_requested = false;
     bool modules_save_requested = false;
+
+    // "Plugins" menu (see the `plugins` param below). Set to the
+    // file_name of whichever PluginInfo checkbox the user clicked this
+    // frame, "" otherwise -- main.cpp is what actually flips it in
+    // StudioSettings::disabled_plugins, persists that, and calls
+    // PluginHost::Reload(), since this function has no access to
+    // PluginHost or the settings file itself.
+    std::string plugin_toggle_requested;
+
+    // Per-panel visibility toggle -- set by either the "Plugins" modal's
+    // panel list (see the `panels` param below) or the "View" menu's
+    // checkboxes, whichever the user clicked this frame ("" otherwise).
+    // Covers BOTH plugin panels (by RegisteredPanel::name) and built-in
+    // ones (by the literal names in panels/builtin_panels.h -- "Explorer",
+    // "Properties", etc.), since both are just entries in the same
+    // StudioSettings::closed_panels list and the same runtime
+    // `panel_open` map in main.cpp. main.cpp flips it in
+    // closed_panels, persists that, and syncs `panel_open` -- this
+    // function has no access to that map itself, same reasoning as
+    // plugin_toggle_requested above.
+    std::string panel_toggle_requested;
 };
 
 // Draws Ava Studio's VSCode-style title bar: brand mark + name, the
@@ -81,7 +106,29 @@ struct TitleBarResult {
 // this function can drop it into the dialog's text field -- the native
 // folder picker itself has to run in main.cpp (needs the GLFWwindow*),
 // so this is how its result gets back into the dialog a frame later.
+//
+// `plugins`: the current PluginHost::ScanAvailable() snapshot, used
+// only to draw the "Plugins" menu's checkboxes (name, enabled/disabled,
+// currently loaded or not) -- this function never loads/unloads
+// anything itself, see TitleBarResult::plugin_toggle_requested.
+//
+// `panels`: the current PluginHost::Panels() snapshot -- every panel a
+// loaded plugin has registered, regardless of whether the user closed
+// its tab. Drawn as a second checkbox list in the same "Plugins" modal
+// (checked = tab currently visible) so closing a panel from its own tab
+// X still has an easy way back, without hunting for which plugin owns
+// it -- see TitleBarResult::panel_toggle_requested. `closed_panels` is
+// StudioSettings::closed_panels, read here only to know which
+// checkboxes start unchecked.
+//
+// The "View" menu (see kBuiltinPanelNames in panels/builtin_panels.h)
+// reads that same `closed_panels` list to draw a checkbox for every
+// built-in panel (Explorer, Properties, Preview, Terminal, Output),
+// followed by a checkbox for every plugin panel in `panels` -- checked
+// when currently visible, unchecked when closed. Both sections funnel
+// into the same TitleBarResult::panel_toggle_requested field.
 TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings, bool is_maximized,
-                             float height, const std::string& browsed_folder);
+                             float height, const std::string& browsed_folder, const std::vector<PluginInfo>& plugins,
+                             const std::vector<RegisteredPanel>& panels, const std::vector<std::string>& closed_panels);
 
 } // namespace studio

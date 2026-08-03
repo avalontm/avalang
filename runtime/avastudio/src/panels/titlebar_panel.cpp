@@ -1,13 +1,18 @@
 #include "panels/titlebar_panel.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <string>
+#include <string_view>
 
 #include "imgui.h"
 
 #include "branding/logo_texture.h"
 #include "palette.h"
+#include "panels/builtin_panels.h"
 #include "panels/editor_panel.h"
 #include "platform/win32_titlebar.h"
+#include "plugins/plugin_host.h"
 #include "util/settings.h"
 
 namespace studio {
@@ -87,7 +92,8 @@ void DrawCloseIcon(ImDrawList* dl, ImVec2 p0, ImVec2 p1) {
 } // namespace
 
 TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings, bool is_maximized,
-                             float height, const std::string& browsed_folder) {
+                             float height, const std::string& browsed_folder, const std::vector<PluginInfo>& plugins,
+                             const std::vector<RegisteredPanel>& panels, const std::vector<std::string>& closed_panels) {
     TitleBarResult result;
 
     ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -173,6 +179,7 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
     ImGui::SetNextWindowPos(ImVec2(result.file_menu_rect.min_x, result.file_menu_rect.max_y + 2.0f));
     ImGui::SetNextWindowSize(ImVec2(210.0f, 0.0f));
     static bool open_properties_modal = false;
+    static bool open_plugins_modal = false;
     static char modules_path_buf[512] = {};
     if (ImGui::BeginPopup("##FileMenu")) {
         if (ImGui::MenuItem("New File", "Ctrl+N")) {
@@ -213,9 +220,49 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
         if (ImGui::MenuItem("Properties")) {
             open_properties_modal = true;
         }
+        if (ImGui::MenuItem("Plugins...")) {
+            open_plugins_modal = true;
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("Exit", "Alt+F4")) {
             result.quit_requested = true;
+        }
+        ImGui::EndPopup();
+    }
+
+    // --- View menu -------------------------------------------------------
+    // Same VSCode idea as the reference screenshot: one checkbox per
+    // panel that can be shown/hidden, checked when it's currently
+    // visible. Built-ins first (see panels/builtin_panels.h), then a
+    // separator and one entry per plugin panel -- both sections just
+    // read/write the same `closed_panels` list, so a single click
+    // handler (result.panel_toggle_requested) covers either kind; see
+    // its comment in the header for why.
+    ImGui::SameLine(0.0f, 4.0f);
+    if (ImGui::Button("View", menu_btn_size)) {
+        ImGui::OpenPopup("##ViewMenu");
+    }
+    result.view_menu_rect = ItemScreenRect();
+    ImGui::SetNextWindowPos(ImVec2(result.view_menu_rect.min_x, result.view_menu_rect.max_y + 2.0f));
+    ImGui::SetNextWindowSize(ImVec2(200.0f, 0.0f));
+    if (ImGui::BeginPopup("##ViewMenu")) {
+        for (const std::string_view& name : kBuiltinPanelNames) {
+            const std::string name_str(name);
+            const bool visible =
+                std::find(closed_panels.begin(), closed_panels.end(), name_str) == closed_panels.end();
+            if (ImGui::MenuItem(name_str.c_str(), nullptr, visible)) {
+                result.panel_toggle_requested = name_str;
+            }
+        }
+        if (!panels.empty()) {
+            ImGui::Separator();
+            for (const RegisteredPanel& panel : panels) {
+                const bool visible =
+                    std::find(closed_panels.begin(), closed_panels.end(), panel.name) == closed_panels.end();
+                if (ImGui::MenuItem(panel.name.c_str(), nullptr, visible)) {
+                    result.panel_toggle_requested = panel.name;
+                }
+            }
         }
         ImGui::EndPopup();
     }
@@ -250,7 +297,8 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
     // this frame's actual state (a popup that just got closed by
     // MenuItem()/Escape/etc. this same frame should not keep forcing the
     // wider hit region on the next frame).
-    result.any_popup_open = ImGui::IsPopupOpen("##FileMenu") || ImGui::IsPopupOpen("##RunMenu");
+    result.any_popup_open =
+        ImGui::IsPopupOpen("##FileMenu") || ImGui::IsPopupOpen("##ViewMenu") || ImGui::IsPopupOpen("##RunMenu");
 
     if (open_about_modal) {
         ImGui::OpenPopup("About Ava Studio##AboutModal");
@@ -393,6 +441,96 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
         if (ImGui::Button("Save", ImVec2(button_w, 0.0f))) {
             settings.modules_path = modules_path_buf;
             result.modules_save_requested = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(2);
+
+    // --- Plugins modal -----------------------------------------------------
+    // A real window, not a cramped dropdown -- "File > Plugins..." opens
+    // this instead of a popup under a button, same family as the
+    // Properties modal above. Lists every .dll/.so PluginHost found in
+    // plugins/ (see the `plugins` param) with a checkbox each; toggling
+    // one sets result.plugin_toggle_requested for main.cpp to act on
+    // (flip StudioSettings::disabled_plugins, SaveSettings,
+    // PluginHost::Reload -- takes effect immediately, no restart) before
+    // the next PluginHost::ScanAvailable() snapshot comes back around.
+    if (open_plugins_modal) {
+        ImGui::OpenPopup("Plugins##PluginsModal");
+        open_plugins_modal = false;
+    }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(480.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f, 20.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 10.0f));
+    if (ImGui::BeginPopupModal("Plugins##PluginsModal", nullptr,
+                               ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse)) {
+        ImGui::TextColored(palette::FromHex(palette::kTextMuted), "Installed plugins");
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        ImGui::TextWrapped(
+            "Enable or disable a plugin found in the plugins/ folder. Changes apply "
+            "immediately -- no need to restart Ava Studio.");
+        ImGui::Dummy(ImVec2(0.0f, 8.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 6.0f));
+
+        if (plugins.empty()) {
+            ImGui::TextDisabled("No plugins found in plugins/.");
+        } else {
+            // Scrollable list -- caps the modal's height instead of
+            // growing unbounded as more plugins get dropped in.
+            ImGui::BeginChild("##PluginsList", ImVec2(0.0f, 220.0f), true);
+            for (const PluginInfo& plugin : plugins) {
+                bool enabled = plugin.enabled;
+                ImGui::PushID(plugin.file_name.c_str());
+                if (ImGui::Checkbox(plugin.file_name.c_str(), &enabled)) {
+                    // `enabled` already reflects the NEW state ImGui
+                    // just applied to the widget -- main.cpp only needs
+                    // to know *which* plugin changed, it re-derives
+                    // on/off from settings.disabled_plugins itself.
+                    result.plugin_toggle_requested = plugin.file_name;
+                }
+                if (plugin.enabled && !plugin.loaded) {
+                    // Enabled but not currently loaded: either
+                    // LoadAll() rejected it (bad ABI, init failed --
+                    // see the Output panel's log) or a Reload() triggered
+                    // this same frame hasn't run yet.
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(no cargado)");
+                }
+
+                // Fase 9: display name / version / author, one muted
+                // line under the checkbox -- indented to visually
+                // belong to that plugin, not the next one in the list.
+                // Any piece the plugin didn't export is just left out
+                // rather than shown as "unknown"/empty parens.
+                std::string meta_line;
+                if (!plugin.plugin_name.empty()) meta_line += plugin.plugin_name;
+                if (!plugin.version.empty()) meta_line += (meta_line.empty() ? "v" : " v") + plugin.version;
+                if (!plugin.author.empty()) meta_line += (meta_line.empty() ? "" : "  ·  ") + std::string("by ") + plugin.author;
+                if (!meta_line.empty()) {
+                    ImGui::Indent();
+                    ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s", meta_line.c_str());
+                    ImGui::Unindent();
+                }
+
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
+        }
+
+        // Per-panel show/hide (previously a second list in this same
+        // modal) now lives in the "View" menu instead -- see its
+        // dropdown right next to File, which covers both built-in and
+        // plugin panels in one place instead of splitting them across
+        // two different menus.
+
+        ImGui::Dummy(ImVec2(0.0f, 8.0f));
+        const float close_button_w = 90.0f;
+        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - close_button_w - ImGui::GetStyle().WindowPadding.x);
+        if (ImGui::Button("Close", ImVec2(close_button_w, 0.0f))) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::Dummy(ImVec2(0.0f, 2.0f));

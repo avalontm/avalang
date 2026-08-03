@@ -79,6 +79,16 @@ public:
         const std::string& className = std::string()
     ) override;
 
+    void DrawLink(
+        float x, float y,
+        const char* text,
+        float fontSize, const char* fontName,
+        const Color& color,
+        const std::string& href,
+        const std::string& clickHandler = std::string(),
+        const std::string& className = std::string()
+    ) override;
+
     const std::vector<RenderCommand>& GetCommands() const { return commands_; }
 
     const std::stack<ClipRect>& GetClipStack() const { return clipStack_; }

@@ -194,4 +194,32 @@ std::string EnsureClickHandler(DesignDocument& doc, const std::string& uid);
 // need to duplicate that check themselves.
 bool RemoveNode(DesignDocument& doc, const std::string& node_uid);
 
+// Fase 6 (PLAN_agente_ia_openrouter.md): adds a new node of `type` as
+// the last child of the node whose DesignNode::id == `parent_id`.
+// Pass "" for `parent_id` to mean doc.root itself, since the root's
+// own `id` is typically blank and matching on a blank id would
+// otherwise ambiguously match any other unnamed node too. Seeds the
+// new node from the catalog's default_properties same as MakeNode,
+// then overlays `properties` on top (a key already in the defaults
+// gets its value replaced, any other key is appended). Returns the
+// new node's node_uid on success, or "" (doc left untouched) if:
+//   - `parent_id` isn't "" and doesn't match any node's id,
+//   - the resolved parent isn't a container (ComponentTypeInfo::
+//     is_container) per the catalog,
+//   - `type` isn't a known catalog type.
+// Sets doc.dirty = true on success.
+std::string AddComponentNode(DesignDocument& doc, const std::string& parent_id, const std::string& type,
+                              const std::string& id, const std::vector<PropertyRow>& properties);
+
+// Fase 6: edits the node whose DesignNode::id == `node_id` (first
+// match, depth-first from root -- ids are meant to be unique but
+// nothing enforces that today, same caveat as Properties' own id
+// field). Overlays `properties` onto the node's existing properties
+// (same replace-or-append rule as AddComponentNode above) and, if
+// `new_id` is non-null, renames the node to `*new_id`. Returns false
+// (doc untouched) if `node_id` doesn't resolve to any node. Sets
+// doc.dirty = true on success.
+bool EditComponentNode(DesignDocument& doc, const std::string& node_id, const std::vector<PropertyRow>& properties,
+                        const std::string* new_id);
+
 } // namespace studio::design

@@ -71,6 +71,16 @@ public:
         const std::string& className = std::string()
     ) = 0;
 
+    virtual void DrawLink(
+        float x, float y,
+        const char* text,
+        float fontSize, const char* fontName,
+        const Color& color,
+        const std::string& href,
+        const std::string& clickHandler = std::string(),
+        const std::string& className = std::string()
+    ) = 0;
+
     virtual void DrawPath(const char* pathData) {}
 
     virtual void PushClipRect(float x, float y, float width, float height) = 0;

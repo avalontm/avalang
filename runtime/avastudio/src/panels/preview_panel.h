@@ -17,6 +17,12 @@ namespace studio {
 // Clicking a node returns its properties so the caller can feed the
 // Properties panel -- see PROPERTIES_EDITABLE below for what's still
 // read-only.
-std::optional<PropertiesState> DrawPreviewPanel(const EngineBridge::PreviewNode& root);
+//
+// `p_open`: same convention as ImGui::Begin's own p_open -- pass the
+// address of this panel's runtime visibility flag (see main.cpp's
+// `panel_open` map) so the tab gets a close ("x") button that flips it
+// to false, the same way the View menu's checkbox does. nullptr (the
+// default) draws the panel with no close button.
+std::optional<PropertiesState> DrawPreviewPanel(const EngineBridge::PreviewNode& root, bool* p_open = nullptr);
 
 } // namespace studio

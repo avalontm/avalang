@@ -412,22 +412,35 @@ void LayoutEngineImpl::ArrangeRowOrColumn(IComponent* component, LayoutNode* nod
 
     // Pass 1: reserve each child's margin on the main axis, and
     // resolve each child's main-axis content size ("width" for a Row,
-    // "height" for a Column) from, in order: an explicit property, an
-    // explicit `grow = true` (this child claims a share of whatever
-    // main-axis space its fixed/intrinsic siblings don't use -- e.g. a
-    // content column sandwiched between a Navbar and a Footer that
-    // both size to their own content), or (Fase A) this child's own
-    // intrinsic/content-based size if it has one (e.g. a Button/Text
-    // sizes to its label). `grow` deliberately overrides intrinsic
-    // sizing rather than only applying when intrinsic is zero: a
-    // padding-only container (e.g. a Column wrapping a single
-    // `slot()`, whose own intrinsic size is just its padding) would
-    // otherwise be misclassified as "fixed" at its minimal padding
-    // size and never receive the remaining space, which is exactly
-    // the layout a page-content region needs. Only a child with none
-    // of the above -- an explicit-size-less container with no
-    // measurable content, e.g. a plain spacer Row/Column -- falls back
-    // to "auto" (share the remainder), same as before Fase A.
+    // "height" for a Column) from, in order:
+    //
+    //   1. An explicit `width`/`height` property -- always wins,
+    //      whatever kind of child this is.
+    //   2. An explicit `grow = true` -- this child claims a share of
+    //      whatever main-axis space its fixed/intrinsic siblings don't
+    //      use (e.g. a content column sandwiched between a Navbar and
+    //      a Footer that both size to their own content). `grow`
+    //      deliberately overrides intrinsic sizing rather than only
+    //      applying when intrinsic is zero: a padding-only container
+    //      (e.g. a Column wrapping a single `slot()`, whose own
+    //      intrinsic size is just its padding) would otherwise be
+    //      misclassified as "fixed" at its minimal padding size and
+    //      never receive the remaining space.
+    //   3. Any other child -- a nested layout container
+    //      (Row/Column/Stack/Container/Page/ScrollView) OR a leaf/
+    //      atomic control (Button, Text, TextBox, CheckBox, Image,
+    //      ...) -- with no explicit size defaults to "auto" too, same
+    //      as an explicit `grow = true`, WITHOUT needing one: one such
+    //      child fills 100% of the main axis, two split it 50/50,
+    //      three 33/33/33, and so on -- same rule as an author-facing
+    //      Figma-style "fill" default / XAML star-sizing ("*"). A
+    //      child's own intrinsic/content-based footprint (Fase A) is
+    //      deliberately NOT used as a fallback here for either
+    //      containers or leaves: the only way to opt a child out of
+    //      the equal-share pool is an explicit `width`/`height`
+    //      (step 1) -- there is no more "shrink to fit my label"
+    //      default, so the container-vs-leaf distinction this
+    //      function used to make no longer matters here.
     const char* mainProp = isRow ? "width" : "height";
     std::vector<double> childMarginMain(children.size(), 0.0);
     std::vector<double> childMainSize(children.size(), -1.0);
@@ -465,16 +478,13 @@ void LayoutEngineImpl::ArrangeRowOrColumn(IComponent* component, LayoutNode* nod
             continue;
         }
 
-        auto intrinsicIt = intrinsic_.find(children[i]->Id());
-        double intrinsicMain = intrinsicIt != intrinsic_.end()
-            ? (isRow ? intrinsicIt->second.width : intrinsicIt->second.height)
-            : 0.0;
-        if (intrinsicMain > 0.0) {
-            childMainSize[i] = intrinsicMain;
-            fixedTotal += intrinsicMain;
-        } else {
-            ++autoCount;
-        }
+        // Step 3 (see the Pass 1 comment above): any child -- container
+        // or leaf -- with no explicit size and no `grow = true` joins
+        // the equal-share pool. No intrinsic/content-based fallback
+        // here anymore; that's still used elsewhere (e.g.
+        // PlaceComponent's cross-axis sizing), just not as a main-axis
+        // default in Row/Column.
+        ++autoCount;
     }
 
     double sizingPool = std::max(0.0, mainAvailable - totalMarginMain);

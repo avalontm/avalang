@@ -241,5 +241,47 @@ void GdiRenderer::OnDrawButton(
     OnDrawText(x + offsetX, y + offsetY, text, fontSize, fontName, textColor, std::string(), std::string());
 }
 
+void GdiRenderer::OnDrawLink(
+    float x, float y,
+    const char* text,
+    float fontSize, const char* fontName,
+    const Color& color,
+    const std::string& href,
+    const std::string& clickHandler,
+    const std::string& className
+) {
+    // No real in-app navigation target on desktop (no browser/DOM to
+    // hand `href` to) -- same documented "web works, desktop stub" gap
+    // as IRenderer.h's SupportsScrollRegions comment. What WAS missing
+    // (the actual bug) is that this used to fall all the way through
+    // to OnDrawHtmlFragment, a no-op here, so a Link rendered as
+    // nothing at all. Drawing the label as real, underlined text is
+    // strictly better than that even without live navigation: the
+    // control is visible, positioned, and its `click` handler (if any)
+    // still fires through the normal hit-testing path other controls
+    // use -- clickHandler/href/className aren't needed for the draw
+    // itself, just kept in the signature for parity with the other
+    // backends.
+    (void)href;
+    (void)clickHandler;
+    (void)className;
+    if (!memDC_ || !text) return;
+
+    HFONT font = CreateFontA(
+        -static_cast<int>(fontSize), 0, 0, 0, FW_NORMAL, FALSE, TRUE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+        (fontName && fontName[0]) ? fontName : "Segoe UI"
+    );
+
+    HFONT oldFont = static_cast<HFONT>(SelectObject(memDC_, font));
+    SetTextColor(memDC_, ToColorRef(color));
+
+    TextOutA(memDC_, static_cast<int>(x), static_cast<int>(y), text, static_cast<int>(lstrlenA(text)));
+
+    SelectObject(memDC_, oldFont);
+    DeleteObject(font);
+}
+
 } // namespace ui
 } // namespace avalang
