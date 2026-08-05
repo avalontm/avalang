@@ -4,6 +4,8 @@
 #include "imgui.h"
 #include "palette.h"
 
+#include <string>
+
 namespace studio {
 
 namespace {
@@ -18,7 +20,7 @@ void DrawCatalogRow(const design::ComponentTypeInfo& info) {
 
     // The whole row is the drag source -- payload is just the type
     // string, the designer canvas is the one that knows how to turn
-    // that into a real DesignNode (via design::MakeNode) on drop.
+    // that into a real IComponent (via design::AddComponentNode) on drop.
     if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
         ImGui::SetDragDropPayload(kToolboxDragDropId, info.type.c_str(),
                                    info.type.size() + 1); // +1: NUL terminator, see designer_canvas.cpp
@@ -39,22 +41,18 @@ void DrawToolboxPanel() {
     ImGui::TextDisabled("Arrastrá un control al lienzo de Design");
     ImGui::Separator();
 
-    // Catalog is already grouped Layout / Content / Interactive in
-    // declaration order (see component_catalog.cpp) -- this just
-    // re-derives a two-way Layout/Controles split from is_container
-    // instead of adding a parallel "group" field to ComponentTypeInfo
-    // for a distinction only this panel cares about. Tracked as a bool
-    // rather than comparing header strings so grouping doesn't depend
-    // on string-literal identity.
+    // Catalog is already sorted by ComponentTypeInfo::order and carries
+    // its own ComponentTypeInfo::category (both come from
+    // data/component_catalog.csv, see B.6 in PLAN_UNIFICADO_AVAUI.md) --
+    // this just draws a new header each time the category changes.
     bool header_drawn = false;
-    bool last_was_container = false;
+    std::string last_category;
     for (const design::ComponentTypeInfo& info : design::GetComponentCatalog()) {
-        if (!header_drawn || info.is_container != last_was_container) {
+        if (!header_drawn || info.category != last_category) {
             if (header_drawn) ImGui::Spacing();
-            ImGui::TextColored(palette::FromHex(palette::kPrimaryLight), "%s",
-                                info.is_container ? "Layout" : "Controles");
+            ImGui::TextColored(palette::FromHex(palette::kPrimaryLight), "%s", info.category.c_str());
             header_drawn = true;
-            last_was_container = info.is_container;
+            last_category = info.category;
         }
         DrawCatalogRow(info);
     }

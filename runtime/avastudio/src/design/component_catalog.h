@@ -25,13 +25,18 @@ struct ComponentTypeInfo {
     std::string display_name; // Toolbox label, e.g. "Button"
     std::vector<PropertyRow> default_properties; // seeded onto a new instance
     bool is_container = false; // true = valid drop target for other components
+    int order = 0;             // Toolbox row order, from data/component_catalog.csv
+    std::string category;      // Toolbox group header, from data/component_catalog.csv
+    std::string icon;          // reserved for a future real icon set
 };
 
-// Fixed catalog for now -- the component set from PROGRESS.md's
-// AvaLang.UI table (Column/Row/Stack/Grid/Flex layout; Text/Image/
-// Spacer/Divider/Link content; Button/TextBox/CheckBox/RadioButton
-// interactive). Returns a reference to a function-local static, so it's
-// built once and safe to call every frame from the Toolbox panel.
+// Fase 9 (plan unificado avastudio/avaui, Parte B): construido a partir
+// de `avalang::ui::registry::GetComponentTypeRegistry()` -- avaui es la
+// unica fuente de verdad para tipos y defaults; ver B.4 en
+// PLAN_UNIFICADO_AVAUI.md. Devuelve una referencia a un static
+// local-a-la-funcion, construido una sola vez (el registro de avaui no
+// cambia en caliente), seguro de llamar cada frame desde el panel del
+// Toolbox.
 const std::vector<ComponentTypeInfo>& GetComponentCatalog();
 
 // Looks up one entry by ComponentTypeInfo::type. Returns nullptr if

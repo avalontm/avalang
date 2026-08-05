@@ -43,24 +43,56 @@ uint64_t ComputeContentHash(const std::string& content) {
     return std::hash<std::string>{}(content);
 }
 
-// --- Breakpoint rendering (per-request viewport instead of a single
-// fixed 1280x720 scaled with CSS -- see docs discussion on why: the
-// HTMLRenderer transform: scale() approach never reflows, it only
-// stretches/shrinks the same 1280x720 layout, so narrow windows either
-// distort (independent sx/sy) or letterbox (uniform scale). Below,
-// LayoutEngine::Compute is instead run against a *different* viewport
-// size for narrow devices, so Row/Column/grow are placed natively for
-// that size -- no scaling, no distortion, no empty margins. ---
+// --- Responsive rendering (per-request viewport instead of a single
+// fixed 1280x720 scaled with CSS -- this is "Fase C, opcion 2" from
+// docs/AVAUI_NATIVE_RENDERING_FIX_PLAN.md, deferred at the time to its
+// own phase; implemented here. The old HTMLRenderer transform: scale()
+// approach never reflowed, it only stretched/shrunk the same 1280x720
+// layout, so windows with a different aspect ratio either distorted
+// (independent sx/sy, never actually used) or letterboxed (uniform
+// scale, what shipped) with empty margin on one axis. Below,
+// LayoutEngine::Compute instead runs against the browser's *actual*
+// window.innerWidth/innerHeight (see avaui_vw/avaui_vh cookies), so
+// Row/Column/grow are placed natively for that exact size -- no
+// scaling, no distortion, no letterboxing, and HTMLRenderer renders
+// `.ava-viewport` at 100%/100% instead of a fixed px box (see
+// HTMLRenderer::EmitHTMLHeader/Footer). A resize big enough to matter
+// (see kViewportResizeThresholdPx) round-trips through the same
+// avaui_vw/avaui_vh + reload mechanism as the first-paint detection
+// script below, so LayoutEngine actually re-runs at the new size
+// instead of a client-side CSS transform faking it. ---
 
 // Below this width (in the `avaui_vw` cookie, itself window.innerWidth
-// from the browser) a request renders at the mobile viewport instead
-// of the 1280x720 default. Matches common phone/tablet breakpoints
-// (Tailwind's `md:` is 768); picked here rather than exposed as a CLI
-// option because AvaUI has no per-project breakpoint config yet.
+// from the browser) a request loads the project's hand-authored
+// `*_mobile.avaui` variant instead of the desktop source (see
+// ApplyMobileVariantOverrides below) -- LayoutEngineImpl has no
+// wrap/reflow of its own, so a Row built for a 1280px-wide design
+// doesn't automatically restack into something narrow-screen-shaped;
+// swapping to an author-provided mobile variant is how AvaUI covers
+// that instead. Matches common phone/tablet breakpoints (Tailwind's
+// `md:` is 768); picked here rather than exposed as a CLI option
+// because AvaUI has no per-project breakpoint config yet. Independent
+// of viewport *sizing*, which below now always uses the browser's real
+// window.innerWidth/innerHeight rather than a fixed mobile box -- this
+// constant only decides which authored source file to render.
 constexpr int kMobileBreakpointPx = 700;
-constexpr int kMobileViewportWidth = 390;
-constexpr int kMobileViewportHeight = 844;
 constexpr const char* kViewportCookieName = "avaui_vw=";
+constexpr const char* kViewportHeightCookieName = "avaui_vh=";
+
+// A resize has to move the window by at least this many logical px on
+// either axis before the client bothers updating the viewport
+// cookie(s) and re-fetching (see the resize listener EventScriptTag()
+// emits). Without a floor, continuous drag-resizing would trigger a
+// fetch on every animation frame; this also caps how many distinct
+// `cacheKey` viewport buckets bytecodeCache_ accumulates per session
+// (see AvaHostApp::RenderAvaUiRoute's cacheKey, which already includes
+// viewportWidth x viewportHeight) since the client rounds the reported
+// size to this same granularity before writing the cookie. Single
+// definition -- ViewportDetectScriptTag() (first paint) and
+// EventScriptTag()'s resize listener (every later resize) both read
+// this same constant directly, no cross-file/cross-library duplicate to
+// keep in sync.
+constexpr int kViewportResizeThresholdPx = 24;
 
 // Name of the cookie that carries a browser's session id (see
 // core/session_manager.h). HttpOnly (never readable from page JS --
@@ -108,17 +140,23 @@ std::string BuildSessionSetCookie(const std::string& sessionId, int ttlSeconds) 
            "; HttpOnly; SameSite=Lax";
 }
 
-// Reads `avaui_vw=<int>` out of a raw "Cookie" request header (e.g.
-// "avaui_vw=390; other=x"). Returns false (leaves outWidth untouched)
-// if the cookie is absent or not a plain integer -- callers then know
-// to send ViewportDetectScriptTag() so the browser sets it and reloads
-// once, instead of silently guessing a width.
-bool TryReadViewportCookie(const std::string& cookieHeader, int& outWidth) {
-    size_t pos = cookieHeader.find(kViewportCookieName);
+// Reads `cookieName<int>` out of a raw "Cookie" request header (e.g.
+// cookieName == "avaui_vw=" matches "avaui_vw=390; other=x"). Returns
+// false (leaves outValue untouched) if the cookie is absent or not a
+// plain integer -- callers then know to send ViewportDetectScriptTag()
+// so the browser sets it and reloads once, instead of silently
+// guessing a size. Shared by both the width (avaui_vw) and height
+// (avaui_vh) viewport cookies -- previously each had its own bespoke
+// parser (TryReadViewportCookie, width-only); unified when height was
+// added so the two don't drift the way BuildImportMap's allowlist did
+// (see known_component_properties.h's own comment on that).
+bool TryReadIntCookie(const std::string& cookieHeader, const char* cookieName, int& outValue) {
+    const std::string needle(cookieName);
+    size_t pos = cookieHeader.find(needle);
     while (pos != std::string::npos) {
         const bool atBoundary = (pos == 0) || (cookieHeader[pos - 1] == ' ');
         if (atBoundary) {
-            const size_t valueStart = pos + std::string(kViewportCookieName).size();
+            const size_t valueStart = pos + needle.size();
             size_t valueEnd = cookieHeader.find(';', valueStart);
             const std::string valueStr = cookieHeader.substr(
                 valueStart, valueEnd == std::string::npos ? std::string::npos : valueEnd - valueStart);
@@ -126,7 +164,7 @@ bool TryReadViewportCookie(const std::string& cookieHeader, int& outWidth) {
                 size_t consumed = 0;
                 int parsed = std::stoi(valueStr, &consumed);
                 if (consumed > 0) {
-                    outWidth = parsed;
+                    outValue = parsed;
                     return true;
                 }
             } catch (...) {
@@ -134,27 +172,35 @@ bool TryReadViewportCookie(const std::string& cookieHeader, int& outWidth) {
                 // match earlier in the header
             }
         }
-        pos = cookieHeader.find(kViewportCookieName, pos + 1);
+        pos = cookieHeader.find(needle, pos + 1);
     }
     return false;
 }
 
 // Inline, blocking <head> script emitted only when the incoming
-// request had no `avaui_vw` cookie yet (first visit, or an expired
-// one). Reads the real window.innerWidth, stores it, and reloads once
-// so the *next* request -- this same route, now with the cookie set --
-// picks the right viewport server-side. Runs before the rest of <head>
-// so the reload happens as early as possible; the desktop-sized first
-// paint is a one-time cost on first visit, not on every navigation
+// request had no `avaui_vw`/`avaui_vh` cookies yet (first visit, or an
+// expired one). Reads the real window.innerWidth/innerHeight, rounds
+// each to kViewportResizeThresholdPx (same granularity the resize
+// listener in HTMLRenderer::EmitHTMLFooter uses, so a fresh visit and a
+// later resize land on the same cacheKey buckets instead of always
+// missing bytecodeCache_), stores them, and reloads once so the *next*
+// request -- this same route, now with both cookies set -- picks the
+// right viewport server-side. Runs before the rest of <head> so the
+// reload happens as early as possible; the desktop-sized first paint
+// is a one-time cost on first visit, not on every navigation
 // (subsequent requests, including the click-handler POSTs the event
-// pipeline already round-trips on every interaction, carry the cookie).
+// pipeline already round-trips on every interaction, carry the
+// cookies).
 std::string ViewportDetectScriptTag() {
     return
         "<script>\n"
         "(function(){\n"
         "  if (document.cookie.indexOf('avaui_vw=') !== -1) return;\n"
-        "  var w = window.innerWidth;\n"
+        "  var step = " + std::to_string(kViewportResizeThresholdPx) + ";\n"
+        "  var w = Math.round(window.innerWidth / step) * step;\n"
+        "  var h = Math.round(window.innerHeight / step) * step;\n"
         "  document.cookie = 'avaui_vw=' + w + '; path=/; max-age=86400; SameSite=Lax';\n"
+        "  document.cookie = 'avaui_vh=' + h + '; path=/; max-age=86400; SameSite=Lax';\n"
         "  location.reload();\n"
         "})();\n"
         "</script>\n";
@@ -425,21 +471,36 @@ HttpResponse AvaHostApp::RenderAvaUiRoute(const std::string& filePath, const Req
         return HttpResponse::ServerError(ErrorResponseText("could not read route file", filePath));
     }
 
-    // Breakpoint: pick a viewport size for LayoutEngine::Compute from
-    // the `avaui_vw` cookie (see TryReadViewportCookie above) instead
-    // of always defaulting to 1280x720. No cookie yet -> render at the
-    // desktop default (safe first paint) and ask the browser to report
-    // its real width via ViewportDetectScriptTag, which reloads once.
-    int viewportWidth = 1280;
-    int viewportHeight = 720;
+    // Pick a viewport size for LayoutEngine::Compute from the
+    // `avaui_vw`/`avaui_vh` cookies (see TryReadIntCookie above)
+    // instead of always defaulting to 1280x720, and instead of the old
+    // two-bucket "desktop or exactly 390x844" choice: LayoutEngine now
+    // always runs against the browser's actual (rounded) window size,
+    // so Row/Column/grow reflow natively for whatever window the
+    // person actually has open -- see the "Responsive rendering"
+    // comment up top. No cookies yet -> render at the desktop default
+    // (safe first paint) and ask the browser to report its real size
+    // via ViewportDetectScriptTag, which reloads once.
+    int viewportWidth = kDefaultViewportWidth;
+    int viewportHeight = kDefaultViewportHeight;
     bool haveViewportCookie = false;
     {
         int cookieWidth = 0;
-        if (TryReadViewportCookie(cookieHeader, cookieWidth)) {
+        int cookieHeight = 0;
+        bool haveWidth = TryReadIntCookie(cookieHeader, kViewportCookieName, cookieWidth);
+        bool haveHeight = TryReadIntCookie(cookieHeader, kViewportHeightCookieName, cookieHeight);
+        if (haveWidth && haveHeight && cookieWidth > 0 && cookieHeight > 0) {
             haveViewportCookie = true;
-            if (cookieWidth > 0 && cookieWidth < kMobileBreakpointPx) {
-                viewportWidth = kMobileViewportWidth;
-                viewportHeight = kMobileViewportHeight;
+            viewportWidth = cookieWidth;
+            viewportHeight = cookieHeight;
+            // Below the mobile breakpoint, still swap in the project's
+            // hand-authored `*_mobile.avaui` variant (LayoutEngineImpl
+            // has no automatic reflow into a narrow-screen layout on
+            // its own) -- but size it against the real window, not a
+            // fixed 390x844 phone box, so e.g. a tablet in portrait
+            // still fills its actual height instead of Ietterboxing
+            // inside an 844px-tall canvas.
+            if (cookieWidth < kMobileBreakpointPx) {
                 source = ApplyMobileVariantOverrides(source, options_.projectRoot);
             }
         }
@@ -560,7 +621,7 @@ HttpResponse AvaHostApp::RenderAvaUiRoute(const std::string& filePath, const Req
     }
 
     const std::string bodyEndTags = BuildBodyEndTags(manifest);
-    const std::string eventScript = EventScriptTag();
+    const std::string eventScript = EventScriptTag(viewportWidth, viewportHeight);
     const std::string consoleScript = BuildConsoleScript(consoleOutput);
     if (!bodyEndTags.empty() || !eventScript.empty() || !consoleScript.empty()) {
         const std::string closeBody = "</body>\n</html>\n";
@@ -774,7 +835,7 @@ std::string AvaHostApp::HotReloadScriptTag() const {
         "</script>\n";
 }
 
-std::string AvaHostApp::EventScriptTag() const {
+std::string AvaHostApp::EventScriptTag(int viewportWidth, int viewportHeight) const {
     // Client half of the Fase 2 event flow (rendering/event_binder.h /
     // the avaui pipeline's event bridge): delegated `click` listener on <body> so
     // it also catches elements a handler re-renders in later (no
@@ -791,6 +852,15 @@ std::string AvaHostApp::EventScriptTag() const {
     // survives the swap (it's on the body element itself, not on any of
     // the children being replaced), so it doesn't need to be re-attached
     // after every update.
+    //
+    // Fase C, opcion 2 (responsive resize) reuses the exact same
+    // fetch-a-fresh-render-and-graft-it-in mechanism below (applyHtml())
+    // instead of the old approach of a full location.reload() -- a
+    // reload re-parses <head>, re-runs every <script> (including the
+    // hot-reload poll, which briefly runs twice), and re-fetches every
+    // asset, all of which this event flow already learned to avoid for
+    // the click/data-handler case. Same fix, same code path, applied to
+    // resize.
     std::ostringstream out;
     out << "<script>\n"
            "(function(){\n"
@@ -808,6 +878,32 @@ std::string AvaHostApp::EventScriptTag() const {
            "      el = el.parentElement;\n"
            "    }\n"
            "    return null;\n"
+           "  }\n"
+           "  function applyHtml(html){\n"
+           "    var next = new DOMParser().parseFromString(html, 'text/html');\n"
+           "    if (next.title) document.title = next.title;\n"
+           "    var nextViewport = next.getElementById('ava-viewport');\n"
+           "    var viewport = document.getElementById('ava-viewport');\n"
+           "    var scrollRoot = (nextViewport && viewport) ? viewport : document.body;\n"
+           "    var oldScrollviews = scrollRoot.querySelectorAll('.ava-scrollview');\n"
+           "    var savedScroll = [];\n"
+           "    oldScrollviews.forEach(function(el){\n"
+           "      savedScroll.push({top: el.scrollTop, left: el.scrollLeft});\n"
+           "    });\n"
+           "    if (nextViewport && viewport) {\n"
+           "      viewport.innerHTML = nextViewport.innerHTML;\n"
+           "    } else {\n"
+           "      document.body.innerHTML = next.body.innerHTML;\n"
+           "    }\n"
+           "    var newScrollRoot = (nextViewport && viewport) ? viewport : document.body;\n"
+           "    var newScrollviews = newScrollRoot.querySelectorAll('.ava-scrollview');\n"
+           "    newScrollviews.forEach(function(el, i){\n"
+           "      var pos = savedScroll[i];\n"
+           "      if (!pos) return;\n"
+           "      el.scrollTop = pos.top;\n"
+           "      el.scrollLeft = pos.left;\n"
+           "    });\n"
+           "    return newScrollRoot;\n"
            "  }\n"
            "  function fireHandler(handler, preventDefault, ev, sourceEl){\n"
            "    if (preventDefault && ev) ev.preventDefault();\n"
@@ -830,29 +926,7 @@ std::string AvaHostApp::EventScriptTag() const {
            "      headers: {'Content-Type': 'application/x-www-form-urlencoded'},\n"
            "      body: body\n"
            "    }).then(function(r){ return r.text(); }).then(function(html){\n"
-           "      var next = new DOMParser().parseFromString(html, 'text/html');\n"
-           "      if (next.title) document.title = next.title;\n"
-           "      var nextViewport = next.getElementById('ava-viewport');\n"
-           "      var viewport = document.getElementById('ava-viewport');\n"
-           "      var scrollRoot = (nextViewport && viewport) ? viewport : document.body;\n"
-           "      var oldScrollviews = scrollRoot.querySelectorAll('.ava-scrollview');\n"
-           "      var savedScroll = [];\n"
-           "      oldScrollviews.forEach(function(el){\n"
-           "        savedScroll.push({top: el.scrollTop, left: el.scrollLeft});\n"
-           "      });\n"
-           "      if (nextViewport && viewport) {\n"
-           "        viewport.innerHTML = nextViewport.innerHTML;\n"
-           "      } else {\n"
-           "        document.body.innerHTML = next.body.innerHTML;\n"
-           "      }\n"
-           "      var newScrollRoot = (nextViewport && viewport) ? viewport : document.body;\n"
-           "      var newScrollviews = newScrollRoot.querySelectorAll('.ava-scrollview');\n"
-           "      newScrollviews.forEach(function(el, i){\n"
-           "        var pos = savedScroll[i];\n"
-           "        if (!pos) return;\n"
-           "        el.scrollTop = pos.top;\n"
-           "        el.scrollLeft = pos.left;\n"
-           "      });\n"
+           "      var newScrollRoot = applyHtml(html);\n"
            "      if (focusState) {\n"
            "        var restored = newScrollRoot.querySelector('[data-comp-id=\"' + focusState.compId + '\"]');\n"
            "        if (restored) {\n"
@@ -900,6 +974,25 @@ std::string AvaHostApp::EventScriptTag() const {
            "    if (!handler) return;\n"
            "    fireHandler(handler, false, ev);\n"
            "  }, true);\n"
+           "\n"
+           "  var resizeStep = " << kViewportResizeThresholdPx << ";\n"
+           "  var lastW = " << viewportWidth << ", lastH = " << viewportHeight << ";\n"
+           "  var resizeTimer = null;\n"
+           "  function applyResize(){\n"
+           "    var w = Math.round(window.innerWidth / resizeStep) * resizeStep;\n"
+           "    var h = Math.round(window.innerHeight / resizeStep) * resizeStep;\n"
+           "    if (w === lastW && h === lastH) return;\n"
+           "    document.cookie = 'avaui_vw=' + w + '; path=/; max-age=86400; SameSite=Lax';\n"
+           "    document.cookie = 'avaui_vh=' + h + '; path=/; max-age=86400; SameSite=Lax';\n"
+           "    fetch(location.pathname + location.search).then(function(r){ return r.text(); }).then(function(html){\n"
+           "      lastW = w; lastH = h;\n"
+           "      applyHtml(html);\n"
+           "    }).catch(function(){ location.reload(); });\n"
+           "  }\n"
+           "  window.addEventListener('resize', function(){\n"
+           "    if (resizeTimer) clearTimeout(resizeTimer);\n"
+           "    resizeTimer = setTimeout(applyResize, 200);\n"
+           "  });\n"
            "})();\n"
            "</script>\n";
     return out.str();

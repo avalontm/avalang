@@ -135,7 +135,6 @@ set(STUDIO_SOURCES
     src/design/design_document.cpp
     src/design/avaui_text.cpp
     src/design/component_resolver.cpp
-    src/design/layout_engine.cpp
     src/design/state_eval.cpp
     src/design/live_render_bridge.cpp
     src/design/imgui_renderer.cpp
@@ -143,6 +142,7 @@ set(STUDIO_SOURCES
     src/panels/explorer_panel.cpp
     src/panels/editor_panel.cpp
     src/panels/properties_panel.cpp
+    src/panels/settings_panel.cpp
     src/panels/preview_panel.cpp
     src/panels/terminal_panel.cpp
     src/panels/logs_panel.cpp
@@ -220,3 +220,60 @@ endif()
 # here the same way once they exist.
 add_subdirectory(plugins/hello_world)
 add_subdirectory(plugins/ai_agent)
+
+# ---------------------------------------------------------------------
+# Fase A.4 (plan unificado avastudio/avaui) -- test de regresion: un
+# .avaui con Grid y Flex, a traves de ParseAvauiText -> BuildLiveRender
+# (el mismo camino que designer_canvas.cpp y avahost), confirmando que
+# cada celda/hijo recibe un rect distinto (antes de A.3 caian todos al
+# fallback de ArrangeStack y se superponian). Solo depende de
+# avalang/avalang_ui -- no linkea ImGui/GLFW.
+# ---------------------------------------------------------------------
+option(AVA_BUILD_STUDIO_TESTS "Build avastudio unit/regression test executables" OFF)
+if(AVA_BUILD_STUDIO_TESTS)
+    add_executable(ava_studio_grid_flex_regression_test
+        ${CMAKE_SOURCE_DIR}/tests/unit/avastudio/GridFlexRegressionTest.cpp
+        src/design/design_document.cpp
+        src/design/avaui_text.cpp
+        src/design/live_render_bridge.cpp
+    )
+    target_include_directories(ava_studio_grid_flex_regression_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
+        ${CMAKE_SOURCE_DIR}/runtime/avaui/src
+    )
+    target_link_libraries(ava_studio_grid_flex_regression_test PRIVATE avalang avalang_ui)
+    target_compile_features(ava_studio_grid_flex_regression_test PRIVATE cxx_std_20)
+
+    # Fase B.4 (plan unificado avastudio/avaui) -- component_catalog.cpp
+    # migrado a wrapper de avalang::ui::registry::GetComponentTypeRegistry().
+    # Prueba el bug de B.0 (isEnabled vs enabled), que spacer/divider
+    # siguen fuera (B.3), y el criterio de aceptacion "un control
+    # agregado solo en avaui aparece en el catalogo de avastudio sin
+    # tocar avastudio" con un tipo temporal.
+    add_executable(ava_studio_component_catalog_wrapper_test
+        ${CMAKE_SOURCE_DIR}/tests/unit/avastudio/ComponentCatalogWrapperTest.cpp
+        src/design/component_catalog.cpp
+        src/util/csv.cpp
+        src/util/data_dir.cpp
+    )
+    target_include_directories(ava_studio_component_catalog_wrapper_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/runtime/avaui/src
+    )
+    target_link_libraries(ava_studio_component_catalog_wrapper_test PRIVATE avalang_ui)
+    target_compile_features(ava_studio_component_catalog_wrapper_test PRIVATE cxx_std_20)
+
+    add_executable(ava_studio_catalog_registry_cross_test
+        ${CMAKE_SOURCE_DIR}/tests/unit/avastudio/CatalogRegistryCrossTest.cpp
+        src/design/component_catalog.cpp
+        src/util/csv.cpp
+        src/util/data_dir.cpp
+    )
+    target_include_directories(ava_studio_catalog_registry_cross_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/runtime/avaui/src
+    )
+    target_link_libraries(ava_studio_catalog_registry_cross_test PRIVATE avalang_ui)
+    target_compile_features(ava_studio_catalog_registry_cross_test PRIVATE cxx_std_20)
+endif()

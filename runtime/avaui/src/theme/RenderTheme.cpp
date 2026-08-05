@@ -1,5 +1,6 @@
 #include "theme/RenderTheme.h"
 #include "components/PropertyValue.h"
+#include "layout/FontRegistry.h"
 #include <algorithm>
 #include <cctype>
 
@@ -13,6 +14,39 @@ static std::string Lowercase(const std::string& s) {
     return result;
 }
 
+// Closes the last gap in "one font file, one source of truth": a
+// theme role (button/body/link/label) can point at a project-supplied
+// TTF via ThemeFont::filePath (AvaStudio's font picker is meant to
+// copy the chosen file into assets/fonts/ and fill this in -- see the
+// field's doc comment in ITheme.h). Until now nothing actually read
+// filePath; FontRegistry stayed on the built-in default for every
+// role regardless of what the theme said, so a project with a custom
+// heading font would still get JetBrains Mono metrics. This is called
+// everywhere ApplyTypeDefaults resolves a role's ThemeFont, so
+// layout measurement, GdiRenderer, and HTMLRenderer all end up
+// resolving `font.name` to the SAME bytes the theme configured, not
+// just the fallback default.
+//
+// RegisterFontFile re-reads and re-parses the file on every call, so
+// this only pays that cost once per family name per process --
+// HasFont(name) short-circuits every subsequent theme lookup for a
+// role that resolves to the same already-registered family (the
+// common case: the same ThemeFont gets asked for on every component
+// of that role).
+static ThemeFont ResolveFont(ITheme* theme, const std::string& role) {
+    ThemeFont font = theme->Font(role);
+    if (!font.filePath.empty() && !layout::FontRegistry::Instance().HasFont(font.name)) {
+        // Best-effort: if the file is missing or fails to parse as a
+        // TTF/OTF, FontRegistry::RegisterFontFile leaves the previous
+        // registration (or the built-in default) in place -- `font`
+        // is still returned with its filePath/name as configured, so
+        // renderers keep drawing the label the theme asked for even
+        // though measurement fell back to the default metrics.
+        layout::FontRegistry::Instance().RegisterFontFile(font.name, font.filePath);
+    }
+    return font;
+}
+
 // Apply defaults based on component type
 static void ApplyTypeDefaults(IComponent* comp, ITheme* theme) {
     std::string type = Lowercase(comp->TypeName());
@@ -24,11 +58,11 @@ static void ApplyTypeDefaults(IComponent* comp, ITheme* theme) {
             comp->SetProperty("backgroundColor", PropertyValue(color.hex));
         }
         if (!comp->GetProperty("fontSize")) {
-            auto font = theme->Font("button");
+            auto font = ResolveFont(theme, "button");
             comp->SetProperty("fontSize", PropertyValue(static_cast<double>(font.sizePoints)));
         }
         if (!comp->GetProperty("fontName")) {
-            auto font = theme->Font("button");
+            auto font = ResolveFont(theme, "button");
             comp->SetProperty("fontName", PropertyValue(font.name));
         }
         if (!comp->GetProperty("textColor")) {
@@ -47,11 +81,11 @@ static void ApplyTypeDefaults(IComponent* comp, ITheme* theme) {
     // Text
     if (type == "text") {
         if (!comp->GetProperty("fontSize")) {
-            auto font = theme->Font("body");
+            auto font = ResolveFont(theme, "body");
             comp->SetProperty("fontSize", PropertyValue(static_cast<double>(font.sizePoints)));
         }
         if (!comp->GetProperty("fontName")) {
-            auto font = theme->Font("body");
+            auto font = ResolveFont(theme, "body");
             comp->SetProperty("fontName", PropertyValue(font.name));
         }
         if (!comp->GetProperty("textColor")) {
@@ -63,11 +97,11 @@ static void ApplyTypeDefaults(IComponent* comp, ITheme* theme) {
     // Link
     if (type == "link") {
         if (!comp->GetProperty("fontSize")) {
-            auto font = theme->Font("link");
+            auto font = ResolveFont(theme, "link");
             comp->SetProperty("fontSize", PropertyValue(static_cast<double>(font.sizePoints)));
         }
         if (!comp->GetProperty("fontName")) {
-            auto font = theme->Font("link");
+            auto font = ResolveFont(theme, "link");
             comp->SetProperty("fontName", PropertyValue(font.name));
         }
         if (!comp->GetProperty("textColor")) {
@@ -91,7 +125,7 @@ static void ApplyTypeDefaults(IComponent* comp, ITheme* theme) {
             comp->SetProperty("borderWidth", PropertyValue(static_cast<double>(spacing.borderWidthPx)));
         }
         if (!comp->GetProperty("fontSize")) {
-            auto font = theme->Font("body");
+            auto font = ResolveFont(theme, "body");
             comp->SetProperty("fontSize", PropertyValue(static_cast<double>(font.sizePoints)));
         }
     }
@@ -111,7 +145,7 @@ static void ApplyTypeDefaults(IComponent* comp, ITheme* theme) {
             comp->SetProperty("borderWidth", PropertyValue(static_cast<double>(spacing.borderWidthPx)));
         }
         if (!comp->GetProperty("fontSize")) {
-            auto font = theme->Font("body");
+            auto font = ResolveFont(theme, "body");
             comp->SetProperty("fontSize", PropertyValue(static_cast<double>(font.sizePoints)));
         }
     }
@@ -127,21 +161,42 @@ static void ApplyTypeDefaults(IComponent* comp, ITheme* theme) {
     // Container/Row/Column (layout containers)
     if (type == "container" || type == "row" || type == "column" || 
         type == "stack" || type == "hstack" || type == "vstack" ||
-        type == "scrollview" || type == "scroll") {
-        if (!comp->GetProperty("backgroundColor")) {
+        type == "scrollview" || type == "scroll" || type == "flex" ||
+        type == "grid" || type == "page") {
+        if (!comp->GetProperty("backgroundColor") &&
+            (type == "container" || type == "row" || type == "column" ||
+             type == "stack" || type == "hstack" || type == "vstack" ||
+             type == "scrollview" || type == "scroll")) {
             auto color = theme->Color("surface");
             comp->SetProperty("backgroundColor", PropertyValue(color.hex));
+        }
+        if (!comp->GetProperty("padding")) {
+            auto spacing = theme->Spacing();
+            comp->SetProperty("padding", PropertyValue(static_cast<double>(spacing.containerPaddingPx)));
+        }
+    }
+
+    // Row/Column/Flex/Grid/ScrollView: the only types that actually
+    // read "spacing" (see LayoutEngineImpl::ArrangeRowOrColumn/
+    // ArrangeGrid) -- filling it in on Stack/Page/Container would be
+    // inert, so it's kept as a narrower list than the padding block
+    // above.
+    if (type == "row" || type == "column" || type == "flex" || type == "grid" ||
+        type == "scrollview" || type == "scroll") {
+        if (!comp->GetProperty("spacing")) {
+            auto spacing = theme->Spacing();
+            comp->SetProperty("spacing", PropertyValue(static_cast<double>(spacing.containerGapPx)));
         }
     }
 
     // Label
     if (type == "label") {
         if (!comp->GetProperty("fontSize")) {
-            auto font = theme->Font("label");
+            auto font = ResolveFont(theme, "label");
             comp->SetProperty("fontSize", PropertyValue(static_cast<double>(font.sizePoints)));
         }
         if (!comp->GetProperty("fontName")) {
-            auto font = theme->Font("label");
+            auto font = ResolveFont(theme, "label");
             comp->SetProperty("fontName", PropertyValue(font.name));
         }
         if (!comp->GetProperty("textColor")) {

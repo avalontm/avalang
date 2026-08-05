@@ -33,6 +33,14 @@ fs::path ConfigPath() {
     return ConfigDir() / "config.json";
 }
 
+std::string ProviderToString(AgentProvider provider) {
+    return provider == AgentProvider::Custom ? "custom" : "openrouter";
+}
+
+AgentProvider ProviderFromString(const std::string& s) {
+    return s == "custom" ? AgentProvider::Custom : AgentProvider::OpenRouter;
+}
+
 } // namespace
 
 AgentConfig LoadAgentConfig() {
@@ -45,6 +53,10 @@ AgentConfig LoadAgentConfig() {
         file >> parsed;
         config.api_key = parsed.value("api_key", "");
         config.last_model = parsed.value("last_model", "");
+        config.provider = ProviderFromString(parsed.value("provider", "openrouter"));
+        config.custom_base_url = parsed.value("custom_base_url", "");
+        config.custom_api_key = parsed.value("custom_api_key", "");
+        config.custom_model = parsed.value("custom_model", "");
     } catch (...) {
     }
     return config;
@@ -58,6 +70,10 @@ void SaveAgentConfig(const AgentConfig& config) {
     json j;
     j["api_key"] = config.api_key;
     j["last_model"] = config.last_model;
+    j["provider"] = ProviderToString(config.provider);
+    j["custom_base_url"] = config.custom_base_url;
+    j["custom_api_key"] = config.custom_api_key;
+    j["custom_model"] = config.custom_model;
 
     std::ofstream file(ConfigPath(), std::ios::trunc);
     if (!file) return;

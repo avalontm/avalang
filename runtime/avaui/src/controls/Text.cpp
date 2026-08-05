@@ -1,6 +1,7 @@
 #include "controls/Text.h"
 #include "components/ComponentTree.h"
 #include "components/PropertyValue.h"
+#include "registry/ComponentTypeRegistry.h"
 
 namespace avalang::ui::controls {
 
@@ -25,5 +26,20 @@ void SetTextValue(IComponent* textComponent, const std::string& text) {
     }
     textComponent->SetProperty("text", PropertyValue(text));
 }
+
+namespace {
+struct TextTypeRegistration {
+    TextTypeRegistration() {
+        using namespace avalang::ui::registry;
+        RegisterComponentType({
+            "Text", "Text", /*is_container=*/false,
+            {
+                {"text", PropertyValue("Text")},
+            },
+        });
+    }
+};
+static TextTypeRegistration _text_type_registration;
+} // namespace
 
 } // namespace avalang::ui::controls

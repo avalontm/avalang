@@ -7,10 +7,16 @@ namespace ui {
 namespace components {
 
 Component::Component(ComponentId id, std::string typeName)
-    : id_(id), typeName_(std::move(typeName)) {}
+    : id_(id), typeName_(std::move(typeName)) {
+    node_id_ = "n" + std::to_string(id);
+}
 
 ComponentId Component::Id() const {
     return id_;
+}
+
+const std::string& Component::NodeId() const {
+    return node_id_;
 }
 
 const std::string& Component::TypeName() const {
@@ -40,6 +46,15 @@ bool Component::HasProperty(const std::string& name) const {
 
 void Component::RemoveProperty(const std::string& name) {
     properties_.erase(name);
+}
+
+std::vector<std::string> Component::PropertyNames() const {
+    std::vector<std::string> names;
+    names.reserve(properties_.size());
+    for (const auto& [key, _] : properties_) {
+        names.push_back(key);
+    }
+    return names;
 }
 
 std::vector<IComponent*>& Component::MutableSlot(const std::string& slot) {

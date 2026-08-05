@@ -1,6 +1,7 @@
 #include "controls/Image.h"
 #include "components/ComponentTree.h"
 #include "components/PropertyValue.h"
+#include "registry/ComponentTypeRegistry.h"
 
 namespace avalang::ui::controls {
 
@@ -25,5 +26,21 @@ void SetImageSource(IComponent* imageComponent, const std::string& src) {
     }
     imageComponent->SetProperty("source", PropertyValue(src));
 }
+
+namespace {
+struct ImageTypeRegistration {
+    ImageTypeRegistration() {
+        using namespace avalang::ui::registry;
+        RegisterComponentType({
+            "Image", "Image", /*is_container=*/false,
+            {
+                {"source", PropertyValue("")},
+                {"alt", PropertyValue("")},
+            },
+        });
+    }
+};
+static ImageTypeRegistration _image_type_registration;
+} // namespace
 
 } // namespace avalang::ui::controls

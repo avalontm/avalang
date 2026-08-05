@@ -194,7 +194,7 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
             };
             // direction "horizontal" scrolls X only; anything else
             // (absent, "vertical", typo) is the vertical default, same
-            // soft-fallback convention as IsHorizontalScrollView in the
+            // soft-fallback convention as IsHorizontalDirection in the
             // layout engine.
             const bool isHorizontal = renderNode->ScrollDirection() == "horizontal";
             std::string html =

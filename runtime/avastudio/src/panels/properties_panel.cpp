@@ -65,7 +65,7 @@ std::optional<PropertyEdit> DrawEditableRowTable(const char* table_id, std::vect
             // Bound directly to row.value -- this is what makes the
             // table itself reflect keystrokes immediately, no extra
             // "editing buffer" struct to keep in sync. What's NOT
-            // committed to the real DesignNode until deactivation
+            // committed to the real IComponent until deactivation
             // below is only the *source-of-truth* copy living in some
             // EditorTab's DesignDocument -- see PropertyEdit's comment
             // in properties_panel.h.
@@ -89,7 +89,7 @@ std::optional<PropertyEdit> DrawEditableRowTable(const char* table_id, std::vect
             // Mirror the removal locally too, so the table doesn't
             // still show the just-deleted row for one extra frame
             // while main.cpp's write-back (which patches the *real*
-            // DesignNode, not this PropertiesState's own copy) catches
+            // IComponent, not this PropertiesState's own copy) catches
             // up on its own next call -- same "why mirror this here"
             // reasoning as tab.design.dirty/tab.dirty in main.cpp.
             rows.erase(rows.begin() + remove_index);
@@ -157,7 +157,7 @@ std::optional<PropertyEdit> DrawPropertiesPanel(PropertiesState& state, bool* p_
     if (state.editable) {
         // Type as an editable combo, seeded from the same catalog the
         // Toolbox drags from -- picking a different type only changes
-        // DesignNode::type; it deliberately does NOT re-seed/merge
+        // IComponent::typeName; it deliberately does NOT re-seed/merge
         // default_properties for the new type (that could silently
         // discard hand-edited values), so existing properties/events
         // just carry over untouched even if some no longer apply to
@@ -169,7 +169,7 @@ std::optional<PropertyEdit> DrawPropertiesPanel(PropertiesState& state, bool* p_
                 const bool is_selected = (info.type == state.selected_component_type);
                 if (ImGui::Selectable(info.display_name.c_str(), is_selected)) {
                     if (info.type != state.selected_component_type) {
-                        committed = PropertyEdit{state.source_tab_id, state.selected_node_uid,
+                        committed = PropertyEdit{state.source_tab_id, state.selected_node_id,
                                                   PropertyEditKind::kType, "", info.type};
                         state.selected_component_type = info.type; // local mirror, see removal comment above
                     }
@@ -183,7 +183,7 @@ std::optional<PropertyEdit> DrawPropertiesPanel(PropertiesState& state, bool* p_
         ImGui::SetNextItemWidth(-FLT_MIN);
         ImGui::InputText("##id_value", &state.selected_component_id);
         if (ImGui::IsItemDeactivatedAfterEdit()) {
-            committed = PropertyEdit{state.source_tab_id, state.selected_node_uid, PropertyEditKind::kId, "",
+            committed = PropertyEdit{state.source_tab_id, state.selected_node_id, PropertyEditKind::kId, "",
                                       state.selected_component_id};
         }
     } else {
@@ -203,7 +203,7 @@ std::optional<PropertyEdit> DrawPropertiesPanel(PropertiesState& state, bool* p_
     ImGui::TextUnformatted("Properties");
     if (state.editable) {
         if (auto edit = DrawEditableRowTable("props", state.properties, add_property_key,
-                                              state.source_tab_id, state.selected_node_uid,
+                                              state.source_tab_id, state.selected_node_id,
                                               PropertyEditKind::kValue, PropertyEditKind::kAddProperty,
                                               PropertyEditKind::kRemoveProperty)) {
             committed = edit;
@@ -231,7 +231,7 @@ std::optional<PropertyEdit> DrawPropertiesPanel(PropertiesState& state, bool* p_
         ImGui::TextUnformatted("Events");
         if (state.editable) {
             if (auto edit = DrawEditableRowTable("events", state.events, add_event_key, state.source_tab_id,
-                                                  state.selected_node_uid, PropertyEditKind::kEvent,
+                                                  state.selected_node_id, PropertyEditKind::kEvent,
                                                   PropertyEditKind::kEvent, PropertyEditKind::kRemoveEvent)) {
                 committed = edit;
             }

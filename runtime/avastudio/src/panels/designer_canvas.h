@@ -7,13 +7,14 @@
 #include "design/design_document.h"
 #include "imgui.h"
 #include "panels/properties_panel.h"
+#include "util/log_bridge.h"
 
 namespace studio {
 
 // ImGui payload type for dragging an ALREADY-PLACED node to move/
 // reorder it (Fase 4) -- as opposed to kToolboxDragDropId
 // (toolbox_panel.h), which is for dropping a brand-new node from the
-// Toolbox. Payload data is the moved node's DesignNode::node_uid,
+// Toolbox. Payload data is the moved node's IComponent::NodeId(),
 // NUL-terminated, same convention as kToolboxDragDropId. Both the drag
 // source and every drop target for this live entirely inside
 // designer_canvas.cpp, so unlike kToolboxDragDropId this doesn't need
@@ -24,24 +25,25 @@ constexpr const char* kNodeMoveDragDropId = "AVAUI_NODE_MOVE";
 
 // Draws the Design canvas for one open .avaui document: computes
 // layout via the real avaui pipeline (LayoutEngine, see
-// design/live_render_bridge.h -- design::ComputeLayout is now only the
-// fallback, see designer_canvas.cpp's DrawNode), draws each DesignNode
-// with its real widget look (SceneCommandWalker::Walk, Fase 4.2) plus
+// design/live_render_bridge.h -- as of Fase 2 (AVASTUDIO_AVAUI_
+// MIGRATION_PLAN.md) this is the ONLY layout engine in use, no
+// parallel fallback), draws each IComponent with its real widget look
+// (SceneCommandWalker::Walk, Fase 4.2) plus
 // a selection/hover/drop-zone overlay, and handles three interactions:
 //
-//   - Click a rectangle -> doc.selected_uid is updated and a
+//   - Click a rectangle -> doc.selected_node_id is updated and a
 //     PropertiesState is returned (same struct/shape DrawPreviewPanel
 //     already returns for the read-only Preview tree, so whatever
 //     wires this into main.cpp later can reuse that exact call site --
 //     see 08_DESIGNER_VIEW_PLAN.md section 5.6 point 3). For a real
 //     (non-synthetic) node this PropertiesState now has `editable =
-//     true` plus `source_tab_id`/`selected_node_uid` filled in (see
+//     true` plus `source_tab_id`/`selected_node_id` filled in (see
 //     `tab_id` param below and properties_panel.h's PropertyEdit) so
 //     main.cpp can write edits back into `doc` -- Fase 3.
 //   - Drop a Toolbox payload (kToolboxDragDropId, see toolbox_panel.h)
-//     onto a container node -> a new DesignNode is appended to that
-//     node's children (design::MakeNode, seeded with the catalog's
-//     default_properties) and doc.dirty is set.
+//     onto a container node -> a new IComponent is appended to that
+//     node's children (doc.tree->CreateComponent + parent->AddChild,
+//     seeded with the catalog's default_properties) and doc.dirty is set.
 //   - A `Componente()` call-site node (PascalCase type, see
 //     design::ComponentResolver::IsComponentCall) is drawn as the
 //     REAL resolved subtree of the imported component instead of an
@@ -84,10 +86,10 @@ constexpr const char* kNodeMoveDragDropId = "AVAUI_NODE_MOVE";
 // care about resolved components (tests, etc.) don't need to change.
 //
 // Resolution here is READ-ONLY / for display purposes only: the
-// resolved tree is a throwaway copy (fresh node_uids on every replaced
-// subtree, see component_resolver.h), rebuilt from `doc.root` fresh
-// every call -- never written back into `doc.root` itself. Clicking a
-// node inside a resolved component still sets `doc.selected_uid` and
+// resolved tree is a throwaway copy (fresh NodeIds on every replaced
+// subtree, see component_resolver.h), rebuilt from `doc.Root()` fresh
+// every call -- never written back into `doc` itself. Clicking a
+// node inside a resolved component still sets `doc.selected_node_id` and
 // returns its PropertiesState for inspection, but it does NOT accept
 // Toolbox drops or Properties edits (there's nowhere real in `doc` to
 // write those -- see designer_canvas.cpp's `synthetic` check). Editing
@@ -145,10 +147,20 @@ constexpr const char* kNodeMoveDragDropId = "AVAUI_NODE_MOVE";
 // today besides editor_panel.cpp) gets the old per-call
 // build-and-destroy behavior instead, since -1 isn't a safe cache key
 // (every such caller would collide on the same slot).
+// `log_bridge`: Fase 4 (AVASTUDIO_AVAUI_MIGRATION_PLAN.md) -- where a
+// failed `BuildLiveRender` call and any node missing from its
+// `uidToRect` (now `nodeIdToRect`) get logged (see designer_canvas.cpp's DrawDesignerCanvas
+// body), in addition to the in-canvas banner both conditions already
+// show regardless of this parameter. Pass main.cpp's session-wide
+// `LogBridge` (see util/log_bridge.h) via EditorState::log_bridge.
+// Default nullptr, same safe-default spirit as `project_root`/`tab_id`
+// above -- a caller that doesn't pass one still gets the banner, just
+// not the Output-panel log line.
 std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, ImVec2 size,
                                                    const std::string& project_root = "",
                                                    int tab_id = -1,
-                                                   std::string* out_generated_handler = nullptr);
+                                                   std::string* out_generated_handler = nullptr,
+                                                   LogBridge* log_bridge = nullptr);
 
 // Frees the cached Fase 6 state VM AND the 9.16 ComponentResolver/
 // resolved-tree cache (see DrawDesignerCanvas's `tab_id` note above)

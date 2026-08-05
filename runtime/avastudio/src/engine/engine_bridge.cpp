@@ -2,9 +2,27 @@
 
 #include "util/data_dir.h"
 
+#include <sstream>
+
 namespace studio {
 
 namespace {
+
+// AvaLang has no separate int type -- every AVA_NUMBER is a double (see
+// ava_value_t::as.n in avalang.h), so a script returning `32` still
+// carries it as 32.0. std::to_string(double) always pads to 6 decimals
+// ("32.000000"), which reads like a float even when the script author
+// thinks of it as a plain int. `oss << n` instead mirrors the same
+// convention core's ValueToDisplayString (avaui_text.cpp) and design's
+// NumberToDisplayString (state_eval.cpp) already use -- default stream
+// formatting drops a trailing ".000000" on its own ("32", "45"), and
+// still shows a real fractional value normally ("3.14159") -- so a
+// number reads here the same way it would anywhere else in Ava Studio.
+std::string FormatAvaNumber(double n) {
+    std::ostringstream oss;
+    oss << n;
+    return oss.str();
+}
 
 // "a/b/c.ava" -> "a/b". "" if there's no separator (unsaved buffer, source
 // passed as a bare in-memory string with no real path).
@@ -126,10 +144,18 @@ RunResult EngineBridge::RunScript(const std::string& source, const std::string& 
     result.success = true;
     switch (out_result.type) {
         case AVA_NIL:
-            result.message = "OK (nil)";
+            // The overwhelming majority of scripts never `return`
+            // anything from top level -- their trailing statement
+            // (e.g. a bare `main()` call, or a `print(...)`) evaluates
+            // to nil, which is not itself meaningful information for
+            // "did my script work". Just "OK" for that common case;
+            // the "(nil)" suffix is reserved for when the script
+            // actually produced a value worth showing (number/bool/
+            // string below).
+            result.message = "OK";
             break;
         case AVA_NUMBER:
-            result.message = "OK -> " + std::to_string(out_result.as.n);
+            result.message = "OK -> " + FormatAvaNumber(out_result.as.n);
             break;
         case AVA_BOOL:
             result.message = std::string("OK -> ") + (out_result.as.b ? "true" : "false");

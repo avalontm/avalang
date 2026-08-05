@@ -36,9 +36,21 @@
 
 namespace avahost {
 
+// Single source of truth for the viewport size used before any
+// avaui_vw/avaui_vh cookie exists yet (first visit). UiPipelineRenderOptions
+// below and app.cpp's viewportWidth/viewportHeight locals both derive from
+// these directly (app.cpp already includes this header under
+// AVAHOST_HAS_UI_PIPELINE, and both usages live inside that same guard, so
+// there's no build-configuration split to worry about here -- unlike the
+// resize-cookie granularity, which app.cpp keeps as its own
+// kViewportResizeThresholdPx since that one's also read by code compiled
+// unconditionally there).
+constexpr int kDefaultViewportWidth = 1280;
+constexpr int kDefaultViewportHeight = 720;
+
 struct UiPipelineRenderOptions {
-    int viewportWidth = 1280;
-    int viewportHeight = 720;
+    int viewportWidth = kDefaultViewportWidth;
+    int viewportHeight = kDefaultViewportHeight;
 
     // Fase 20.2.1: field names mirror html_renderer's RenderOptions
     // so the 20.2.5 swap can forward them with zero translation.

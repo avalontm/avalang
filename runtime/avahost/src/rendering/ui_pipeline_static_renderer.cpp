@@ -7,6 +7,7 @@
 #include "parser/AvauiParser.h"
 #include "theme/ITheme.h"
 #include "theme/RenderTheme.h"
+#include "theme/ProjectFontOverrides.h"
 #include "layout/LayoutEngine.h"
 #include "render_tree/IRenderTree.h"
 #include "scene/ISceneGraph.h"
@@ -43,17 +44,22 @@ bool RenderAvauiStatic(const std::string& avauiSource, const UiPipelineRenderOpt
         }
         avalang::ui::IComponent* root = parsed.tree->Root();
 
-        // Theme (Fase 16) -- default theme only; avalang.ui has no
-        // notion of a project-configured theme yet, same gap
-        // html_renderer.cpp's own styling (hardcoded CSS classes) has
-        // on the existing path.
+        // Theme (Fase 16) -- default theme, overlaid with any
+        // project-configured fonts from app.ava (`font "role" "name"
+        // "path"` lines, see theme/ProjectFontOverrides.h). ProjectTheme
+        // is a harmless passthrough when options.projectRoot has no
+        // such lines (the common case), so it's always constructed
+        // rather than branching on whether overrides exist.
         auto themeProvider = std::unique_ptr<avalang::ui::IThemeProvider>(
             avalang::ui::CreateDefaultThemeProvider());
         if (!themeProvider) {
             outError = "failed to create the default theme provider";
             return false;
         }
-        avalang::ui::RenderTheme::Apply(parsed.tree.get(), themeProvider->Current());
+        avalang::ui::theme::ProjectTheme projectTheme(
+            themeProvider->Current(),
+            avalang::ui::theme::LoadProjectFontOverrides(options.projectRoot));
+        avalang::ui::RenderTheme::Apply(parsed.tree.get(), &projectTheme);
 
         // Layout (Fase 3)
         auto layoutEngine = avalang::ui::LayoutEngine::Create();

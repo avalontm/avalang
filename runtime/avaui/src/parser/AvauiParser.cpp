@@ -1,5 +1,6 @@
 #include "parser/AvauiParser.h"
 #include "parser/AvauiPropertyCoercion.h"
+#include "events/AutoBind.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -73,8 +74,39 @@ std::vector<Line> Tokenize(const std::string& source) {
     while (std::getline(stream, raw)) {
         ++lineNo;
         std::string stripped = StripComment(raw);
-        size_t firstNonSpace = stripped.find_first_not_of(" \t");
-        if (firstNonSpace == std::string::npos) continue; // blank/comment-only
+
+        // Indentation column, tab-aware: a raw find_first_not_of(" \t")
+        // treats a tab and a space as the same one column, so a file
+        // that mixes an 8-space-indented property with a 2-tab-indented
+        // sibling (e.g. an editor auto-indenting one line differently)
+        // silently computes a SMALLER column for the tabbed line than
+        // its space-indented siblings, even though both look like "one
+        // level deeper" visually. That misindented line then reads as
+        // closing the enclosing block early -- ParseComponent's body
+        // loop sees `line.indent <= header.indent` and throws
+        // "unterminated component block (expected 'end')", which
+        // UiComponentResolver::LoadComponent silently swallows (`catch
+        // (const ParseError&) { return nullptr; }`), leaving the whole
+        // imported component unresolved -- it just doesn't render, no
+        // visible error anywhere. Expanding each tab to a fixed 4-column
+        // stride (this codebase's own nesting width, see every `row`/
+        // `column`/property indent throughout the samples) instead of
+        // counting it as 1 column makes indentation consistent whether
+        // an editor happens to save a given line with tabs or spaces.
+        size_t firstNonSpace = 0;
+        int indentColumn = 0;
+        for (; firstNonSpace < stripped.size(); ++firstNonSpace) {
+            char c = stripped[firstNonSpace];
+            if (c == ' ') {
+                indentColumn += 1;
+            } else if (c == '\t') {
+                indentColumn += 4;
+            } else {
+                break;
+            }
+        }
+        if (firstNonSpace == stripped.size()) continue; // blank/comment-only
+
         std::string text = Trim(stripped);
         if (text.empty()) continue;
         // Recover the same line's un-stripped content from the same
@@ -84,7 +116,7 @@ std::vector<Line> Tokenize(const std::string& source) {
         // that already survive comment-stripping, it doesn't change
         // which lines make it into `lines`.
         std::string rawText = Trim(raw.substr(firstNonSpace));
-        lines.push_back({static_cast<int>(firstNonSpace), text, rawText, lineNo});
+        lines.push_back({indentColumn, text, rawText, lineNo});
     }
     return lines;
 }
@@ -117,18 +149,66 @@ std::pair<std::string, std::string> SplitProperty(const Line& line) {
 // porque ambos archivos comparten el namespace avalang::ui::parser.
 
 // True if `text` is a no-body component reference call, e.g.
-// "Navbar()" -- a name immediately followed by "(" ... ")" (any
-// argument text between the parens is ignored: passing arguments to
-// an imported component is a future-phase concern, see AvauiParser.h
-// "Semantic gaps").
-bool IsComponentCall(const std::string& text, std::string* nameOut) {
+// "Navbar()" or "Navbar(height = 64, class = \"dark\")" -- a name
+// immediately followed by "(" ... ")". `argsOut`, if non-null, receives
+// the raw text between the parens (empty for a plain "Navbar()") so
+// the caller can parse it as call-site property overrides -- see
+// ParseComponentCallArgs below.
+bool IsComponentCall(const std::string& text, std::string* nameOut, std::string* argsOut = nullptr) {
     if (text.empty() || text.back() != ')') return false;
     size_t open = text.find('(');
     if (open == std::string::npos) return false;
     std::string name = Trim(text.substr(0, open));
     if (name.empty()) return false;
     *nameOut = name;
+    if (argsOut) {
+        *argsOut = text.substr(open + 1, text.size() - open - 2);
+    }
     return true;
+}
+
+// Splits a component call's argument text -- e.g. `height = 64, class
+// = "dark"` -- on top-level commas (commas inside a double-quoted
+// value don't split, so `label = "A, B"` survives intact) and sets
+// each `key = value` pair on `comp` via the same
+// InferValue/SetPropertyWithAlias path a normal property line inside
+// a component body uses (see ParseComponent's IsPropertyLine branch
+// below), so `Navbar(height = 64)` behaves exactly like a `height =
+// 64` line would inside a real (non-call) component -- same type
+// inference, same "gap"->"spacing"/"value"->"text" aliasing. A bare
+// `Navbar()` has empty argText and this is a no-op, matching the old
+// "no-body call" behavior exactly.
+void ParseComponentCallArgs(const std::string& argsText, IComponent* comp, int lineNo) {
+    std::string args = Trim(argsText);
+    if (args.empty()) return;
+
+    std::vector<std::string> parts;
+    bool inString = false;
+    size_t start = 0;
+    for (size_t i = 0; i < args.size(); ++i) {
+        char c = args[i];
+        if (c == '"') inString = !inString;
+        if (c == ',' && !inString) {
+            parts.push_back(args.substr(start, i - start));
+            start = i + 1;
+        }
+    }
+    parts.push_back(args.substr(start));
+
+    for (const std::string& rawPart : parts) {
+        std::string part = Trim(rawPart);
+        if (part.empty()) continue;
+        size_t eq = part.find('=');
+        if (eq == std::string::npos) {
+            throw ParseError("expected 'key = value' in component call arguments, got: " + part, lineNo);
+        }
+        std::string key = Trim(part.substr(0, eq));
+        std::string value = Trim(part.substr(eq + 1));
+        if (key.empty()) {
+            throw ParseError("empty property name in component call arguments", lineNo);
+        }
+        SetPropertyWithAlias(comp, key, InferValue(value));
+    }
 }
 
 // Parses an `animate` block's flat `key = value` body (same grammar
@@ -192,7 +272,8 @@ IComponent* ParseComponent(const std::vector<Line>& lines, size_t& idx, Componen
     const Line& header = lines[idx];
 
     std::string callName;
-    if (IsComponentCall(header.text, &callName)) {
+    std::string callArgs;
+    if (IsComponentCall(header.text, &callName, &callArgs)) {
         ++idx;
         IComponent* comp = tree->CreateComponent(CanonicalTypeName(callName));
         // Unresolved import reference (docs/architecture/17_AVAUI_FILE_FORMAT.md,
@@ -202,6 +283,12 @@ IComponent* ParseComponent(const std::vector<Line>& lines, size_t& idx, Componen
         // node itself so a later phase can find these without a
         // second pass over the source text.
         comp->SetProperty("__unresolvedImportCall", PropertyValue(true));
+        // Call-site overrides (e.g. `height = 64` in `Navbar(height =
+        // 64)`) -- parsed onto this same node so a later resolution
+        // phase (e.g. avahost's UiComponentResolver) can read them off
+        // the call node itself, same place it already looks for
+        // "__unresolvedImportCall".
+        ParseComponentCallArgs(callArgs, comp, header.lineNo);
         return comp;
     }
 
@@ -389,11 +476,11 @@ ParsedAvaui AvauiParser::Parse(const std::string& source) {
     }
 
     if (!result.tree->Root()) {
-        // No `view` block at all -- still return a usable (empty) tree
-        // rather than a null root, per the class-comment guarantee.
         IComponent* root = result.tree->CreateComponent("Page");
         result.tree->SetRoot(root);
     }
+
+    AutoBindEvents(result.tree->Root(), result.code);
 
     return result;
 }

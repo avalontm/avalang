@@ -1,8 +1,11 @@
 #include "parser/AvauiPropertyCoercion.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <unordered_map>
+
+#include "registry/ComponentTypeRegistry.h"
 
 namespace avalang {
 namespace ui {
@@ -51,19 +54,47 @@ const std::unordered_map<std::string, std::string>& PropertyAliases() {
     return kPropertyAliases;
 }
 
-const std::unordered_map<std::string, std::string>& TypeNames() {
-    static const std::unordered_map<std::string, std::string> kTypeNames = {
-        {"page", "Page"},         {"container", "Container"},
-        {"row", "Row"},           {"column", "Column"},
-        {"stack", "Stack"},       {"text", "Text"},
-        {"label", "Label"},       {"button", "Button"},
-        {"image", "Image"},       {"input", "TextBox"},
-        {"checkbox", "CheckBox"}, {"icon", "Icon"},
-        {"link", "Link"},         {"textbox", "TextBox"},
-        {"combobox", "ComboBox"}, {"radiobutton", "RadioButton"},
-        {"radio", "RadioButton"}, {"dialog", "Dialog"},
-        {"scrollview", "ScrollView"}, {"scroll", "ScrollView"},
+const std::unordered_map<std::string, std::string>& TypeNameAliases() {
+    // Fase B.5 (plan unificado avastudio/avaui): a diferencia del resto
+    // de TypeNames() (ver abajo), estos tres no son una variante de
+    // may/minuscula del TypeName real -- son atajos de sintaxis del
+    // lenguaje .avaui para un tipo que ya existe con otro nombre
+    // (p.ej. "input" en vez de "textbox"). No se pueden derivar del
+    // registro de avaui igual que el resto, asi que se mantienen a
+    // mano aca, mismo motivo que PropertyAliases(): alias de sintaxis,
+    // no de catalogo.
+    static const std::unordered_map<std::string, std::string> kTypeNameAliases = {
+        {"input", "TextBox"},
+        {"radio", "RadioButton"},
+        {"scroll", "ScrollView"},
     };
+    return kTypeNameAliases;
+}
+
+const std::unordered_map<std::string, std::string>& TypeNames() {
+    // Fase B.5: antes esta tabla repetia a mano cada TypeName real
+    // (con su propia oportunidad de desincronizarse, igual que el bug
+    // de enabled/isEnabled en B.0) -- ahora se deriva de
+    // registry::GetComponentTypeRegistry(), la misma fuente que ya usa
+    // avastudio (B.4). Un tipo nuevo que se auto-registre en avaui
+    // (controls/Xxx.cpp) queda reconocible por el parser via su propio
+    // TypeName en minuscula sin tocar este archivo. Los pocos alias
+    // que no son solo mayus/minuscula (input/radio/scroll) siguen
+    // arriba, en TypeNameAliases().
+    static const std::unordered_map<std::string, std::string> kTypeNames = [] {
+        std::unordered_map<std::string, std::string> types;
+        for (const avalang::ui::registry::ComponentTypeDescriptor& descriptor :
+             avalang::ui::registry::GetComponentTypeRegistry()) {
+            std::string lower = descriptor.type;
+            std::transform(lower.begin(), lower.end(), lower.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            types[lower] = descriptor.type;
+        }
+        for (const auto& [alias, canonical] : TypeNameAliases()) {
+            types[alias] = canonical;
+        }
+        return types;
+    }();
     return kTypeNames;
 }
 

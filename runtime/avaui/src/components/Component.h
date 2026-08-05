@@ -20,6 +20,7 @@ public:
     Component(ComponentId id, std::string typeName);
 
     ComponentId Id() const override;
+    const std::string& NodeId() const override;
     const std::string& TypeName() const override;
 
     IComponent* Parent() const override;
@@ -32,6 +33,7 @@ public:
     const PropertyValue* GetProperty(const std::string& name) const override;
     bool HasProperty(const std::string& name) const override;
     void RemoveProperty(const std::string& name) override;
+    std::vector<std::string> PropertyNames() const override;
 
     void AddChild(IComponent* child, const std::string& slot) override;
     void RemoveChild(IComponent* child) override;
@@ -41,6 +43,7 @@ public:
 
 private:
     ComponentId id_;
+    std::string node_id_;
     std::string typeName_;
     IComponent* parent_ = nullptr;
 

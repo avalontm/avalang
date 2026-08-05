@@ -1,5 +1,7 @@
 #include "renderer/GdiRenderer.h"
 
+#include "layout/FontRegistry.h"
+
 namespace avalang {
 namespace ui {
 
@@ -9,6 +11,83 @@ GdiRenderer::GdiRenderer(HWND hwnd, int width, int height)
 
 GdiRenderer::~GdiRenderer() {
     ReleaseBackBuffer();
+    // Undo AddFontMemResourceEx for every font this renderer installed
+    // -- private/process-scoped installs like these are supposed to be
+    // cleaned up on the way out (matches the general "match every
+    // AddFontMemResourceEx with a RemoveFontMemResourceEx" GDI rule).
+    for (auto& entry : loadedFontResources_) {
+        if (entry.second != nullptr) {
+            RemoveFontMemResourceEx(entry.second);
+        }
+    }
+}
+
+HFONT GdiRenderer::ResolveFont(float fontSizePx, const char* fontName, bool underline) {
+    const std::string key = (fontName && fontName[0]) ? fontName : std::string();
+
+    const auto cachedIt = resolvedFaceNames_.find(key);
+    if (cachedIt != resolvedFaceNames_.end()) {
+        return CreateFontA(
+            -static_cast<int>(fontSizePx), 0, 0, 0, FW_NORMAL, FALSE, underline ? TRUE : FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+            cachedIt->second.c_str());
+    }
+
+    const unsigned char* ttfData = nullptr;
+    std::size_t ttfSize = 0;
+    const bool haveBytes = layout::FontRegistry::Instance().GetFontBytes(key, &ttfData, &ttfSize);
+
+    if (haveBytes && ttfData != nullptr && ttfSize > 0) {
+        DWORD numFontsInstalled = 0;
+        // AddFontMemResourceEx wants a non-const buffer; it does not
+        // modify it, but the Win32 signature predates const-correctness.
+        HANDLE fontHandle = AddFontMemResourceEx(
+            const_cast<void*>(static_cast<const void*>(ttfData)),
+            static_cast<DWORD>(ttfSize), nullptr, &numFontsInstalled);
+
+        if (fontHandle != nullptr && numFontsInstalled > 0) {
+            loadedFontResources_[key] = fontHandle;
+
+            // The face GDI will actually respond to is whatever name
+            // is baked into the TTF's own 'name' table -- for AvaUI's
+            // embedded default that's "JetBrains Mono". We don't parse
+            // the name table ourselves here; instead we hand GDI the
+            // ORIGINAL requested key. After AddFontMemResourceEx, GDI
+            // resolves that name against the newly-installed private
+            // font before falling back to any system font of the same
+            // name, so passing `key` (fontName) through still lands on
+            // the just-installed font when they match -- and for the
+            // common case (key is empty / caller didn't set fontName),
+            // AvaUI's default font component property is expected to
+            // literally be named after the embedded font ("JetBrains
+            // Mono") by DefaultTheme, so this resolves correctly. A
+            // follow-up can parse the 'name' table directly (stb
+            // exposes stbtt_GetFontNameString) if a project's custom
+            // font's declared family and its file's internal name ever
+            // diverge.
+            const std::string faceName = key.empty() ? std::string("JetBrains Mono") : key;
+            resolvedFaceNames_[key] = faceName;
+
+            return CreateFontA(
+                -static_cast<int>(fontSizePx), 0, 0, 0, FW_NORMAL, FALSE, underline ? TRUE : FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+                faceName.c_str());
+        }
+    }
+
+    // Defensive fallback: couldn't get/install the measured font's
+    // bytes (should be rare -- FontRegistry always has the built-in
+    // default loaded). Resolve by name the old way rather than fail to
+    // draw at all; this path means measurement and painting can drift
+    // again, same as before this fix, so it's a degraded mode, not the
+    // intended one.
+    return CreateFontA(
+        -static_cast<int>(fontSizePx), 0, 0, 0, FW_NORMAL, FALSE, underline ? TRUE : FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+        (fontName && fontName[0]) ? fontName : "Segoe UI");
 }
 
 COLORREF GdiRenderer::ToColorRef(const Color& c) {
@@ -156,12 +235,7 @@ void GdiRenderer::OnDrawText(
     (void)className;
     if (!memDC_ || !text) return;
 
-    HFONT font = CreateFontA(
-        -static_cast<int>(fontSize), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-        (fontName && fontName[0]) ? fontName : "Segoe UI"
-    );
+    HFONT font = ResolveFont(fontSize, fontName);
 
     HFONT oldFont = static_cast<HFONT>(SelectObject(memDC_, font));
     SetTextColor(memDC_, ToColorRef(color));
@@ -220,12 +294,7 @@ void GdiRenderer::OnDrawButton(
 
     if (!text || !text[0]) return;
 
-    HFONT font = CreateFontA(
-        -static_cast<int>(fontSize), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-        (fontName && fontName[0]) ? fontName : "Segoe UI"
-    );
+    HFONT font = ResolveFont(fontSize, fontName);
 
     HFONT oldFont = static_cast<HFONT>(SelectObject(memDC_, font));
     SIZE extent{0, 0};
@@ -267,12 +336,7 @@ void GdiRenderer::OnDrawLink(
     (void)className;
     if (!memDC_ || !text) return;
 
-    HFONT font = CreateFontA(
-        -static_cast<int>(fontSize), 0, 0, 0, FW_NORMAL, FALSE, TRUE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-        (fontName && fontName[0]) ? fontName : "Segoe UI"
-    );
+    HFONT font = ResolveFont(fontSize, fontName, /*underline=*/true);
 
     HFONT oldFont = static_cast<HFONT>(SelectObject(memDC_, font));
     SetTextColor(memDC_, ToColorRef(color));

@@ -1,6 +1,7 @@
 #include "controls/Dialog.h"
 #include "components/ComponentTree.h"
 #include "components/PropertyValue.h"
+#include "registry/ComponentTypeRegistry.h"
 
 namespace avalang::ui::controls {
 
@@ -31,5 +32,22 @@ void SetDialogOpen(IComponent* dialog, bool isOpen) {
     }
     dialog->SetProperty("isOpen", PropertyValue(isOpen));
 }
+
+namespace {
+struct DialogTypeRegistration {
+    DialogTypeRegistration() {
+        using namespace avalang::ui::registry;
+        RegisterComponentType({
+            "Dialog", "Dialog", /*is_container=*/true,
+            {
+                {"title", PropertyValue("Dialog")},
+                {"isOpen", PropertyValue(false)},
+                {"dismissible", PropertyValue(true)},
+            },
+        });
+    }
+};
+static DialogTypeRegistration _dialog_type_registration;
+} // namespace
 
 } // namespace avalang::ui::controls

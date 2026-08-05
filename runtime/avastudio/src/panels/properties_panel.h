@@ -17,7 +17,7 @@ struct PropertiesState {
     std::string selected_component_id;
     std::vector<PropertyRow> properties;
 
-    // DesignNode::events mirror (key = event name e.g. "on_click",
+    // IComponent events mirror (key = event name e.g. "on_click",
     // value = handler function name) -- only populated for a Designer
     // canvas selection (see designer_canvas.cpp's ToPropertiesState).
     // Preview-panel selections leave this empty, same as `properties`
@@ -33,19 +33,19 @@ struct PropertiesState {
     // False for every Preview-panel selection, and also false for a
     // Designer canvas selection that landed on a *synthetic* node (a
     // resolved `Componente()` import copy, see designer_canvas.h) --
-    // there's no real DesignNode in any doc.root to write back into for
+    // there's no real IComponent in any doc tree to write back into for
     // those. True only for a selection on a real node of the active
     // .avaui's own tree.
     bool editable = false;
 
     // Identifies which node to patch on write-back: `source_tab_id`
     // matches EditorTab::id (stable across tab reordering/renaming,
-    // unlike a vector index) and `selected_node_uid` matches
-    // DesignNode::node_uid within that tab's DesignDocument::root.
+    // unlike a vector index) and `selected_node_id` matches
+    // IComponent::NodeId() within that tab's DesignDocument::tree.
     // Both stay at their defaults (-1 / empty) for a non-editable
     // selection.
     int source_tab_id = -1;
-    std::string selected_node_uid;
+    std::string selected_node_id;
 };
 
 // What a PropertyEdit represents -- previously (Fase 3) there was only
@@ -56,8 +56,8 @@ struct PropertiesState {
 // on it.
 enum class PropertyEditKind {
     kValue,          // an existing property's value changed -- key + new_value
-    kId,             // DesignNode::id changed -- new_value holds the new id, key unused
-    kType,           // DesignNode::type changed -- new_value holds the new type string, key unused
+    kId,             // IComponent "id" property changed -- new_value holds the new id, key unused
+    kType,           // IComponent type changed -- new_value holds the new type string, key unused
     kAddProperty,    // a new property row -- key = its key, new_value = its (usually empty) initial value
     kRemoveProperty, // remove the property with this key -- key set, new_value unused
     kEvent,          // an event's handler changed or a new event row was added -- key = event name, new_value = handler
@@ -69,12 +69,12 @@ enum class PropertyEditKind {
 // in properties_panel.cpp -- committed on unfocus/Enter, not keystroke by
 // keystroke) or clicks an add/remove button. The caller (main.cpp) is the
 // one that actually knows where every open DesignDocument lives, so it
-// looks up `source_tab_id` / `node_uid` itself and patches the real
-// DesignNode according to `kind` -- this struct is just the "what
+// looks up `source_tab_id` / `node_id` itself and patches the real
+// IComponent according to `kind` -- this struct is just the "what
 // changed" message, not a mutation applied by this panel.
 struct PropertyEdit {
     int tab_id = -1;
-    std::string node_uid;
+    std::string node_id;
     PropertyEditKind kind = PropertyEditKind::kValue;
     std::string key;
     std::string new_value;
@@ -91,7 +91,7 @@ struct PropertyEdit {
 // row, and an "add" row at the bottom of each table. Returns a
 // PropertyEdit once any of that is committed (nullopt on every frame
 // nothing was just committed) so the caller can write it back into the
-// real DesignNode and mark the document dirty.
+// real IComponent and mark the document dirty.
 //
 // `p_open`: same convention as ImGui::Begin's own p_open -- pass the
 // address of this panel's runtime visibility flag (see main.cpp's

@@ -1,39 +1,65 @@
 #include "design/live_render_bridge.h"
 
-#include <functional>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 
 #include "components/IComponent.h"
-#include "components/PropertyValue.h"
-#include "parser/AvauiPropertyCoercion.h"
+#include "composition/ComposePageWithLayout.h"
+#include "parser/AvauiParser.h"
+#include "resolver/DottedPath.h"
 #include "theme/ITheme.h"
 #include "theme/RenderTheme.h"
+#include "theme/ProjectFontOverrides.h"
+#include "layout/LayoutEngine.h"
+#include "render_tree/IRenderTree.h"
+#include "scene/ISceneGraph.h"
 
 namespace studio::design {
 
-LiveRenderResult BuildLiveRender(const DesignNode& root, int viewportWidth, int viewportHeight) {
+namespace {
+
+std::string ReadFileToString(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return {};
+    std::ostringstream buf;
+    buf << in.rdbuf();
+    return buf.str();
+}
+
+std::filesystem::path ResolveDottedPath(const std::string& projectRoot, const std::string& dotted) {
+    return avalang::ui::ResolveDottedAvauiPath(projectRoot, dotted);
+}
+
+} // namespace
+
+LiveRenderResult BuildLiveRender(avalang::ui::ComponentTree* tree, int viewportWidth, int viewportHeight,
+                                  const std::string& extends,
+                                  const std::string& projectRoot) {
     LiveRenderResult out;
-    out.componentTree = avalang::ui::ComponentTree::Create();
 
-    std::function<avalang::ui::IComponent*(const DesignNode&)> build =
-        [&](const DesignNode& n) -> avalang::ui::IComponent* {
-        using namespace avalang::ui;
-        IComponent* comp = out.componentTree->CreateComponent(parser::CanonicalTypeName(n.type));
-        out.uidToComponentId[n.node_uid] = comp->Id();
+    if (!tree || !tree->Root()) {
+        out.error = "empty component tree";
+        return out;
+    }
 
-        if (!n.id.empty()) comp->SetProperty("id", PropertyValue(n.id));
-        for (const auto& p : n.properties) {
-            parser::SetPropertyWithAlias(comp, p.key, parser::InferValue(p.value));
+    if (!extends.empty() && !projectRoot.empty()) {
+        auto layoutPath = ResolveDottedPath(projectRoot, extends);
+        std::string layoutSource = ReadFileToString(layoutPath.string());
+        if (!layoutSource.empty()) {
+            try {
+                auto layoutParsed = avalang::ui::parser::AvauiParser::Parse(layoutSource);
+                if (layoutParsed.tree && layoutParsed.tree->Root()) {
+                    auto slotInfo = avalang::ui::LocateLayoutSlot(layoutParsed.tree.get(),
+                                                                  viewportWidth, viewportHeight);
+                    out.layoutTree = std::move(layoutParsed.tree);
+                    out.slotRect = slotInfo.slotRect;
+                    out.hasSlot = slotInfo.hasSlot;
+                }
+            } catch (const std::exception&) {
+            }
         }
-        for (const auto& ev : n.events) {
-            comp->SetProperty(ev.key, PropertyValue(ev.value));
-        }
-
-        for (const auto& child : n.children) {
-            comp->AddChild(build(child));
-        }
-        return comp;
-    };
-    out.componentTree->SetRoot(build(root));
+    }
 
     auto themeProvider = std::unique_ptr<avalang::ui::IThemeProvider>(
         avalang::ui::CreateDefaultThemeProvider());
@@ -41,20 +67,36 @@ LiveRenderResult BuildLiveRender(const DesignNode& root, int viewportWidth, int 
         out.error = "failed to create the default theme provider";
         return out;
     }
-    avalang::ui::RenderTheme::Apply(out.componentTree.get(), themeProvider->Current());
+    // Same app.ava `font "role" "name" "path"` overlay AvaHost's real
+    // render pipeline applies (ui_pipeline_static_renderer.cpp /
+    // ui_pipeline_dynamic_renderer.cpp) -- both call the exact same
+    // avaui parser (theme/ProjectFontOverrides.h), so the canvas
+    // preview and the actual served page resolve a project's custom
+    // font identically instead of drifting the way the original
+    // text/row overlap bug happened in the first place.
+    avalang::ui::theme::ProjectTheme projectTheme(
+        themeProvider->Current(),
+        avalang::ui::theme::LoadProjectFontOverrides(projectRoot));
+    avalang::ui::RenderTheme::Apply(tree, &projectTheme);
 
     out.layoutEngine = avalang::ui::LayoutEngine::Create();
-    avalang::ui::LayoutRect viewport{0.0, 0.0, static_cast<double>(viewportWidth),
-                                      static_cast<double>(viewportHeight)};
+    int effectiveW = viewportWidth;
+    int effectiveH = viewportHeight;
+    if (out.hasSlot) {
+        effectiveW = static_cast<int>(out.slotRect.width);
+        effectiveH = static_cast<int>(out.slotRect.height);
+    }
+    avalang::ui::LayoutRect viewport{0.0, 0.0, static_cast<double>(effectiveW),
+                                      static_cast<double>(effectiveH)};
     avalang::ui::ILayoutNode* layoutRoot =
-        out.layoutEngine->Compute(out.componentTree->Root(), viewport);
+        out.layoutEngine->Compute(tree->Root(), viewport);
     if (!layoutRoot) {
         out.error = "LayoutEngine::Compute failed";
         return out;
     }
 
     out.renderTree.reset(avalang::ui::render::IRenderTree::Create());
-    out.renderTree->Build(out.componentTree->Root(), out.layoutEngine.get());
+    out.renderTree->Build(tree->Root(), out.layoutEngine.get());
     if (!out.renderTree->Root()) {
         out.error = "IRenderTree::Build failed";
         return out;
@@ -68,12 +110,10 @@ LiveRenderResult BuildLiveRender(const DesignNode& root, int viewportWidth, int 
         return out;
     }
 
-    std::unordered_map<avalang::ui::ComponentId, std::string> idToUid;
-    for (auto& kv : out.uidToComponentId) idToUid[kv.second] = kv.first;
     std::function<void(avalang::ui::ILayoutNode*)> walk = [&](avalang::ui::ILayoutNode* ln) {
         if (!ln) return;
-        auto it = idToUid.find(ln->Id());
-        if (it != idToUid.end()) out.uidToRect[it->second] = ln->Rect();
+        auto* comp = tree->FindById(ln->Id());
+        if (comp) out.nodeIdToRect[comp->NodeId()] = ln->Rect();
         for (auto* c : ln->Children()) walk(c);
     };
     walk(layoutRoot);

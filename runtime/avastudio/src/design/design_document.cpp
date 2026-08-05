@@ -2,339 +2,304 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cctype>
+#include <filesystem>
 #include <fstream>
+#include <functional>
 #include <unordered_set>
 
 #include "design/avaui_text.h"
-#include "design/component_catalog.h"
-#include "util/data_dir.h"
+#include "parser/AvauiParser.h"
+#include "components/IComponent.h"
+#include "components/PropertyValue.h"
+#include "events/AutoBind.h"
 
 namespace studio::design {
 
 namespace {
 
-// Strips anything that isn't a valid AvaLang identifier char and makes
-// sure the result doesn't start with a digit -- used to turn a
-// DesignNode::id (free text, could be anything the user typed into
-// Properties) into a safe handler function name for EnsureClickHandler
-// below. Falls back to "control" if nothing usable survives (e.g. an
-// id that was entirely punctuation/whitespace).
-std::string SanitizeIdentifier(const std::string& raw) {
-    std::string out;
-    for (unsigned char c : raw) {
-        if (std::isalnum(c) || c == '_') out += static_cast<char>(c);
-    }
-    if (out.empty()) out = "control";
-    if (std::isdigit(static_cast<unsigned char>(out[0]))) out = "_" + out;
-    return out;
-}
-
-void CollectIds(const DesignNode& node, std::unordered_set<std::string>& out) {
-    if (!node.id.empty()) out.insert(node.id);
-    for (const DesignNode& child : node.children) CollectIds(child, out);
-}
-
-// Next free "<prefix><N>" id across the whole tree, starting at 1 --
-// VS6-style auto-naming ("button1", "button2", ...) for a control that
-// doesn't have one yet by the time EnsureClickHandler needs to name
-// its handler after it.
-std::string NextAutoId(const DesignNode& root, const std::string& prefix) {
-    std::unordered_set<std::string> ids;
-    CollectIds(root, ids);
-    int n = 1;
-    std::string candidate;
-    do {
-        candidate = prefix + std::to_string(n);
-        ++n;
-    } while (ids.find(candidate) != ids.end());
-    return candidate;
-}
-
-bool CodeBehindHasFunc(const std::string& code_behind, const std::string& name) {
-    // Crude substring search rather than parsing code_behind as
-    // AvaLang -- good enough to answer "does a stub already exist"
-    // without pulling the VM/parser into the Designer's edit path.
-    // False positives (e.g. the name appearing inside a comment or
-    // string) are harmless here: worst case is skipping a stub that
-    // was needed, which just means double-clicking again re-adds it.
-    return code_behind.find("func " + name + "(") != std::string::npos;
-}
-
-void AppendHandlerStub(DesignDocument& doc, const std::string& name) {
-    if (!doc.code_behind.empty() && doc.code_behind.back() != '\n') doc.code_behind += "\n";
-    if (!doc.code_behind.empty()) doc.code_behind += "\n"; // blank line between stubs
-    doc.code_behind += "func " + name + "(sender, e)\n    -- TODO: " + name + "\nend\n";
-}
-
-// Fase 6: looks up a node by its user-facing `id` (not node_uid) --
-// what a tool call from the agent refers to, since node_uid is an
-// ephemeral in-memory handle the model never sees. Depth-first,
-// first match, root included. `id` must be non-empty: matching on a
-// blank id would ambiguously hit every unnamed node in the tree.
-DesignNode* FindNodeByIdMutable(DesignNode& root, const std::string& id) {
-    if (id.empty()) return nullptr;
-    if (root.id == id) return &root;
-    for (DesignNode& child : root.children) {
-        if (DesignNode* found = FindNodeByIdMutable(child, id)) return found;
-    }
-    return nullptr;
-}
-
-// Shared by AddComponentNode/EditComponentNode below: replaces the
-// value of any property whose key is already present, appends any
-// that isn't -- same "patch, don't replace wholesale" behavior the
-// Properties panel's own kAddProperty/kValue edits give a node one
-// field at a time (see main.cpp's PropertyEditKind switch), just
-// applied to a batch of fields in one call instead of one per edit.
-void UpsertProperties(DesignNode& node, const std::vector<PropertyRow>& properties) {
-    for (const PropertyRow& incoming : properties) {
-        bool found = false;
-        for (PropertyRow& existing : node.properties) {
-            if (existing.key == incoming.key) {
-                existing.value = incoming.value;
-                found = true;
-                break;
+std::string NextAutoId(avalang::ui::IComponent* root, const std::string& prefix) {
+    std::unordered_set<std::string> existing;
+    std::function<void(avalang::ui::IComponent*)> collect = [&](avalang::ui::IComponent* n) {
+        if (!n) return;
+        if (const auto* idProp = n->GetProperty("id")) {
+            if (idProp->Type() == avalang::ui::PropertyType::String) {
+                existing.insert(idProp->AsString());
             }
         }
-        if (!found) node.properties.push_back(incoming);
+        for (auto* c : n->Children()) collect(c);
+    };
+    collect(root);
+    int i = 1;
+    while (existing.count(prefix + std::to_string(i))) ++i;
+    return prefix + std::to_string(i);
+}
+
+std::string SanitizeIdentifier(const std::string& s) {
+    std::string out;
+    for (char c : s) {
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_') {
+            out.push_back(c);
+        }
+    }
+    if (!out.empty() && std::isdigit(static_cast<unsigned char>(out[0]))) {
+        out = "_" + out;
+    }
+    return out.empty() ? "handler" : out;
+}
+
+std::string PropValueToString(const avalang::ui::PropertyValue& pv) {
+    switch (pv.Type()) {
+        case avalang::ui::PropertyType::Bool: return pv.AsBool() ? "true" : "false";
+        case avalang::ui::PropertyType::Number: {
+            double n = pv.AsNumber();
+            if (n == static_cast<long long>(n)) return std::to_string(static_cast<long long>(n));
+            return std::to_string(n);
+        }
+        case avalang::ui::PropertyType::String: return pv.AsString();
+        default: return "";
     }
 }
 
 } // namespace
 
 std::string GenerateNodeUid() {
-    // Process-lifetime counter is enough -- see the header comment on
-    // DesignNode::node_uid, these are never persisted or compared
-    // across runs. Atomic only so a future background load (if that
-    // ever happens) can't race with the UI thread; today everything
-    // calling this runs on the single UI thread anyway.
-    static std::atomic<unsigned long long> counter{0};
-    return "n" + std::to_string(counter.fetch_add(1, std::memory_order_relaxed));
-}
-
-DesignNode MakeNode(const std::string& type) {
-    DesignNode node;
-    node.node_uid = GenerateNodeUid();
-    node.type = type;
-    if (const ComponentTypeInfo* info = FindComponentType(type)) {
-        node.properties = info->default_properties;
-    }
-    return node;
+    static std::atomic<uint64_t> counter{0};
+    return "uid_" + std::to_string(counter.fetch_add(1));
 }
 
 DesignDocument NewBlankAvauiDocument() {
     DesignDocument doc;
-    doc.root = MakeNode("page");
+    doc.tree = avalang::ui::ComponentTree::Create();
+    auto* root = doc.tree->CreateComponent("Page");
+    doc.tree->SetRoot(root);
     return doc;
 }
 
-bool LoadAvauiFile(const std::string& path, DesignDocument& out_doc, std::string& out_error) {
-    std::string text;
-    if (!util::ReadFileToString(path, text)) {
-        out_error = "no se pudo abrir el archivo";
+bool ParseAvauiText(const std::string& text, DesignDocument& out_doc, std::string& out_error) {
+    out_doc = DesignDocument{};
+    out_doc.tree = avalang::ui::ComponentTree::Create();
+
+    try {
+        auto parsed = avalang::ui::parser::AvauiParser::Parse(text);
+        out_doc.code_behind = parsed.code;
+        for (const auto& [k, v] : parsed.state) {
+            out_doc.initial_state.push_back(PropertyRow{k, v});
+        }
+        out_doc.imports = parsed.imports;
+        out_doc.extends = parsed.extends;
+
+        if (parsed.tree && parsed.tree->Root()) {
+            out_doc.tree = std::move(parsed.tree);
+        }
+    } catch (const std::exception& e) {
+        out_error = e.what();
         return false;
     }
 
-    DesignDocument doc;
-    if (!ParseAvauiText(text, doc.root, doc.code_behind, doc.initial_state, doc.imports, out_error)) {
-        return false;
-    }
-    doc.dirty = false;
-    out_doc = std::move(doc);
     return true;
 }
 
+bool LoadAvauiFile(const std::string& path, DesignDocument& out_doc, std::string& out_error) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        out_error = "could not open " + path;
+        return false;
+    }
+    std::ostringstream buf;
+    buf << in.rdbuf();
+    return ParseAvauiText(buf.str(), out_doc, out_error);
+}
+
 bool SaveAvauiFile(const DesignDocument& doc, const std::string& path) {
-    std::ofstream file(path, std::ios::binary);
-    if (!file) return false;
-    file << WriteAvauiText(doc.root, doc.code_behind, doc.initial_state, doc.imports);
-    return static_cast<bool>(file);
+    if (!doc.tree || !doc.tree->Root()) return false;
+
+    std::string text = WriteAvauiText(
+        doc.tree->Root(), doc.code_behind, doc.initial_state, doc.imports);
+
+    std::ofstream out(path, std::ios::binary);
+    if (!out) return false;
+    out << text;
+    return true;
 }
 
-DesignNode* FindNodeByUid(DesignNode& root, const std::string& uid) {
-    if (root.node_uid == uid) return &root;
-    for (DesignNode& child : root.children) {
-        if (DesignNode* found = FindNodeByUid(child, uid)) return found;
+avalang::ui::IComponent* FindNodeById(avalang::ui::IComponent* root, const std::string& nodeId) {
+    if (!root) return nullptr;
+    if (root->NodeId() == nodeId) return root;
+    for (auto* child : root->Children()) {
+        if (auto* found = FindNodeById(child, nodeId)) return found;
     }
     return nullptr;
 }
 
-DesignNode* FindParentOfUid(DesignNode& root, const std::string& uid) {
-    for (DesignNode& child : root.children) {
-        if (child.node_uid == uid) return &root;
-        if (DesignNode* found = FindParentOfUid(child, uid)) return found;
+avalang::ui::IComponent* FindParentOf(avalang::ui::IComponent* root, avalang::ui::IComponent* target) {
+    if (!root || !target) return nullptr;
+    if (root == target) return nullptr;
+    for (auto* child : root->Children()) {
+        if (child == target) return root;
+        if (auto* found = FindParentOf(child, target)) return found;
     }
     return nullptr;
 }
 
-bool NodeContainsUid(const DesignNode& node, const std::string& uid) {
-    if (node.node_uid == uid) return true;
-    for (const DesignNode& child : node.children) {
-        if (NodeContainsUid(child, uid)) return true;
+bool NodeContains(avalang::ui::IComponent* node, avalang::ui::IComponent* target) {
+    if (!node || !target) return false;
+    if (node == target) return true;
+    for (auto* child : node->Children()) {
+        if (NodeContains(child, target)) return true;
     }
     return false;
 }
 
-bool MoveNode(DesignDocument& doc, const std::string& moved_uid, const std::string& target_uid,
+bool MoveNode(DesignDocument& doc, const std::string& movedNodeId, const std::string& targetNodeId,
               DropZone zone) {
-    if (moved_uid == target_uid) return false; // dropped on itself -- no-op
-    if (moved_uid == doc.root.node_uid) return false; // the page root can't be moved
+    if (!doc.tree) return false;
+    auto* root = doc.tree->Root();
+    if (!root) return false;
+    if (movedNodeId == targetNodeId) return false;
+    if (root->NodeId() == movedNodeId) return false;
 
-    DesignNode* moved = FindNodeByUid(doc.root, moved_uid);
-    if (!moved) return false; // stale payload (node no longer exists) -- tolerate silently
+    auto* moved = FindNodeById(root, movedNodeId);
+    if (!moved) return false;
+    auto* target = FindNodeById(root, targetNodeId);
+    if (!target) return false;
+    if (NodeContains(moved, target)) return false;
 
-    // Refuse to make a node its own descendant (e.g. dragging a
-    // container on top of one of its own children) -- checked BEFORE
-    // any mutation, against the tree exactly as it stands right now.
-    if (NodeContainsUid(*moved, target_uid)) return false;
+    auto* oldParent = FindParentOf(root, moved);
+    if (oldParent) oldParent->RemoveChild(moved);
 
-    // Copy the subtree out before touching any vector. Erasing an
-    // element from a std::vector<DesignNode> move-assigns every
-    // element after it down by one slot in place -- a raw pointer held
-    // across that erase (e.g. to a sibling that comes after the erased
-    // node) would silently end up pointing at the wrong node's data.
-    // `extracted` is a fully independent object from here on, so none
-    // of that matters for it.
-    DesignNode extracted = *moved;
-
-    DesignNode* old_parent = FindParentOfUid(doc.root, moved_uid);
-    if (!old_parent) return false; // shouldn't happen -- moved_uid != root.node_uid, checked above
-    {
-        std::vector<DesignNode>& siblings = old_parent->children;
-        siblings.erase(std::remove_if(siblings.begin(), siblings.end(),
-                                       [&](const DesignNode& n) { return n.node_uid == moved_uid; }),
-                       siblings.end());
-    }
-
-    // Every lookup from here on is done FRESH, after the erase above --
-    // if the target happened to live in the same sibling vector as the
-    // moved node, a pointer/index taken before the erase could now be
-    // stale (see the comment on `extracted`).
     if (zone == DropZone::kInto) {
-        if (DesignNode* target = FindNodeByUid(doc.root, target_uid)) {
-            target->children.push_back(std::move(extracted));
+        target->AddChild(moved);
+    } else {
+        auto* targetParent = FindParentOf(root, target);
+        if (!targetParent) {
+            if (oldParent) oldParent->AddChild(moved);
+            return false;
+        }
+        auto siblings = targetParent->Children();
+        auto it = std::find(siblings.begin(), siblings.end(), target);
+        if (it == siblings.end()) {
+            targetParent->AddChild(moved);
+            return true;
+        }
+        size_t idx = std::distance(siblings.begin(), it);
+        if (zone == DropZone::kBefore) {
+            targetParent->RemoveChild(target);
+            targetParent->AddChild(moved);
+            targetParent->AddChild(target);
         } else {
-            // Target vanished mid-drag (shouldn't happen in practice)
-            // -- put the node back where it was rather than losing it.
-            old_parent->children.push_back(std::move(extracted));
+            targetParent->RemoveChild(target);
+            targetParent->AddChild(target);
+            targetParent->AddChild(moved);
         }
-        doc.dirty = true;
-        return true;
     }
 
-    // kBefore / kAfter: insert as a sibling of target, inside target's
-    // OWN parent's children -- also looked up fresh.
-    DesignNode* target_parent = FindParentOfUid(doc.root, target_uid);
-    if (!target_parent) {
-        // Target is the root itself -- root has no siblings, so fall
-        // back to "into" instead of silently dropping the node.
-        doc.root.children.push_back(std::move(extracted));
-        doc.dirty = true;
-        return true;
-    }
-
-    std::vector<DesignNode>& siblings = target_parent->children;
-    auto it = std::find_if(siblings.begin(), siblings.end(),
-                            [&](const DesignNode& n) { return n.node_uid == target_uid; });
-    if (it == siblings.end()) {
-        // Target vanished mid-drag -- same fallback as above.
-        target_parent->children.push_back(std::move(extracted));
-        doc.dirty = true;
-        return true;
-    }
-    const auto index = (it - siblings.begin()) + (zone == DropZone::kAfter ? 1 : 0);
-    siblings.insert(siblings.begin() + index, std::move(extracted));
     doc.dirty = true;
     return true;
 }
 
-bool RemoveNode(DesignDocument& doc, const std::string& node_uid) {
-    if (node_uid == doc.root.node_uid) return false; // the page root can't be deleted
+std::string EnsureClickHandler(DesignDocument& doc, const std::string& nodeId) {
+    if (!doc.tree) return "";
+    auto* node = FindNodeById(doc.tree->Root(), nodeId);
+    if (!node) return "";
 
-    DesignNode* target = FindNodeByUid(doc.root, node_uid);
-    if (!target) return false; // stale/synthetic uid -- nothing real to remove
-
-    // Whether the current selection needs clearing is decided BEFORE
-    // the erase below (which invalidates `target`) -- NodeContainsUid
-    // covers both "the removed node itself was selected" and "the
-    // selection was a descendant of it".
-    const bool clears_selection = !doc.selected_uid.empty() && NodeContainsUid(*target, doc.selected_uid);
-
-    DesignNode* parent = FindParentOfUid(doc.root, node_uid);
-    if (!parent) return false; // shouldn't happen -- node_uid != root.node_uid, checked above
-
-    std::vector<DesignNode>& siblings = parent->children;
-    const auto before = siblings.size();
-    siblings.erase(std::remove_if(siblings.begin(), siblings.end(),
-                                   [&](const DesignNode& n) { return n.node_uid == node_uid; }),
-                   siblings.end());
-    if (siblings.size() == before) return false; // shouldn't happen -- target was just found above
-
-    if (clears_selection) doc.selected_uid.clear();
-    doc.dirty = true;
-    return true;
-}
-
-std::string EnsureClickHandler(DesignDocument& doc, const std::string& uid) {
-    DesignNode* node = FindNodeByUid(doc.root, uid);
-    if (!node) return ""; // synthetic (resolved-import) node or stale uid
-
-    if (node->id.empty()) {
-        node->id = NextAutoId(doc.root, node->type);
-        doc.dirty = true;
+    std::string id;
+    if (const auto* idProp = node->GetProperty("id")) {
+        if (idProp->Type() == avalang::ui::PropertyType::String) {
+            id = idProp->AsString();
+        }
+    }
+    if (id.empty()) {
+        id = NextAutoId(doc.tree->Root(), node->TypeName());
+        node->SetProperty("id", avalang::ui::PropertyValue(id));
     }
 
-    // Reuse an existing "click" binding as-is (see header comment --
-    // this never renames a handler someone already has).
-    for (PropertyRow& ev : node->events) {
-        if (ev.key != "click") continue;
-        if (ev.value.empty()) {
-            ev.value = SanitizeIdentifier(node->id) + "_Click";
-            doc.dirty = true;
+    std::string handlerName;
+    if (const auto* clickProp = node->GetProperty("click")) {
+        if (clickProp->Type() == avalang::ui::PropertyType::String) {
+            handlerName = clickProp->AsString();
         }
-        if (!CodeBehindHasFunc(doc.code_behind, ev.value)) {
-            AppendHandlerStub(doc, ev.value);
-            doc.dirty = true;
-        }
-        return ev.value;
     }
 
-    // No "click" event yet -- create one and its stub.
-    const std::string handler = SanitizeIdentifier(node->id) + "_Click";
-    node->events.push_back(PropertyRow{"click", handler});
-    AppendHandlerStub(doc, handler);
+    if (handlerName.empty()) {
+        handlerName = SanitizeIdentifier(id) + "_Click";
+        node->SetProperty("click", avalang::ui::PropertyValue(handlerName));
+    }
+
+    std::string stub = "function " + handlerName + "()\nend\n";
+    if (doc.code_behind.find("function " + handlerName) == std::string::npos) {
+        if (!doc.code_behind.empty() && doc.code_behind.back() != '\n') {
+            doc.code_behind.push_back('\n');
+        }
+        doc.code_behind += stub;
+    }
+
     doc.dirty = true;
-    return handler;
+    return handlerName;
 }
 
-std::string AddComponentNode(DesignDocument& doc, const std::string& parent_id, const std::string& type,
-                              const std::string& id, const std::vector<PropertyRow>& properties) {
-    DesignNode* parent = parent_id.empty() ? &doc.root : FindNodeByIdMutable(doc.root, parent_id);
-    if (!parent) return ""; // parent_id given but no node has that id
+bool RemoveNode(DesignDocument& doc, const std::string& nodeId) {
+    if (!doc.tree) return false;
+    auto* root = doc.tree->Root();
+    if (!root) return false;
+    if (root->NodeId() == nodeId) return false;
 
-    const ComponentTypeInfo* parent_info = FindComponentType(parent->type);
-    if (!parent_info || !parent_info->is_container) return ""; // not a valid drop target
-
-    if (!FindComponentType(type)) return ""; // unknown component type -- refuse rather than guess
-
-    DesignNode node = MakeNode(type); // seeds default_properties + fresh node_uid
-    node.id = id;
-    UpsertProperties(node, properties);
-
-    const std::string new_uid = node.node_uid;
-    parent->children.push_back(std::move(node));
-    doc.dirty = true;
-    return new_uid;
-}
-
-bool EditComponentNode(DesignDocument& doc, const std::string& node_id, const std::vector<PropertyRow>& properties,
-                        const std::string* new_id) {
-    DesignNode* node = FindNodeByIdMutable(doc.root, node_id);
+    auto* node = FindNodeById(root, nodeId);
     if (!node) return false;
 
-    UpsertProperties(*node, properties);
-    if (new_id) node->id = *new_id;
+    auto* parent = FindParentOf(root, node);
+    if (!parent) return false;
+
+    parent->RemoveChild(node);
+    doc.tree->DestroyComponent(node->Id());
+
+    if (!doc.selected_node_id.empty()) {
+        auto* selected = FindNodeById(root, doc.selected_node_id);
+        if (!selected || selected == node || NodeContains(node, selected)) {
+            doc.selected_node_id.clear();
+        }
+    }
+
+    doc.dirty = true;
+    return true;
+}
+
+std::string AddComponentNode(DesignDocument& doc, const std::string& parentId, const std::string& type,
+                              const std::string& id, const std::vector<PropertyRow>& properties) {
+    if (!doc.tree) return "";
+    auto* root = doc.tree->Root();
+    if (!root) return "";
+
+    avalang::ui::IComponent* parent = nullptr;
+    if (parentId.empty()) {
+        parent = root;
+    } else {
+        parent = FindNodeById(root, parentId);
+    }
+    if (!parent) return "";
+
+    auto* node = doc.tree->CreateComponent(type);
+    if (!id.empty()) node->SetProperty("id", avalang::ui::PropertyValue(id));
+    for (const auto& prop : properties) {
+        node->SetProperty(prop.key, avalang::ui::PropertyValue(prop.value));
+    }
+    parent->AddChild(node);
+
+    doc.dirty = true;
+    return node->NodeId();
+}
+
+bool EditComponentNode(DesignDocument& doc, const std::string& nodeId, const std::vector<PropertyRow>& properties,
+                        const std::string* newId) {
+    if (!doc.tree) return false;
+    auto* node = FindNodeById(doc.tree->Root(), nodeId);
+    if (!node) return false;
+
+    for (const auto& prop : properties) {
+        node->SetProperty(prop.key, avalang::ui::PropertyValue(prop.value));
+    }
+    if (newId) {
+        node->SetProperty("id", avalang::ui::PropertyValue(*newId));
+    }
 
     doc.dirty = true;
     return true;

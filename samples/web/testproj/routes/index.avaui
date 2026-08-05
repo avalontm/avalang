@@ -21,7 +21,8 @@ view
 
         row
             gap = 12
-
+			height = 48
+			
             button
                 id = "Decrease"
                 text = "-"
@@ -36,6 +37,7 @@ view
 
             button
                 id = "Clear"
+				grow = true
                 text = "Clear"
                 click = OnClearClick()
             end

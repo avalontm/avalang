@@ -2,6 +2,9 @@
 
 #include "imgui.h"
 
+#include <cstring>
+#include <string>
+
 namespace studio {
 namespace plugins_ui {
 
@@ -199,6 +202,96 @@ extern "C" float TextLineHeight(AvaPanelContext* /*ctx*/) {
     return ImGui::GetTextLineHeightWithSpacing();
 }
 
+extern "C" void TextColored(AvaPanelContext* /*ctx*/, const char* text, float r, float g, float b, float a) {
+    ConsumePendingSameLine(0.0f);
+    ImGui::TextColored(ImVec4(r, g, b, a), "%s", text ? text : "");
+}
+
+// Manually wraps `text` to `wrap_width`, inserting '\n' at the same break
+// points ImGui::TextWrapped() would pick (ImFont::CalcWordWrapPositionA is
+// the same helper TextWrapped uses internally) -- unlike TextWrapped,
+// InputTextMultiline has no wrap mode of its own: every line already in
+// the buffer is treated as one visual line verbatim. Without this, a
+// message with no embedded '\n' rendered as one single line that either
+// scrolled sideways or, with NoHorizontalScroll set (see
+// selectable_message below), just got clipped at the edge -- which is
+// exactly the "no salto de línea, se sale del chat" bug this fixes.
+std::string WordWrapText(const char* text, float wrap_width) {
+    std::string result;
+    if (!text || !*text) return result;
+    result.reserve(std::strlen(text) + 16);
+
+    ImFont* font = ImGui::GetFont();
+    const char* text_end = text + std::strlen(text);
+    const char* p = text;
+    while (p < text_end) {
+        const char* line_end = p;
+        while (line_end < text_end && *line_end != '\n') ++line_end;
+
+        const char* seg = p;
+        while (seg < line_end) {
+            const char* wrap_pos = font->CalcWordWrapPositionA(1.0f, seg, line_end, wrap_width);
+            if (wrap_pos <= seg) wrap_pos = seg + 1; // always advances, even for one very long "word"
+            result.append(seg, wrap_pos);
+            seg = wrap_pos;
+            // Skip the single space that caused the break, same as
+            // TextWrapped does -- otherwise every wrapped line but the
+            // first would start with a stray leading space.
+            if (seg < line_end && *seg == ' ') ++seg;
+            if (seg < line_end) result += '\n';
+        }
+        if (line_end < text_end) { result += '\n'; p = line_end + 1; }
+        else p = line_end;
+    }
+    return result;
+}
+
+// Fase 10: see plugin_api.h's comment on selectable_message for the
+// "why" -- this is what actually renders it. A read-only
+// InputTextMultiline instead of TextWrapped is the standard Dear ImGui
+// way to get real selection/copy out of a block of text; TextWrapped
+// has no selection model at all.
+extern "C" void SelectableMessage(AvaPanelContext* /*ctx*/, const char* id, const char* text,
+                                   float text_r, float text_g, float text_b, float text_a,
+                                   float bg_r, float bg_g, float bg_b, float bg_a) {
+    ConsumePendingSameLine(0.0f);
+    if (!text) text = "";
+    if (!id || id[0] == '\0') id = "##msg";
+
+    const ImGuiStyle& style = ImGui::GetStyle();
+
+    float wrap_width = ImGui::GetContentRegionAvail().x - style.FramePadding.x * 2.0f;
+    if (wrap_width < 40.0f) wrap_width = 40.0f;
+
+    // Wrapped once here (not left to the widget, which can't do it --
+    // see WordWrapText's comment) and reused for both what's actually
+    // drawn and the height measurement below, so the box is always sized
+    // to exactly the lines it displays, hard-wrapped included.
+    std::string wrapped = WordWrapText(text, wrap_width);
+
+    int line_count = 1;
+    for (char c : wrapped) {
+        if (c == '\n') ++line_count;
+    }
+    float height = line_count * ImGui::GetTextLineHeight() + style.FramePadding.y * 2.0f + 4.0f;
+
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(bg_r, bg_g, bg_b, bg_a));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(text_r, text_g, text_b, text_a));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+
+    // ReadOnly: this is a copyable label, not an editable field -- the
+    // goal is letting the user drag-select/Ctrl+C their own chat
+    // history, not rewrite it. const_cast is safe here: ImGui never
+    // writes through a ReadOnly buffer, it only needs a non-const
+    // pointer to match the same InputText signature used by editable
+    // callers.
+    ImGui::InputTextMultiline(id, const_cast<char*>(wrapped.c_str()), wrapped.size() + 1, ImVec2(-1.0f, height),
+                               ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_NoHorizontalScroll);
+
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
+}
+
 extern "C" bool Combo(AvaPanelContext* /*ctx*/, const char* label, int* current_index, const char* const* items,
                        int items_count) {
     if (!current_index || !items || items_count <= 0) return false;
@@ -261,6 +354,8 @@ void FillUiApi(AvaUiApi& ui) {
     ui.input_text_multiline_submit_hint = &InputTextMultilineSubmitHint;
     ui.button_disabled = &ButtonDisabled;
     ui.text_line_height = &TextLineHeight;
+    ui.text_colored = &TextColored;
+    ui.selectable_message = &SelectableMessage;
 }
 
 AvaPanelContext* BeginPanelContext(const char* panel_name) {

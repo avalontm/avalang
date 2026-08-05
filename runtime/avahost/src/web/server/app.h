@@ -96,15 +96,25 @@ private:
     // `handler=OnX`. Resolves `path` the same way an ordinary GET to
     // that path would (router_.Resolve), then re-renders it with the
     // named handler dispatched first -- the response IS the new page
-    // HTML, which the client script from EventScriptTag() swaps in via
-    // document.open/write/close.
+    // HTML, which the client script from EventScriptTag() swaps into
+    // #ava-viewport via DOMParser (see EventScriptTag's applyHtml()).
     HttpResponse HandleEventRoute(const HttpRequest& request);
 
     // <script> tag, injected alongside HotReloadScriptTag(), that POSTs
     // to /__avahost/event whenever an element with [data-handler] fires
     // its bound [data-event] and swaps the response in as the new
-    // document -- the client half of the Fase 2 event flow.
-    std::string EventScriptTag() const;
+    // #ava-viewport content (via DOMParser) -- the client half of the
+    // Fase 2 event flow. Also carries the responsive-resize listener
+    // (Fase C, opcion 2): both flows fetch a freshly-rendered page and
+    // graft it into the live DOM through the same shared applyHtml()
+    // helper defined once inside this script, rather than each having
+    // its own copy of the DOMParser/scroll-restore logic. viewportWidth/
+    // viewportHeight are this response's own render size (the same
+    // values RenderAvaUiRoute passed to UiPipelineRenderOptions), so the
+    // resize listener's "did the window change enough" check has a
+    // correct baseline from the very first paint, not just after a
+    // resize has already happened once.
+    std::string EventScriptTag(int viewportWidth, int viewportHeight) const;
 
     // Builds a "500 ..." body, including the given detail only when
     // options_.IsDevelopment() -- Production responses stay generic

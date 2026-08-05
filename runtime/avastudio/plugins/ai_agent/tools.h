@@ -60,7 +60,7 @@ std::string ExecuteWriteTool(AvaStudioHost* host, const std::string& tool_name, 
 // Fase 6 -- Designer integration. Two tools, both resolved against
 // AvaHostServices::design_add_component/design_edit_component (see
 // plugin_api.h's "Design services (Fase 6)" section): agrega/edita un
-// componente sobre el DesignNode tree del tab .avaui activo. Same
+// componente sobre el ComponentTree del tab .avaui activo. Same
 // approval gate as apply_edit above -- neither of these two host
 // services writes anything by itself; both compute the resulting
 // AvaLang UI source and queue it as a normal Aplicar/Rechazar

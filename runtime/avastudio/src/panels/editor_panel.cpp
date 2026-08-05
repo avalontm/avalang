@@ -921,17 +921,10 @@ void SaveTab(EditorTab& tab) {
             // tab.design untouched and still write the raw text to
             // disk (a syntax error is allowed to reach disk, exactly
             // like saving invalid code in a plain .ava file today).
-            design::DesignNode parsed_root;
-            std::string parsed_code_behind;
-            std::vector<PropertyRow> parsed_initial_state;
-            std::vector<std::string> parsed_imports;
+            design::DesignDocument parsed_doc;
             std::string parse_error;
-            if (design::ParseAvauiText(tab.GetText(), parsed_root, parsed_code_behind, parsed_initial_state,
-                                        parsed_imports, parse_error)) {
-                tab.design.root = std::move(parsed_root);
-                tab.design.code_behind = std::move(parsed_code_behind);
-                tab.design.initial_state = std::move(parsed_initial_state);
-                tab.design.imports = std::move(parsed_imports);
+            if (design::LoadAvauiFile(tab.file_path, parsed_doc, parse_error)) {
+                tab.design = std::move(parsed_doc);
                 tab.avaui_load_error.clear();
             }
             std::ofstream file(tab.file_path, std::ios::binary);
@@ -967,7 +960,7 @@ void ToggleTabViewMode(EditorTab& tab) {
         // design tree" state to fail on. Programmatic SetText(), so
         // rebuild the function index/autocomplete trie by hand exactly
         // like OpenFileInTab does after its own SetText().
-        tab.SetText(design::WriteAvauiText(tab.design.root, tab.design.code_behind, tab.design.initial_state,
+        tab.SetText(design::WriteAvauiText(tab.design.Root(), tab.design.code_behind, tab.design.initial_state,
                                             tab.design.imports));
         RebuildIndexAndTrie(tab);
         tab.avaui_load_error.clear();
@@ -977,20 +970,13 @@ void ToggleTabViewMode(EditorTab& tab) {
 
     // Code -> Design: re-parse the buffer so hand-edits made in Code
     // view aren't lost. Selection is cleared either way -- ParseAvauiText
-    // assigns fresh node_uids (same as LoadAvauiFile), so the previous
-    // selected_uid can't possibly match anything in the reparsed tree.
-    design::DesignNode parsed_root;
-    std::string parsed_code_behind;
-    std::vector<PropertyRow> parsed_initial_state;
-    std::vector<std::string> parsed_imports;
+    // assigns a fresh tree (same as LoadAvauiFile), so the previous
+    // selected_node_id can't possibly match anything in the reparsed tree.
+    design::DesignDocument parsed_doc;
     std::string parse_error;
-    if (design::ParseAvauiText(tab.GetText(), parsed_root, parsed_code_behind, parsed_initial_state,
-                                parsed_imports, parse_error)) {
-        tab.design.root = std::move(parsed_root);
-        tab.design.code_behind = std::move(parsed_code_behind);
-        tab.design.initial_state = std::move(parsed_initial_state);
-        tab.design.imports = std::move(parsed_imports);
-        tab.design.selected_uid.clear();
+    if (design::ParseAvauiText(tab.GetText(), parsed_doc, parse_error)) {
+        tab.design = std::move(parsed_doc);
+        tab.design.selected_node_id.clear();
         tab.avaui_load_error.clear();
         tab.view_mode = TabViewMode::Design;
     } else {
@@ -1335,7 +1321,7 @@ void DrawEditorPanel(EditorState& state) {
                     ImVec2 avail = ImGui::GetContentRegionAvail();
                     std::string generated_handler; // Fase 5 -- see JumpToCodeBehindHandler below
                     if (auto selected_node = DrawDesignerCanvas(tab.design, avail, state.project_root, tab.id,
-                                                                 &generated_handler)) {
+                                                                 &generated_handler, state.log_bridge)) {
                         state.designer_selection = std::move(selected_node);
                     }
                     if (tab.design.dirty) tab.dirty = true;

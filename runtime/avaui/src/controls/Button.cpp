@@ -1,6 +1,7 @@
 #include "controls/Button.h"
 #include "components/ComponentTree.h"
 #include "components/PropertyValue.h"
+#include "registry/ComponentTypeRegistry.h"
 #include <unordered_map>
 #include <mutex>
 
@@ -99,5 +100,22 @@ ButtonClickCallback* GetButtonClickCallback(ComponentId buttonId) {
 }
 
 }  // namespace internal
+
+namespace {
+struct ButtonTypeRegistration {
+    ButtonTypeRegistration() {
+        using namespace avalang::ui::registry;
+        RegisterComponentType({
+            "Button", "Button", /*is_container=*/false,
+            {
+                {"text", PropertyValue("Button")},
+                {"isEnabled", PropertyValue(true)},
+                {"style", PropertyValue("primary")},
+            },
+        });
+    }
+};
+static ButtonTypeRegistration _button_type_registration;
+} // namespace
 
 }  // namespace avalang::ui::controls

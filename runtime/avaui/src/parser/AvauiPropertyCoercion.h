@@ -14,7 +14,7 @@ namespace parser {
 // Extraido de AvauiParser.cpp (estaba en su namespace anonimo) para
 // que CUALQUIER builder que construya un ComponentTree a partir de
 // datos que NO vienen de texto .avaui (p.ej. Ava Studio's
-// live_render_bridge, que arma el arbol directo desde DesignNode)
+// live_render_bridge, que arma el arbol directo desde ComponentTree/IComponent)
 // use exactamente las mismas reglas de inferencia de tipo y de alias
 // de nombre que el parser real -- sin esto, el panel Design y el
 // pipeline real (avahost/ui_pipeline_*) podrian silenciosamente

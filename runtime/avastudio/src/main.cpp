@@ -30,6 +30,8 @@
 
 #include "design/avaui_text.h"
 #include "design/design_document.h"
+#include "components/IComponent.h"
+#include "components/PropertyValue.h"
 #include "engine/engine_bridge.h"
 #include "fonts/embedded_font.h"
 #include "panels/builtin_panels.h"
@@ -39,6 +41,7 @@
 #include "panels/pending_edits_panel.h"
 #include "panels/preview_panel.h"
 #include "panels/properties_panel.h"
+#include "panels/settings_panel.h"
 #include "panels/terminal_panel.h"
 #include "panels/titlebar_panel.h"
 #include "panels/toolbox_panel.h"
@@ -212,9 +215,9 @@ int main() {
     engine.SetModulesPath(settings.modules_path);
 
     // One-shot channel from the "Browse..." folder dialog (which can only
-    // run here, since it needs `window`) back into the Properties modal's
-    // text field a frame later -- see DrawTitleBar's `browsed_folder` param.
-    std::string pending_modules_browse;
+    // run here, since it needs `window`) back into the Settings panel's
+    // text field a frame later -- see DrawSettingsPanel's `browsed_folder` param.
+    std::string pending_settings_browse;
 
     studio::ExplorerState explorer_state;
     explorer_state.root_dir = ResolveWorkspaceDir();
@@ -235,6 +238,12 @@ int main() {
     // See util/log_bridge.h for why these are split.
     studio::LogBridge log_bridge;
     studio::PropertiesState properties_state;
+    // Fase 4 (AVASTUDIO_AVAUI_MIGRATION_PLAN.md): same "set once, right
+    // after the thing it points to exists" pattern as
+    // editor_state.project_root above -- lets DrawDesignerCanvas (via
+    // DrawEditorPanel) log render failures into this same Output-panel
+    // stream instead of needing its own.
+    editor_state.log_bridge = &log_bridge;
 
     // Build the demo Component Tree once at startup -- see the note in
     // engine_bridge.cpp about why this is fixed rather than script-driven.
@@ -265,10 +274,10 @@ int main() {
         const studio::EditorTab* active = editor_state.Active();
         if (!active || active->is_welcome || !active->is_avaui) return false;
         path = active->file_path;
-        avaui_source = (active->view_mode == studio::TabViewMode::Design)
-                           ? studio::design::WriteAvauiText(active->design.root, active->design.code_behind,
-                                                             active->design.initial_state, active->design.imports)
-                           : active->GetText();
+            avaui_source = (active->view_mode == studio::TabViewMode::Design)
+                               ? studio::design::WriteAvauiText(active->design.Root(), active->design.code_behind,
+                                                                 active->design.initial_state, active->design.imports)
+                               : active->GetText();
         return true;
     };
     plugin_callbacks.get_last_run_output = [&](std::string& text, bool& had_error) -> bool {
@@ -362,18 +371,10 @@ int main() {
             // buffer above), so the Design canvas reflects the approved
             // change right away instead of needing a manual F7 round-trip.
             if (tab_ptr->is_avaui) {
-                studio::design::DesignNode parsed_root;
-                std::string parsed_code_behind;
-                std::vector<studio::PropertyRow> parsed_state;
-                std::vector<std::string> parsed_imports;
                 std::string parse_error;
-                if (studio::design::ParseAvauiText(edit.new_content, parsed_root, parsed_code_behind, parsed_state,
-                                                    parsed_imports, parse_error)) {
-                    tab_ptr->design.root = std::move(parsed_root);
-                    tab_ptr->design.code_behind = std::move(parsed_code_behind);
-                    tab_ptr->design.initial_state = std::move(parsed_state);
-                    tab_ptr->design.imports = std::move(parsed_imports);
-                    tab_ptr->design.selected_uid.clear(); // node_uids were reassigned on reparse
+                studio::design::DesignDocument parsed_doc;
+                if (studio::design::LoadAvauiFile("", parsed_doc, parse_error)) {
+                    tab_ptr->design = std::move(parsed_doc);
                     tab_ptr->design.dirty = false;
                     tab_ptr->avaui_load_error.clear();
                 }
@@ -452,9 +453,8 @@ int main() {
         const std::vector<studio::PluginInfo> available_plugins =
             plugin_host.ScanAvailable(plugins_dir, settings.disabled_plugins);
         studio::TitleBarResult titlebar_result = studio::DrawTitleBar(
-            editor_state, settings, is_maximized, kTitleBarHeight, pending_modules_browse, available_plugins,
+            editor_state, settings, is_maximized, kTitleBarHeight, available_plugins,
             plugin_host.Panels(), settings.closed_panels);
-        pending_modules_browse.clear(); // one-shot, consumed by DrawTitleBar this frame
 
         // "Plugins" menu checkbox toggled this frame -- flip it in
         // settings, persist, and reload right away (no restart needed)
@@ -497,6 +497,15 @@ int main() {
                 closed.push_back(name); // was open -> close it
                 panel_open[name] = false;
             }
+            studio::SaveSettings(settings);
+        }
+
+        if (titlebar_result.open_settings_requested) {
+            auto& closed = settings.closed_panels;
+            auto it = std::find(closed.begin(), closed.end(), "Settings");
+            if (it != closed.end()) closed.erase(it);
+            panel_open["Settings"] = true;
+            ImGui::SetWindowFocus("Settings");
             studio::SaveSettings(settings);
         }
 
@@ -599,6 +608,7 @@ int main() {
             ImGui::DockBuilderDockWindow("Toolbox", dock_left);
             ImGui::DockBuilderDockWindow("Code Editor", dock_center);
             ImGui::DockBuilderDockWindow("Properties", dock_right);
+            ImGui::DockBuilderDockWindow("Settings", dock_right);
             ImGui::DockBuilderDockWindow("Preview", dock_bottom);
             ImGui::DockBuilderDockWindow("Terminal", dock_bottom); // tabs alongside Preview, like VSCode's bottom panel
             ImGui::DockBuilderDockWindow("Output", dock_bottom);   // general Ava Studio logs -- see util/log_bridge.h
@@ -757,16 +767,6 @@ int main() {
             // actually uses the return value.
             perform_run();
         }
-        if (titlebar_result.modules_browse_requested) {
-            std::string path;
-            if (studio::titlebar::OpenFolderDialog(window, path, settings.modules_path)) {
-                pending_modules_browse = path;
-            }
-        }
-        if (titlebar_result.modules_save_requested) {
-            engine.SetModulesPath(settings.modules_path);
-            studio::SaveSettings(settings);
-        }
         // Fold in File > Exit and any native close request (Alt+F4, the
         // taskbar/dock close, etc. -- see GlfwWindowCloseRequested) so
         // every path to quitting resolves through the one check below.
@@ -868,7 +868,7 @@ int main() {
         // shows keystrokes immediately, see properties_panel.cpp), and
         // returns a PropertyEdit only once a field is committed
         // (unfocus/Enter) -- that's the point this patches the *real*
-        // DesignNode the selection came from, identified by tab id + uid
+        // IComponent the selection came from, identified by tab id + uid
         // rather than a stale pointer (properties_state outlives whatever
         // frame the selection was made on, including tab switches).
         if (bool& open = panel_open.try_emplace("Properties", true).first->second; open) {
@@ -876,85 +876,32 @@ int main() {
                 for (auto& tab_ptr : editor_state.tabs) {
                 studio::EditorTab& tab = *tab_ptr;
                 if (tab.id != edit->tab_id || !tab.is_avaui) continue;
-                if (studio::design::DesignNode* node =
-                        studio::design::FindNodeByUid(tab.design.root, edit->node_uid)) {
-                    // 9.9/9.12: every kind of edit the Properties panel
-                    // can now emit -- see PropertyEditKind in
-                    // properties_panel.h for what each one means and
-                    // which field(s) of PropertyEdit it uses.
+                if (avalang::ui::IComponent* node =
+                        studio::design::FindNodeById(tab.design.Root(), edit->node_id)) {
                     switch (edit->kind) {
                         case studio::PropertyEditKind::kValue:
-                            for (auto& prop : node->properties) {
-                                if (prop.key == edit->key) {
-                                    prop.value = edit->new_value;
-                                    break;
-                                }
-                            }
+                            node->SetProperty(edit->key, avalang::ui::PropertyValue(edit->new_value));
                             break;
                         case studio::PropertyEditKind::kId:
-                            node->id = edit->new_value;
+                            node->SetProperty("id", avalang::ui::PropertyValue(edit->new_value));
                             break;
                         case studio::PropertyEditKind::kType:
-                            node->type = edit->new_value;
                             break;
                         case studio::PropertyEditKind::kAddProperty:
-                            // Guard against a duplicate key slipping in
-                            // anyway (e.g. two edits committed the same
-                            // frame from a stale UI state) -- the panel
-                            // already disables its own "+" button for a
-                            // key that exists, this is just a second,
-                            // cheap line of defense against a
-                            // duplicate that would otherwise be
-                            // impossible to tell apart in the table.
-                            {
-                                bool exists = false;
-                                for (const auto& prop : node->properties) {
-                                    if (prop.key == edit->key) { exists = true; break; }
-                                }
-                                if (!exists) node->properties.push_back({edit->key, edit->new_value});
+                            if (!node->HasProperty(edit->key)) {
+                                node->SetProperty(edit->key, avalang::ui::PropertyValue(edit->new_value));
                             }
                             break;
                         case studio::PropertyEditKind::kRemoveProperty:
-                            for (auto it = node->properties.begin(); it != node->properties.end(); ++it) {
-                                if (it->key == edit->key) {
-                                    node->properties.erase(it);
-                                    break;
-                                }
-                            }
+                            node->RemoveProperty(edit->key);
                             break;
-                        case studio::PropertyEditKind::kEvent: {
-                            // Shared by "value changed" and "new row
-                            // added" (see properties_panel.cpp's
-                            // DrawEditableRowTable call for events) --
-                            // find-or-add covers both: an existing
-                            // event's handler gets updated in place, a
-                            // brand-new event name gets appended.
-                            bool found = false;
-                            for (auto& ev : node->events) {
-                                if (ev.key == edit->key) {
-                                    ev.value = edit->new_value;
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            if (!found) node->events.push_back({edit->key, edit->new_value});
+                        case studio::PropertyEditKind::kEvent:
+                            node->SetProperty(edit->key, avalang::ui::PropertyValue(edit->new_value));
                             break;
-                        }
                         case studio::PropertyEditKind::kRemoveEvent:
-                            for (auto it = node->events.begin(); it != node->events.end(); ++it) {
-                                if (it->key == edit->key) {
-                                    node->events.erase(it);
-                                    break;
-                                }
-                            }
+                            node->RemoveProperty(edit->key);
                             break;
                     }
-                    // Same convention SaveTab/HandleDropTarget already use:
-                    // this loop sets design-doc dirty, DrawEditorPanel's
-                    // "if (tab.design.dirty) tab.dirty = true" line only
-                    // runs on its own next call, so mirror it here too --
-                    // otherwise the tab strip's unsaved dot wouldn't light
-                    // up until the next click on the canvas.
                     tab.design.dirty = true;
                     tab.dirty = true;
                 }
@@ -964,6 +911,26 @@ int main() {
             }
             }
             persist_if_closed("Properties", open);
+        }
+
+        // --- Settings ----------------------------------------------------
+        if (bool& open = panel_open.try_emplace("Settings", true).first->second; open) {
+            bool settings_dirty = false;
+            bool settings_browse_requested = false;
+            studio::DrawSettingsPanel(settings, plugin_host.SettingsPanels(), settings_dirty,
+                                       settings_browse_requested, pending_settings_browse, &open);
+            pending_settings_browse.clear();
+            if (settings_browse_requested) {
+                std::string path;
+                if (studio::titlebar::OpenFolderDialog(window, path, settings.modules_path)) {
+                    pending_settings_browse = path;
+                }
+            }
+            if (settings_dirty) {
+                engine.SetModulesPath(settings.modules_path);
+                studio::SaveSettings(settings);
+            }
+            persist_if_closed("Settings", open);
         }
 
         // --- Terminal --------------------------------------------------------

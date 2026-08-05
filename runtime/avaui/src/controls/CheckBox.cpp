@@ -1,6 +1,7 @@
 #include "controls/CheckBox.h"
 #include "components/ComponentTree.h"
 #include "components/PropertyValue.h"
+#include "registry/ComponentTypeRegistry.h"
 #include <unordered_map>
 #include <mutex>
 
@@ -82,5 +83,22 @@ void UnbindCheckBoxChange(ComponentId checkBoxId) {
     std::lock_guard<std::mutex> lock(g_callbackMutex);
     g_checkBoxCallbacks.erase(checkBoxId);
 }
+
+namespace {
+struct CheckBoxTypeRegistration {
+    CheckBoxTypeRegistration() {
+        using namespace avalang::ui::registry;
+        RegisterComponentType({
+            "CheckBox", "CheckBox", /*is_container=*/false,
+            {
+                {"label", PropertyValue("CheckBox")},
+                {"isChecked", PropertyValue(false)},
+                {"isEnabled", PropertyValue(true)},
+            },
+        });
+    }
+};
+static CheckBoxTypeRegistration _checkbox_type_registration;
+} // namespace
 
 } // namespace avalang::ui::controls

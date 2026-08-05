@@ -62,7 +62,18 @@ struct OpenRouterModel {
 
 class OpenRouterClient {
 public:
-    explicit OpenRouterClient(std::string api_key);
+    // `base_url` vacío (el valor por defecto) mantiene el comportamiento
+    // de siempre: pega a https://openrouter.ai/api/v1 y manda los headers
+    // propios de OpenRouter (HTTP-Referer/X-Title). Si se pasa un
+    // `base_url` no vacío -- p.ej. "http://localhost:1234/v1" o
+    // "https://api.openai.com/v1" -- ese es el que se usa (sin agregarle
+    // ni sacarle el "/v1" final: se concatena tal cual con "/chat/completions"
+    // y "/models"), y esos dos headers extra se omiten porque no son
+    // parte del estándar OpenAI y algunos servidores los rechazan.
+    // `api_key` puede quedar vacío en este modo -- el header Authorization
+    // directamente no se manda, en vez de mandar "Bearer " (varios
+    // servidores locales tipo LM Studio/Ollama no piden key).
+    explicit OpenRouterClient(std::string api_key, std::string base_url = "");
 
     // Streams one assistant turn. `tools` may be empty (no tool calling
     // offered at all, e.g. still used as-is by Fases 1-3). This call is
@@ -88,4 +99,6 @@ public:
 
 private:
     std::string api_key_;
+    std::string base_url_; // vacío == default de OpenRouter, ver comentario del ctor
+    bool is_custom_ = false;
 };

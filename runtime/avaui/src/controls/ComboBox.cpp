@@ -1,6 +1,7 @@
 #include "controls/ComboBox.h"
 #include "components/ComponentTree.h"
 #include "components/PropertyValue.h"
+#include "registry/ComponentTypeRegistry.h"
 #include <unordered_map>
 #include <mutex>
 
@@ -103,5 +104,21 @@ void UnbindComboBoxChange(ComponentId comboBoxId) {
     std::lock_guard<std::mutex> lock(g_callbackMutex);
     g_comboBoxCallbacks.erase(comboBoxId);
 }
+
+namespace {
+struct ComboBoxTypeRegistration {
+    ComboBoxTypeRegistration() {
+        using namespace avalang::ui::registry;
+        RegisterComponentType({
+            "ComboBox", "Combo Box", /*is_container=*/false,
+            {
+                {"selectedValue", PropertyValue("")},
+                {"isEnabled", PropertyValue(true)},
+            },
+        });
+    }
+};
+static ComboBoxTypeRegistration _combobox_type_registration;
+} // namespace
 
 } // namespace avalang::ui::controls

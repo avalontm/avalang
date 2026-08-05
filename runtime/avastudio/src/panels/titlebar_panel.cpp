@@ -1,6 +1,7 @@
 #include "panels/titlebar_panel.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cstdio>
 #include <string>
 #include <string_view>
@@ -92,7 +93,7 @@ void DrawCloseIcon(ImDrawList* dl, ImVec2 p0, ImVec2 p1) {
 } // namespace
 
 TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings, bool is_maximized,
-                             float height, const std::string& browsed_folder, const std::vector<PluginInfo>& plugins,
+                             float height, const std::vector<PluginInfo>& plugins,
                              const std::vector<RegisteredPanel>& panels, const std::vector<std::string>& closed_panels) {
     TitleBarResult result;
 
@@ -177,10 +178,17 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
     // happened to click" -- otherwise a click near a button's edge can
     // make the popup appear noticeably off to the side.
     ImGui::SetNextWindowPos(ImVec2(result.file_menu_rect.min_x, result.file_menu_rect.max_y + 2.0f));
-    ImGui::SetNextWindowSize(ImVec2(210.0f, 0.0f));
-    static bool open_properties_modal = false;
+    // Constraint en vez de SetNextWindowSize: 210px es el ancho de
+    // siempre, pero este popup es el único que tiene un BeginMenu()
+    // adentro (Preferences) -- ImGui necesita poder ensanchar la
+    // ventana si su propio cálculo de columnas (el que ubica la flecha
+    // de submenu a la derecha, mismo mecanismo que alinea "Ctrl+N" etc.
+    // en los demás items) pide más lugar. Un ancho fijo se lo impediría
+    // y la flecha terminaría mal posicionada -- dejarlo crecer es lo
+    // que hace que la flecha nativa de BeginMenu se vea bien sin tener
+    // que dibujar nada a mano.
+    ImGui::SetNextWindowSizeConstraints(ImVec2(210.0f, 0.0f), ImVec2(FLT_MAX, FLT_MAX));
     static bool open_plugins_modal = false;
-    static char modules_path_buf[512] = {};
     if (ImGui::BeginPopup("##FileMenu")) {
         if (ImGui::MenuItem("New File", "Ctrl+N")) {
             result.new_requested = true;
@@ -217,11 +225,14 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
             }
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Properties")) {
-            open_properties_modal = true;
-        }
-        if (ImGui::MenuItem("Plugins...")) {
-            open_plugins_modal = true;
+        if (ImGui::BeginMenu("Preferences")) {
+            if (ImGui::MenuItem("Settings", "Ctrl+,")) {
+                result.open_settings_requested = true;
+            }
+            if (ImGui::MenuItem("Extensions")) {
+                open_plugins_modal = true;
+            }
+            ImGui::EndMenu();
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Exit", "Alt+F4")) {
@@ -385,68 +396,6 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
         ImGui::Dummy(ImVec2(0.0f, 2.0f));
         ImGui::EndPopup();
     }
-
-    if (open_properties_modal) {
-        ImGui::OpenPopup("Properties##PropertiesModal");
-        open_properties_modal = false;
-        // Modal just opened -- (re)seed the text field from the current
-        // setting, not whatever was left over from a previous open/close
-        // without saving. Stays empty when settings.modules_path is empty
-        // (the default) -- see the field's comment in util/settings.h for
-        // why blank is meaningful and shouldn't be replaced with a
-        // resolved absolute path here.
-        std::snprintf(modules_path_buf, sizeof(modules_path_buf), "%s", settings.modules_path.c_str());
-    }
-    if (!browsed_folder.empty()) {
-        // One frame after "Browse..." succeeded (see the comment on
-        // DrawTitleBar's declaration) -- drop the picked folder into the
-        // field, overwriting whatever was there.
-        std::snprintf(modules_path_buf, sizeof(modules_path_buf), "%s", browsed_folder.c_str());
-    }
-    // A bit taller/wider than a plain auto-fit popup, plus extra padding
-    // below, so the dialog doesn't read as cramped next to its own text.
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f, 20.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 10.0f));
-    if (ImGui::BeginPopupModal("Properties##PropertiesModal", nullptr,
-                               ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse)) {
-        ImGui::TextColored(palette::FromHex(palette::kTextMuted), "Modules folder");
-        ImGui::Dummy(ImVec2(0.0f, 2.0f));
-        ImGui::TextWrapped(
-            "In addition to imports relative to the open file, \"import\" also looks here -- "
-            "meant for base/shared modules across projects. Leave blank to use the modules "
-            "folder next to the executable.");
-        ImGui::Dummy(ImVec2(0.0f, 6.0f));
-
-        ImGui::SetNextItemWidth(-90.0f);
-        ImGui::InputTextWithHint("##ModulesPathInput", "(default: folder next to the executable)",
-                                  modules_path_buf, sizeof(modules_path_buf));
-        ImGui::SameLine();
-        if (ImGui::Button("Browse...", ImVec2(80.0f, 0.0f))) {
-            result.modules_browse_requested = true;
-        }
-
-        ImGui::Dummy(ImVec2(0.0f, 8.0f));
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0.0f, 8.0f));
-
-        const float button_w = 90.0f;
-        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - (button_w * 2.0f + ImGui::GetStyle().ItemSpacing.x) -
-                              ImGui::GetStyle().WindowPadding.x);
-        if (ImGui::Button("Cancel", ImVec2(button_w, 0.0f))) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Save", ImVec2(button_w, 0.0f))) {
-            settings.modules_path = modules_path_buf;
-            result.modules_save_requested = true;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::Dummy(ImVec2(0.0f, 2.0f));
-        ImGui::EndPopup();
-    }
-    ImGui::PopStyleVar(2);
 
     // --- Plugins modal -----------------------------------------------------
     // A real window, not a cramped dropdown -- "File > Plugins..." opens

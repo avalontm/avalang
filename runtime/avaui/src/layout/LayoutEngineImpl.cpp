@@ -37,7 +37,7 @@ double AlignOffset(double slotStart, double slotLength, double childLength, Layo
 // ComputeIntrinsicSize below. Anything other than "horizontal" (absent,
 // wrong type, "vertical", typo) falls back to vertical, same
 // soft-fallback convention as ReadAlignment.
-bool IsHorizontalScrollView(const IComponent* component) {
+bool IsHorizontalDirection(const IComponent* component) {
     if (const PropertyValue* value = component->GetProperty("direction")) {
         if (value->Type() == PropertyType::String) {
             return value->AsString() == "horizontal";
@@ -58,6 +58,44 @@ bool IsHorizontalScrollView(const IComponent* component) {
 // entirely for a closed one.
 bool IsDialog(const IComponent* component) {
     return component->TypeName() == "Dialog";
+}
+
+// A Slot marks where a page's own content lands inside a layout (see
+// `slot()` in samples/web/testproj/layouts/main.avaui and
+// ui_pipeline_dynamic_renderer.cpp's "locate layout slot" probe pass,
+// which runs LayoutEngine::Compute against the *layout* tree alone --
+// before the calling page's content has been substituted in -- purely
+// to read back the Slot's own rect). At that probe time a Slot has no
+// children yet, so its intrinsic size (ComputeIntrinsicSize's generic
+// Stack-like fallback, since "Slot" isn't Row/Column/ScrollView/a known
+// leaf) is always 0x0. Without this special case, a Slot with no
+// explicit width/height and no explicit `grow = true` -- which is how
+// every real layout writes it; the *wrapping* Row/Column gets
+// `grow = true`, not the Slot itself, see main.avaui -- falls into
+// ArrangeRowOrColumn's ordinary "hugs its own content" branch and
+// claims zero main-axis space, so the page ends up rendered into a
+// 0-height (or 0-width) box no matter how much room its parent
+// actually has. A Slot is, definitionally, the one child meant to
+// consume whatever room its parent has left -- so treat it as an
+// implicit `grow = true` unless the author gave it an explicit
+// width/height (still respected by ArrangeRowOrColumn's Pass 1 above
+// this check runs) or explicitly opted out with `grow = false`.
+bool IsSlot(const IComponent* component) {
+    return component->TypeName() == "Slot";
+}
+
+// True if `component` should claim a share of its Row/Column parent's
+// leftover main-axis space: either an explicit `grow = true`, or a
+// Slot that hasn't explicitly opted out (see IsSlot above). Checked
+// once, from ArrangeRowOrColumn's Pass 1, so a Slot's implicit default
+// and an author's explicit override share one place instead of two
+// separate opinions about the same child.
+bool ShouldGrow(const IComponent* component) {
+    const PropertyValue* growProp = component->GetProperty("grow");
+    if (growProp && growProp->Type() == PropertyType::Bool) {
+        return growProp->AsBool();
+    }
+    return IsSlot(component);
 }
 
 } // namespace
@@ -108,8 +146,12 @@ IntrinsicSize LayoutEngineImpl::ComputeIntrinsicSize(IComponent* component) {
     double spacing = ReadNumber(component, "spacing", 0.0);
 
     if (typeName == "Button" || typeName == "Text" || typeName == "Label" || typeName == "Link") {
-        // Leaf content: measure the label text (see TextMeasure.h for
-        // why this is a heuristic, not a pixel-exact glyph measure).
+        // Leaf content: measure the label text against the component's
+        // actual font (real glyph metrics via FontRegistry -- see
+        // TextMeasure.h/FontRegistry.h). `fontName` also drives the
+        // line-height lookup below so a control that sets a custom
+        // font gets that font's real ascent/descent, not the default
+        // font's.
         std::string text;
         if (const PropertyValue* value = component->GetProperty("text")) {
             if (value->Type() == PropertyType::String) {
@@ -124,7 +166,7 @@ IntrinsicSize LayoutEngineImpl::ComputeIntrinsicSize(IComponent* component) {
             }
         }
         double textWidth = EstimateTextWidth(text, fontSize, fontName);
-        double textHeight = DefaultLineHeight(fontSize);
+        double textHeight = DefaultLineHeight(fontSize, fontName);
 
         if (typeName == "Button") {
             // A button additionally gets default padding around its
@@ -205,7 +247,7 @@ IntrinsicSize LayoutEngineImpl::ComputeIntrinsicSize(IComponent* component) {
         }
         size.height = mainTotal + padding.top + padding.bottom;
         size.width = crossMax + padding.left + padding.right;
-    } else if (typeName == "ScrollView") {
+    } else if (typeName == "ScrollView" || typeName == "Flex") {
         // Same Row/Column math (dispatched on "direction"), for the case
         // a ScrollView has no explicit width/height of its own -- without
         // this, an un-sized ScrollView would intrinsic-size to 0x0 (the
@@ -215,7 +257,7 @@ IntrinsicSize LayoutEngineImpl::ComputeIntrinsicSize(IComponent* component) {
         // an explicit height (that's the point -- a bounded viewport
         // smaller than its content), so this mostly matters for the
         // cross axis and for nested/auto-sizing edge cases.
-        bool isRow = IsHorizontalScrollView(component);
+        bool isRow = IsHorizontalDirection(component);
         double mainTotal = 0.0;
         double crossMax = 0.0;
         for (const IntrinsicSize& childSize : childSizes) {
@@ -232,6 +274,25 @@ IntrinsicSize LayoutEngineImpl::ComputeIntrinsicSize(IComponent* component) {
             size.height = mainTotal + padding.top + padding.bottom;
             size.width = crossMax + padding.left + padding.right;
         }
+    } else if (typeName == "Grid") {
+        int columns = std::max(1, static_cast<int>(ReadNumber(component, "columns", 1.0)));
+        int neededRows = childSizes.empty()
+                              ? 0
+                              : static_cast<int>((childSizes.size() + columns - 1) / static_cast<size_t>(columns));
+        int explicitRows = static_cast<int>(ReadNumber(component, "rows", 0.0));
+        int rows = std::max({1, neededRows, explicitRows});
+
+        double maxChildWidth = 0.0;
+        double maxChildHeight = 0.0;
+        for (const IntrinsicSize& childSize : childSizes) {
+            maxChildWidth = std::max(maxChildWidth, childSize.width);
+            maxChildHeight = std::max(maxChildHeight, childSize.height);
+        }
+
+        double totalWidth = maxChildWidth * columns + spacing * (columns - 1);
+        double totalHeight = maxChildHeight * rows + spacing * (rows - 1);
+        size.width = totalWidth + padding.left + padding.right;
+        size.height = totalHeight + padding.top + padding.bottom;
     } else {
         // "Stack" and every TypeName the engine doesn't otherwise
         // recognize -- same overlay scope as ArrangeStack: intrinsic
@@ -383,7 +444,11 @@ void LayoutEngineImpl::LayoutNodeRecursive(IComponent* component, LayoutNode* no
         // with Rects that extend past `contentBox` on the scroll axis --
         // exactly the overflow SceneCommandWalker turns into a real
         // scrollable region on web (see its "ScrollView" case).
-        ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/IsHorizontalScrollView(component));
+        ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/IsHorizontalDirection(component));
+    } else if (typeName == "Flex") {
+        ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/IsHorizontalDirection(component));
+    } else if (typeName == "Grid") {
+        ArrangeGrid(component, node, contentBox);
     } else {
         // "Stack" and every TypeName the engine doesn't otherwise
         // recognize (Page, Container, Text, Button, ...) share the
@@ -416,31 +481,27 @@ void LayoutEngineImpl::ArrangeRowOrColumn(IComponent* component, LayoutNode* nod
     //
     //   1. An explicit `width`/`height` property -- always wins,
     //      whatever kind of child this is.
-    //   2. An explicit `grow = true` -- this child claims a share of
+    //   2. An explicit `grow = true` (or a Slot, which grows
+    //      implicitly unless it opts out with `grow = false` -- see
+    //      IsSlot/ShouldGrow above) -- this child claims a share of
     //      whatever main-axis space its fixed/intrinsic siblings don't
     //      use (e.g. a content column sandwiched between a Navbar and
-    //      a Footer that both size to their own content). `grow`
-    //      deliberately overrides intrinsic sizing rather than only
-    //      applying when intrinsic is zero: a padding-only container
-    //      (e.g. a Column wrapping a single `slot()`, whose own
-    //      intrinsic size is just its padding) would otherwise be
-    //      misclassified as "fixed" at its minimal padding size and
-    //      never receive the remaining space.
+    //      a Footer that both size to their own content).
     //   3. Any other child -- a nested layout container
     //      (Row/Column/Stack/Container/Page/ScrollView) OR a leaf/
     //      atomic control (Button, Text, TextBox, CheckBox, Image,
-    //      ...) -- with no explicit size defaults to "auto" too, same
-    //      as an explicit `grow = true`, WITHOUT needing one: one such
-    //      child fills 100% of the main axis, two split it 50/50,
-    //      three 33/33/33, and so on -- same rule as an author-facing
-    //      Figma-style "fill" default / XAML star-sizing ("*"). A
-    //      child's own intrinsic/content-based footprint (Fase A) is
-    //      deliberately NOT used as a fallback here for either
-    //      containers or leaves: the only way to opt a child out of
-    //      the equal-share pool is an explicit `width`/`height`
-    //      (step 1) -- there is no more "shrink to fit my label"
-    //      default, so the container-vs-leaf distinction this
-    //      function used to make no longer matters here.
+    //      ...) -- with no explicit size and no `grow = true` hugs its
+    //      own intrinsic/content-based size (Fase A). This is what
+    //      makes a typical `[logo, row(grow=true), row{link, link}]`
+    //      navbar behave as authors expect: the logo and the link
+    //      group each take only as much width as their own content
+    //      needs, and only the explicitly-`grow`-marked spacer
+    //      between them claims whatever space is left over. Without
+    //      this fallback, every non-explicit child -- including ones
+    //      that never asked to grow -- competed equally for the
+    //      remaining space, so e.g. two links meant to sit tight next
+    //      to each other on the right instead got stretched across
+    //      half the navbar each.
     const char* mainProp = isRow ? "width" : "height";
     std::vector<double> childMarginMain(children.size(), 0.0);
     std::vector<double> childMainSize(children.size(), -1.0);
@@ -472,19 +533,28 @@ void LayoutEngineImpl::ArrangeRowOrColumn(IComponent* component, LayoutNode* nod
             continue;
         }
 
-        const PropertyValue* growProp = children[i]->GetProperty("grow");
-        if (growProp && growProp->Type() == PropertyType::Bool && growProp->AsBool()) {
+        if (ShouldGrow(children[i])) {
             ++autoCount;
             continue;
         }
 
-        // Step 3 (see the Pass 1 comment above): any child -- container
-        // or leaf -- with no explicit size and no `grow = true` joins
-        // the equal-share pool. No intrinsic/content-based fallback
-        // here anymore; that's still used elsewhere (e.g.
-        // PlaceComponent's cross-axis sizing), just not as a main-axis
-        // default in Row/Column.
-        ++autoCount;
+        // Any other child -- container or leaf -- with no explicit
+        // size and no `grow = true` hugs its own content: its
+        // main-axis footprint is its intrinsic size (Fase A,
+        // ComputeIntrinsicSize, already computed for every component
+        // before this pass runs -- see Compute()), same source
+        // PlaceComponent already falls back to for a non-Stretch
+        // cross axis. Treated as fixed (added to fixedTotal, not
+        // autoCount) so it does NOT compete with `grow = true`
+        // siblings for the remaining space -- only an explicit `grow`
+        // does that. Falls back to 0 if this component somehow isn't
+        // in the cache (matches PlaceComponent's own fallback).
+        auto intrinsicIt = intrinsic_.find(children[i]->Id());
+        double intrinsicMain = intrinsicIt != intrinsic_.end()
+                                    ? (isRow ? intrinsicIt->second.width : intrinsicIt->second.height)
+                                    : 0.0;
+        childMainSize[i] = intrinsicMain;
+        fixedTotal += intrinsicMain;
     }
 
     double sizingPool = std::max(0.0, mainAvailable - totalMarginMain);
@@ -534,6 +604,40 @@ void LayoutEngineImpl::ArrangeStack(IComponent* component, LayoutNode* node, con
         LayoutAlignment hAlign = ReadAlignment(children[i], "align-h");
         LayoutAlignment vAlign = ReadAlignment(children[i], "align-v");
         LayoutNodeRecursive(children[i], static_cast<LayoutNode*>(childNodes[i]), contentBox, hAlign, vAlign);
+    }
+}
+
+void LayoutEngineImpl::ArrangeGrid(IComponent* component, LayoutNode* node, const LayoutRect& contentBox) {
+    std::vector<IComponent*> children = component->Children();
+    if (children.empty()) {
+        return;
+    }
+
+    const std::vector<ILayoutNode*>& childNodes = node->Children();
+
+    int columns = std::max(1, static_cast<int>(ReadNumber(component, "columns", 1.0)));
+    int neededRows = static_cast<int>((children.size() + static_cast<size_t>(columns) - 1)
+                                       / static_cast<size_t>(columns));
+    int explicitRows = static_cast<int>(ReadNumber(component, "rows", 0.0));
+    int rows = std::max({1, neededRows, explicitRows});
+
+    double spacing = ReadNumber(component, "spacing", 0.0);
+    double cellWidth = std::max(0.0, (contentBox.width - spacing * (columns - 1)) / columns);
+    double cellHeight = std::max(0.0, (contentBox.height - spacing * (rows - 1)) / rows);
+
+    for (size_t i = 0; i < children.size(); ++i) {
+        int col = static_cast<int>(i) % columns;
+        int row = static_cast<int>(i) / columns;
+
+        LayoutRect cellSlot;
+        cellSlot.x = contentBox.x + col * (cellWidth + spacing);
+        cellSlot.y = contentBox.y + row * (cellHeight + spacing);
+        cellSlot.width = cellWidth;
+        cellSlot.height = cellHeight;
+
+        LayoutAlignment hAlign = ReadAlignment(children[i], "align-h");
+        LayoutAlignment vAlign = ReadAlignment(children[i], "align-v");
+        LayoutNodeRecursive(children[i], static_cast<LayoutNode*>(childNodes[i]), cellSlot, hAlign, vAlign);
     }
 }
 

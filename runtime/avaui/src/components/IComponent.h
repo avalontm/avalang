@@ -23,6 +23,7 @@ public:
     virtual ~IComponent() = default;
 
     virtual ComponentId Id() const = 0;
+    virtual const std::string& NodeId() const = 0;
     virtual const std::string& TypeName() const = 0;
 
     virtual IComponent* Parent() const = 0;
@@ -33,6 +34,7 @@ public:
     virtual const PropertyValue* GetProperty(const std::string& name) const = 0;
     virtual bool HasProperty(const std::string& name) const = 0;
     virtual void RemoveProperty(const std::string& name) = 0;
+    virtual std::vector<std::string> PropertyNames() const = 0;
 
     // Slots -- named, ordered child containers. "default" is used when
     // no slot is given. A component may expose zero, one or many slots

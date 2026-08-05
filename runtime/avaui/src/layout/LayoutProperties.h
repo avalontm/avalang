@@ -60,7 +60,18 @@ namespace layout {
 //                                    between consecutive children.
 //                                    Read off the *parent* (Row/Column)
 //                                    component, not the child. Default
-//                                    0.
+//                                    0 -- LayoutEngine itself never
+//                                    invents a value; the real
+//                                    Parser -> RenderTheme -> Layout
+//                                    pipeline fills margin/padding/
+//                                    spacing in on layout containers
+//                                    that don't set them explicitly
+//                                    (see RenderTheme.cpp's
+//                                    ApplyTypeDefaults and
+//                                    ThemeSpacing::containerPaddingPx/
+//                                    containerGapPx), so this 0 only
+//                                    shows up when the engine is used
+//                                    directly, bypassing RenderTheme.
 
 // Defaults used by intrinsic sizing (LayoutEngineImpl::ComputeIntrinsicSize,
 // see layout/TextMeasure.h for the text-measurement side of it) when a

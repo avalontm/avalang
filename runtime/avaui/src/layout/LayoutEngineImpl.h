@@ -83,6 +83,8 @@ private:
     // fallback for any TypeName the engine doesn't otherwise recognize.
     void ArrangeStack(IComponent* component, LayoutNode* node, const LayoutRect& contentBox);
 
+    void ArrangeGrid(IComponent* component, LayoutNode* node, const LayoutRect& contentBox);
+
     std::unordered_map<ComponentId, std::unique_ptr<LayoutNode>> nodes_;
     LayoutNode* root_ = nullptr;
 

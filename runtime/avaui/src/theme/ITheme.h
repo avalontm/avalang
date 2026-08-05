@@ -22,14 +22,31 @@ struct ThemeColor {
  * Font descriptor for theme typography.
  */
 struct ThemeFont {
-    std::string name;        // Font family name (e.g., "Segoe UI", "Arial")
+    std::string name;        // Font family name (e.g., "Segoe UI", "Arial") --
+                              // also the key layout::FontRegistry measures
+                              // real glyph metrics under (see FontRegistry.h).
     uint32_t sizePoints = 12; // Font size in points
     uint32_t weight = 400;    // 400=normal, 700=bold (CSS weights)
     bool italic = false;
-    
+
+    // Optional path (relative to the project root, e.g.
+    // "assets/fonts/Inter-Regular.ttf") to an embedded/custom TTF that
+    // backs `name`. Empty means "use AvaUI's built-in default font
+    // (JetBrains Mono) for measurement" -- `name` is then purely a
+    // display label passed through to renderers, NOT something
+    // FontRegistry can measure against (a bare system font name has no
+    // guaranteed-identical file on every target platform/browser; see
+    // FontRegistry.h). When AvaStudio's font picker resolves a system
+    // font, it copies that font's file into the project's assets and
+    // fills this in, so `name` and `filePath` end up describing the
+    // exact same bytes everywhere the project is built or previewed.
+    std::string filePath;
+
     ThemeFont() = default;
     ThemeFont(const std::string& n, uint32_t s) 
         : name(n), sizePoints(s) {}
+    ThemeFont(const std::string& n, uint32_t s, const std::string& file)
+        : name(n), sizePoints(s), filePath(file) {}
 };
 
 /**
@@ -40,6 +57,8 @@ struct ThemeSpacing {
     uint32_t marginPx = 4;
     uint32_t borderWidthPx = 1;
     uint32_t borderRadiusPx = 4;
+    uint32_t containerPaddingPx = 16;
+    uint32_t containerGapPx = 12;
 };
 
 /**

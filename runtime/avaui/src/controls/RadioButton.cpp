@@ -1,6 +1,7 @@
 #include "controls/RadioButton.h"
 #include "components/ComponentTree.h"
 #include "components/PropertyValue.h"
+#include "registry/ComponentTypeRegistry.h"
 #include <unordered_map>
 #include <vector>
 #include <mutex>
@@ -120,5 +121,23 @@ void UnbindRadioButtonChange(ComponentId radioButtonId) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_callbacks.erase(radioButtonId);
 }
+
+namespace {
+struct RadioButtonTypeRegistration {
+    RadioButtonTypeRegistration() {
+        using namespace avalang::ui::registry;
+        RegisterComponentType({
+            "RadioButton", "Radio Button", /*is_container=*/false,
+            {
+                {"label", PropertyValue("RadioButton")},
+                {"group", PropertyValue("")},
+                {"isSelected", PropertyValue(false)},
+                {"isEnabled", PropertyValue(true)},
+            },
+        });
+    }
+};
+static RadioButtonTypeRegistration _radiobutton_type_registration;
+} // namespace
 
 } // namespace avalang::ui::controls

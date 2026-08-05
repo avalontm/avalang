@@ -2,6 +2,7 @@
 #define AVA_UI_HTML_RENDERER_H
 
 #include "renderer/BaseRenderer.h"
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -91,7 +92,13 @@ protected:
     void OnEndFrame() override;
 
 private:
-    std::stringstream html_;
+    // Body markup only (everything between the .ava-viewport div and its
+    // close). The <head>, including @font-face rules, can't be known
+    // until AFTER the body is drawn -- OnDrawText/OnDrawButton/OnDrawLink
+    // only find out which font names are actually used as they run -- so
+    // the full document is assembled in OnEndFrame from bodyHtml_ +
+    // whatever fonts_ collected, instead of streaming a <head> up front.
+    std::stringstream bodyHtml_;
     std::string cachedOutput_;
     bool outputDirty_;
     std::vector<std::string> styleRules_;
@@ -100,8 +107,23 @@ private:
     std::string extraBodyEnd_;
     bool fragmentOnly_ = false;
 
-    void EmitHTMLHeader();
-    void EmitHTMLFooter();
+    // Font family names (as written into `font-family:` CSS) seen while
+    // drawing this frame's text/button/link elements. One @font-face
+    // rule per name is emitted at OnEndFrame, backed by whatever
+    // FontRegistry actually measured that name against -- see
+    // EmitFontFaceRules. A std::set keeps them de-duplicated and in a
+    // stable order without an extra lookup structure.
+    std::set<std::string> usedFontNames_;
+
+    // Resolves `fontName` to the CSS `font-family` value to write
+    // inline (quotes it, falls back to a canonical name for an empty/
+    // null fontName) and records it in usedFontNames_ so OnEndFrame
+    // knows to emit a matching @font-face rule.
+    std::string ResolveCssFontFamily(const char* fontName);
+
+    std::string EmitHTMLHeader();
+    std::string EmitHTMLFooter();
+    std::string EmitFontFaceRules() const;
     void EmitCSSFromState();
 
     std::string ColorToHex(const Color& c) const;

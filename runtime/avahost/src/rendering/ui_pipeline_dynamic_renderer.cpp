@@ -8,9 +8,11 @@
 #include <unordered_map>
 
 #include "components/ComponentTree.h"
+#include "composition/ComposePageWithLayout.h"
 #include "parser/AvauiParser.h"
 #include "theme/ITheme.h"
 #include "theme/RenderTheme.h"
+#include "theme/ProjectFontOverrides.h"
 #include "layout/LayoutEngine.h"
 #include "render_tree/IRenderTree.h"
 #include "scene/ISceneGraph.h"
@@ -20,7 +22,7 @@
 #include "commands/SceneCommandWalker.h"
 #include "events/IEventDispatcher.h"
 
-#include "component/dotted_path.h"
+#include "resolver/DottedPath.h"
 #include "runtime/runtime_host.h"
 #include "ui_component_resolver.h"
 #include "ui_pipeline_static_renderer.h"
@@ -70,7 +72,13 @@ bool RenderTreeFragment(avalang::ui::ComponentTree* tree,
             return false;
         }
         substage = "RenderTreeFragment: apply theme";
-        avalang::ui::RenderTheme::Apply(tree, themeProvider->Current());
+        // See ui_pipeline_static_renderer.cpp -- same app.ava
+        // `font "role" "name" "path"` overlay, same passthrough-when-empty
+        // ProjectTheme wrapper.
+        avalang::ui::theme::ProjectTheme projectTheme(
+            themeProvider->Current(),
+            avalang::ui::theme::LoadProjectFontOverrides(options.projectRoot));
+        avalang::ui::RenderTheme::Apply(tree, &projectTheme);
 
         substage = "RenderTreeFragment: layout engine compute";
         auto layoutEngine = avalang::ui::LayoutEngine::Create();
@@ -139,28 +147,7 @@ bool RenderTreeFragment(avalang::ui::ComponentTree* tree,
     }
 }
 
-// Depth-first search for the first component whose TypeName matches
-// `typeName` (case-sensitive, matches the canonical names ComponentTree
-// stores -- e.g. "Slot" for a bare `slot()` call in a layout). Used to
-// locate the layout's `slot()` placeholder so the page fragment can be
-// sized/positioned against its actual computed rect instead of the
-// full page viewport -- see the "render page fragment" stage below for
-// why: without this, a page's own root gets laid out at (0,0) across
-// the *entire* viewport (independent of where the layout's Navbar/
-// Footer leave room for it), so it visually overlaps them.
-avalang::ui::IComponent* FindComponentByType(avalang::ui::IComponent* root,
-                                              const std::string& typeName) {
-    if (!root) return nullptr;
-    if (root->TypeName() == typeName) return root;
-    for (avalang::ui::IComponent* child : root->Children()) {
-        if (avalang::ui::IComponent* found = FindComponentByType(child, typeName)) {
-            return found;
-        }
-    }
-    return nullptr;
-}
-
-avalang::ui::IComponent* FindComponentById(avalang::ui::IComponent* root,
+ avalang::ui::IComponent* FindComponentById(avalang::ui::IComponent* root,
                                             avalang::ui::ComponentId id) {
     if (!root) return nullptr;
     if (root->Id() == id) return root;
@@ -423,7 +410,7 @@ bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, Runtim
         bool haveLayout = false;
         if (!parsed.extends.empty()) {
             stage = "parse layout";
-            fs::path layoutPath = ResolveDottedAvauiPath(projectRoot, parsed.extends);
+            fs::path layoutPath = avalang::ui::ResolveDottedAvauiPath(projectRoot, parsed.extends);
             std::string layoutSource;
             std::string readError;
             if (ReadFile(layoutPath, layoutSource, readError)) {
@@ -538,23 +525,12 @@ bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, Runtim
         bool haveSlotRect = false;
         if (haveLayout) {
             stage = "locate layout slot";
-            if (avalang::ui::IComponent* slotComponent =
-                    FindComponentByType(layoutParsed.tree->Root(), "Slot")) {
-                auto probeLayoutEngine = avalang::ui::LayoutEngine::Create();
-                avalang::ui::LayoutRect viewport{
-                    0.0, 0.0,
-                    static_cast<double>(options.viewportWidth),
-                    static_cast<double>(options.viewportHeight)};
-                probeLayoutEngine->Compute(layoutParsed.tree->Root(), viewport);
-                if (avalang::ui::ILayoutNode* slotNode =
-                        probeLayoutEngine->FindNode(slotComponent->Id())) {
-                    slotRect = slotNode->Rect();
-                    haveSlotRect = true;
-                }
-                // If the layout has no `slot()` placeholder at all, or
-                // the probe layout couldn't resolve it, fall back to
-                // the previous full-viewport behavior below rather
-                // than silently dropping the page.
+            auto slotInfo = avalang::ui::LocateLayoutSlot(layoutParsed.tree.get(),
+                                                          options.viewportWidth,
+                                                          options.viewportHeight);
+            if (slotInfo.hasSlot) {
+                slotRect = slotInfo.slotRect;
+                haveSlotRect = true;
             }
         }
 

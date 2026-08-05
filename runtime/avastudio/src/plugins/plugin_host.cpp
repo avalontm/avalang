@@ -363,7 +363,11 @@ int PluginHost::RegisterPanelTrampoline(AvaStudioHost* host, const AvaPanelRegis
     auto* self = static_cast<PluginHost*>(host->_internal_host_reserved);
 
     for (const auto& existing : self->panels_) {
-        if (existing.name == registration->name) return -1; // duplicate name
+        // Duplicates are rejected per (name, is_settings) pair, not name
+        // alone -- a plugin's normal chat tab and its Settings section
+        // can legitimately share a display name (see Fase 6 of
+        // PLAN_settings_panel.md, ai_agent's "AI Agent (OpenRouter)").
+        if (existing.name == registration->name && existing.is_settings == registration->is_settings) return -1;
     }
 
     RegisteredPanel panel;
@@ -372,6 +376,7 @@ int PluginHost::RegisterPanelTrampoline(AvaStudioHost* host, const AvaPanelRegis
     panel.draw = registration->draw;
     panel.user_data = registration->user_data;
     panel.default_dock_slot = registration->default_dock_slot;
+    panel.is_settings = registration->is_settings;
 
     self->panels_.push_back(std::move(panel));
     return static_cast<int>(self->panels_.size()) - 1;
@@ -578,20 +583,11 @@ bool PluginHost::DesignAddComponentTrampoline(AvaStudioHost* host, const char* p
         return fail("no hay ningun documento .avaui activo en el editor");
     }
 
-    design::DesignNode parsed_root;
-    std::string parsed_code_behind;
-    std::vector<PropertyRow> parsed_state;
-    std::vector<std::string> parsed_imports;
+    design::DesignDocument doc;
     std::string parse_error;
-    if (!design::ParseAvauiText(source, parsed_root, parsed_code_behind, parsed_state, parsed_imports, parse_error)) {
+    if (!design::LoadAvauiFile(path, doc, parse_error)) {
         return fail("no se pudo interpretar el documento activo: " + parse_error);
     }
-
-    design::DesignDocument doc;
-    doc.root = std::move(parsed_root);
-    doc.code_behind = std::move(parsed_code_behind);
-    doc.initial_state = std::move(parsed_state);
-    doc.imports = std::move(parsed_imports);
 
     const std::string new_uid =
         design::AddComponentNode(doc, parent_id ? parent_id : "", type, id ? id : "",
@@ -601,7 +597,7 @@ bool PluginHost::DesignAddComponentTrampoline(AvaStudioHost* host, const char* p
                      "y que 'type' sea un tipo de componente conocido");
     }
 
-    const std::string new_source = design::WriteAvauiText(doc.root, doc.code_behind, doc.initial_state, doc.imports);
+    const std::string new_source = design::WriteAvauiText(doc.Root(), doc.code_behind, doc.initial_state, doc.imports);
     std::string description = "Agente: agregar componente '" + std::string(type) + "'";
     if (id && id[0] != '\0') description += " (" + std::string(id) + ")";
 
@@ -628,20 +624,11 @@ bool PluginHost::DesignEditComponentTrampoline(AvaStudioHost* host, const char* 
         return fail("no hay ningun documento .avaui activo en el editor");
     }
 
-    design::DesignNode parsed_root;
-    std::string parsed_code_behind;
-    std::vector<PropertyRow> parsed_state;
-    std::vector<std::string> parsed_imports;
+    design::DesignDocument doc;
     std::string parse_error;
-    if (!design::ParseAvauiText(source, parsed_root, parsed_code_behind, parsed_state, parsed_imports, parse_error)) {
+    if (!design::LoadAvauiFile(path, doc, parse_error)) {
         return fail("no se pudo interpretar el documento activo: " + parse_error);
     }
-
-    design::DesignDocument doc;
-    doc.root = std::move(parsed_root);
-    doc.code_behind = std::move(parsed_code_behind);
-    doc.initial_state = std::move(parsed_state);
-    doc.imports = std::move(parsed_imports);
 
     const bool has_new_id = new_id && new_id[0] != '\0';
     const std::string new_id_str = has_new_id ? new_id : "";
@@ -650,7 +637,7 @@ bool PluginHost::DesignEditComponentTrampoline(AvaStudioHost* host, const char* 
         return fail("no se encontro ningun componente con id '" + std::string(node_id) + "' en el documento activo");
     }
 
-    const std::string new_source = design::WriteAvauiText(doc.root, doc.code_behind, doc.initial_state, doc.imports);
+    const std::string new_source = design::WriteAvauiText(doc.Root(), doc.code_behind, doc.initial_state, doc.imports);
     const std::string description = "Agente: editar componente '" + std::string(node_id) + "'";
 
     std::string queue_error;

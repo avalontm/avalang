@@ -13,7 +13,6 @@
 
 #include "runtime/runtime_host.h"
 #include "ui_vm_state_bridge.h"
-#include "known_component_properties.h"
 #include "avalang.h"
 
 namespace avahost {
@@ -28,11 +27,8 @@ void BindComponentRefsNative(AvaVM* vm, avalang::ui::IComponent* comp) {
         std::string comp_id = idProp->AsString();
         ava_value_t dict = ava_dict_create(vm);
 
-        std::size_t kKnownPropsCount = 0;
-        const char* const* kKnownProps = KnownComponentPropertyNames(kKnownPropsCount);
-        for (size_t i = 0; i < kKnownPropsCount; ++i) {
-            const char* key = kKnownProps[i];
-            if (std::string(key) == "id") continue;
+        for (const auto& key : comp->PropertyNames()) {
+            if (key == "id") continue;
 
             if (const avalang::ui::PropertyValue* prop = comp->GetProperty(key)) {
                 ava_value_t val;
@@ -54,9 +50,9 @@ void BindComponentRefsNative(AvaVM* vm, avalang::ui::IComponent* comp) {
                 // the dict still points at it (use-after-free on next read,
                 // e.g. in ExportComponentPropsNative). The dict owns the
                 // reference created above; do not release it separately.
-                ava_dict_set(vm, dict, key, val);
+                ava_dict_set(vm, dict, key.c_str(), val);
             } else {
-                ava_dict_set(vm, dict, key, ava_value_t{});
+                ava_dict_set(vm, dict, key.c_str(), ava_value_t{});
             }
         }
 

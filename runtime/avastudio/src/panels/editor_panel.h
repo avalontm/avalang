@@ -11,6 +11,7 @@
 #include "languages/function_index.h"
 #include "languages/member_access_resolver.h"
 #include "panels/properties_panel.h"
+#include "util/log_bridge.h"
 
 namespace studio {
 
@@ -121,6 +122,16 @@ struct EditorState {
     // caller that never sets this just keeps the pre-resolver
     // behavior instead of crashing on an empty base dir.
     std::string project_root;
+
+    // Fase 4 (AVASTUDIO_AVAUI_MIGRATION_PLAN.md): main.cpp's session-
+    // wide LogBridge (util/log_bridge.h), set once right alongside
+    // `project_root` above. DrawEditorPanel threads it straight through
+    // to DrawDesignerCanvas so a failed BuildLiveRender (or a node
+    // missing from its uidToRect) shows up in the Output panel, not
+    // just the in-canvas banner. Null until main.cpp sets it, which
+    // DrawDesignerCanvas treats as "don't log" -- same safe-default
+    // pattern as `project_root` being empty.
+    LogBridge* log_bridge = nullptr;
 
     EditorTab* Active();
     const EditorTab* Active() const;

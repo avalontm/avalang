@@ -1,6 +1,7 @@
 #include "controls/TextBox.h"
 #include "components/ComponentTree.h"
 #include "components/PropertyValue.h"
+#include "registry/ComponentTypeRegistry.h"
 #include <unordered_map>
 #include <mutex>
 
@@ -72,5 +73,23 @@ void UnbindTextBoxChange(ComponentId textBoxId) {
     std::lock_guard<std::mutex> lock(g_callbackMutex);
     g_textBoxCallbacks.erase(textBoxId);
 }
+
+namespace {
+struct TextBoxTypeRegistration {
+    TextBoxTypeRegistration() {
+        using namespace avalang::ui::registry;
+        RegisterComponentType({
+            "TextBox", "Text Box", /*is_container=*/false,
+            {
+                {"text", PropertyValue("")},
+                {"placeholder", PropertyValue("")},
+                {"isFocused", PropertyValue(false)},
+                {"isEnabled", PropertyValue(true)},
+            },
+        });
+    }
+};
+static TextBoxTypeRegistration _textbox_type_registration;
+} // namespace
 
 } // namespace avalang::ui::controls

@@ -146,9 +146,13 @@ void DrawPendingEditsPanel(PluginHost& plugin_host) {
         }
         ImGui::EndChild();
 
+        ImGui::PushStyleColor(ImGuiCol_Button, palette::FromHex(palette::kPrimary));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, palette::FromHex(palette::kPrimaryHover));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, palette::FromHex(palette::kPrimaryDark));
         if (ImGui::Button("Aplicar")) {
             plugin_host.ApproveEdit(edit.id);
         }
+        ImGui::PopStyleColor(3);
         ImGui::SameLine();
         if (ImGui::Button("Rechazar")) {
             plugin_host.RejectEdit(edit.id);

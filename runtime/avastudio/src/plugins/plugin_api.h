@@ -59,7 +59,18 @@ extern "C" {
 // plain input_text_multiline, where Enter always inserts a newline).
 // Fase 9 appended AvaUiApi::input_text_multiline_submit_hint and
 // button_disabled -- same rule again.
-#define AVA_STUDIO_PLUGIN_ABI_VERSION 5
+// Fase 6 of PLAN_settings_panel.md appended AvaPanelRegistration::
+// is_settings -- ABI 1..5 plugins still load fine, they just always
+// get is_settings == false (the struct is zero-initialized on the
+// plugin's side via `AvaPanelRegistration registration{};`, the
+// pattern ai_agent_plugin.cpp already uses, so this comes out false
+// by default with no plugin-side change needed).
+// Fase 10 of PLAN_agente_ia_openrouter.md appended AvaUiApi::
+// text_colored/selectable_message at the end -- same rule, ABI 1..6
+// plugins still load fine, they just don't see them (and keep
+// rendering chat history as plain, unselectable text_wrapped() lines,
+// same as before).
+#define AVA_STUDIO_PLUGIN_ABI_VERSION 7
 
 typedef struct AvaStudioHost AvaStudioHost;
 
@@ -187,6 +198,35 @@ typedef struct AvaUiApi {
     // N * text_line_height() + padding) without needing raw ImGui
     // access just for that one measurement.
     float (*text_line_height)(AvaPanelContext* ctx);
+
+    // Fase 10: same as text_wrapped, but in an arbitrary RGBA color
+    // (0..1 per channel) instead of the panel's default text color --
+    // lets a plugin tag things like a chat role label ("Tú"/"Agente")
+    // or a dim system line without needing a full styled widget just
+    // for that.
+    void (*text_colored)(AvaPanelContext* ctx, const char* text, float r, float g, float b, float a);
+
+    // Fase 10: a chat message bubble. Two problems this solves that
+    // text_wrapped() can't:
+    //  1. text_wrapped() renders plain ImGui text, which has no
+    //     selection support at all -- there is no way to drag-select or
+    //     Ctrl+C anything out of it. This renders the same text as a
+    //     read-only text field instead (real mouse-drag selection and
+    //     copy, exactly like any other text box), while still being
+    //     un-editable -- the point is to let the user copy their own
+    //     chat history, not to let them rewrite it.
+    //  2. It auto-sizes its height to the wrapped content at the
+    //     current panel width, the same way a chat bubble grows to fit
+    //     its message -- the caller doesn't pre-compute a line count or
+    //     pixel height the way input_text_multiline's caller has to.
+    // `text_color`/`bg_color` (RGBA 0..1) tint the message text and its
+    // background respectively, so two roles (e.g. user vs. assistant)
+    // read as visually distinct bubbles instead of both being plain
+    // text behind a "Tú:"/"Agente:" prefix. `id` must be unique within
+    // the panel, same rule as begin_child's `id`.
+    void (*selectable_message)(AvaPanelContext* ctx, const char* id, const char* text,
+                                float text_r, float text_g, float text_b, float text_a,
+                                float bg_r, float bg_g, float bg_b, float bg_a);
 } AvaUiApi;
 
 // --- Read-only host services (Fase 0) ----------------------------------
@@ -320,6 +360,14 @@ typedef struct AvaPanelRegistration {
     AvaPanelDrawFn draw;
     void* user_data; // passed back to every draw() call unchanged
     AvaDockSlot default_dock_slot;
+
+    // Fase 6 (see PLAN_settings_panel.md): if true, this panel is not
+    // docked as its own tab -- the host draws it inline as a section
+    // inside the built-in "Settings" panel instead, using `name` as the
+    // section's label. Default false (an ABI <=5 plugin never sets this
+    // field, so it stays false via zero-initialization -- see the note
+    // above AVA_STUDIO_PLUGIN_ABI_VERSION).
+    bool is_settings;
 } AvaPanelRegistration;
 
 // Handed to the plugin in ava_plugin_init(). Every field is set by the

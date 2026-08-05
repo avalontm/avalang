@@ -52,17 +52,10 @@ struct TitleBarResult {
     bool save_as_requested = false;
     bool quit_requested = false;
 
-    // Properties dialog ("File > Properties"), modules-folder setting.
-    // modules_browse_requested: user clicked "Browse..." -- main.cpp owns
-    // the GLFWwindow* needed for the native folder picker, so it handles
-    // this the same way it already does for open_folder_requested.
-    // modules_save_requested: user clicked "Save" -- by then
-    // `settings.modules_path` (passed into DrawTitleBar by reference) has
-    // already been updated with the dialog's text field, so main.cpp just
-    // needs to apply it (EngineBridge::SetModulesPath) and persist it
-    // (util::SaveSettings).
-    bool modules_browse_requested = false;
-    bool modules_save_requested = false;
+    // "File > Preferences > Settings" (Ctrl+,). main.cpp reacts by
+    // ensuring panel_open["Settings"] = true and focusing that tab, same
+    // pattern as reopening a panel toggled from View -- see main.cpp.
+    bool open_settings_requested = false;
 
     // "Plugins" menu (see the `plugins` param below). Set to the
     // file_name of whichever PluginInfo checkbox the user clicked this
@@ -96,17 +89,6 @@ struct TitleBarResult {
 // menu bar did) -- only the window-chrome buttons come back through the
 // return value, since only main.cpp knows how to talk to GLFW/the OS.
 //
-// `settings.modules_path` is read to pre-fill the Properties dialog's text
-// field, and written to directly when the user edits it or clicks
-// "Save" (see TitleBarResult::modules_save_requested) -- main.cpp is
-// what actually applies/persists it, this function only edits the struct.
-//
-// `browsed_folder`: normally "". The one frame after the user clicks
-// "Browse..." and picks a folder, main.cpp passes that folder here so
-// this function can drop it into the dialog's text field -- the native
-// folder picker itself has to run in main.cpp (needs the GLFWwindow*),
-// so this is how its result gets back into the dialog a frame later.
-//
 // `plugins`: the current PluginHost::ScanAvailable() snapshot, used
 // only to draw the "Plugins" menu's checkboxes (name, enabled/disabled,
 // currently loaded or not) -- this function never loads/unloads
@@ -128,7 +110,7 @@ struct TitleBarResult {
 // when currently visible, unchecked when closed. Both sections funnel
 // into the same TitleBarResult::panel_toggle_requested field.
 TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings, bool is_maximized,
-                             float height, const std::string& browsed_folder, const std::vector<PluginInfo>& plugins,
+                             float height, const std::vector<PluginInfo>& plugins,
                              const std::vector<RegisteredPanel>& panels, const std::vector<std::string>& closed_panels);
 
 } // namespace studio

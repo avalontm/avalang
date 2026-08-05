@@ -36,6 +36,10 @@ set(AVA_UI_SOURCES
     src/layout/LayoutProperties.cpp
     src/layout/LayoutNode.cpp
     src/layout/TextMeasure.cpp
+    # Real font measurement (stb_truetype-backed) -- replaces the old
+    # average-char-width/flat-line-height heuristic. See FontRegistry.h.
+    src/layout/FontRegistry.cpp
+    src/resources/fonts/DefaultFontData.cpp
     src/layout/LayoutEngineImpl.cpp
     src/layout/LayoutEngine.cpp
     # Phase 4 -- State System
@@ -66,6 +70,16 @@ set(AVA_UI_SOURCES
     # Phase 14 -- Parser .avaui -> ComponentTree
     src/parser/AvauiParser.cpp
     src/parser/AvauiPropertyCoercion.cpp
+    # Composition: extends/slot() page+layout composition (motor unico Fase 1)
+    src/composition/ComposePageWithLayout.cpp
+
+    # Phase 20 -- Events: auto-bind, dispatch, event names
+    src/events/AutoBind.cpp
+
+    # Phase 22 -- Component import resolver (motor unico Fase 3)
+    src/resolver/DottedPath.cpp
+    src/resolver/KnownComponentProperties.cpp
+    src/resolver/ComponentResolver.cpp
     # Phase 14 -- Scene Graph -> Render Commands walker (this phase's
     # own end-to-end deliverable needs it; see AvauiParser.cpp header
     # comment and docs/AVAUI_FASE13_INTERFACE_FREEZE.md)
@@ -77,6 +91,11 @@ set(AVA_UI_SOURCES
     # Phase 16 -- Theme system
     src/theme/DefaultTheme.cpp
     src/theme/RenderTheme.cpp
+    # Project-configured fonts (app.ava `font "role" "name" "path"`
+    # lines) -- shared by AvaHost's render pipeline and AvaStudio's
+    # design-time preview so both resolve a project's custom font the
+    # same way. See theme/ProjectFontOverrides.h.
+    src/theme/ProjectFontOverrides.cpp
     # Phase 17 -- Controls: Button (primer control real, valida Theme + Resources)
     src/controls/Button.cpp
     # Phase 18 -- Controls: resto del set base
@@ -88,6 +107,7 @@ set(AVA_UI_SOURCES
     src/controls/RadioButton.cpp
     src/controls/ComboBox.cpp
     src/controls/Dialog.cpp
+    src/controls/Link.cpp
     # Phase 19 -- Animation
     src/animation/IAnimatable.cpp
     src/animation/Easing.cpp
@@ -95,6 +115,11 @@ set(AVA_UI_SOURCES
     src/animation/Timeline.cpp
     src/animation/AnimationController.cpp
     src/animation/AnimationBinding.cpp
+
+    # Phase 6 (avastudio/avaui unification plan, Part B) -- component
+    # type registry: single source for the catalog avastudio currently
+    # keeps by hand.
+    src/registry/ComponentTypeRegistry.cpp
 )
 
 # Platform bridge backend (compile-time selection, no runtime OS
@@ -141,6 +166,10 @@ target_include_directories(avalang_ui PUBLIC
 target_include_directories(avalang_ui PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}
+    # stb_truetype.h (vendored, single-header, public domain) --
+    # FontRegistry.cpp's real glyph measurement. Header-only, so this
+    # is a compile-time include only, nothing extra to link.
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
 )
 
 target_compile_features(avalang_ui PRIVATE cxx_std_20)
@@ -230,4 +259,50 @@ if(AVA_BUILD_UI_TESTS)
         ${CMAKE_SOURCE_DIR}/runtime/avahost/src
     )
     target_compile_features(ava_ui_pipeline_fase20_2_demo PRIVATE cxx_std_20)
+
+    # Phase 6 (avastudio/avaui unification plan, Part B) -- minimal
+    # unit test for ComponentTypeRegistry (registers fake types, checks
+    # lookup/listing/idempotency).
+    add_executable(ava_component_type_registry_test ${CMAKE_SOURCE_DIR}/tests/unit/avaui/ComponentTypeRegistryTest.cpp)
+    target_link_libraries(ava_component_type_registry_test PRIVATE avalang_ui)
+    target_include_directories(ava_component_type_registry_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_features(ava_component_type_registry_test PRIVATE cxx_std_20)
+
+    add_executable(ava_component_type_registry_controls_test ${CMAKE_SOURCE_DIR}/tests/unit/avaui/ComponentTypeRegistryControlsTest.cpp)
+    target_link_libraries(ava_component_type_registry_controls_test PRIVATE avalang_ui)
+    target_include_directories(ava_component_type_registry_controls_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_features(ava_component_type_registry_controls_test PRIVATE cxx_std_20)
+
+    # Fase A.4 (plan unificado avastudio/avaui) -- tests unitarios de
+    # Grid/Flex en LayoutEngineImpl: N x M columnas/filas, mas hijos que
+    # celdas explicitas, un solo hijo, y direccion horizontal/vertical
+    # para Flex (incluyendo el fallback vertical por defecto).
+    add_executable(ava_grid_flex_layout_test ${CMAKE_SOURCE_DIR}/tests/unit/avaui/GridFlexLayoutTest.cpp)
+    target_link_libraries(ava_grid_flex_layout_test PRIVATE avalang_ui)
+    target_include_directories(ava_grid_flex_layout_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_features(ava_grid_flex_layout_test PRIVATE cxx_std_20)
+
+    # Fase B.5 (plan unificado avastudio/avaui) -- TypeNames() de
+    # AvauiPropertyCoercion.cpp derivado del registro (ya no hay tabla
+    # hardcodeada de tipos reales), mas auditoria de PropertyAliases()
+    # contra el registro para no repetir el bug de enabled/isEnabled.
+    add_executable(ava_typename_property_alias_audit_test ${CMAKE_SOURCE_DIR}/tests/unit/avaui/TypeNameAndPropertyAliasAuditTest.cpp)
+    target_link_libraries(ava_typename_property_alias_audit_test PRIVATE avalang_ui)
+    target_include_directories(ava_typename_property_alias_audit_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_features(ava_typename_property_alias_audit_test PRIVATE cxx_std_20)
+
+    add_executable(ava_container_spacing_defaults_test ${CMAKE_SOURCE_DIR}/tests/unit/avaui/ContainerSpacingDefaultsTest.cpp)
+    target_link_libraries(ava_container_spacing_defaults_test PRIVATE avalang_ui)
+    target_include_directories(ava_container_spacing_defaults_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_features(ava_container_spacing_defaults_test PRIVATE cxx_std_20)
 endif()

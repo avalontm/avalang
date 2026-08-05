@@ -10,6 +10,8 @@ DefaultTheme::DefaultTheme() {
     spacing_.marginPx = 4;
     spacing_.borderWidthPx = 1;
     spacing_.borderRadiusPx = 4;
+    spacing_.containerPaddingPx = 16;
+    spacing_.containerGapPx = 12;
 }
 
 void DefaultTheme::InitColors() {

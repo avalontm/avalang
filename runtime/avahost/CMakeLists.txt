@@ -30,7 +30,6 @@ set(AVAHOST_SOURCES
     src/core/session_manager.cpp
     src/runtime/runtime_host.cpp
     src/rendering/event_binder.cpp
-    src/component/dotted_path.cpp
     src/web/transport/socket.cpp
     src/web/protocol/http_parser.cpp
     src/web/protocol/url_codec.cpp
@@ -107,8 +106,6 @@ if(TARGET avalang_ui)
         src/rendering/ui_vm_state_bridge.cpp
         src/rendering/ui_vm_event_bridge.cpp
         src/rendering/ui_pipeline_dynamic_renderer.cpp
-        # Fase 20.2 -- imports resolver for the new avaui engine.
-        src/rendering/ui_component_resolver.cpp
         # Fase 2 -- bytecode cache (content-hash based render cache)
         src/rendering/ui_bytecode_cache.cpp
     )

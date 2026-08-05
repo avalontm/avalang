@@ -8,8 +8,9 @@
 
 #include <curl/curl.h>
 
-#include <atomic>
 #include <algorithm>
+#include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <cstdio>
@@ -46,6 +47,20 @@ enum class MessageKind { User, Assistant, ToolNotice };
 struct ChatMessage {
     MessageKind kind;
     std::string content;
+
+    // Fase 10: `content` is raw text (possibly Markdown, for
+    // User/Assistant) as sent to/received from the model -- what's
+    // actually persisted/sent as history. `display_cache` is the
+    // cleaned-up, styled-for-a-plain-text-widget version DrawAgentPanel
+    // hands to ui.selectable_message() (see FormatMarkdownForDisplay).
+    // Recomputed lazily, only when `content` has grown since the last
+    // draw (streaming appends to the last message every frame; every
+    // other message's content is stable after it's added) -- avoids
+    // re-parsing every message's Markdown on every single frame just
+    // because one of them is still streaming.
+    std::string display_cache;
+    size_t display_cache_len = 0;
+    bool display_cache_valid = false;
 };
 
 struct AgentState {
@@ -83,6 +98,20 @@ struct AgentState {
     std::string current_model = kDefaultModel;
     bool auto_context = true;
 
+    // Proveedor activo + su config, ver config.h. `provider` es lo único
+    // que decide qué mitad de este struct usa SendMessage/FetchModels --
+    // api_key/current_model de arriba quedan intactos al cambiar a
+    // Custom y volver (no se pisan entre sí).
+    AgentProvider provider = AgentProvider::OpenRouter;
+    char custom_base_url_buffer[256] = "";
+    char custom_api_key_buffer[256] = "";
+    char custom_model_buffer[256] = "";
+    std::string custom_base_url;
+    std::string custom_api_key;
+    std::string custom_model;
+
+    bool IsCustom() const { return provider == AgentProvider::Custom; }
+
     // Fase 7.1: memoria persistente entre sesiones, un archivo por
     // proyecto (ver memory.h/.cpp). `current_project_root` es lo último
     // que vio DrawAgentPanel -- cuando cambia (se abrió otro proyecto),
@@ -102,6 +131,20 @@ struct AgentState {
     bool models_loaded = false;
     std::string models_error;
     std::thread models_worker;
+
+    // Modelo de OpenRouter escrito a mano -- el combo de arriba solo
+    // ofrece lo que trajo /models, que no siempre lista todo (variantes
+    // ":free" en particular tardan en aparecer o quedan afuera según el
+    // momento). Este campo no se persiste por sí mismo: al tocar "Usar"
+    // pisa state->current_model (que sí se persiste con PersistConfig,
+    // igual que si se hubiera elegido del combo).
+    char manual_model_buffer[256] = "";
+
+    // Filtro de texto sobre el combo de modelos -- OpenRouter lista
+    // varios cientos, no es viable buscar a ojo. No se persiste, es
+    // puramente de UI (se resetea solo si el plugin se recarga, lo cual
+    // está bien).
+    char model_filter_buffer[128] = "";
 };
 
 AgentState g_state;
@@ -111,6 +154,75 @@ std::string FormatModelLabel(const OpenRouterModel& model) {
     char buffer[320];
     std::snprintf(buffer, sizeof(buffer), "%s (%ldk ctx)", model.id.c_str(), model.context_length / 1000);
     return buffer;
+}
+
+// Substring case-insensitive, sin acentos ni fuzzy matching -- pieza
+// base de MatchesModelFilter de abajo.
+bool ContainsCaseInsensitive(const std::string& haystack, const std::string& needle) {
+    if (needle.empty()) return true;
+    auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end(),
+                           [](unsigned char a, unsigned char b) { return std::tolower(a) == std::tolower(b); });
+    return it != haystack.end();
+}
+
+// A diferencia de un substring literal, separa el filtro en palabras
+// (por espacios) y pide que TODAS aparezcan en algún lugar del label,
+// en cualquier orden -- así escribir "gpt oss free" encuentra
+// "openai/gpt-oss-20b:free" sin que el usuario tenga que acordarse de
+// los guiones/barras/dos puntos exactos como están en el id real.
+bool MatchesModelFilter(const std::string& haystack, const std::string& filter) {
+    size_t start = 0;
+    while (start <= filter.size()) {
+        size_t space = filter.find(' ', start);
+        std::string word = filter.substr(start, space == std::string::npos ? std::string::npos : space - start);
+        if (!word.empty() && !ContainsCaseInsensitive(haystack, word)) return false;
+        if (space == std::string::npos) break;
+        start = space + 1;
+    }
+    return true;
+}
+
+// --- Proveedor activo -----------------------------------------------------
+// SendMessage/FetchModels no tocan state->api_key/current_model ni
+// state->custom_* directamente -- pasan siempre por estos cuatro
+// helpers, así que agregar un proveedor nuevo el día de mañana es
+// cuestión de tocarlos acá, no de perseguir cada uso.
+
+std::string ActiveApiKey(AgentState* state) {
+    return state->IsCustom() ? state->custom_api_key : state->api_key;
+}
+
+std::string ActiveBaseUrl(AgentState* state) {
+    // Vacío para OpenRouter -- OpenRouterClient interpreta un base_url
+    // vacío como "usar el default de OpenRouter", ver su constructor.
+    return state->IsCustom() ? state->custom_base_url : "";
+}
+
+std::string ActiveModel(AgentState* state) {
+    return state->IsCustom() ? state->custom_model : state->current_model;
+}
+
+OpenRouterClient MakeClient(AgentState* state) {
+    return OpenRouterClient(ActiveApiKey(state), ActiveBaseUrl(state));
+}
+
+// Lo mínimo para intentar hablar con el proveedor activo -- gatea
+// FetchModels (que se llama automáticamente al abrir el plugin y al
+// cambiar de config). Para OpenRouter es la api_key de siempre; para
+// Custom alcanza con la base_url (la api_key es opcional y varios
+// servidores locales exponen /v1/models sin pedirla).
+bool CanTalkToProvider(AgentState* state) {
+    return state->IsCustom() ? !state->custom_base_url.empty() : state->has_api_key;
+}
+
+// Lo mínimo para habilitar el chat -- gatea el panel principal. A
+// diferencia de CanTalkToProvider, en modo Custom también exige un
+// modelo escrito a mano: no hay combo automático acá (ver comentario
+// de custom_model en config.h), así que sin eso StreamChatCompletion
+// se mandaría con un `model` vacío.
+bool IsProviderReady(AgentState* state) {
+    if (state->IsCustom()) return !state->custom_base_url.empty() && !state->custom_model.empty();
+    return state->has_api_key;
 }
 
 // --- Loading indicators --------------------------------------------------
@@ -148,6 +260,146 @@ const char* TypingCursor() {
     return ((NowMillis() / 500) % 2 == 0) ? " ▌" : "  ";
 }
 
+// --- Chat bubble styling (Fase 10) ---------------------------------------
+// AvaUiApi has no rich-text widget (see plugin_api.h) -- a chat bubble is
+// one single-style read-only text box (selectable_message), so "Markdown
+// support" here means turning the raw **bold**/`code`/# headers/- lists the
+// model writes into something that reads cleanly as plain text, not real
+// per-run bold/color rendering. Two roles still read as visually distinct
+// bubbles via selectable_message's text/background color, which is the
+// other half of what was asked for.
+
+// Roles are told apart only by the small colored "Tú"/"Agente" label
+// above each message -- no filled background behind the text itself
+// (that read as a chat-bubble box, which wasn't wanted). Background is
+// fully transparent (alpha 0) so each message just sits in the panel
+// like plain text; text color also stays neutral so nothing about the
+// message body itself looks tinted or boxed.
+constexpr float kMessageTextColor[4] = {0.92f, 0.92f, 0.92f, 1.0f};
+constexpr float kMessageBgColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+constexpr float kUserLabelColor[4] = {0.63f, 0.80f, 1.00f, 1.0f};
+constexpr float kAssistantLabelColor[4] = {0.78f, 0.86f, 0.62f, 1.0f};
+constexpr float kToolNoticeColor[4] = {0.62f, 0.62f, 0.62f, 1.0f};
+
+// Removes a `marker` pair (e.g. "**") from `line`, keeping the text
+// between them, for every such pair found left-to-right. Non-greedy:
+// each opening marker pairs with the very next one. Used for
+// bold/italic, where the surrounding style can't actually be rendered
+// in a single-style text box, so the best a plain-text view can do is
+// not show the asterisks/underscores themselves.
+void StripMarkerPairs(std::string& line, const std::string& marker) {
+    size_t pos = 0;
+    while (true) {
+        size_t open = line.find(marker, pos);
+        if (open == std::string::npos) break;
+        size_t close = line.find(marker, open + marker.size());
+        if (close == std::string::npos) break;
+        line.erase(close, marker.size());
+        line.erase(open, marker.size());
+        pos = open; // re-scan from here in case more pairs follow on the same line
+    }
+}
+
+// `code` -> «code»: inline code can't be shown in a different font/color
+// in a single-style widget either, so it's set apart with guillemets
+// instead of just silently dropping the backticks (which would make it
+// indistinguishable from prose).
+void StripInlineCode(std::string& line) {
+    size_t pos = 0;
+    while (true) {
+        size_t open = line.find('`', pos);
+        if (open == std::string::npos) break;
+        size_t close = line.find('`', open + 1);
+        if (close == std::string::npos) break;
+        line.replace(close, 1, "\xC2\xBB");            // »
+        line.replace(open, 1, "\xC2\xAB");              // «
+        pos = close + 1;
+    }
+}
+
+// Left-trim helper for detecting line-leading markers (#, -, *) without
+// losing the original indentation of everything else.
+size_t FirstNonSpace(const std::string& line) {
+    size_t i = 0;
+    while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
+    return i;
+}
+
+// Fase 10: cleans up raw Markdown into something readable inside a
+// single-style, selectable text box -- see the block comment above.
+// Handles: fenced code blocks (```), ATX headers (#..######), unordered
+// list markers (-, *, +), bold/italic markers, inline code, and
+// horizontal rules (---/***). Anything else passes through unchanged.
+std::string FormatMarkdownForDisplay(const std::string& raw) {
+    std::string out;
+    out.reserve(raw.size());
+    bool in_code_block = false;
+
+    size_t line_start = 0;
+    while (line_start <= raw.size()) {
+        size_t newline = raw.find('\n', line_start);
+        std::string line = raw.substr(line_start, newline == std::string::npos ? std::string::npos : newline - line_start);
+
+        size_t first = FirstNonSpace(line);
+        std::string trimmed = line.substr(first);
+
+        if (trimmed.rfind("```", 0) == 0) {
+            // Toggle without emitting the fence line itself -- the
+            // language tag after ``` (if any) isn't useful without real
+            // syntax highlighting anyway.
+            in_code_block = !in_code_block;
+        } else if (in_code_block) {
+            out += "  \xE2\x94\x82 " + line; // "  │ " -- visually sets the block apart, keeps original spacing inside it
+            out += '\n';
+        } else if (!trimmed.empty() && trimmed[0] == '#') {
+            size_t hashes = 0;
+            while (hashes < trimmed.size() && trimmed[hashes] == '#') ++hashes;
+            if (hashes <= 6 && hashes < trimmed.size() && trimmed[hashes] == ' ') {
+                std::string heading = trimmed.substr(hashes + 1);
+                out += "\xE2\x96\x8E " + heading; // "▎ " -- a small marker standing in for a header rule
+                out += '\n';
+            } else {
+                out += line;
+                out += '\n';
+            }
+        } else if (trimmed == "---" || trimmed == "***" || trimmed == "___") {
+            out += "\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80"; // "────────"
+            out += '\n';
+        } else {
+            bool is_bullet = trimmed.size() >= 2 && (trimmed[0] == '-' || trimmed[0] == '*' || trimmed[0] == '+') &&
+                              trimmed[1] == ' ';
+            std::string body = is_bullet ? (line.substr(0, first) + "\xE2\x80\xA2 " + trimmed.substr(2)) : line;
+            StripMarkerPairs(body, "**");
+            StripMarkerPairs(body, "__");
+            StripMarkerPairs(body, "*");
+            StripMarkerPairs(body, "_");
+            StripInlineCode(body);
+            out += body;
+            out += '\n';
+        }
+
+        if (newline == std::string::npos) break;
+        line_start = newline + 1;
+    }
+
+    // The loop always appends a trailing '\n' for the last line too --
+    // drop it so selectable_message's height measurement doesn't count
+    // one extra blank line that was never in the original message.
+    if (!out.empty() && out.back() == '\n') out.pop_back();
+    return out;
+}
+
+// Recomputes ChatMessage::display_cache only if `content` changed since
+// the last call (see the field's comment) -- cheap check, avoids
+// reformatting every message's Markdown on every frame just because the
+// last one is still streaming in.
+void RefreshDisplayCache(ChatMessage& msg) {
+    if (msg.display_cache_valid && msg.display_cache_len == msg.content.size()) return;
+    msg.display_cache = FormatMarkdownForDisplay(msg.content);
+    msg.display_cache_len = msg.content.size();
+    msg.display_cache_valid = true;
+}
+
 void SetStatus(AgentState* state, std::string text) {
     std::lock_guard<std::mutex> lock(state->status_mutex);
     state->status_text = std::move(text);
@@ -172,6 +424,10 @@ void PersistConfig(AgentState* state) {
     AgentConfig config;
     config.api_key = state->api_key;
     config.last_model = state->current_model;
+    config.provider = state->provider;
+    config.custom_base_url = state->custom_base_url;
+    config.custom_api_key = state->custom_api_key;
+    config.custom_model = state->custom_model;
     SaveAgentConfig(config);
 }
 
@@ -182,9 +438,9 @@ void PersistConfig(AgentState* state) {
 void PersistMemory(AgentState* state) {
     if (!state->project_root_known) return;
     AgentMemory memory;
-    memory.accumulated_cost_usd = state->accumulated_cost_usd;
     {
         std::lock_guard<std::mutex> lock(state->mutex);
+        memory.accumulated_cost_usd = state->accumulated_cost_usd;
         for (const auto& m : state->messages) {
             if (m.kind == MessageKind::User) memory.history.push_back({"user", m.content});
             else if (m.kind == MessageKind::Assistant) memory.history.push_back({"assistant", m.content});
@@ -207,8 +463,8 @@ void SyncProjectMemory(AgentState* state) {
     state->project_root_known = true;
 
     AgentMemory memory = LoadAgentMemory(root_str);
-    state->accumulated_cost_usd = memory.accumulated_cost_usd;
     std::lock_guard<std::mutex> lock(state->mutex);
+    state->accumulated_cost_usd = memory.accumulated_cost_usd;
     state->messages.clear();
     for (const auto& entry : memory.history) {
         if (entry.role == "user") state->messages.push_back({MessageKind::User, entry.content});
@@ -222,8 +478,9 @@ void FetchModels(AgentState* state) {
     if (state->models_worker.joinable()) state->models_worker.join();
 
     state->models_worker = std::thread([state]() {
-        OpenRouterClient client(state->api_key);
-        client.ListModels([state](bool success, std::vector<OpenRouterModel> models, const std::string& error) {
+        OpenRouterClient client = MakeClient(state);
+        std::string active_model = ActiveModel(state);
+        client.ListModels([state, active_model](bool success, std::vector<OpenRouterModel> models, const std::string& error) {
             std::lock_guard<std::mutex> lock(state->models_mutex);
             if (success) {
                 state->models = std::move(models);
@@ -231,7 +488,7 @@ void FetchModels(AgentState* state) {
                 state->selected_model_index = -1;
                 for (size_t i = 0; i < state->models.size(); ++i) {
                     state->model_labels.push_back(FormatModelLabel(state->models[i]));
-                    if (state->models[i].id == state->current_model) {
+                    if (state->models[i].id == active_model) {
                         state->selected_model_index = static_cast<int>(i);
                     }
                 }
@@ -354,7 +611,7 @@ void SendMessage(AgentState* state) {
     state->stop_requested.store(false);
     state->streaming.store(true);
 
-    std::string model = state->current_model;
+    std::string model = ActiveModel(state);
     std::vector<OpenRouterToolDef> tools = BuildReadOnlyToolDefs();
     std::vector<OpenRouterToolDef> write_tools = BuildWriteToolDefs();
     std::vector<OpenRouterToolDef> design_tools = BuildDesignToolDefs();
@@ -374,7 +631,7 @@ void SendMessage(AgentState* state) {
             // further down).
             SetStatus(state, "Pensando");
 
-            OpenRouterClient client(state->api_key);
+            OpenRouterClient client = MakeClient(state);
 
             bool success = false;
             std::string error;
@@ -395,7 +652,11 @@ void SendMessage(AgentState* state) {
                 },
                 &state->stop_requested);
 
-            if (success) state->accumulated_cost_usd += ComputeTurnCost(state, model, usage);
+            if (success) {
+                double turn_cost = ComputeTurnCost(state, model, usage);
+                std::lock_guard<std::mutex> lock(state->mutex);
+                state->accumulated_cost_usd += turn_cost;
+            }
 
             if (!success) {
                 SetStatus(state, "");
@@ -491,7 +752,13 @@ void SendMessage(AgentState* state) {
     });
 }
 
-void DrawConfigRow(AvaPanelContext* ctx, AgentState* state) {
+// Combo de arriba de todo del panel: elige entre el OpenRouter de
+// siempre y un endpoint "Custom" compatible con OpenAI (ver config.h).
+// Fuera de la función para no reconstruirla cada frame -- son punteros
+// a literales, no hace falta.
+const char* kProviderLabels[] = {"OpenRouter", "Personalizado (compatible con OpenAI)"};
+
+void DrawOpenRouterSettings(AvaPanelContext* ctx, AgentState* state) {
     g_host->ui.input_text(ctx, "API Key##ai_agent_key", state->api_key_buffer, sizeof(state->api_key_buffer));
     g_host->ui.same_line(ctx);
     if (g_host->ui.button(ctx, "Guardar Key")) {
@@ -509,20 +776,114 @@ void DrawConfigRow(AvaPanelContext* ctx, AgentState* state) {
         g_host->ui.text_wrapped(ctx, ("Error al listar modelos: " + state->models_error).c_str());
         if (g_host->ui.button(ctx, "Reintentar")) FetchModels(state);
     } else if (state->models_loaded && !state->model_labels.empty()) {
-        std::vector<const char*> items;
-        items.reserve(state->model_labels.size());
-        for (const auto& label : state->model_labels) items.push_back(label.c_str());
+        g_host->ui.input_text(ctx, "Filtrar##ai_agent_model_filter", state->model_filter_buffer,
+                               sizeof(state->model_filter_buffer));
 
-        int index = state->selected_model_index;
-        if (g_host->ui.combo(ctx, "Modelo##ai_agent_model", &index, items.data(), static_cast<int>(items.size()))) {
-            state->selected_model_index = index;
-            state->current_model = state->models[index].id;
-            PersistConfig(state);
+        // Índices dentro de state->models/model_labels que matchean el
+        // filtro -- se recalcula cada frame (son a lo sumo unos cientos
+        // de strings cortos, no vale la pena cachearlo).
+        std::vector<int> filtered_indices;
+        filtered_indices.reserve(state->model_labels.size());
+        for (size_t i = 0; i < state->model_labels.size(); ++i) {
+            if (MatchesModelFilter(state->model_labels[i], state->model_filter_buffer)) {
+                filtered_indices.push_back(static_cast<int>(i));
+            }
+        }
+
+        if (filtered_indices.empty()) {
+            g_host->ui.text_wrapped(ctx, "Ningún modelo coincide con el filtro.");
+        } else {
+            std::vector<const char*> items;
+            items.reserve(filtered_indices.size());
+            for (int idx : filtered_indices) items.push_back(state->model_labels[idx].c_str());
+
+            // El combo trabaja con índices dentro de la lista filtrada,
+            // no contra state->models -- hay que traducir para adentro
+            // (buscar dónde cayó selected_model_index en la lista
+            // filtrada de este frame) y para afuera (mapear de vuelta
+            // al índice real al aplicar la selección). Si el modelo
+            // elegido quedó afuera del filtro actual, el combo
+            // simplemente no muestra nada seleccionado -- no se pierde,
+            // sigue siendo state->current_model hasta que se elija otro.
+            int display_index = -1;
+            for (size_t i = 0; i < filtered_indices.size(); ++i) {
+                if (filtered_indices[i] == state->selected_model_index) {
+                    display_index = static_cast<int>(i);
+                    break;
+                }
+            }
+
+            if (g_host->ui.combo(ctx, "Modelo##ai_agent_model", &display_index, items.data(),
+                                  static_cast<int>(items.size()))) {
+                int real_index = filtered_indices[display_index];
+                state->selected_model_index = real_index;
+                state->current_model = state->models[real_index].id;
+                PersistConfig(state);
+            }
         }
     } else if (state->has_api_key) {
         if (g_host->ui.button(ctx, "Cargar modelos")) FetchModels(state);
     }
 
+    g_host->ui.separator(ctx);
+    g_host->ui.text_wrapped(ctx, "¿No está en la lista? Escribilo tal cual lo usa OpenRouter (ej. "
+                                  "openai/gpt-oss-20b:free):");
+    g_host->ui.input_text(ctx, "Modelo manual##ai_agent_manual_model", state->manual_model_buffer,
+                           sizeof(state->manual_model_buffer));
+    g_host->ui.same_line(ctx);
+    if (g_host->ui.button_disabled(ctx, "Usar", state->manual_model_buffer[0] == '\0')) {
+        state->current_model = state->manual_model_buffer;
+        // Ya no corresponde a ningún índice del combo (o puede que sí,
+        // si coincide con algo ya listado -- no vale la pena buscarlo,
+        // el combo simplemente se muestra sin selección hasta el
+        // próximo FetchModels).
+        state->selected_model_index = -1;
+        PersistConfig(state);
+    }
+}
+
+// Sin combo de modelos acá a propósito -- a diferencia de OpenRouter,
+// un endpoint Custom puede no exponer /v1/models, o exponerlo pero sin
+// listar el modelo que el usuario realmente quiere usar (p.ej. LM
+// Studio a veces solo lista el que está cargado en ese momento). El
+// modelo se escribe a mano, igual que en cualquier cliente OpenAI-
+// compatible genérico (curl, Postman, etc).
+void DrawCustomSettings(AvaPanelContext* ctx, AgentState* state) {
+    g_host->ui.text_wrapped(ctx, "Endpoint compatible con la API de OpenAI (LM Studio, Ollama, vLLM, "
+                                  "un proxy propio, etc). La API key es opcional.");
+    g_host->ui.input_text(ctx, "Base URL##ai_agent_custom_url", state->custom_base_url_buffer,
+                           sizeof(state->custom_base_url_buffer));
+    g_host->ui.input_text(ctx, "API Key (opcional)##ai_agent_custom_key", state->custom_api_key_buffer,
+                           sizeof(state->custom_api_key_buffer));
+    g_host->ui.input_text(ctx, "Modelo##ai_agent_custom_model", state->custom_model_buffer,
+                           sizeof(state->custom_model_buffer));
+    if (g_host->ui.button(ctx, "Guardar configuración")) {
+        state->custom_base_url = state->custom_base_url_buffer;
+        state->custom_api_key = state->custom_api_key_buffer;
+        state->custom_model = state->custom_model_buffer;
+        PersistConfig(state);
+        if (!state->custom_base_url.empty()) FetchModels(state);
+    }
+}
+
+void DrawAgentSettingsPanel(AvaPanelContext* ctx, void* user_data) {
+    auto* state = static_cast<AgentState*>(user_data);
+    if (!g_host) return;
+
+    int provider_index = state->IsCustom() ? 1 : 0;
+    if (g_host->ui.combo(ctx, "Proveedor##ai_agent_provider", &provider_index, kProviderLabels, 2)) {
+        state->provider = (provider_index == 1) ? AgentProvider::Custom : AgentProvider::OpenRouter;
+        PersistConfig(state);
+    }
+    g_host->ui.separator(ctx);
+
+    if (state->IsCustom()) {
+        DrawCustomSettings(ctx, state);
+    } else {
+        DrawOpenRouterSettings(ctx, state);
+    }
+
+    g_host->ui.separator(ctx);
     if (g_host->ui.button(ctx, state->auto_context ? "Contexto automático: ON" : "Contexto automático: OFF")) {
         state->auto_context = !state->auto_context;
     }
@@ -535,10 +896,13 @@ void DrawAgentPanel(AvaPanelContext* ctx, void* user_data) {
 
     if (!state->streaming.load()) SyncProjectMemory(state);
 
-    DrawConfigRow(ctx, state);
-
+    double accumulated_cost_usd;
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        accumulated_cost_usd = state->accumulated_cost_usd;
+    }
     char cost_buf[64];
-    std::snprintf(cost_buf, sizeof(cost_buf), "Costo total: $%.4f", state->accumulated_cost_usd);
+    std::snprintf(cost_buf, sizeof(cost_buf), "Costo total: $%.4f", accumulated_cost_usd);
     g_host->ui.label(ctx, cost_buf);
 
     if (g_host->ui.button(ctx, "Borrar historial")) {
@@ -548,8 +912,10 @@ void DrawAgentPanel(AvaPanelContext* ctx, void* user_data) {
         if (state->project_root_known) ClearAgentMemory(state->current_project_root);
     }
 
-    if (!state->has_api_key) {
-        g_host->ui.text_wrapped(ctx, "Ingresá tu OPENROUTER_API_KEY arriba y guardala para empezar a chatear.");
+    if (!IsProviderReady(state)) {
+        g_host->ui.text_wrapped(ctx, state->IsCustom()
+            ? "Configurá la Base URL y el Modelo del proveedor personalizado en Settings > AI Agent (OpenRouter) para empezar a chatear."
+            : "Configurá tu OPENROUTER_API_KEY en Settings > AI Agent (OpenRouter) para empezar a chatear.");
         return;
     }
 
@@ -575,28 +941,43 @@ void DrawAgentPanel(AvaPanelContext* ctx, void* user_data) {
     {
         std::lock_guard<std::mutex> lock(state->mutex);
         for (size_t i = 0; i < state->messages.size(); ++i) {
-            const auto& msg = state->messages[i];
+            auto& msg = state->messages[i]; // non-const: RefreshDisplayCache may update display_cache
             bool is_last = (i == state->messages.size() - 1);
             // The empty placeholder pushed at the start of each turn
             // (see SendMessage) has nothing to show yet -- skip the
-            // bubble entirely instead of rendering a bare "Agente: ".
-            // The status line below ("Pensando...") is what tells the
-            // user something is happening until the first token lands.
+            // bubble entirely instead of rendering an empty one. The
+            // status line below ("Pensando...") is what tells the user
+            // something is happening until the first token lands.
             if (msg.kind == MessageKind::Assistant && msg.content.empty()) continue;
-            std::string line;
-            switch (msg.kind) {
-                case MessageKind::User: line = "Tú: " + msg.content; break;
-                case MessageKind::Assistant:
-                    line = "Agente: " + msg.content;
-                    // Tokens are still streaming into this exact bubble --
-                    // a blinking caret makes that visible instead of the
-                    // text just sitting there looking stalled between
-                    // deltas.
-                    if (streaming && is_last) line += TypingCursor();
-                    break;
-                case MessageKind::ToolNotice: line = "  🔧 " + msg.content; break;
+
+            if (msg.kind == MessageKind::ToolNotice) {
+                std::string line = "  \xF0\x9F\x94\xA7 " + msg.content; // "  🔧 "
+                g_host->ui.text_colored(ctx, line.c_str(), kToolNoticeColor[0], kToolNoticeColor[1],
+                                         kToolNoticeColor[2], kToolNoticeColor[3]);
+                g_host->ui.spacing(ctx);
+                continue;
             }
-            g_host->ui.text_wrapped(ctx, line.c_str());
+
+            bool is_user = (msg.kind == MessageKind::User);
+            const float* label_color = is_user ? kUserLabelColor : kAssistantLabelColor;
+
+            g_host->ui.text_colored(ctx, is_user ? "Tú" : "Agente", label_color[0], label_color[1], label_color[2],
+                                     label_color[3]);
+
+            RefreshDisplayCache(msg);
+            std::string display_text = msg.display_cache;
+            // Tokens are still streaming into this exact bubble -- a
+            // blinking caret makes that visible instead of the text just
+            // sitting there looking stalled between deltas. Appended
+            // after the cache (not part of it) since it blinks every
+            // frame regardless of whether content actually changed.
+            if (msg.kind == MessageKind::Assistant && streaming && is_last) display_text += TypingCursor();
+
+            std::string widget_id = "##ai_agent_msg_" + std::to_string(i);
+            g_host->ui.selectable_message(ctx, widget_id.c_str(), display_text.c_str(), kMessageTextColor[0],
+                                           kMessageTextColor[1], kMessageTextColor[2], kMessageTextColor[3],
+                                           kMessageBgColor[0], kMessageBgColor[1], kMessageBgColor[2],
+                                           kMessageBgColor[3]);
             g_host->ui.spacing(ctx);
         }
     }
@@ -676,6 +1057,17 @@ extern "C" bool ava_plugin_init(AvaStudioHost* host) {
         g_state.current_model = config.last_model;
     }
 
+    g_state.provider = config.provider;
+    g_state.custom_base_url = config.custom_base_url;
+    g_state.custom_api_key = config.custom_api_key;
+    g_state.custom_model = config.custom_model;
+    std::snprintf(g_state.custom_base_url_buffer, sizeof(g_state.custom_base_url_buffer), "%s",
+                  g_state.custom_base_url.c_str());
+    std::snprintf(g_state.custom_api_key_buffer, sizeof(g_state.custom_api_key_buffer), "%s",
+                  g_state.custom_api_key.c_str());
+    std::snprintf(g_state.custom_model_buffer, sizeof(g_state.custom_model_buffer), "%s",
+                  g_state.custom_model.c_str());
+
     AvaPanelRegistration registration{};
     registration.name = "AI Agent (OpenRouter)";
     registration.draw = &DrawAgentPanel;
@@ -685,10 +1077,18 @@ extern "C" bool ava_plugin_init(AvaStudioHost* host) {
     const int panel_id = host->register_panel(host, &registration);
     if (panel_id < 0) return false;
 
-    if (g_state.has_api_key) FetchModels(&g_state);
+    AvaPanelRegistration settings_registration{};
+    settings_registration.name = "AI Agent (OpenRouter)";
+    settings_registration.draw = &DrawAgentSettingsPanel;
+    settings_registration.user_data = &g_state;
+    settings_registration.is_settings = true;
+    const int settings_panel_id = host->register_panel(host, &settings_registration);
+    if (settings_panel_id < 0) return false;
 
-    host->services.log(host, g_state.has_api_key ? "ai_agent plugin initialized"
-                                                  : "ai_agent plugin initialized (sin API key configurada)");
+    if (CanTalkToProvider(&g_state)) FetchModels(&g_state);
+
+    host->services.log(host, IsProviderReady(&g_state) ? "ai_agent plugin initialized"
+                                                         : "ai_agent plugin initialized (sin proveedor configurado)");
     return true;
 }
 
@@ -709,7 +1109,7 @@ extern "C" const char* ava_plugin_display_name() {
 }
 
 extern "C" const char* ava_plugin_version() {
-    return "1.0.0";
+    return "1.1.0";
 }
 
 extern "C" const char* ava_plugin_author() {

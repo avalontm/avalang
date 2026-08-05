@@ -61,6 +61,7 @@ struct RegisteredPanel {
     AvaPanelDrawFn draw = nullptr;
     void* user_data = nullptr;
     AvaDockSlot default_dock_slot = AVA_DOCK_BOTTOM;
+    bool is_settings = false;
 };
 
 // Read-only host state PluginHost forwards into AvaHostServices, wired
@@ -202,7 +203,28 @@ public:
     std::vector<PluginInfo> ScanAvailable(const std::string& plugins_dir,
                                            const std::vector<std::string>& disabled_plugins) const;
 
-    const std::vector<RegisteredPanel>& Panels() const { return panels_; }
+    // Panels a plugin registered as normal dockable tabs (is_settings
+    // == false) -- what main.cpp's tab-drawing loop and the View menu
+    // iterate. Filtered from panels_ on every call (cheap: a handful
+    // of panels, called once per frame).
+    std::vector<RegisteredPanel> Panels() const {
+        std::vector<RegisteredPanel> result;
+        for (const auto& panel : panels_) {
+            if (!panel.is_settings) result.push_back(panel);
+        }
+        return result;
+    }
+
+    // Panels a plugin registered as a Settings section (is_settings ==
+    // true) -- drawn inline inside the built-in Settings panel instead
+    // of as their own tab. See PLAN_settings_panel.md Fase 1.
+    std::vector<RegisteredPanel> SettingsPanels() const {
+        std::vector<RegisteredPanel> result;
+        for (const auto& panel : panels_) {
+            if (panel.is_settings) result.push_back(panel);
+        }
+        return result;
+    }
 
     // --- Fase 5: write services -----------------------------------------
 
@@ -266,7 +288,7 @@ private:
     static bool RunProjectTrampoline(AvaStudioHost* host, const char** out_output, bool* out_had_error,
                                       const char** out_error);
 
-    // Fase 6 -- both design services end up here: mutate a DesignNode
+    // Fase 6 -- both design services end up here: mutate an IComponent
     // tree, serialize it, and hand the result to the exact same
     // queuing logic ApplyEditTrampoline uses (this is what makes
     // design_add_component/design_edit_component share apply_edit's
@@ -322,7 +344,7 @@ private:
     // callbacks_.get_active_avaui_document (main thread only, same
     // reasoning as RunMailbox above). Only carries the READ side --
     // once the plugin thread has `path`/`avaui_source`, the actual
-    // DesignNode mutation + WriteAvauiText() serialization happens
+    // IComponent mutation + WriteAvauiText() serialization happens
     // entirely on that thread (fully local values, no shared state),
     // and the result is queued via QueueEdit (pending_edits_mutex_),
     // not through this mailbox again.

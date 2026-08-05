@@ -23,6 +23,17 @@ struct SseContext {
     std::function<void(const std::string&)> on_delta;
     std::string error;
 
+    // Copia cruda de TODO lo que llegó por el WRITEFUNCTION, sin tocar.
+    // `leftover` se va vaciando línea por línea a medida que se parsean
+    // los `data: ...` del streaming, así que no sirve para recuperar el
+    // cuerpo completo cuando el servidor responde un error HTTP (401,
+    // 402, 429, etc.): en ese caso OpenRouter NO manda SSE, manda un
+    // único JSON plano (p.ej. {"error":{"message":"...","code":402}})
+    // que no empieza con "data: " y por eso el parser de streaming lo
+    // ignoraba por completo. `raw_body` es lo que se usa para poder leer
+    // ese mensaje real en vez de quedarnos solo con el código HTTP.
+    std::string raw_body;
+
     // Keyed by the `index` field OpenAI-style deltas use to say which
     // tool call (of possibly several in parallel) a fragment belongs to.
     std::map<int, PendingToolCall> tool_calls;
@@ -55,6 +66,7 @@ void ApplyToolCallDelta(SseContext* ctx, const json& delta_tool_calls) {
 size_t WriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata) {
     size_t total = size * nmemb;
     auto* ctx = static_cast<SseContext*>(userdata);
+    ctx->raw_body.append(ptr, total);
     ctx->leftover.append(ptr, total);
 
     size_t pos;
@@ -107,6 +119,77 @@ size_t PlainWriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata) 
     return total;
 }
 
+// Traduce un código HTTP a un mensaje entendible cuando el cuerpo de la
+// respuesta no trajo nada útil que mostrar (o no se pudo parsear).
+std::string DefaultHttpErrorMessage(long http_code) {
+    switch (http_code) {
+        case 401: return "API key inválida o ausente (401)";
+        case 402: return "Créditos insuficientes en la cuenta de OpenRouter (402)";
+        case 403: return "Acceso denegado por OpenRouter (403)";
+        case 404: return "Modelo o endpoint no encontrado (404)";
+        case 408: return "Tiempo de espera agotado (408)";
+        case 429: return "Límite de tasa excedido, reintentá en unos segundos (429)";
+        default:
+            if (http_code >= 500) return "Error del proveedor/OpenRouter (" + std::to_string(http_code) + ")";
+            return "HTTP " + std::to_string(http_code);
+    }
+}
+
+// Intenta sacar un mensaje de error legible del cuerpo crudo de la
+// respuesta. Cubre los dos formatos que en la práctica devuelve
+// OpenRouter para errores:
+//  1) Un único JSON plano (NO server-sent-events): esto pasa cuando el
+//     request falla antes de empezar a streamear, p.ej. 401/402/429 --
+//     el shape típico es {"error":{"message":"...","code":402,...}},
+//     pero por las dudas también se contempla {"message":"..."} y
+//     {"error":"..."} como string.
+//  2) Una línea "data: {...}" con un objeto "error" adentro -- esto
+//     puede pasar si el error llega DESPUÉS de que el stream ya
+//     arrancó (el proveedor detrás del modelo falla a mitad de turno).
+//     Ese caso ya lo cubre ctx.error (ver WriteCallback), pero se
+//     revisa acá también como red de seguridad por si el chunk final
+//     nunca llegó a procesarse como línea completa.
+std::string ExtractErrorMessage(const std::string& raw_body, long http_code) {
+    std::string text = raw_body;
+
+    // Si vino como SSE ("data: {...}"), quedarnos con el primer payload.
+    if (text.rfind("data: ", 0) == 0) {
+        size_t nl = text.find('\n');
+        text = text.substr(6, nl == std::string::npos ? std::string::npos : nl - 6);
+    }
+
+    try {
+        json parsed = json::parse(text);
+        if (parsed.contains("error")) {
+            const auto& err = parsed["error"];
+            if (err.is_object()) {
+                std::string msg = err.value("message", "");
+                if (!msg.empty()) {
+                    // Muchos proveedores mandan también un "code" propio
+                    // (distinto del HTTP) que ayuda a distinguir, p.ej.
+                    // insufficient_quota vs rate_limit_exceeded.
+                    if (err.contains("code") && !err["code"].is_null()) {
+                        return msg + " (código " + err["code"].dump() + ")";
+                    }
+                    return msg;
+                }
+            } else if (err.is_string()) {
+                std::string msg = err.get<std::string>();
+                if (!msg.empty()) return msg;
+            }
+        }
+        if (parsed.contains("message") && parsed["message"].is_string()) {
+            std::string msg = parsed["message"].get<std::string>();
+            if (!msg.empty()) return msg;
+        }
+    } catch (...) {
+        // Cuerpo no era JSON (o estaba vacío/truncado) -- cae al mensaje
+        // por defecto según el código HTTP.
+    }
+
+    return DefaultHttpErrorMessage(http_code);
+}
+
 json ToolCallsToJson(const std::vector<OpenRouterToolCall>& tool_calls) {
     json arr = json::array();
     for (const auto& tc : tool_calls) {
@@ -119,9 +202,21 @@ json ToolCallsToJson(const std::vector<OpenRouterToolCall>& tool_calls) {
     return arr;
 }
 
+const char* kDefaultBaseUrl = "https://openrouter.ai/api/v1";
+
+// Concatena base_url + path sin duplicar ni perder la "/" del medio,
+// para no depender de que el usuario haya escrito (o no) la barra final
+// al pegar su endpoint en el campo de Settings.
+std::string JoinUrl(const std::string& base_url, const char* path) {
+    std::string base = base_url.empty() ? kDefaultBaseUrl : base_url;
+    if (!base.empty() && base.back() == '/') base.pop_back();
+    return base + path;
+}
+
 } // namespace
 
-OpenRouterClient::OpenRouterClient(std::string api_key) : api_key_(std::move(api_key)) {}
+OpenRouterClient::OpenRouterClient(std::string api_key, std::string base_url)
+    : api_key_(std::move(api_key)), base_url_(std::move(base_url)), is_custom_(!base_url_.empty()) {}
 
 void OpenRouterClient::StreamChatCompletion(
     const std::string& model, const std::vector<OpenRouterMessage>& history,
@@ -191,12 +286,24 @@ void OpenRouterClient::StreamChatCompletion(
 
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
-    std::string auth_header = "Authorization: Bearer " + api_key_;
-    headers = curl_slist_append(headers, auth_header.c_str());
-    headers = curl_slist_append(headers, "HTTP-Referer: https://avalang.dev");
-    headers = curl_slist_append(headers, "X-Title: Ava Studio AI Agent");
+    // El header Authorization solo se manda si hay api_key -- en modo
+    // custom puede legítimamente estar vacía (servidores locales tipo
+    // LM Studio/Ollama no la piden, y mandar "Bearer " sin nada después
+    // rompe con algunos de ellos).
+    if (!api_key_.empty()) {
+        std::string auth_header = "Authorization: Bearer " + api_key_;
+        headers = curl_slist_append(headers, auth_header.c_str());
+    }
+    if (!is_custom_) {
+        // Headers propios de OpenRouter (atribución de la app) -- no son
+        // parte del estándar OpenAI, así que solo van cuando el endpoint
+        // es el de OpenRouter.
+        headers = curl_slist_append(headers, "HTTP-Referer: https://avalang.dev");
+        headers = curl_slist_append(headers, "X-Title: Ava Studio AI Agent");
+    }
 
-    curl_easy_setopt(curl, CURLOPT_URL, "https://openrouter.ai/api/v1/chat/completions");
+    std::string url = JoinUrl(base_url_, "/chat/completions");
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body_str.c_str());
@@ -230,7 +337,7 @@ void OpenRouterClient::StreamChatCompletion(
         return;
     }
     if (http_code >= 400) {
-        on_done(false, "HTTP " + std::to_string(http_code), {}, {});
+        on_done(false, ExtractErrorMessage(ctx.raw_body, http_code), {}, {});
         return;
     }
 
@@ -268,7 +375,8 @@ void OpenRouterClient::ListModels(
         headers = curl_slist_append(headers, auth_header.c_str());
     }
 
-    curl_easy_setopt(curl, CURLOPT_URL, "https://openrouter.ai/api/v1/models");
+    std::string url = JoinUrl(base_url_, "/models");
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &PlainWriteCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
@@ -288,7 +396,7 @@ void OpenRouterClient::ListModels(
         return;
     }
     if (http_code >= 400) {
-        on_done(false, {}, "HTTP " + std::to_string(http_code));
+        on_done(false, {}, ExtractErrorMessage(response, http_code));
         return;
     }
 
