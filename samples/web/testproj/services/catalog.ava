@@ -1,0 +1,59 @@
+var products = [
+    {id: 1, name: "Cafe Americano", price: 2.50, category: "Bebidas"},
+    {id: 2, name: "Capuccino", price: 3.50, category: "Bebidas"},
+    {id: 3, name: "Latte", price: 3.80, category: "Bebidas"},
+    {id: 4, name: "Te Verde", price: 2.00, category: "Bebidas"},
+    {id: 5, name: "Croissant", price: 2.20, category: "Panaderia"},
+    {id: 6, name: "Medialuna", price: 1.80, category: "Panaderia"},
+    {id: 7, name: "Cheesecake", price: 4.50, category: "Postres"},
+    {id: 8, name: "Brownie", price: 3.20, category: "Postres"},
+    {id: 9, name: "Cookie", price: 1.50, category: "Postres"},
+    {id: 10, name: "Sandwich", price: 5.90, category: "Comida"}
+]
+
+var sales = []
+
+func GetProducts()
+    return products
+end
+
+func GetCategories()
+    var cats = []
+    var i = 0
+    while i < len(products)
+        local found = false
+        local j = 0
+        while j < len(cats)
+            if cats[j] == products[i].category then
+                found = true
+            end
+            j = j + 1
+        end
+        if not found then
+            cats.append(products[i].category)
+        end
+        i = i + 1
+    end
+    return cats
+end
+
+func FindById(id)
+    local i = 0
+    while i < len(products)
+        if products[i].id == id then
+            return products[i]
+        end
+        i = i + 1
+    end
+    return nil
+end
+
+func RecordSale(items, total)
+    local sale = {items: items, total: total}
+    sales.append(sale)
+    return sale
+end
+
+func GetSales()
+    return sales
+end

@@ -72,6 +72,9 @@ set(CORE_SOURCES
     src/vm/vm_async.cpp
     src/vm/module.cpp
     src/vm/coroutine.cpp
+    platform/memory/MemoryFileSystem.cpp
+    src/compiler/proto_io.cpp
+    src/compiler/obfuscate.cpp
     src/builtins/builtin_strings.cpp
     src/builtins/builtin_lists.cpp
     src/builtins/builtin_dicts.cpp
@@ -81,14 +84,7 @@ set(CORE_SOURCES
     src/builtins/builtin_natives.cpp
     src/builtins/builtin_mem.cpp
     src/builtins/builtin_init.cpp
-    src/ui/component.cpp
-    src/ui/tree.cpp
-    src/ui/layout.cpp
-    src/ui/property.cpp
-    src/ui/event.cpp
-    src/ui/registry.cpp
     src/ui/builtins.cpp
-    src/ui/avaui_text.cpp
     ${FRONTEND_SOURCES}
 )
 
@@ -168,7 +164,10 @@ target_include_directories(avalang
         ${CMAKE_CURRENT_SOURCE_DIR}/api/src
         ${CMAKE_CURRENT_SOURCE_DIR}/api/include
         ${GENERATED_DIR}
+        ${CMAKE_SOURCE_DIR}/runtime/avaui/src
 )
+
+target_link_libraries(avalang PRIVATE avalang_ui)
 
 if(AVA_HAVE_ANTLR)
     # El paquete de vcpkg "antlr4-runtime" NO expone un target llamado

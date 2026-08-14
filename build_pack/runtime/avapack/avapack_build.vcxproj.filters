@@ -1,0 +1,28 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avapack\src\main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\build_pack\runtime\avapack\generated\embedded_project.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avapack\third_party\tiny-aes-c\aes.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avapack\src\checksum\sha256.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\_CODE_\avalang\runtime\avapack\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{1DE988E1-F14D-3F5C-AB16-71C82C53759B}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{0DF66D1A-125E-3422-BD47-A49B211178FD}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

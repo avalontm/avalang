@@ -1,81 +1,33 @@
 #include "design/state_eval.h"
 
-#include <cctype>
-#include <cstdlib>
-#include <sstream>
+#include "parser/AvauiPropertyCoercion.h"
 
 namespace studio::design {
 
 namespace {
-
-// Mirrors core/src/ui/avaui_text.cpp's anonymous-namespace LooksNumeric
-// exactly (same digits/one-dot/optional-leading-sign grammar) -- kept
-// as a separate copy here (rather than exported from core) since this
-// side of the boundary only has the C API's ava_value_t to build with,
-// not core's internal Value/StringObj types that function operates on.
-bool LooksNumeric(const std::string& v) {
-    if (v.empty()) return false;
-    size_t i = 0;
-    if (v[i] == '+' || v[i] == '-') ++i;
-    if (i >= v.size()) return false;
-    bool has_digits = false;
-    bool has_dot = false;
-    for (; i < v.size(); ++i) {
-        if (std::isdigit(static_cast<unsigned char>(v[i]))) {
-            has_digits = true;
-        } else if (v[i] == '.' && !has_dot) {
-            has_dot = true;
-        } else {
-            return false;
-        }
-    }
-    return has_digits;
+using avalang::ui::parser::LooksLikeCall;
+using avalang::ui::parser::NumberToDisplayString;
 }
-
-// True when `handler_name` is already a full call expression (e.g.
-// `OnAdd(Player)`, `OnAdd("Raul", 38, data)`) rather than a bare
-// handler name (e.g. `OnGuardarClick`, or an auto-bound
-// `On<Id><Event>` candidate -- see avaui_text.cpp's AutoBindEvents).
-// Trimmed text ending in ')' with a matching '(' present is enough:
-// AvaLang's own grammar (postfix/trailer/callTrailer) is the one that
-// actually validates/parses the argument list -- this just decides
-// whether InvokeHandler should append the call parens itself or not.
-bool LooksLikeCall(const std::string& trimmed) {
-    return !trimmed.empty() && trimmed.back() == ')' &&
-           trimmed.find('(') != std::string::npos;
-}
-
-// Same convention as core's ValueToDisplayString (oss << n) for the
-// number->text direction, so an evaluated number reads the same way
-// a hand-written .avaui literal would.
-std::string NumberToDisplayString(double n) {
-    std::ostringstream oss;
-    oss << n;
-    return oss.str();
-}
-
-} // namespace
 
 AvaVM* BuildStateVM(const DesignDocument& doc) {
     AvaVM* vm = ava_vm_create();
     if (!vm) return nullptr;
 
     for (const PropertyRow& row : doc.initial_state) {
+        auto pv = avalang::ui::parser::InferValue(row.value);
         ava_value_t value;
-        if (row.value == "true" || row.value == "false") {
-            value.type = AVA_BOOL;
-            value.as.b = (row.value == "true") ? 1 : 0;
-        } else if (LooksNumeric(row.value)) {
-            value.type = AVA_NUMBER;
-            value.as.n = std::strtod(row.value.c_str(), nullptr);
-        } else {
-            // Not released after the set below -- same lightweight
-            // convention EngineBridge::BuildDemoComponentTree already
-            // uses for ava_string_create + ava_ui_set_property (no
-            // matching ava_value_release there either). Bounded by
-            // this VM's lifetime, which the caller owns and destroys
-            // once per DrawDesignerCanvas call -- see state_eval.h.
-            value = ava_string_create(vm, row.value.data(), row.value.size());
+        switch (pv.Type()) {
+            case avalang::ui::PropertyType::Bool:
+                value.type = AVA_BOOL;
+                value.as.b = pv.AsBool() ? 1 : 0;
+                break;
+            case avalang::ui::PropertyType::Number:
+                value.type = AVA_NUMBER;
+                value.as.n = pv.AsNumber();
+                break;
+            default:
+                value = ava_string_create(vm, row.value.data(), row.value.size());
+                break;
         }
         ava_set_global(vm, row.key.c_str(), value);
     }
@@ -86,21 +38,21 @@ AvaVM* BuildStateVM(const DesignDocument& doc) {
 std::string EvalPropertyExpr(AvaVM* vm, const std::string& raw_value) {
     if (!vm || raw_value.empty()) return raw_value;
 
-    // Wrapped in parens so an expression like `"Counter: " + counter`
-    // (or a plain literal/identifier) always lands as a single RHS,
-    // and named `__avaui_eval__` specifically to make collision with a
-    // real `state` var name astronomically unlikely (state vars are
-    // ordinary AvaLang identifiers, none of which would plausibly
-    // start with double underscores by convention).
+
+
+
+
+
+
     const std::string source = "__avaui_eval__ = (" + raw_value + ")";
 
     char* compile_error = nullptr;
     AvaModule* module = ava_compile(vm, source.c_str(), "<avaui-prop>", &compile_error);
     if (!module) {
-        // Common case: raw_value is actually a plain string literal
-        // ("Guardar todo", with a space) that isn't valid as a bare
-        // AvaLang expression at all -- fall back to showing it as-is,
-        // exactly what the canvas already did before this pass.
+
+
+
+
         if (compile_error) ava_string_free(compile_error);
         return raw_value;
     }
@@ -128,26 +80,26 @@ std::string EvalPropertyExpr(AvaVM* vm, const std::string& raw_value) {
             return display;
         }
         case AVA_NIL:
-            // The common "plain string literal, not a real
-            // identifier" case -- see state_eval.h's header comment on
-            // why VM::GetGlobal returning Nil for an undefined name is
-            // exactly the signal this needs, without touching the
-            // parser to disambiguate literal vs. identifier up front.
+
+
+
+
+
             return raw_value;
         default:
-            // List/Dict/Function/etc. aren't meaningful as a control's
-            // display text -- fall back rather than show "" or a
-            // handle-ish placeholder.
+
+
+
             ava_value_release(vm, result);
             return raw_value;
     }
 }
 
 std::string GetDisplayPropertyKey(const std::string& node_type) {
-    // Every essential/content-bearing component uses `value` for "the
-    // text it shows" -- see component_catalog.cpp's comment above the
-    // Interactive section for why button/link/checkbox/radiobutton were
-    // moved off their old `text`/`label` names onto this one shared name.
+
+
+
+
     if (node_type == "text" || node_type == "textbox" || node_type == "button" || node_type == "link" ||
         node_type == "checkbox" || node_type == "radiobutton") {
         return "value";
@@ -158,15 +110,15 @@ std::string GetDisplayPropertyKey(const std::string& node_type) {
 void BindCodeBehind(AvaVM* vm, const DesignDocument& doc) {
     if (!vm || doc.code_behind.empty()) return;
 
-    // Wrapped in the same `methods ... end` shell EnsureClickHandler
-    // writes into `code_behind` (see design_document.cpp / the .avaui
-    // format's `methods` block, core/src/ui/avaui_text.h) -- NOT
-    // strictly required (a bare sequence of `func ... end` at top
-    // level compiles the same either way, `methods`/`end` aren't
-    // reserved as a block keyword at the expression-compiler level),
-    // but keeping it consistent with how the file itself wraps this
-    // exact text means a future syntax change to that block only has
-    // one place (avaui_text.cpp) to stay in sync with, not two.
+
+
+
+
+
+
+
+
+
     char* compile_error = nullptr;
     AvaModule* module = ava_compile(vm, doc.code_behind.c_str(), "<avaui-code-behind>", &compile_error);
     if (!module) {
@@ -184,18 +136,18 @@ void BindCodeBehind(AvaVM* vm, const DesignDocument& doc) {
 bool InvokeHandler(AvaVM* vm, const std::string& handler_name, std::string* out_error) {
     if (!vm || handler_name.empty()) return false;
 
-    // `handler_name` is either a bare name (`click = increment`, or an
-    // auto-bound `On<Id><Event>` candidate -- see 08_DESIGNER_VIEW_PLAN.md
-    // section 0.1's example) or a full call the author wrote directly
-    // in .avaui (`click = OnAdd(Player)`, `click = OnAdd("Raul", 38,
-    // data)`). Only append the zero-arg `()` for the bare-name case --
-    // a call that already has its own arg list must be used as-is, or
-    // `OnAdd(Player)()` (calling the *result* of OnAdd(Player)) would
-    // be compiled instead of the call itself. AvaLang's
-    // EmitDefaultsPrologue (core/src/compiler/compiler.cpp) fills
-    // missing params with their declared defaults, or nil if none --
-    // it doesn't error on an arity mismatch, so the bare-name zero-arg
-    // form stays safe against a handler declared with parameters.
+
+
+
+
+
+
+
+
+
+
+
+
     const std::string source = "__avaui_invoke_result__ = " + handler_name +
                                 (LooksLikeCall(handler_name) ? "" : "()");
 
@@ -221,15 +173,15 @@ bool InvokeHandler(AvaVM* vm, const std::string& handler_name, std::string* out_
 
     ava_value_t result = ava_get_global(vm, "__avaui_invoke_result__");
     if (result.type == AVA_STRING) {
-        // Only reference-counted result type __avaui_invoke_result__
-        // could hold that isn't released elsewhere -- mirrors
-        // EvalPropertyExpr's AVA_STRING case. Everything else
-        // (number/bool/nil/list/dict/etc.) either isn't ref-counted or
-        // isn't meaningful to release through the C API the way this
-        // function uses it (the caller never reads the value itself).
+
+
+
+
+
+
         ava_value_release(vm, result);
     }
     return true;
 }
 
-} // namespace studio::design
+}

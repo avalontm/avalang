@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <sstream>
 #include <unordered_map>
 
 #include "registry/ComponentTypeRegistry.h"
@@ -35,17 +36,17 @@ PropertyValue InferValue(const std::string& raw) {
     if (raw == "false") return PropertyValue(false);
     double num;
     if (LooksLikeNumber(raw, &num)) return PropertyValue(num);
-    // Cualquier otra cosa (identificador suelto, concatenacion,
-    // expresion sin resolver) se deja como texto opaco -- mismo "soft
-    // fallback" que ya documentaba AvauiParser.h ("Semantic gaps").
+
+
+
     return PropertyValue(raw);
 }
 
 namespace {
 
-// Ver AvauiPropertyCoercion.h -- estos dos mapas eran privados a
-// AvauiParser.cpp; ahora viven aca porque SetPropertyWithAlias y
-// CanonicalTypeName son de uso publico.
+
+
+
 const std::unordered_map<std::string, std::string>& PropertyAliases() {
     static const std::unordered_map<std::string, std::string> kPropertyAliases = {
         {"gap", "spacing"},
@@ -55,14 +56,14 @@ const std::unordered_map<std::string, std::string>& PropertyAliases() {
 }
 
 const std::unordered_map<std::string, std::string>& TypeNameAliases() {
-    // Fase B.5 (plan unificado avastudio/avaui): a diferencia del resto
-    // de TypeNames() (ver abajo), estos tres no son una variante de
-    // may/minuscula del TypeName real -- son atajos de sintaxis del
-    // lenguaje .avaui para un tipo que ya existe con otro nombre
-    // (p.ej. "input" en vez de "textbox"). No se pueden derivar del
-    // registro de avaui igual que el resto, asi que se mantienen a
-    // mano aca, mismo motivo que PropertyAliases(): alias de sintaxis,
-    // no de catalogo.
+
+
+
+
+
+
+
+
     static const std::unordered_map<std::string, std::string> kTypeNameAliases = {
         {"input", "TextBox"},
         {"radio", "RadioButton"},
@@ -72,15 +73,15 @@ const std::unordered_map<std::string, std::string>& TypeNameAliases() {
 }
 
 const std::unordered_map<std::string, std::string>& TypeNames() {
-    // Fase B.5: antes esta tabla repetia a mano cada TypeName real
-    // (con su propia oportunidad de desincronizarse, igual que el bug
-    // de enabled/isEnabled en B.0) -- ahora se deriva de
-    // registry::GetComponentTypeRegistry(), la misma fuente que ya usa
-    // avastudio (B.4). Un tipo nuevo que se auto-registre en avaui
-    // (controls/Xxx.cpp) queda reconocible por el parser via su propio
-    // TypeName en minuscula sin tocar este archivo. Los pocos alias
-    // que no son solo mayus/minuscula (input/radio/scroll) siguen
-    // arriba, en TypeNameAliases().
+
+
+
+
+
+
+
+
+
     static const std::unordered_map<std::string, std::string> kTypeNames = [] {
         std::unordered_map<std::string, std::string> types;
         for (const avalang::ui::registry::ComponentTypeDescriptor& descriptor :
@@ -98,7 +99,7 @@ const std::unordered_map<std::string, std::string>& TypeNames() {
     return kTypeNames;
 }
 
-} // namespace
+}
 
 std::string CanonicalTypeName(const std::string& asWritten) {
     const auto& types = TypeNames();
@@ -120,6 +121,17 @@ void SetPropertyWithAlias(IComponent* component, const std::string& name,
     }
 }
 
-} // namespace parser
-} // namespace ui
-} // namespace avalang
+std::string NumberToDisplayString(double n) {
+    std::ostringstream oss;
+    oss << n;
+    return oss.str();
+}
+
+bool LooksLikeCall(const std::string& s) {
+    return !s.empty() && s.back() == ')' &&
+           s.find('(') != std::string::npos;
+}
+
+}
+}
+}

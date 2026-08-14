@@ -138,6 +138,8 @@ public:
     // the control instead of failing silently. Additive to the frozen
     // interface, same pattern as ScrollDirection().
     virtual std::string BindingWarning() const = 0;
+
+    virtual bool Wrap() const = 0;
 };
 
 } // namespace render

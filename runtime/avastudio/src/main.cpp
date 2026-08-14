@@ -1,10 +1,10 @@
-// Ava Studio -- Milestone 1 ("engine first").
-//
-// A single ImGui window, docked into Explorer / Code Editor / Properties
-// / Preview / Terminal / Output, linked directly against the `avalang`
-// core library.
-// No FFI boundary: this is C++ calling into C++. See studio/CMakeLists.txt
-// for the full rationale.
+
+
+
+
+
+
+
 
 #include <algorithm>
 #include <cstdio>
@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <system_error>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -26,12 +27,12 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
-#include "imgui_internal.h" // DockBuilder* -- used once to lay out the default panels on first run
+#include "imgui_internal.h"
 
-#include "design/avaui_text.h"
 #include "design/design_document.h"
 #include "components/IComponent.h"
 #include "components/PropertyValue.h"
+#include "parser/AvauiWriter.h"
 #include "engine/engine_bridge.h"
 #include "fonts/embedded_font.h"
 #include "panels/builtin_panels.h"
@@ -41,6 +42,7 @@
 #include "panels/pending_edits_panel.h"
 #include "panels/preview_panel.h"
 #include "panels/properties_panel.h"
+#include "panels/build_panel.h"
 #include "panels/settings_panel.h"
 #include "panels/terminal_panel.h"
 #include "panels/titlebar_panel.h"
@@ -50,6 +52,7 @@
 #include "plugins/plugin_ui_bridge.h"
 #include "platform/win32_titlebar.h"
 #include "theme.h"
+#include "util/ava_cli_locator.h"
 #include "util/log_bridge.h"
 #include "util/settings.h"
 
@@ -61,12 +64,12 @@ void GlfwErrorCallback(int error, const char* description) {
     std::fprintf(stderr, "GLFW error %d: %s\n", error, description);
 }
 
-// Ava Studio's initial workspace folder -- resolved next to the .exe
-// (not the process's current working directory, which depends on how
-// the app was launched: double-click, a shortcut, a debugger, etc.) so
-// "scripts/" is found reliably every time, the same way VSCode always
-// opens relative to a known workspace root. Created on first run if it
-// doesn't exist yet, so a fresh install has somewhere to save into.
+
+
+
+
+
+
 std::string ResolveWorkspaceDir() {
     fs::path base = fs::current_path();
 #if defined(_WIN32)
@@ -81,11 +84,11 @@ std::string ResolveWorkspaceDir() {
     return workspace.string();
 }
 
-// Where PluginHost looks for plugin .dll/.so files -- next to the .exe
-// (same base resolution as ResolveWorkspaceDir above, for the same
-// reason: independent of the process's working directory), in a
-// "plugins" folder created on first run so there's somewhere obvious
-// to drop a plugin into. See PLAN_agente_ia_openrouter.md Fase 0.
+
+
+
+
+
 std::string ResolvePluginsDir() {
     fs::path base = fs::current_path();
 #if defined(_WIN32)
@@ -100,37 +103,37 @@ std::string ResolvePluginsDir() {
     return plugins_dir.string();
 }
 
-// Height of Ava Studio's own title bar (see panels/titlebar_panel.h) --
-// the dockspace below it starts at this offset instead of the very top
-// of the window, now that there's no OS-native title bar reserving that
-// space for us.
+
+
+
+
 constexpr float kTitleBarHeight = 34.0f;
 
-// Small gap below the custom title bar so the docked panel tabs (Explorer /
-// Code Editor / ...) don't sit visually glued to it -- without this, the
-// tab row started at y == kTitleBarHeight exactly, right up against the
-// titlebar's bottom edge, which read as everything being flush to the top
-// of the window with no breathing room.
+
+
+
+
+
 constexpr float kTitleBarGap = 6.0f;
 
-// Set by GlfwWindowCloseRequested() below -- can't capture state directly
-// since GLFW callbacks are plain C function pointers, so this is written
-// there and read back once per frame in the main loop instead.
+
+
+
 bool g_native_close_requested = false;
 
-// Fires on Alt+F4, the taskbar/dock "close", or any other OS-level close
-// request GLFW would otherwise honor immediately. Ava Studio needs a
-// chance to warn about unsaved files first (see the exit confirmation in
-// main()), so this cancels GLFW's default "close now" and defers to that
-// same confirmation instead -- the same one the custom titlebar's X
-// button and File > Exit already go through, so every way of closing the
-// window behaves consistently.
+
+
+
+
+
+
+
 void GlfwWindowCloseRequested(GLFWwindow* window) {
     glfwSetWindowShouldClose(window, GLFW_FALSE);
     g_native_close_requested = true;
 }
 
-} // namespace
+}
 
 int main() {
     glfwSetErrorCallback(GlfwErrorCallback);
@@ -151,10 +154,10 @@ int main() {
     glfwSwapInterval(1);
     glfwSetWindowCloseCallback(window, GlfwWindowCloseRequested);
 
-    // Removes the OS-native title bar (Windows only -- no-op elsewhere)
-    // so we can draw our own VSCode-style one below, while keeping
-    // native move/resize/Aero-Snap/minimize/maximize. See
-    // platform/win32_titlebar.h for how.
+
+
+
+
     studio::titlebar::Install(window);
 
     IMGUI_CHECKVERSION();
@@ -162,23 +165,23 @@ int main() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
-    // Ava Studio's default font -- JetBrains Mono, compiled into the exe
-    // (see src/fonts/). Must happen before the OpenGL3 backend builds its
-    // font atlas texture, so this runs before ImGui_ImplOpenGL3_Init() below.
+
+
+
     studio::LoadDefaultFont(16.0f);
 
-    // Bold weight for the Code Editor panel only (see editor_panel.cpp) --
-    // loaded into the same atlas, same timing constraint as above.
+
+
     studio::LoadBoldFont(16.0f);
 
-    // Persist window/dock layout per-user, the same way VSCode remembers
-    // your panel arrangement between sessions -- not next to the exe
-    // (which might be a shared/read-only install location) and not in
-    // whatever directory ava_studio.exe happens to be launched from.
-    // ImGui itself does the actual save/load (on exit and periodically)
-    // once io.IniFilename points here; we only need to make sure the
-    // folder exists and the string outlives the ImGui context, hence
-    // `static` (ImGui keeps the raw pointer, not a copy).
+
+
+
+
+
+
+
+
     static std::string ini_path = [] {
         fs::path config_dir;
 #if defined(_WIN32)
@@ -207,53 +210,57 @@ int main() {
 
     studio::EngineBridge engine;
 
-    // Settings are loaded once here and applied to the VM immediately --
-    // modules_path defaults to "" (first run, or user cleared it), which
-    // SetModulesPath() resolves to util::ResolveDefaultModulesDir(). See
-    // util/settings.h.
+
+
+
+
     studio::StudioSettings settings = studio::LoadSettings();
     engine.SetModulesPath(settings.modules_path);
 
-    // One-shot channel from the "Browse..." folder dialog (which can only
-    // run here, since it needs `window`) back into the Settings panel's
-    // text field a frame later -- see DrawSettingsPanel's `browsed_folder` param.
+
+
+
     std::string pending_settings_browse;
+
+    studio::BuildPanelState build_panel_state;
+    studio::BuildBrowseField pending_build_browse_field = studio::BuildBrowseField::kNone;
+    std::string pending_build_browse_value;
 
     studio::ExplorerState explorer_state;
     explorer_state.root_dir = ResolveWorkspaceDir();
 
     studio::EditorState editor_state;
     studio::InitEditorPanel(editor_state);
-    // Same root Explorer is rooted at (explorer_state.root_dir above) --
-    // .avaui imports resolve against this, see design/component_resolver.h
-    // and EditorState::project_root's comment on why it must be one
-    // fixed root shared by the whole recursion.
+
+
+
+
     editor_state.project_root = explorer_state.root_dir;
     studio::OpenWelcomeTab(editor_state);
 
     studio::TerminalState terminal_state;
     studio::LogsState logs_state;
-    // Separate from `engine`'s console: general Ava Studio logs (plugin
-    // load/init, PluginHost edit results) vs. a script's own run output.
-    // See util/log_bridge.h for why these are split.
+
+
+
     studio::LogBridge log_bridge;
     studio::PropertiesState properties_state;
-    // Fase 4 (AVASTUDIO_AVAUI_MIGRATION_PLAN.md): same "set once, right
-    // after the thing it points to exists" pattern as
-    // editor_state.project_root above -- lets DrawDesignerCanvas (via
-    // DrawEditorPanel) log render failures into this same Output-panel
-    // stream instead of needing its own.
+
+
+
+
+
     editor_state.log_bridge = &log_bridge;
 
-    // Build the demo Component Tree once at startup -- see the note in
-    // engine_bridge.cpp about why this is fixed rather than script-driven.
+
+
     studio::EngineBridge::DemoTree demo_tree = engine.BuildDemoComponentTree();
 
-    // --- Plugin system (Fase 0, see PLAN_agente_ia_openrouter.md) -------
-    // Callbacks are lambdas capturing the panel state above by
-    // reference rather than PluginHost knowing about ExplorerState/
-    // EditorState/TerminalState/EngineBridge directly -- keeps the
-    // plugin system decoupled from those types (see plugin_host.h).
+
+
+
+
+
     studio::PluginHostCallbacks plugin_callbacks;
     plugin_callbacks.get_project_root = [&]() -> std::string { return explorer_state.root_dir; };
     plugin_callbacks.get_active_file = [&](std::string& path, std::string& content) -> bool {
@@ -263,20 +270,28 @@ int main() {
         content = active->GetText();
         return true;
     };
-    // Fase 6: the design services (design_add_component/
-    // design_edit_component) need the active .avaui tab's CURRENT
-    // source, which may live only in tab.design (Design view edits
-    // never touch tab.editor) -- so this resolves through
-    // WriteAvauiText() when that's the case, same conversion
-    // ToggleTabViewMode already does when leaving Design view, rather
-    // than reusing get_active_file's raw buffer (which could be stale).
+
+
+
+
+
+
+
     plugin_callbacks.get_active_avaui_document = [&](std::string& path, std::string& avaui_source) -> bool {
         const studio::EditorTab* active = editor_state.Active();
         if (!active || active->is_welcome || !active->is_avaui) return false;
         path = active->file_path;
             avaui_source = (active->view_mode == studio::TabViewMode::Design)
-                               ? studio::design::WriteAvauiText(active->design.Root(), active->design.code_behind,
-                                                                 active->design.initial_state, active->design.imports)
+                               ? [&] {
+                                     avalang::ui::parser::AvauiWriteOptions opts;
+                                     opts.code_behind = active->design.code_behind;
+                                     opts.imports = active->design.imports;
+                                     opts.initial_state.reserve(active->design.initial_state.size());
+                                     for (const auto& row : active->design.initial_state) {
+                                         opts.initial_state.push_back({row.key, row.value});
+                                     }
+                                     return avalang::ui::parser::WriteAvaui(active->design.Root(), opts);
+                                 }()
                                : active->GetText();
         return true;
     };
@@ -288,12 +303,12 @@ int main() {
     };
     plugin_callbacks.log = [&](const std::string& line) { log_bridge.Log(line); };
 
-    // Runs the active tab through the exact same compile+run pipeline the
-    // F5 hotkey below uses -- shared by both so run_project() (Fase 5)
-    // can't drift from what pressing F5 actually does. Defined here
-    // (rather than inline at each call site) since it needs to be handed
-    // to PluginHostCallbacks::run_project_on_main_thread, but the F5 key
-    // handling further down in the loop calls it too.
+
+
+
+
+
+
     auto perform_run = [&]() -> studio::RunProjectResult {
         studio::RunProjectResult result;
         const studio::EditorTab* active = editor_state.Active();
@@ -308,13 +323,13 @@ int main() {
         terminal_state.last_run = engine.RunScript(active->GetText(), run_source_name);
         terminal_state.has_run_result = true;
         if (!terminal_state.last_run.success) {
-            // The failing file isn't always the one that was run -- e.g.
-            // an error inside an `import`ed module. Falls back to
-            // run_source_name when the VM didn't know the file (see
-            // RunResult::error_source), same as a top-level error. Open/
-            // focus that file's tab first (no-op if it's already the
-            // active tab) so HighlightError has something to point at
-            // even for a module that was never opened by hand.
+
+
+
+
+
+
+
             const std::string& err_source = terminal_state.last_run.error_source;
             const std::string& target_path = err_source.empty() ? run_source_name : err_source;
             if (!target_path.empty() && target_path != run_source_name) {
@@ -330,7 +345,7 @@ int main() {
         return result;
     };
 
-    // --- Fase 5: write services ------------------------------------------
+
     plugin_callbacks.write_approved_edit = [&](const studio::PendingEdit& edit) {
         std::error_code ec;
         fs::path resolved = fs::weakly_canonical(fs::path(explorer_state.root_dir) / edit.path, ec);
@@ -339,7 +354,7 @@ int main() {
             return;
         }
 
-        fs::create_directories(resolved.parent_path(), ec); // no-op if it already exists; ec ignored either way
+        fs::create_directories(resolved.parent_path(), ec);
 
         std::ofstream out(resolved, std::ios::binary | std::ios::trunc);
         if (!out) {
@@ -349,10 +364,10 @@ int main() {
         out << edit.new_content;
         out.close();
 
-        // If that path is open in a tab, refresh its buffer so it doesn't
-        // show stale text -- and clear `dirty` since the buffer now
-        // matches what was just written to disk, same as a normal Save
-        // would.
+
+
+
+
         for (const auto& tab_ptr : editor_state.tabs) {
             if (tab_ptr->file_path.empty()) continue;
             std::error_code ec2;
@@ -362,14 +377,14 @@ int main() {
             tab_ptr->SetText(edit.new_content);
             tab_ptr->dirty = false;
 
-            // Fase 6: an approved edit against a .avaui file can be a
-            // design mutation (design_add_component/design_edit_component)
-            // as much as a plain text edit -- re-parse into tab.design
-            // too, same forgiving policy as SaveTab's Code-view branch
-            // (a parse error here just leaves the last valid tab.design
-            // untouched; the new text already reached disk and the tab
-            // buffer above), so the Design canvas reflects the approved
-            // change right away instead of needing a manual F7 round-trip.
+
+
+
+
+
+
+
+
             if (tab_ptr->is_avaui) {
                 std::string parse_error;
                 studio::design::DesignDocument parsed_doc;
@@ -386,38 +401,38 @@ int main() {
     };
     plugin_callbacks.run_project_on_main_thread = perform_run;
 
-    // Kept around for the lifetime of the loop -- both the initial
-    // LoadAll below and every later PluginHost::Reload()/ScanAvailable()
-    // triggered by the "Plugins" menu need the same folder.
+
+
+
     const std::string plugins_dir = ResolvePluginsDir();
 
     studio::PluginHost plugin_host(std::move(plugin_callbacks));
     plugin_host.LoadAll(plugins_dir, settings.disabled_plugins);
 
-    // Per-panel visibility (see the "View" menu, panels/titlebar_panel.cpp,
-    // and its `panels`/`closed_panels` params). Keyed by panel name --
-    // for a plugin panel that's RegisteredPanel::name (same uniqueness
-    // guarantee RegisterPanelTrampoline already enforces); for a
-    // built-in panel it's one of the literal names in
-    // panels/builtin_panels.h, which must match that panel's own
-    // ImGui::Begin() string exactly. A name not yet in the map defaults
-    // to open the first time its panel is drawn below -- see the
-    // try_emplace calls -- except for names persisted in
-    // settings.closed_panels, seeded closed right here so a panel the
-    // user closed last session doesn't flash open for one frame before
-    // anything reads the settings file.
+
+
+
+
+
+
+
+
+
+
+
+
     std::unordered_map<std::string, bool> panel_open;
     for (const std::string& name : settings.closed_panels) {
         panel_open[name] = false;
     }
 
-    // Persists a panel that was just closed (its p_open flag flipped to
-    // false this frame -- via the View menu/Plugins modal's checkbox
-    // above, or the panel's own tab "x" button) into
-    // settings.closed_panels, so it stays closed across restarts even
-    // if the app closes uncleanly. Shared by every built-in and plugin
-    // panel draw call below rather than duplicating this
-    // find-or-append-and-save logic five-plus times.
+
+
+
+
+
+
+
     auto persist_if_closed = [&](const std::string& name, bool open) {
         if (open) return;
         auto& closed = settings.closed_panels;
@@ -430,13 +445,19 @@ int main() {
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
-        // Services any AvaHostServices::run_project() call a plugin's
-        // worker thread is currently blocked on -- see PluginHost::
-        // PumpMainThreadWork's comment. Deliberately outside the
-        // ImGui::NewFrame()/Render() bracket below: perform_run (via
-        // plugin_callbacks.run_project_on_main_thread) only touches
-        // EditorState/EngineBridge, never ImGui state directly.
+
+
+
+
+
+
         plugin_host.PumpMainThreadWork();
+
+        // Folds the background "Run" (StartScriptRun, see terminal_panel.h)
+        // into the console/terminal_state.last_run as it streams in and
+        // once it finishes. Unconditional -- must run even while the
+        // Terminal panel tab is closed, see PollScriptRun's own comment.
+        studio::PollScriptRun(terminal_state, engine);
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -444,57 +465,57 @@ int main() {
 
         ImGuiViewport* viewport = ImGui::GetMainViewport();
 
-        // --- Custom title bar (replaces the OS-native one) -------------
+
         const bool is_maximized = studio::titlebar::IsWindowMaximizedNow(window);
-        // Re-scanned every frame (just a directory listing, see
-        // PluginHost::ScanAvailable) so the "Plugins" menu always shows
-        // what's actually on disk right now, not a stale snapshot from
-        // when the app started.
+
+
+
+
         const std::vector<studio::PluginInfo> available_plugins =
             plugin_host.ScanAvailable(plugins_dir, settings.disabled_plugins);
         studio::TitleBarResult titlebar_result = studio::DrawTitleBar(
             editor_state, settings, is_maximized, kTitleBarHeight, available_plugins,
             plugin_host.Panels(), settings.closed_panels);
 
-        // "Plugins" menu checkbox toggled this frame -- flip it in
-        // settings, persist, and reload right away (no restart needed)
-        // before anything below iterates plugin_host.Panels(). Safe to
-        // do here: nothing has drawn a plugin panel yet this frame.
+
+
+
+
         if (!titlebar_result.plugin_toggle_requested.empty()) {
             const std::string& name = titlebar_result.plugin_toggle_requested;
             auto& disabled = settings.disabled_plugins;
             auto it = std::find(disabled.begin(), disabled.end(), name);
             if (it != disabled.end()) {
-                disabled.erase(it); // was disabled -> enable it
+                disabled.erase(it);
             } else {
-                disabled.push_back(name); // was enabled -> disable it
+                disabled.push_back(name);
             }
             studio::SaveSettings(settings);
             plugin_host.Reload(plugins_dir, settings.disabled_plugins);
         }
 
-        // Panel visibility toggled this frame -- either a built-in panel
-        // from the "View" menu or a plugin panel from there or the
-        // "Plugins" modal's list (see TitleBarResult::panel_toggle_requested).
-        // Flip both the persisted list and the runtime map every panel
-        // draw call below reads, same as clicking the panel's own tab x
-        // would, and persist it right away so it survives even if the
-        // app closes uncleanly.
+
+
+
+
+
+
+
         if (!titlebar_result.panel_toggle_requested.empty()) {
             const std::string& name = titlebar_result.panel_toggle_requested;
             auto& closed = settings.closed_panels;
             auto it = std::find(closed.begin(), closed.end(), name);
             if (it != closed.end()) {
-                closed.erase(it); // was closed -> reopen it
+                closed.erase(it);
                 panel_open[name] = true;
-                // Bring it to the front of its dock node the moment it
-                // reopens -- otherwise it re-docks into its last known
-                // spot (imgui.ini remembers that) but silently sits
-                // behind whichever tab is already selected there, which
-                // looks like nothing happened.
+
+
+
+
+
                 ImGui::SetWindowFocus(name.c_str());
             } else {
-                closed.push_back(name); // was open -> close it
+                closed.push_back(name);
                 panel_open[name] = false;
             }
             studio::SaveSettings(settings);
@@ -509,6 +530,15 @@ int main() {
             studio::SaveSettings(settings);
         }
 
+        if (titlebar_result.build_requested) {
+            auto& closed = settings.closed_panels;
+            auto it = std::find(closed.begin(), closed.end(), "Build");
+            if (it != closed.end()) closed.erase(it);
+            panel_open["Build"] = true;
+            ImGui::SetWindowFocus("Build");
+            studio::SaveSettings(settings);
+        }
+
         if (titlebar_result.minimize_clicked) {
             glfwIconifyWindow(window);
         }
@@ -519,17 +549,17 @@ int main() {
                 glfwMaximizeWindow(window);
             }
         }
-        // Every way of asking to quit (this button, File > Exit further
-        // down, and native close via the GLFW callback above) funnels
-        // into the same "any unsaved changes?" check right before the
-        // main loop's end instead of closing here directly -- see
-        // want_quit below.
+
+
+
+
+
         bool want_quit = titlebar_result.close_clicked;
 
-        // Tells the Win32 hook which pixels are "real" buttons so
-        // WM_NCHITTEST doesn't treat clicking them as dragging the
-        // window (see platform/win32_titlebar.h). No-op on other
-        // platforms.
+
+
+
+
         auto to_rect = [](const studio::ScreenRect& r) {
             return studio::titlebar::Rect{static_cast<int>(r.min_x), static_cast<int>(r.min_y),
                                            static_cast<int>(r.max_x), static_cast<int>(r.max_y)};
@@ -542,17 +572,17 @@ int main() {
         };
         int extra_rect_count = 4;
         if (titlebar_result.any_popup_open) {
-            // While a File/View/Run dropdown is open, treat the *entire*
-            // titlebar strip as a real (HTCLIENT) region for this frame
-            // instead of just the four button rects. Otherwise a click
-            // meant to dismiss the dropdown by clicking elsewhere on the
-            // titlebar (the brand icon area, the empty space between
-            // buttons, the centered file name, etc.) gets intercepted by
-            // Windows as HTCAPTION -- treated as "start dragging the
-            // window" -- and never reaches ImGui, so the popup's normal
-            // click-outside-closes-it behavior can't fire. Clicks in the
-            // dockspace/editor area below the titlebar were never affected
-            // by this, since that area is already HTCLIENT.
+
+
+
+
+
+
+
+
+
+
+
             extra_rects[4] = studio::titlebar::Rect{
                 static_cast<int>(viewport->WorkPos.x), static_cast<int>(viewport->WorkPos.y),
                 static_cast<int>(viewport->WorkPos.x + viewport->WorkSize.x),
@@ -563,7 +593,7 @@ int main() {
                                             to_rect(titlebar_result.maximize_rect), to_rect(titlebar_result.close_rect),
                                             extra_rects, extra_rect_count);
 
-        // --- Dockspace host (everything below the title bar) -----------
+
         const ImVec2 dock_pos(viewport->WorkPos.x, viewport->WorkPos.y + kTitleBarHeight + kTitleBarGap);
         const ImVec2 dock_size(viewport->WorkSize.x, viewport->WorkSize.y - kTitleBarHeight - kTitleBarGap);
         ImGui::SetNextWindowPos(dock_pos);
@@ -581,11 +611,11 @@ int main() {
 
         ImGuiID dockspace_id = ImGui::GetID("AvaStudioDockspace");
 
-        // Only runs when this dockspace ID has no saved layout yet --
-        // i.e. the very first launch, or if imgui.ini was deleted/moved.
-        // Once the user drags a panel anywhere, ImGui's own save (into
-        // io.IniFilename) takes over and this block is skipped on every
-        // later launch, so their arrangement sticks.
+
+
+
+
+
         if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr) {
             ImGui::DockBuilderRemoveNode(dockspace_id);
             ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
@@ -598,26 +628,26 @@ int main() {
             ImGuiID dock_center = dock_main;
 
             ImGui::DockBuilderDockWindow("Explorer", dock_left);
-            // Sibling tab in the same dock node as Explorer, not its own
-            // split -- see 08_DESIGNER_VIEW_PLAN.md section 5.5. Only
-            // ever actually drawn (see DrawToolboxPanel() call below)
-            // while the active tab is a .avaui in Design view, same as
-            // VS6 only showing the Toolbox with a .frm open; docking it
-            // here up front just means it lands in the right place
-            // instead of floating the first time that happens.
+
+
+
+
+
+
+
             ImGui::DockBuilderDockWindow("Toolbox", dock_left);
             ImGui::DockBuilderDockWindow("Code Editor", dock_center);
             ImGui::DockBuilderDockWindow("Properties", dock_right);
             ImGui::DockBuilderDockWindow("Settings", dock_right);
             ImGui::DockBuilderDockWindow("Preview", dock_bottom);
-            ImGui::DockBuilderDockWindow("Terminal", dock_bottom); // tabs alongside Preview, like VSCode's bottom panel
-            ImGui::DockBuilderDockWindow("Output", dock_bottom);   // general Ava Studio logs -- see util/log_bridge.h
+            ImGui::DockBuilderDockWindow("Terminal", dock_bottom);
+            ImGui::DockBuilderDockWindow("Output", dock_bottom);
 
-            // Plugin panels (Fase 0) -- docked as a tab alongside
-            // whichever built-in panel already occupies their
-            // requested slot, same as Toolbox joining Explorer above.
-            // Purely a first-run default; the user can drag it
-            // anywhere afterward like any other panel.
+
+
+
+
+
             for (const auto& panel : plugin_host.Panels()) {
                 ImGuiID target = dock_center;
                 switch (panel.default_dock_slot) {
@@ -635,14 +665,14 @@ int main() {
         ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f));
         ImGui::End();
 
-        // --- Explorer -> Editor -----------------------------------------
-        // try_emplace seeds "Explorer" open the first time this runs
-        // (unless settings.closed_panels already marked it closed above,
-        // via the seeding loop right before persist_if_closed) -- same
-        // convention the plugin panel loop below uses. `open`'s address
-        // becomes Explorer's ImGui::Begin() p_open, so the tab gets a
-        // close ("x") button wired to the same flag the View menu's
-        // checkbox reads/writes.
+
+
+
+
+
+
+
+
         studio::ExplorerResult explorer_result;
         if (bool& open = panel_open.try_emplace("Explorer", true).first->second; open) {
             explorer_result = studio::DrawExplorerPanel(explorer_state, &open);
@@ -658,40 +688,43 @@ int main() {
             studio::RenameTabPath(editor_state, explorer_result.file_renamed->first,
                                    explorer_result.file_renamed->second);
         }
+        if (explorer_result.reveal_in_file_manager) {
+            studio::titlebar::RevealInFileExplorer(*explorer_result.reveal_in_file_manager);
+        }
 
-        // --- Toolbox (only while a .avaui tab is showing Design view) ---
-        // Not called at all otherwise -- an ImGui window that isn't
-        // drawn on a frame just doesn't appear (it stays docked where
-        // DockBuilderDockWindow put it above for next time), same as
-        // how Preview/Output already work as always-tabbed-but-
-        // sometimes-empty siblings. See 08_DESIGNER_VIEW_PLAN.md
-        // section 5.5.
+
+
+
+
+
+
+
         if (const studio::EditorTab* active = editor_state.Active();
             active && active->is_avaui && active->view_mode == studio::TabViewMode::Design) {
             studio::DrawToolboxPanel();
         }
 
-        // --- Editor -> Save / Run ----------------------------------------
+
         studio::DrawEditorPanel(editor_state);
         if (const studio::EditorTab* active = editor_state.Active();
             active && active->is_avaui && active->view_mode == studio::TabViewMode::Design) {
-            // Unconditional (not `if (designer_selection)`): the active
-            // tab's Designer canvas now reports its CURRENT selection
-            // every single call (see designer_canvas.cpp's `doc.selected_uid`
-            // recompute), including nullopt when nothing is selected in
-            // it. Mirroring that unconditionally here is what makes
-            // switching to a tab with nothing selected actually clear
-            // Properties instead of leaving it pointed at whatever a
-            // DIFFERENT tab last had selected -- which, left alone,
-            // would let an edit made right now silently patch that
-            // OTHER tab's node instead of anything visible on screen.
+
+
+
+
+
+
+
+
+
+
             properties_state = editor_state.designer_selection ? *editor_state.designer_selection
                                                                  : studio::PropertiesState{};
         }
 
-        // Global hotkeys (checked here, not tied to any single panel's
-        // focus, so they work the same whether the click that opened a
-        // popup, the Explorer, or the editor currently has focus).
+
+
+
         ImGuiIO& io = ImGui::GetIO();
         const bool want_save    = io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S);
         const bool want_save_as = io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S);
@@ -699,6 +732,7 @@ int main() {
         const bool want_open    = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O);
         const bool want_close_tab = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_W);
         const bool want_run     = ImGui::IsKeyPressed(ImGuiKey_F5);
+        const bool want_build   = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_B);
         const bool want_toggle_view = ImGui::IsKeyPressed(ImGuiKey_F7);
 
         if (titlebar_result.new_requested || want_new || editor_state.new_tab_requested) {
@@ -713,11 +747,11 @@ int main() {
         if (titlebar_result.open_folder_requested || editor_state.open_folder_requested) {
             std::string path;
             if (studio::titlebar::OpenFolderDialog(window, path, explorer_state.root_dir)) {
-                // Switches the Explorer panel over to the chosen directory,
-                // the same "open a project" role VSCode's Open Folder plays --
-                // it's just the working directory Explorer browses from,
-                // it doesn't touch whatever tabs are already open in the
-                // Code Editor.
+
+
+
+
+
                 explorer_state.root_dir = path;
             }
         }
@@ -732,8 +766,8 @@ int main() {
         }
         if (editor_state.save_requested || want_save) {
             if (studio::EditorTab* active = editor_state.Active(); active && !active->is_welcome) {
-                // Untitled buffer: Ctrl+S / File > Save falls through to the
-                // Save As dialog, same as most editors.
+
+
                 if (active->file_path.empty()) {
                     std::string path;
                     if (studio::titlebar::SaveFileDialog(window, path, explorer_state.root_dir)) {
@@ -751,27 +785,58 @@ int main() {
             }
         }
         if (want_toggle_view) {
-            // No-op for any tab that isn't .avaui -- ToggleTabViewMode
-            // guards on tab.is_avaui itself, same as VS6 where F7 only
-            // meant something with a .frm open.
+
+
+
             if (studio::EditorTab* active = editor_state.Active()) {
                 studio::ToggleTabViewMode(*active);
             }
         }
         if (editor_state.run_requested || want_run) {
-            // Discards the RunProjectResult here -- terminal_state was
-            // already updated as a side effect (same as before this was
-            // factored out into perform_run), which is all this call site
-            // ever needed. See perform_run's definition above, right
-            // after plugin_callbacks is built, for the Fase 5 caller that
-            // actually uses the return value.
-            perform_run();
+            // Interactive Run (button/shortcut): out-of-process via
+            // ava_cli.exe, see StartScriptRun's comment in
+            // terminal_panel.h for why. This intentionally does NOT call
+            // perform_run() -- that stays in-process and untouched, since
+            // it's also what plugin_callbacks.run_project_on_main_thread
+            // uses (see below), and that path is synchronous by contract
+            // (plugins block on its return value).
+            if (studio::EditorTab* active = editor_state.Active(); active && !active->is_welcome) {
+                if (terminal_state.run.running.load()) {
+                    // A run is already in flight -- same "ignore, don't
+                    // queue a second one" behavior perform_run() itself
+                    // never had to think about (it always ran to
+                    // completion before returning).
+                } else if (active->file_path.empty()) {
+                    engine.AppendConsoleLine(studio::ConsoleLine::Kind::Error,
+                        "save the file (Ctrl+S) before running it -- Run needs a .ava on disk.");
+                } else {
+                    studio::SaveTab(*active); // ava_cli.exe reads from disk, unlike the old in-process RunScript()
+                    fs::path ava_cli = settings.build_ava_cli_path.empty() ? studio::DetectAvaCliPath()
+                                                                            : fs::path(settings.build_ava_cli_path);
+                    std::error_code ava_cli_ec;
+                    if (ava_cli.empty() || !fs::exists(ava_cli, ava_cli_ec)) {
+                        engine.AppendConsoleLine(studio::ConsoleLine::Kind::Error,
+                            "could not find ava_cli(.exe) -- set its path under Build > Advanced.");
+                    } else {
+                        studio::StartScriptRun(terminal_state, engine, ava_cli.string(), active->file_path);
+                    }
+                }
+            }
         }
-        // Fold in File > Exit and any native close request (Alt+F4, the
-        // taskbar/dock close, etc. -- see GlfwWindowCloseRequested) so
-        // every path to quitting resolves through the one check below.
+
+        if (want_build) {
+            auto& closed = settings.closed_panels;
+            auto it = std::find(closed.begin(), closed.end(), "Build");
+            if (it != closed.end()) closed.erase(it);
+            panel_open["Build"] = true;
+            ImGui::SetWindowFocus("Build");
+            studio::SaveSettings(settings);
+        }
+
+
+
         want_quit = want_quit || titlebar_result.quit_requested || g_native_close_requested;
-        g_native_close_requested = false; // consumed this frame either way
+        g_native_close_requested = false;
 
         if (want_quit) {
             if (studio::HasUnsavedChanges(editor_state)) {
@@ -781,10 +846,10 @@ int main() {
             }
         }
 
-        // --- Unsaved-changes confirmation on exit (Save All & Exit /
-        // Exit / Cancel) -- drawn every frame so it stays open across
-        // frames once OpenPopup fires above, same pattern as every other
-        // modal in this file/the panels.
+
+
+
+
         ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f));
         if (ImGui::BeginPopupModal("Unsaved Changes##ExitConfirm", nullptr,
@@ -796,9 +861,9 @@ int main() {
             ImGui::Separator();
             ImGui::Spacing();
 
-            // Three outcomes, three colors, so the button someone taps
-            // under pressure matches what they meant: green = keeps your
-            // work, red = throws it away, gray = does nothing / backs out.
+
+
+
             const float spacing = ImGui::GetStyle().ItemSpacing.x;
             const float button_w = (ImGui::GetContentRegionAvail().x - 2.0f * spacing) / 3.0f;
 
@@ -807,11 +872,11 @@ int main() {
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, studio::palette::FromHex(0x189b48));
             if (ImGui::Button("Save All & Exit", ImVec2(button_w, 0.0f))) {
                 studio::SaveAllTabs(editor_state);
-                // SaveAllTabs() skips untitled tabs (nothing to write into
-                // without a path) -- walk those here, one Save As dialog
-                // at a time, same as Ctrl+S on an untitled buffer would.
-                // If the user cancels any of those dialogs, stay open
-                // instead of quitting so that tab's work isn't discarded.
+
+
+
+
+
                 bool all_saved = true;
                 for (auto& tab : editor_state.tabs) {
                     if (tab->is_welcome || !tab->dirty || !tab->file_path.empty()) continue;
@@ -832,9 +897,9 @@ int main() {
             ImGui::PushStyleColor(ImGuiCol_Button, studio::palette::FromHex(studio::palette::kError, 0.85f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, studio::palette::FromHex(studio::palette::kError, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, studio::palette::FromHex(0xc93b3b));
-            // Renamed from "Exit" -- the label now says exactly what it
-            // does (discards unsaved work) instead of leaving that to be
-            // inferred from position/color alone.
+
+
+
             if (ImGui::Button("Exit Without Saving", ImVec2(button_w, 0.0f))) {
                 glfwSetWindowShouldClose(window, GLFW_TRUE);
                 ImGui::CloseCurrentPopup();
@@ -855,22 +920,22 @@ int main() {
         editor_state.open_folder_requested = false;
         editor_state.new_tab_requested = false;
 
-        // --- Preview -> Properties -----------------------------------------
-        // Same try_emplace-seeds-open convention as Explorer above.
+
+
         if (bool& open = panel_open.try_emplace("Preview", true).first->second; open) {
             if (auto selected = studio::DrawPreviewPanel(demo_tree.root, &open)) {
                 properties_state = *selected;
             }
             persist_if_closed("Preview", open);
         }
-        // Fase 3 (write-back): DrawPropertiesPanel edits properties_state's
-        // own PropertyRow::value in place as the person types (so the table
-        // shows keystrokes immediately, see properties_panel.cpp), and
-        // returns a PropertyEdit only once a field is committed
-        // (unfocus/Enter) -- that's the point this patches the *real*
-        // IComponent the selection came from, identified by tab id + uid
-        // rather than a stale pointer (properties_state outlives whatever
-        // frame the selection was made on, including tab switches).
+
+
+
+
+
+
+
+
         if (bool& open = panel_open.try_emplace("Properties", true).first->second; open) {
             if (auto edit = studio::DrawPropertiesPanel(properties_state, &open)) {
                 for (auto& tab_ptr : editor_state.tabs) {
@@ -905,15 +970,15 @@ int main() {
                     tab.design.dirty = true;
                     tab.dirty = true;
                 }
-                // Tab ids are unique (EditorState::next_tab_id only ever
-                // increments) -- no need to keep scanning once matched.
+
+
                 break;
             }
             }
             persist_if_closed("Properties", open);
         }
 
-        // --- Settings ----------------------------------------------------
+
         if (bool& open = panel_open.try_emplace("Settings", true).first->second; open) {
             bool settings_dirty = false;
             bool settings_browse_requested = false;
@@ -933,13 +998,63 @@ int main() {
             persist_if_closed("Settings", open);
         }
 
-        // --- Terminal --------------------------------------------------------
+
+        if (bool& open = panel_open.try_emplace("Build", true).first->second; open) {
+            studio::BuildPanelResult build_result =
+                studio::DrawBuildPanel(build_panel_state, settings, explorer_state.root_dir,
+                                        pending_build_browse_field, pending_build_browse_value, log_bridge, &open);
+            pending_build_browse_field = studio::BuildBrowseField::kNone;
+            pending_build_browse_value.clear();
+            if (build_result.browse_requested != studio::BuildBrowseField::kNone) {
+                std::string path;
+                bool picked = false;
+                switch (build_result.browse_requested) {
+                    case studio::BuildBrowseField::kProjectDir:
+                        picked = studio::titlebar::OpenFolderDialog(
+                            window, path,
+                            settings.build_project_dir.empty() ? explorer_state.root_dir : settings.build_project_dir);
+                        break;
+                    case studio::BuildBrowseField::kOutputDir:
+                        picked = studio::titlebar::OpenFolderDialog(window, path, settings.build_out_dir);
+                        break;
+                    case studio::BuildBrowseField::kRepoRoot:
+                        picked = studio::titlebar::OpenFolderDialog(window, path, settings.build_repo_root);
+                        break;
+                    case studio::BuildBrowseField::kVcpkgRoot:
+                        picked = studio::titlebar::OpenFolderDialog(window, path, settings.build_vcpkg_root);
+                        break;
+                    case studio::BuildBrowseField::kEntryFile:
+                        picked = studio::titlebar::OpenFileDialog(
+                            window, path,
+                            settings.build_project_dir.empty() ? explorer_state.root_dir : settings.build_project_dir);
+                        break;
+                    case studio::BuildBrowseField::kAvaCliPath:
+                        picked = studio::titlebar::OpenFileDialog(window, path, settings.build_ava_cli_path);
+                        break;
+                    case studio::BuildBrowseField::kKeyFile:
+                        picked = studio::titlebar::OpenFileDialog(window, path, explorer_state.root_dir);
+                        break;
+                    case studio::BuildBrowseField::kNone:
+                        break;
+                }
+                if (picked) {
+                    pending_build_browse_field = build_result.browse_requested;
+                    pending_build_browse_value = path;
+                }
+            }
+            if (build_result.settings_dirty) {
+                studio::SaveSettings(settings);
+            }
+            persist_if_closed("Build", open);
+        }
+
+
         if (bool& open = panel_open.try_emplace("Terminal", true).first->second; open) {
             if (auto file_click = studio::DrawTerminalPanel(terminal_state, engine, &open)) {
-                // Clicking an older Error line in the scrollback jumps to it
-                // again, exactly like the auto-open/highlight right after a
-                // failed Run above -- open/focus the file (no-op if it's
-                // already the active tab) and highlight the position.
+
+
+
+
                 if (const studio::EditorTab* active = editor_state.Active();
                     file_click->file_path.empty() || !active || active->file_path != file_click->file_path) {
                     studio::ClearErrorHighlights(editor_state);
@@ -955,27 +1070,27 @@ int main() {
             persist_if_closed("Terminal", open);
         }
 
-        // --- Output (general logs) ------------------------------------------
+
         if (bool& open = panel_open.try_emplace("Output", true).first->second; open) {
             studio::DrawLogsPanel(logs_state, log_bridge, &open);
             persist_if_closed("Output", open);
         }
 
-        // --- Plugin panels (Fase 0) -----------------------------------
-        // Tabbed alongside the built-in panels (same as Preview/Terminal/
-        // Output) -- a plugin has no concept of "only visible in Design
-        // view" the way Toolbox does, so there's no view-mode conditional
-        // here. Same closable convention the built-ins above now share
-        // too (see panel_open's comment): try_emplace seeds a
-        // first-seen panel open (unless settings.closed_panels already
-        // marked it closed above), then Begin's p_open both draws the
-        // tab's x button and -- once the user clicks it -- flips `open`
-        // to false, so next frame this loop simply stops calling
-        // Begin() for it. ImGui itself remembers that panel's last dock
-        // location (imgui.ini, keyed by its window name) for whenever
-        // `open` goes back to true, either via the View menu, the
-        // "Plugins" modal's panel list, or a future ReopenPanel menu --
-        // no manual re-docking needed here.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         for (const auto& panel : plugin_host.Panels()) {
             bool& open = panel_open.try_emplace(panel.name, true).first->second;
             if (!open) continue;
@@ -986,38 +1101,38 @@ int main() {
             studio::plugins_ui::EndPanelContext(ctx);
             ImGui::End();
 
-            // The x button just set `open` to false above -- persist
-            // that immediately (same as the View menu's / Plugins
-            // modal's checkbox does) so a panel closed by its tab, not
-            // just one of those menus, also stays closed across
-            // restarts.
+
+
+
+
+
             persist_if_closed(panel.name, open);
         }
 
-        // --- Fase 5: apply_edit approval gate --------------------------
-        // Draws nothing when there are no pending proposals (see its own
-        // comment) -- called every frame, after plugins have had a chance
-        // to queue one via AvaHostServices::apply_edit this frame, so a
-        // proposal shows up the same frame it was made rather than a
-        // frame late.
+
+
+
+
+
+
         studio::DrawPendingEditsPanel(plugin_host);
 
         ImGui::Render();
         int display_w, display_h;
         glfwGetFramebufferSize(window, &display_w, &display_h);
         glViewport(0, 0, display_w, display_h);
-        glClearColor(0.043f, 0.043f, 0.051f, 1.0f); // #0b0b0d, matches theme.cpp's bg_editor
+        glClearColor(0.043f, 0.043f, 0.051f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
         glfwSwapBuffers(window);
     }
 
-    // Every loaded plugin's ava_plugin_shutdown() runs (reverse load
-    // order) while the ImGui/GLFW context it drew into is still alive --
-    // a plugin has no business touching either after this point, but
-    // tearing them down before the context itself is destroyed keeps
-    // that boundary clean either way.
+
+
+
+
+
     plugin_host.UnloadAll();
 
     ImGui_ImplOpenGL3_Shutdown();

@@ -158,7 +158,8 @@ Value VM::Call(const Value& callable, const std::vector<Value>& args) {
         return result;
     }
 
-    throw std::runtime_error("attempt to call a non-callable value");
+    throw std::runtime_error("attempt to call a non-callable value (type=" +
+                              std::to_string(static_cast<int>(callable.type)) + ")");
 }
 
 } // namespace ava

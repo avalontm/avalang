@@ -13,6 +13,8 @@
 #include "theme/ITheme.h"
 #include "theme/RenderTheme.h"
 #include "theme/ProjectFontOverrides.h"
+#include "theme/ProjectStyleOverrides.h"
+#include "theme/ProjectAnimationOverrides.h"
 #include "layout/LayoutEngine.h"
 #include "render_tree/IRenderTree.h"
 #include "scene/ISceneGraph.h"
@@ -78,7 +80,30 @@ bool RenderTreeFragment(avalang::ui::ComponentTree* tree,
         avalang::ui::theme::ProjectTheme projectTheme(
             themeProvider->Current(),
             avalang::ui::theme::LoadProjectFontOverrides(options.projectRoot));
-        avalang::ui::RenderTheme::Apply(tree, &projectTheme);
+        // See ui_pipeline_static_renderer.cpp / ProjectTheme::
+        // RegisterProjectFonts -- must run before RenderTheme::Apply,
+        // and must run on every RenderTreeFragment call (page AND
+        // layout), since each one builds its own throwaway
+        // ProjectTheme/HTMLRenderer and a component that sets
+        // `fontName` explicitly (e.g. "heading1") never triggers
+        // RenderTheme's own lazy registration.
+        projectTheme.RegisterProjectFonts();
+        // See ui_pipeline_static_renderer.cpp -- same declared-style-
+        // file overlay (`style *` / `style <type>` blocks), same
+        // passthrough-when-empty stance.
+        avalang::ui::theme::ProjectStyleSheet projectStyles =
+            avalang::ui::theme::LoadProjectStyleOverrides(options.projectRoot);
+        avalang::ui::RenderTheme::Apply(tree, &projectTheme, &projectStyles);
+
+        // See ui_pipeline_static_renderer.cpp -- same declared-
+        // animation-file overlay (`animation dialog:open`/`animation
+        // dialog:close` blocks), same passthrough-when-empty stance.
+        // This is the pipeline that actually renders testproj's
+        // dialog/modal on every open/close request, so this is where
+        // the override needs to reach HTMLRenderer for it to have any
+        // visible effect.
+        avalang::ui::theme::ProjectAnimationSheet projectAnimations =
+            avalang::ui::theme::LoadProjectAnimationOverrides(options.projectRoot);
 
         substage = "RenderTreeFragment: layout engine compute";
         auto layoutEngine = avalang::ui::LayoutEngine::Create();
@@ -131,6 +156,22 @@ bool RenderTreeFragment(avalang::ui::ComponentTree* tree,
             htmlRenderer->SetExtraHead(options.extraHead);
             htmlRenderer->SetExtraBodyEnd(options.extraBodyEnd);
             htmlRenderer->SetFragmentOnly(fragmentOnly);
+            // See ui_pipeline_static_renderer.cpp -- same state-CSS
+            // wiring. A no-op here whenever fragmentOnly is true,
+            // since EmitHTMLHeader (and its <style> block) isn't
+            // emitted for a fragment -- the initial full-page render
+            // already carries these rules.
+            htmlRenderer->SetProjectStyles(&projectStyles);
+            // See ui_pipeline_static_renderer.cpp -- same animation-
+            // CSS wiring. A no-op here whenever fragmentOnly is true,
+            // since EmitHTMLHeader (and its <style>/@keyframes block)
+            // isn't emitted for a fragment -- the initial full-page
+            // render already carries these rules, and a
+            // dialog-open/dialog-close swap only ever changes the
+            // .ava-overlay-fragment markup itself (see
+            // EventScriptTag's applyHtml() in app.cpp), not the
+            // <style> block that defines how it animates.
+            htmlRenderer->SetProjectAnimations(&projectAnimations);
         }
         substage = "RenderTreeFragment: walk scene commands";
         avalang::ui::RenderCommandSink sink;
@@ -222,29 +263,43 @@ void ResolveImportsAndMergeState(const std::string& projectRoot,
 // matching close has to be found by tracking nesting depth, not just
 // the next literal "</div>".
 //
-// kMarker must stay byte-for-byte identical to the opening tag
-// SceneCommandWalker.cpp's Pass 2 emits (including its inline
-// `style="position:relative; z-index:2147483647;"`, added so this
-// fragment also outranks a layout's trailing Footer -- see that file's
-// comment on Pass 2) -- this is a plain substring search, not an HTML
-// attribute parse, so any drift between the two silently stops this
-// extraction from firing at all.
+// kMarkerPrefix/kMarkerSuffix must stay byte-for-byte identical to the
+// opening tag SceneCommandWalker.cpp's Pass 2 emits -- this is a plain
+// substring search, not an HTML attribute parse, so any drift between
+// the two silently stops this extraction from firing at all.
+//
+// The tag also carries a `data-dialog-id="<N>"` attribute (the source
+// component's numeric ComponentId, see SceneCommandWalker.cpp's Pass 2
+// comment on why: so app.cpp's applyHtml() can diff an overlay's id
+// between renders). That id is dynamic, so it can't be part of a fixed
+// literal -- match the prefix up to the attribute, then resume after
+// its value at the fixed `style="position:relative; ...">` suffix,
+// instead of a single literal that never matches any real id.
 void ExtractOverlayFragments(const std::string& html, std::string& mainHtml, std::string& overlayHtml) {
     mainHtml.clear();
     overlayHtml.clear();
-    static const std::string kMarker =
-        "<div class=\"ava-overlay-fragment\" style=\"position:relative; z-index:2147483647;\">";
+    static const std::string kMarkerPrefix =
+        "<div class=\"ava-overlay-fragment\" data-dialog-id=\"";
+    static const std::string kMarkerSuffix =
+        "\" style=\"position:relative; z-index:2147483647;\">";
 
     size_t pos = 0;
     while (pos < html.size()) {
-        size_t start = html.find(kMarker, pos);
+        size_t start = html.find(kMarkerPrefix, pos);
         if (start == std::string::npos) {
+            mainHtml += html.substr(pos);
+            break;
+        }
+        size_t suffixPos = html.find(kMarkerSuffix, start + kMarkerPrefix.size());
+        if (suffixPos == std::string::npos) {
+            // Malformed / no matching suffix -- keep the rest as main
+            // content rather than silently drop it.
             mainHtml += html.substr(pos);
             break;
         }
         mainHtml += html.substr(pos, start - pos);
 
-        size_t scan = start + kMarker.size();
+        size_t scan = suffixPos + kMarkerSuffix.size();
         int depth = 1;
         size_t closeAt = std::string::npos;
         while (scan < html.size()) {
@@ -313,7 +368,11 @@ bool RenderAvauiDynamicWithState(RuntimeHost& host, const std::string& avauiSour
         VmStateBridge stateBridge(host);
         stateBridge.BindWithOverlay(mergedState, cachedStateJson);
 
-        host.BindCodeBehind(parsed.code);
+        std::string codeError;
+        if (!host.BindCodeBehind(parsed.code, &codeError)) {
+            outError = "code block failed to bind: " + codeError;
+            return false;
+        }
 
         avalang::ui::IComponent* root = parsed.tree->Root();
 
@@ -451,7 +510,11 @@ bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, Runtim
         stateBridge.BindWithOverlay(mergedState, cachedStateJson);
 
         stage = "bind code-behind";
-        host.BindCodeBehind(parsed.code);
+        std::string codeError;
+        if (!host.BindCodeBehind(parsed.code, &codeError)) {
+            outError = "code block failed to bind: " + codeError;
+            return false;
+        }
 
         avalang::ui::IComponent* root = parsed.tree->Root();
 

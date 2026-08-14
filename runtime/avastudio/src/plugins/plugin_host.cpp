@@ -9,8 +9,8 @@
 
 #include "plugin_ui_bridge.h"
 
-#include "design/avaui_text.h"
 #include "design/design_document.h"
+#include "parser/AvauiWriter.h"
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -38,10 +38,10 @@ void* LoadLibraryPortable(const std::string& path) {
 #if defined(_WIN32)
     return static_cast<void*>(LoadLibraryA(path.c_str()));
 #else
-    // RTLD_LOCAL (not _GLOBAL): a plugin's own symbols shouldn't leak
-    // into other plugins or the host's global symbol table -- each
-    // plugin only talks to Ava Studio through the AvaStudioHost struct
-    // it's handed, never by being able to see another module's symbols.
+
+
+
+
     return dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
 #endif
 }
@@ -63,20 +63,20 @@ void UnloadLibraryPortable(void* handle) {
 #endif
 }
 
-// A metadata symbol returning null (either because the plugin doesn't
-// export it, or a badly-behaved one that exports it but returns null
-// anyway) is "not provided", same as not exporting it at all -- never
-// a reason to reject the plugin, so this always hands back a valid
-// (possibly empty) std::string rather than propagating the null.
+
+
+
+
+
 std::string SafeCStr(const char* s) {
     return s ? std::string(s) : std::string();
 }
 
-// Fase 9: reads the three optional metadata symbols (see plugin_api.h)
-// from an already-open library handle. Called from both LoadAll() (the
-// library's open anyway) and ScanAvailable()'s cache-miss path (which
-// opens the library just for this, then closes it again) -- pulled out
-// here so both places resolve the exact same three symbol names.
+
+
+
+
+
 struct PluginMetadata {
     std::string name;
     std::string version;
@@ -95,11 +95,11 @@ PluginMetadata ReadPluginMetadata(void* handle) {
     return metadata;
 }
 
-// Same rule read_file already enforces on the plugin side (see
-// ai_agent's tools.cpp) -- duplicated here rather than shared, since
-// this is the host's own security boundary for a *write*, not
-// something a plugin gets to self-certify. Rejects `../` traversal and
-// absolute-path overrides; any resolution failure is a rejection too.
+
+
+
+
+
 bool ResolveWithinRoot(const std::string& root, const std::string& requested_relative_path,
                        fs::path* out_resolved) {
     if (root.empty() || requested_relative_path.empty()) return false;
@@ -120,16 +120,16 @@ bool ResolveWithinRoot(const std::string& root, const std::string& requested_rel
     return true;
 }
 
-// Fase 6: AvaHostServices::design_add_component/design_edit_component
-// take properties as a flat "key=value;key2=value2" string rather than
-// a JSON blob -- keeps the plugin_api.h C boundary free of any JSON
-// dependency, same spirit as every other service here being plain
-// strings. No escaping of ';'/'=' inside a value: a property value
-// that needs either just isn't reachable through this call (a plugin
-// wanting that can still fall back to apply_edit against the raw
-// .avaui text). Empty entries (blank segments, or a segment with no
-// '=') are skipped rather than erroring -- tolerant of a trailing ';'
-// or accidental double ';;' from whatever built the string.
+
+
+
+
+
+
+
+
+
+
 std::vector<PropertyRow> ParsePropertiesKv(const std::string& kv) {
     std::vector<PropertyRow> out;
     size_t pos = 0;
@@ -148,7 +148,7 @@ std::vector<PropertyRow> ParsePropertiesKv(const std::string& kv) {
     return out;
 }
 
-} // namespace
+}
 
 PluginHost::PluginHost(PluginHostCallbacks callbacks) : callbacks_(std::move(callbacks)) {
     host_.abi_version = AVA_STUDIO_PLUGIN_ABI_VERSION;
@@ -172,7 +172,7 @@ PluginHost::~PluginHost() {
 void PluginHost::LoadAll(const std::string& plugins_dir, const std::vector<std::string>& disabled_plugins) {
     std::error_code ec;
     if (!fs::exists(plugins_dir, ec) || !fs::is_directory(plugins_dir, ec)) {
-        return; // no plugins/ folder yet -- a fresh install, not an error
+        return;
     }
 
     for (const auto& entry : fs::directory_iterator(plugins_dir, ec)) {
@@ -183,9 +183,9 @@ void PluginHost::LoadAll(const std::string& plugins_dir, const std::vector<std::
         const std::string path = entry.path().string();
         const std::string display_name = entry.path().filename().string();
 
-        // The "Plugins" menu's checkboxes (see titlebar_panel.h) --
-        // skipped exactly like any other rejection reason below, just
-        // without ever touching the library at all.
+
+
+
         if (std::find(disabled_plugins.begin(), disabled_plugins.end(), display_name) != disabled_plugins.end()) {
             if (callbacks_.log) callbacks_.log("[plugin_host] " + display_name + " desactivado por el usuario -- omitido");
             continue;
@@ -212,12 +212,12 @@ void PluginHost::LoadAll(const std::string& plugins_dir, const std::vector<std::
             continue;
         }
 
-        // Checked BEFORE init_fn ever sees a live AvaStudioHost* --
-        // see the ABI-compat note above AVA_STUDIO_PLUGIN_ABI_VERSION
-        // in plugin_api.h. A plugin reporting a NEWER ABI than this
-        // host build understands is rejected outright (it may rely on
-        // fields this host doesn't set); an OLDER one is fine, since
-        // fields are only ever appended.
+
+
+
+
+
+
         const int plugin_abi = abi_version_fn();
         if (plugin_abi > AVA_STUDIO_PLUGIN_ABI_VERSION || plugin_abi <= 0) {
             if (callbacks_.log) {
@@ -229,11 +229,11 @@ void PluginHost::LoadAll(const std::string& plugins_dir, const std::vector<std::
             continue;
         }
 
-        // A plugin is third-party code running in-process -- one bad
-        // plugin throwing during init should be skipped, not take down
-        // Ava Studio before its first frame (mirrors AvaHost's
-        // PluginLoader::LoadAll, see runtime/avahost/src/plugin/
-        // plugin_loader.cpp).
+
+
+
+
+
         bool init_ok = false;
         loading_plugin_name_ = display_name;
         try {
@@ -251,10 +251,10 @@ void PluginHost::LoadAll(const std::string& plugins_dir, const std::vector<std::
 
         if (!init_ok) {
             if (callbacks_.log) callbacks_.log("[plugin_host] " + display_name + " init failed -- skipped");
-            // Any panels it may have registered before failing are left
-            // in panels_ -- Fase 0 doesn't support a partial rollback,
-            // so a plugin should only call register_panel() once it
-            // knows it will return true. Documented in plugin_api.h.
+
+
+
+
             UnloadLibraryPortable(handle);
             continue;
         }
@@ -272,9 +272,9 @@ void PluginHost::UnloadAll() {
             try {
                 it->shutdown();
             } catch (...) {
-                // Swallow -- we're tearing down the app either way, and
-                // a plugin misbehaving on shutdown shouldn't stop the
-                // rest from unloading cleanly.
+
+
+
             }
         }
         UnloadLibraryPortable(it->library_handle);
@@ -294,7 +294,7 @@ std::vector<PluginInfo> PluginHost::ScanAvailable(const std::string& plugins_dir
 
     std::error_code ec;
     if (!fs::exists(plugins_dir, ec) || !fs::is_directory(plugins_dir, ec)) {
-        return result; // no plugins/ folder yet -- nothing to list
+        return result;
     }
 
     for (const auto& entry : fs::directory_iterator(plugins_dir, ec)) {
@@ -307,12 +307,12 @@ std::vector<PluginInfo> PluginHost::ScanAvailable(const std::string& plugins_dir
         info.enabled =
             std::find(disabled_plugins.begin(), disabled_plugins.end(), info.file_name) == disabled_plugins.end();
 
-        // Fase 9: metadata for the menu. A loaded plugin already had it
-        // read once in LoadAll() -- reuse that, zero extra cost. A
-        // disabled (or currently-rejected) one has no LoadedPlugin to
-        // read from, so fall back to the mtime-keyed cache below rather
-        // than dlopen-ing it fresh every frame (see metadata_cache_'s
-        // comment in plugin_host.h for why that matters here).
+
+
+
+
+
+
         auto loaded_it = std::find_if(loaded_.begin(), loaded_.end(), [&info](const LoadedPlugin& lp) {
             return lp.display_name == info.file_name;
         });
@@ -350,9 +350,9 @@ std::vector<PluginInfo> PluginHost::ScanAvailable(const std::string& plugins_dir
         result.push_back(std::move(info));
     }
 
-    // Stable, predictable ordering for the menu regardless of what the
-    // filesystem's directory_iterator happens to hand back -- alpha by
-    // file name, same as Explorer already sorts its own listing.
+
+
+
     std::sort(result.begin(), result.end(),
               [](const PluginInfo& a, const PluginInfo& b) { return a.file_name < b.file_name; });
     return result;
@@ -363,10 +363,10 @@ int PluginHost::RegisterPanelTrampoline(AvaStudioHost* host, const AvaPanelRegis
     auto* self = static_cast<PluginHost*>(host->_internal_host_reserved);
 
     for (const auto& existing : self->panels_) {
-        // Duplicates are rejected per (name, is_settings) pair, not name
-        // alone -- a plugin's normal chat tab and its Settings section
-        // can legitimately share a display name (see Fase 6 of
-        // PLAN_settings_panel.md, ai_agent's "AI Agent (OpenRouter)").
+
+
+
+
         if (existing.name == registration->name && existing.is_settings == registration->is_settings) return -1;
     }
 
@@ -398,9 +398,9 @@ bool PluginHost::GetActiveFileTrampoline(AvaStudioHost* host, const char** out_p
     }
     if (out_path) *out_path = self->scratch_active_path_.c_str();
     if (out_content) *out_content = self->scratch_active_content_.c_str();
-    // Selection reporting lands with Fase 3 -- see plugin_api.h's note
-    // on get_active_file. -1/-1 means "not available yet", not "empty
-    // selection at offset -1".
+
+
+
     if (out_selection_start) *out_selection_start = -1;
     if (out_selection_end) *out_selection_end = -1;
     return true;
@@ -422,10 +422,10 @@ bool PluginHost::GetLastRunOutputTrampoline(AvaStudioHost* host, const char** ou
 void PluginHost::LogTrampoline(AvaStudioHost* host, const char* message) {
     auto* self = static_cast<PluginHost*>(host->_internal_host_reserved);
     if (!self->callbacks_.log || !message) return;
-    // loading_plugin_name_ is only set while a plugin's ava_plugin_init
-    // is on the stack -- a plugin logging later (e.g. from inside its
-    // own draw() callback) falls back to a generic prefix instead of a
-    // stale/empty name.
+
+
+
+
     const std::string prefix = self->loading_plugin_name_.empty() ? "[plugin]" : "[" + self->loading_plugin_name_ + "]";
     self->callbacks_.log(prefix + " " + message);
 }
@@ -449,9 +449,9 @@ bool PluginHost::QueueEdit(PluginHost* self, const std::string& path, const std:
         return false;
     }
 
-    // The diff PendingEditsPanel shows is against what's on disk right
-    // now -- a brand-new file (resolved doesn't exist yet) diffs against
-    // "", same as `git diff` would show it as all-added lines.
+
+
+
     std::string old_content;
     std::error_code ec;
     if (fs::exists(resolved, ec) && fs::is_regular_file(resolved, ec)) {
@@ -464,13 +464,13 @@ bool PluginHost::QueueEdit(PluginHost* self, const std::string& path, const std:
     }
 
     PendingEdit edit;
-    // loading_plugin_name_ is only set while a plugin's ava_plugin_init is
-    // on the stack (see LogTrampoline's comment) -- every caller of
-    // QueueEdit runs well after that, from the plugin's own worker
-    // thread, so it's always empty here. Fase 5 doesn't need per-plugin
-    // attribution badly enough to plumb a caller identity through every
-    // AvaHostServices call just for this, so the panel gets a generic
-    // label instead.
+
+
+
+
+
+
+
     edit.owner_plugin = "plugin";
     edit.path = path;
     edit.description = description;
@@ -510,23 +510,23 @@ bool PluginHost::RunProjectTrampoline(AvaStudioHost* host, const char** out_outp
     RunMailbox& mbox = self->run_mailbox_;
 
     std::unique_lock<std::mutex> lock(mbox.mutex);
-    // Wait out any request already in flight (from this plugin or
-    // another) before posting ours -- see the mailbox's comment in
-    // plugin_host.h for why only one is served at a time.
+
+
+
     mbox.cv.wait(lock, [&] { return !mbox.request_pending; });
     mbox.request_pending = true;
     mbox.result_ready = false;
 
-    // PumpMainThreadWork() polls request_pending once per frame rather
-    // than waiting on the cv itself, so no notify is needed to wake it --
-    // just wait for it to flip result_ready.
+
+
+
     mbox.cv.wait(lock, [&] { return mbox.result_ready; });
 
     RunProjectResult result = std::move(mbox.result);
     mbox.request_pending = false;
     mbox.result_ready = false;
     lock.unlock();
-    mbox.cv.notify_all(); // let the next waiting RunProjectTrampoline post its request
+    mbox.cv.notify_all();
 
     self->scratch_run_output_ = result.output;
     self->scratch_run_error_ = result.error;
@@ -544,10 +544,10 @@ bool PluginHost::FetchActiveAvauiDocument(PluginHost* self, std::string& out_pat
     DesignDocMailbox& mbox = self->design_doc_mailbox_;
 
     std::unique_lock<std::mutex> lock(mbox.mutex);
-    // Same one-at-a-time queueing as RunMailbox above (see its comment
-    // in plugin_host.h) -- design_doc_mailbox_ is a separate slot from
-    // run_mailbox_ so a design fetch never has to wait behind an
-    // in-flight run_project(), and vice versa.
+
+
+
+
     mbox.cv.wait(lock, [&] { return !mbox.request_pending; });
     mbox.request_pending = true;
     mbox.result_ready = false;
@@ -597,7 +597,16 @@ bool PluginHost::DesignAddComponentTrampoline(AvaStudioHost* host, const char* p
                      "y que 'type' sea un tipo de componente conocido");
     }
 
-    const std::string new_source = design::WriteAvauiText(doc.Root(), doc.code_behind, doc.initial_state, doc.imports);
+    const std::string new_source = [&] {
+        avalang::ui::parser::AvauiWriteOptions opts;
+        opts.code_behind = doc.code_behind;
+        opts.imports = doc.imports;
+        opts.initial_state.reserve(doc.initial_state.size());
+        for (const auto& row : doc.initial_state) {
+            opts.initial_state.push_back({row.key, row.value});
+        }
+        return avalang::ui::parser::WriteAvaui(doc.Root(), opts);
+    }();
     std::string description = "Agente: agregar componente '" + std::string(type) + "'";
     if (id && id[0] != '\0') description += " (" + std::string(id) + ")";
 
@@ -637,7 +646,16 @@ bool PluginHost::DesignEditComponentTrampoline(AvaStudioHost* host, const char* 
         return fail("no se encontro ningun componente con id '" + std::string(node_id) + "' en el documento activo");
     }
 
-    const std::string new_source = design::WriteAvauiText(doc.Root(), doc.code_behind, doc.initial_state, doc.imports);
+    const std::string new_source = [&] {
+        avalang::ui::parser::AvauiWriteOptions opts;
+        opts.code_behind = doc.code_behind;
+        opts.imports = doc.imports;
+        opts.initial_state.reserve(doc.initial_state.size());
+        for (const auto& row : doc.initial_state) {
+            opts.initial_state.push_back({row.key, row.value});
+        }
+        return avalang::ui::parser::WriteAvaui(doc.Root(), opts);
+    }();
     const std::string description = "Agente: editar componente '" + std::string(node_id) + "'";
 
     std::string queue_error;
@@ -664,7 +682,7 @@ void PluginHost::ApproveEdit(int id) {
             }
         }
     }
-    if (!found) return; // already resolved (e.g. a stale double-click) -- nothing to do
+    if (!found) return;
     if (callbacks_.write_approved_edit) callbacks_.write_approved_edit(edit);
 }
 
@@ -727,4 +745,4 @@ void PluginHost::PumpMainThreadWork() {
     }
 }
 
-} // namespace studio
+}

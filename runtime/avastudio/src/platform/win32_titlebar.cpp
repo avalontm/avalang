@@ -257,6 +257,30 @@ bool OpenFolderDialog(GLFWwindow* window, std::string& out_path, const std::stri
     return ok;
 }
 
+namespace {
+
+bool IsDirectoryPath(const std::string& path) {
+    const DWORD attrs = GetFileAttributesA(path.c_str());
+    return (attrs != INVALID_FILE_ATTRIBUTES) && (attrs & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+} // namespace
+
+void RevealInFileExplorer(const std::string& path) {
+    if (path.empty()) return;
+    if (IsDirectoryPath(path)) {
+        // A folder: just open it, same as double-clicking into it.
+        ShellExecuteA(nullptr, "explore", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    } else {
+        // A file: open its *parent* folder with the file itself
+        // highlighted, same as VSCode/Windows' own "Open Containing
+        // Folder" / "Show in Explorer". /select, needs the whole thing as
+        // one quoted parameter string, not a bare path.
+        const std::string param = "/select,\"" + path + "\"";
+        ShellExecuteA(nullptr, "open", "explorer.exe", param.c_str(), nullptr, SW_SHOWNORMAL);
+    }
+}
+
 } // namespace studio::titlebar
 
 #else // !_WIN32
@@ -270,6 +294,7 @@ void OpenUrl(const char*) {}
 bool OpenFileDialog(GLFWwindow*, std::string&, const std::string&) { return false; }
 bool SaveFileDialog(GLFWwindow*, std::string&, const std::string&) { return false; }
 bool OpenFolderDialog(GLFWwindow*, std::string&, const std::string&) { return false; }
+void RevealInFileExplorer(const std::string&) {}
 
 } // namespace studio::titlebar
 

@@ -190,6 +190,74 @@ AVA_API AvaModule* ava_compile(
 AVA_API void ava_module_destroy(AvaModule* module);
 
 /* ---------------------------------------------------------------------
+ * Bytecode serialization (.avbc) -- Fase 6 de plan_ava_pack.md.
+ *
+ * Envuelve compiler/proto_io.h + compiler/obfuscate.h (internos) para que
+ * avacli/avapack puedan producir/consumir bytecode precompilado sin incluir
+ * ningun header interno del compilador -- ver el comentario de cabecera de
+ * ese header para el porque.
+ * ------------------------------------------------------------------- */
+
+typedef struct AvaModuleSerializeOptions {
+    int strip_debug_info;      /* 1 = no emitir debug_lines/debug_name/source_name */
+    int obfuscate;              /* 1 = correr el pase de ofuscacion antes de serializar */
+    uint64_t obfuscate_seed;    /* module_seed del pase; ignorado si obfuscate == 0 */
+    int obfuscate_strings;      /* 1 = ademas ofuscar los Value::String de la constant pool */
+    int flatten_control_flow;   /* 1 = ademas aplanar el control-flow de cada Proto elegible */
+} AvaModuleSerializeOptions;
+
+/* Serializa `module` (formato .avbc, ver proto_io.h) a un buffer que el
+ * caller debe liberar con ava_string_free. `options` puede ser NULL (usa
+ * strip_debug_info=0, obfuscate=0 -- mismos defaults que ProtoIoOptions).
+ *
+ * IMPORTANTE si options->obfuscate != 0: el pase de ofuscacion corre
+ * IN-PLACE sobre el Proto de `module` -- este mismo AvaModule NO debe
+ * pasarse a ava_run despues de esta llamada si obfuscate_strings tambien
+ * estaba activo (la constant pool queda con strings cifrados, invalidos
+ * para GETGLOBAL/GETATTR hasta que se revierta -- ver
+ * ava_module_deobfuscate_strings). El flujo esperado es compilar,
+ * serializar-con-ofuscacion, y descartar el AvaModule -- no ejecutarlo en
+ * el mismo proceso.
+ *
+ * Si `out_symbol_map` no es NULL, recibe el SymbolMap (texto formateado,
+ * "kind\toriginal\tobfuscated" por linea, "" si obfuscate==0 o no hubo
+ * simbolos) -- pensado para guardarse LOCALMENTE junto al proyecto fuente
+ * del lado del desarrollador (nunca embeberlo en el build distribuido).
+ * Liberar con ava_string_free. */
+AVA_API uint8_t* ava_module_serialize(
+    AvaModule* module,
+    const AvaModuleSerializeOptions* options,
+    size_t* out_len,
+    char** out_symbol_map
+);
+
+/* Reconstruye un AvaModule desde bytes producidos por ava_module_serialize
+ * (o por proto_io::WriteProto directamente). `vm` no se usa hoy (el Proto
+ * reconstruido no depende de ninguna VM en particular) -- se recibe por
+ * simetria con ava_compile y por si una version futura de este formato
+ * necesita contexto de la VM (ej. validar una version de ABI instalada).
+ * Devuelve NULL y llena out_error (liberar con ava_string_free) si `bytes`
+ * no es un .avbc valido -- incluyendo version de formato no soportada por
+ * este build de avalang (ver proto_io.h: no hay compatibilidad hacia atras
+ * entre versiones de formato distintas, se rechaza con error claro). */
+AVA_API AvaModule* ava_module_deserialize(
+    AvaVM* vm,
+    const uint8_t* bytes,
+    size_t len,
+    char** out_error
+);
+
+/* Revierte la ofuscacion de strings de un modulo deserializado (ver
+ * AvaModuleSerializeOptions::obfuscate_strings) -- llamar UNA vez, con el
+ * mismo obfuscate_seed usado al serializar, inmediatamente despues de
+ * ava_module_deserialize y ANTES de ava_run. No-op si el .avbc no fue
+ * serializado con obfuscate_strings=1 (aplica un XOR reversible sobre
+ * strings que nunca se toco -- corromperia la constant pool, asi que el
+ * caller es responsable de no llamar esto sobre un modulo que no lo
+ * necesita). */
+AVA_API void ava_module_deobfuscate_strings(AvaModule* module, uint64_t seed);
+
+/* ---------------------------------------------------------------------
  * Execution
  * ------------------------------------------------------------------- */
 

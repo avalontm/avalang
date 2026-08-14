@@ -41,3 +41,31 @@
 [2026-08-03 21:16:09] [ERR] avaui render failed for .\samples\web\testproj\routes\controls.avaui: [parse page] unterminated component block (expected 'end' at column 4) (line 192)
 ----- AvaHost log opened 2026-08-04 18:51:54 -----
 ----- AvaHost log opened 2026-08-04 18:52:24 -----
+----- AvaHost log opened 2026-08-05 17:14:37 -----
+----- AvaHost log opened 2026-08-05 23:18:56 -----
+----- AvaHost log opened 2026-08-05 23:33:37 -----
+----- AvaHost log opened 2026-08-05 23:40:46 -----
+----- AvaHost log opened 2026-08-05 23:59:34 -----
+----- AvaHost log opened 2026-08-06 00:12:31 -----
+[2026-08-06 00:12:42] [ERR] avaui render failed for .\samples\web\testproj\routes\controls.avaui: [parse page] unterminated component block (expected 'end' at column 4) (line 192)
+[2026-08-06 00:12:50] [ERR] avaui render failed for .\samples\web\testproj\routes\controls.avaui: [parse page] unterminated component block (expected 'end' at column 4) (line 192)
+----- AvaHost log opened 2026-08-06 00:17:29 -----
+----- AvaHost log opened 2026-08-06 00:44:55 -----
+----- AvaHost log opened 2026-08-06 10:23:40 -----
+----- AvaHost log opened 2026-08-06 21:38:09 -----
+----- AvaHost log opened 2026-08-06 22:09:00 -----
+----- AvaHost log opened 2026-08-06 23:02:01 -----
+----- AvaHost log opened 2026-08-06 23:22:28 -----
+----- AvaHost log opened 2026-08-06 23:52:33 -----
+----- AvaHost log opened 2026-08-07 00:03:50 -----
+----- AvaHost log opened 2026-08-09 12:22:21 -----
+----- AvaHost log opened 2026-08-10 17:31:26 -----
+----- AvaHost log opened 2026-08-10 18:33:42 -----
+----- AvaHost log opened 2026-08-10 18:45:24 -----
+----- AvaHost log opened 2026-08-10 19:00:13 -----
+----- AvaHost log opened 2026-08-10 20:46:57 -----
+----- AvaHost log opened 2026-08-10 22:14:48 -----
+[2026-08-10 22:14:58] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui (handler 'OnCheckout()'): event handler 'OnCheckout()' failed: attempt to call a non-callable value
+----- AvaHost log opened 2026-08-10 22:35:53 -----
+----- AvaHost log opened 2026-08-10 23:29:15 -----
+----- AvaHost log opened 2026-08-11 18:26:52 -----

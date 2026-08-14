@@ -1,0 +1,32 @@
+params
+    name
+    price
+    productId
+end
+
+view
+    container
+        padding = 16
+        gap = 8
+
+        column
+            gap = 8
+
+            text
+                text = name
+                fontSize = 16
+            end
+
+            text
+                text = "$" + price
+                style = "text.price"
+            end
+
+            button
+                id = "ProductCardAddBtn"
+                text = "Agregar"
+                click = OnAddToCart(productId)
+            end
+        end
+    end
+end

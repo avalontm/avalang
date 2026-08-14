@@ -241,10 +241,14 @@ void DrawRenamePopup(ExplorerState& state, ExplorerResult& result) {
 // actual hotkeys are handled once in DrawExplorerPanel (see the comment
 // there), gated on the panel having focus, so they work no matter which
 // row's context menu (if any) is open.
-void DrawEntryContextMenu(const std::string& entry_path, const std::string& dir) {
+void DrawEntryContextMenu(const std::string& entry_path, const std::string& dir, ExplorerResult& result) {
     if (ImGui::BeginPopupContextItem()) {
         if (ImGui::MenuItem("New File")) g_create_request = {true, false, dir};
         if (ImGui::MenuItem("New Folder")) g_create_request = {true, true, dir};
+        ImGui::Separator();
+        if (ImGui::MenuItem("Open in Explorer")) {
+            result.reveal_in_file_manager = entry_path;
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("Rename", "F2")) {
             g_rename_request = {true, entry_path};
@@ -294,7 +298,7 @@ void DrawDirectory(const fs::path& dir, ExplorerState& state, ExplorerResult& re
                 }
                 ImGui::EndDragDropTarget();
             }
-            DrawEntryContextMenu(path_str, path_str);
+            DrawEntryContextMenu(path_str, path_str, result);
             if (open) {
                 DrawDirectory(path, state, result);
                 ImGui::TreePop();
@@ -340,7 +344,7 @@ void DrawDirectory(const fs::path& dir, ExplorerState& state, ExplorerResult& re
                 }
                 ImGui::EndDragDropTarget();
             }
-            DrawEntryContextMenu(path_str, dir.string());
+            DrawEntryContextMenu(path_str, dir.string(), result);
         }
         ImGui::PopID();
     }

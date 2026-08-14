@@ -1,0 +1,19 @@
+import mysql
+
+func rawConnect(h, host, user, passwd, db, port)
+    return MySQLNative.mysql_real_connect(h, host, user, passwd, db, port, nil, 0)
+end
+
+func main()
+    h = MySQLNative.mysql_init(nil)
+    print("init handle: " + str(h))
+
+    r = rawConnect(h, "127.0.0.1", "root", "", "test", 3306)
+    print("connect result (forwarded): " + str(r))
+    print("is same as handle: " + str(r == h))
+    print("is null: " + str(mem_is_null(r)))
+    print("errno: " + str(MySQLNative.mysql_errno(h)))
+    print("error: " + mem_peek_string(MySQLNative.mysql_error(h)))
+end
+
+main()

@@ -39,6 +39,15 @@ private:
     uint16_t max_reg_ = 0;
     uint16_t result_reg_ = 0;
     std::unordered_map<std::string, uint16_t> locals_;
+    // true solo para el Compiler raíz (nivel de módulo/script, ver
+    // Compile()). Cada función/método/lambda compila en su propio
+    // `Compiler sub` (CompileFunc, CompileClass, LambdaExpr) y ese sub
+    // pone esto en false. Decide si una asignación a un nombre simple
+    // (`x = ...`, con o sin `local` delante -- la gramática descarta esa
+    // palabra clave, ver ast_builder.cpp:visitLocalStatement) se
+    // resuelve como variable local a ese scope (registro persistente) o
+    // como variable global (SETGLOBAL/GETGLOBAL), ver CompileStmt.
+    bool is_top_level_ = true;
     std::unordered_map<std::string, ClassObj*> compiled_classes_;
     ClassObj* current_base_class_ = nullptr;
     bool is_init_ = false;

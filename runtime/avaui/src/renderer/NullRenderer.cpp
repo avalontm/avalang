@@ -39,10 +39,11 @@ void NullRenderer::OnDrawText(
     float fontSize, const char* fontName,
     const Color& color,
     const std::string& clickHandler,
-    const std::string& className
+    const std::string& className,
+    float maxWidth
 ) {
     (void)x; (void)y; (void)text; (void)fontSize;
-    (void)fontName; (void)color; (void)clickHandler; (void)className;
+    (void)fontName; (void)color; (void)clickHandler; (void)className; (void)maxWidth;
 }
 
 void NullRenderer::OnDrawImage(

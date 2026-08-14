@@ -57,6 +57,11 @@ struct TitleBarResult {
     // pattern as reopening a panel toggled from View -- see main.cpp.
     bool open_settings_requested = false;
 
+    // "Run > Build Executable..." (Ctrl+B), see panels/build_panel.h.
+    // main.cpp reacts the exact same way as open_settings_requested,
+    // just against panel_open["Build"] instead.
+    bool build_requested = false;
+
     // "Plugins" menu (see the `plugins` param below). Set to the
     // file_name of whichever PluginInfo checkbox the user clicked this
     // frame, "" otherwise -- main.cpp is what actually flips it in

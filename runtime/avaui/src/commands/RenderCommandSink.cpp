@@ -109,7 +109,8 @@ void RenderCommandSink::DrawText(
     float fontSize, const char* fontName,
     const Color& color,
     const std::string& clickHandler,
-    const std::string& className
+    const std::string& className,
+    float maxWidth
 ) {
     RenderCommand cmd;
     cmd.type = RenderCommandType::DrawText;
@@ -121,6 +122,7 @@ void RenderCommandSink::DrawText(
     cmd.drawText.color = color;
     cmd.drawText.clickHandler = clickHandler;
     cmd.drawText.className = className;
+    cmd.drawText.maxWidth = maxWidth;
     Emit(cmd);
 }
 

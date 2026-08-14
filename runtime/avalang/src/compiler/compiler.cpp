@@ -1,6 +1,8 @@
 #include "compiler.h"
 #include "../vm/vm_extern.h"
+#include "../common/ava_error.h"
 #include <stdexcept>
+#include <cstdio>
 
 namespace ava {
 
@@ -58,9 +60,7 @@ uint16_t Compiler::AddConstant(const Value& v) {
 
 void Compiler::Emit(OpCode op, uint16_t a, uint16_t b, uint16_t c) {
     proto_->instructions.push_back({op, static_cast<uint8_t>(a), b, c});
-    // Kept 1:1 with instructions so VM::ExecuteFrame can index it by pc on
-    // a runtime error (see core/src/vm/vm.cpp) -- every push to
-    // instructions must have a matching push here.
+
     proto_->debug_lines.push_back(static_cast<uint32_t>(current_line_));
     if (next_reg_ > max_reg_) max_reg_ = next_reg_;
 }
@@ -103,19 +103,30 @@ bool Compiler::IsShortCircuit(BinOp op) {
     return op == BinOp::And || op == BinOp::Or;
 }
 
-// `static`/`private` son sintácticamente válidos en cualquier
-// assignStatement/funcDeclaration (ver grammar/AvaLang.g4, Fase A) pero
-// solo tienen sentido dentro de un cuerpo de clase. `CompileClass` lee
-// esos flags directamente desde `cls->body` antes de que un
-// AssignStmt/FuncDef de nivel de clase llegue nunca a `CompileStmt` /
-// `CompileExprToReg` / `CompileFunc` -- así que si alguno de esos tres
-// ve un flag en true, es porque el modificador se usó afuera de una
-// clase (a nivel de módulo o dentro del cuerpo de una función/método).
-static void RejectMemberModifiersOutsideClass(bool is_static, bool is_private, const char* kind) {
+static void RejectMemberModifiersOutsideClass(bool is_static, bool is_private, const char* kind,
+                                               int line) {
     if (is_static || is_private) {
-        throw std::runtime_error(
-            std::string("'static'/'private' solo son validos dentro del cuerpo de una clase (") +
-            kind + ")");
+        std::string msg = std::string("'static'/'private' solo son validos dentro del cuerpo de una clase (") +
+                           kind + ")";
+        if (line > 0) {
+            msg += " (linea " + std::to_string(line) + ")";
+        }
+        throw AvaError(msg, line);
+    }
+}
+
+static void RejectDuplicateFuncDefs(const std::vector<std::shared_ptr<StmtNode>>& stmts) {
+    std::unordered_set<std::string> seen;
+    for (auto& stmt : stmts) {
+        auto* f = dynamic_cast<FuncDef*>(stmt.get());
+        if (!f) continue;
+        if (!seen.insert(f->name).second) {
+            std::string msg = "la funcion '" + f->name + "' ya esta definida";
+            if (f->line > 0) {
+                msg += " (linea " + std::to_string(f->line) + ")";
+            }
+            throw AvaError(msg, f->line);
+        }
     }
 }
 
@@ -136,7 +147,7 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
 
     if (auto* f = dynamic_cast<FStringExpr*>(expr.get())) {
         std::vector<uint16_t> result_regs;
-        
+
         for (auto& [is_expr, content] : f->fragments) {
             if (!is_expr) {
                 auto reg = AllocReg();
@@ -148,30 +159,30 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
                 result_regs.push_back(expr_reg);
             }
         }
-        
+
         if (result_regs.empty()) {
             auto reg = AllocReg();
             auto idx = AddConstant(MakeString(""));
             Emit(OpCode::LOADK, reg, idx);
             return reg;
         }
-        
+
         if (result_regs.size() == 1) {
             return result_regs[0];
         }
-        
+
         auto result_reg = AllocReg();
         auto str_func_reg = AllocReg();
         Emit(OpCode::GETGLOBAL, str_func_reg, AddConstant(MakeString("str")));
         FreeRegs(1);
-        
+
         uint16_t first = result_regs[0];
         for (size_t i = 1; i < result_regs.size(); ++i) {
             auto temp_reg = AllocReg();
             Emit(OpCode::ADD, temp_reg, first, result_regs[i]);
             first = temp_reg;
         }
-        
+
         return first;
     }
 
@@ -283,8 +294,13 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
                 Emit(OpCode::MOVE, original, reg);
                 auto result = AllocReg();
                 Emit(OpCode::INC, result, reg);
-                auto idx = AddConstant(MakeString(n->name));
-                Emit(OpCode::SETGLOBAL, result, idx);
+
+                if (!is_top_level_ && n->name != "this" && locals_.find(n->name) != locals_.end()) {
+                    Emit(OpCode::MOVE, locals_.at(n->name), result);
+                } else {
+                    auto idx = AddConstant(MakeString(n->name));
+                    Emit(OpCode::SETGLOBAL, result, idx);
+                }
                 FreeRegs(1);
                 return original;
             }
@@ -298,8 +314,12 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
                 Emit(OpCode::MOVE, original, reg);
                 auto result = AllocReg();
                 Emit(OpCode::DEC, result, reg);
-                auto idx = AddConstant(MakeString(n->name));
-                Emit(OpCode::SETGLOBAL, result, idx);
+                if (!is_top_level_ && n->name != "this" && locals_.find(n->name) != locals_.end()) {
+                    Emit(OpCode::MOVE, locals_.at(n->name), result);
+                } else {
+                    auto idx = AddConstant(MakeString(n->name));
+                    Emit(OpCode::SETGLOBAL, result, idx);
+                }
                 FreeRegs(1);
                 return original;
             }
@@ -314,13 +334,18 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
 
     if (auto* c = dynamic_cast<CallExpr*>(expr.get())) {
         auto callee_reg = CompileExpr(c->callee);
-        std::vector<uint16_t> arg_regs;
-        for (auto& arg : c->args) {
-            arg_regs.push_back(CompileExpr(arg));
+        uint8_t argc = static_cast<uint8_t>(c->args.size());
+
+        uint16_t call_frame_end = callee_reg + 1 + argc;
+        if (next_reg_ < call_frame_end) {
+            next_reg_ = call_frame_end;
+            if (next_reg_ > max_reg_) max_reg_ = next_reg_;
         }
-        uint8_t argc = static_cast<uint8_t>(arg_regs.size());
-        for (size_t i = 0; i < arg_regs.size(); ++i) {
-            Emit(OpCode::MOVE, callee_reg + 1 + i, arg_regs[i]);
+        for (size_t i = 0; i < c->args.size(); ++i) {
+            uint16_t regs_before_arg = next_reg_;
+            auto arg_reg = CompileExpr(c->args[i]);
+            Emit(OpCode::MOVE, static_cast<uint16_t>(callee_reg + 1 + i), arg_reg);
+            FreeRegs(next_reg_ - regs_before_arg);
         }
         Emit(OpCode::CALL, callee_reg, argc, 1);
         return callee_reg;
@@ -362,12 +387,6 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
         auto func_reg = AllocReg();
         Emit(OpCode::GETGLOBAL, func_reg, AddConstant(MakeString("slice")));
 
-        // Reserve the 4 fixed argument slots (obj, start, end, step) up
-        // front. If we only call AllocReg() for slots that are actually
-        // present, a skipped slot (e.g. missing `start` in arr[:3], which
-        // is filled with a bare LOADNIL) never advances next_reg_, so the
-        // *next* CompileExpr call reuses that same register and clobbers
-        // the value we just wrote there.
         auto obj_slot = AllocReg();
         auto start_slot = AllocReg();
         auto end_slot = AllocReg();
@@ -420,21 +439,27 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
 
         auto method_idx = AddConstant(MakeString("__init__"));
         uint8_t argc = static_cast<uint8_t>(s->args.size());
-        std::vector<uint16_t> arg_regs;
-        for (auto& arg : s->args) {
-            arg_regs.push_back(CompileExpr(arg));
+
+        uint16_t call_frame_end = 1 + argc;
+        if (next_reg_ < call_frame_end) {
+            next_reg_ = call_frame_end;
+            if (next_reg_ > max_reg_) max_reg_ = next_reg_;
         }
-        for (size_t i = 0; i < arg_regs.size(); ++i) {
-            Emit(OpCode::MOVE, 1 + i, arg_regs[i]);
+        for (size_t i = 0; i < s->args.size(); ++i) {
+            uint16_t regs_before_arg = next_reg_;
+            auto arg_reg = CompileExpr(s->args[i]);
+            Emit(OpCode::MOVE, static_cast<uint16_t>(1 + i), arg_reg);
+            FreeRegs(next_reg_ - regs_before_arg);
         }
         auto result_reg = AllocReg();
         Emit(OpCode::BASECALL, result_reg, method_idx, argc);
-        FreeRegs(arg_regs.size());
+        FreeRegs(argc);
         return result_reg;
     }
 
     if (auto* l = dynamic_cast<LambdaExpr*>(expr.get())) {
         Compiler sub;
+        sub.is_top_level_ = false;
         sub.proto_ = std::make_shared<Proto>();
         sub.source_name_ = source_name_;
         sub.proto_->source_name = source_name_;
@@ -478,12 +503,15 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
     if (stmt->line > 0) current_line_ = stmt->line;
 
     if (auto* e = dynamic_cast<ExprStmt*>(stmt.get())) {
+
+        uint16_t regs_before = next_reg_;
         CompileExpr(e->expr);
+        FreeRegs(next_reg_ - regs_before);
         return;
     }
 
     if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
-        RejectMemberModifiersOutsideClass(a->is_static, a->is_private, "asignacion");
+        RejectMemberModifiersOutsideClass(a->is_static, a->is_private, "asignacion", a->line);
         if (!a->target) {
             FreeRegs(1);
             return;
@@ -493,14 +521,34 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
             bool has_local = locals_.find(n->name) != locals_.end();
             bool is_known_attr = instance_attrs_.find(n->name) != instance_attrs_.end();
             uint16_t regs_before = next_reg_;
-            auto val_reg = CompileExpr(a->value);
+
             if (in_method && n->name != "this" && !has_local && is_known_attr) {
+                auto val_reg = CompileExpr(a->value);
                 auto attr_idx = AddConstant(MakeString(n->name));
                 auto this_reg = locals_.at("this");
                 Emit(OpCode::SETATTR, this_reg, attr_idx, val_reg);
                 FreeRegs(next_reg_ - regs_before);
                 return;
             }
+
+            if (!is_top_level_ && n->name != "this") {
+                if (has_local) {
+                    uint16_t local_reg = locals_.at(n->name);
+                    auto val_reg = CompileExpr(a->value);
+                    Emit(OpCode::MOVE, local_reg, val_reg);
+                    FreeRegs(next_reg_ - regs_before);
+                    return;
+                }
+
+                uint16_t local_reg = AllocReg();
+                auto val_reg = CompileExpr(a->value);
+                Emit(OpCode::MOVE, local_reg, val_reg);
+                locals_[n->name] = local_reg;
+                FreeRegs(next_reg_ - (local_reg + 1));
+                return;
+            }
+
+            auto val_reg = CompileExpr(a->value);
             auto idx = AddConstant(MakeString(n->name));
             Emit(OpCode::SETGLOBAL, val_reg, idx);
             FreeRegs(next_reg_ - regs_before);
@@ -526,20 +574,20 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
                     is_this = true;
                 }
             }
-            
+
             uint16_t regs_before = next_reg_;
             auto val_reg = CompileExpr(a->value);
-            
+
             uint16_t obj_reg;
             if (is_this && locals_.find("this") != locals_.end()) {
                 obj_reg = locals_.at("this");
             } else {
                 obj_reg = CompileExpr(a_expr->obj);
             }
-            
+
             auto attr_idx = AddConstant(MakeString(a_expr->attr));
             Emit(OpCode::SETATTR, obj_reg, attr_idx, val_reg);
-            
+
             FreeRegs(next_reg_ - regs_before);
             return;
         }
@@ -554,6 +602,12 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
         auto result_reg = AllocReg();
         Emit(BinOpToOpcode(a->op), result_reg, target_reg, val_reg);
         if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
+
+            if (!is_top_level_ && n->name != "this" && locals_.find(n->name) != locals_.end()) {
+                Emit(OpCode::MOVE, locals_.at(n->name), result_reg);
+                FreeRegs(next_reg_ - regs_before);
+                return;
+            }
             auto idx = AddConstant(MakeString(n->name));
             Emit(OpCode::SETGLOBAL, result_reg, idx);
             FreeRegs(next_reg_ - regs_before);
@@ -573,17 +627,17 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
                     is_this = true;
                 }
             }
-            
+
             uint16_t obj_reg;
             if (is_this && locals_.find("this") != locals_.end()) {
                 obj_reg = locals_.at("this");
             } else {
                 obj_reg = CompileExpr(a_expr->obj);
             }
-            
+
             auto attr_idx = AddConstant(MakeString(a_expr->attr));
             Emit(OpCode::SETATTR, obj_reg, attr_idx, result_reg);
-            
+
             FreeRegs(next_reg_ - regs_before);
             return;
         }
@@ -593,9 +647,10 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
 
     if (auto* r = dynamic_cast<ReturnStmt*>(stmt.get())) {
         if (r->value) {
+            uint16_t regs_before = next_reg_;
             auto reg = CompileExpr(r->value);
             Emit(OpCode::RETURN, reg, 1);
-            FreeRegs(1);
+            FreeRegs(next_reg_ - regs_before);
         } else {
             Emit(OpCode::RETURN, 0, 0);
         }
@@ -674,10 +729,13 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
 }
 
 void Compiler::CompileIf(const IfStmt* stmt) {
+
+    uint16_t regs_before = next_reg_;
     auto cond_reg = CompileExpr(stmt->condition);
     Emit(OpCode::TEST, cond_reg, 1);
     size_t jmp_to_else_or_next = proto_->instructions.size();
     Emit(OpCode::JMP, 0);
+    FreeRegs(next_reg_ - regs_before);
 
     CompileChunk(stmt->then_body);
 
@@ -689,10 +747,12 @@ void Compiler::CompileIf(const IfStmt* stmt) {
     PatchJump(jmp_to_else_or_next);
 
     for (auto& [elif_cond, elif_body] : stmt->elif_clauses) {
+        uint16_t elif_regs_before = next_reg_;
         auto ec_reg = CompileExpr(elif_cond);
         Emit(OpCode::TEST, ec_reg, 1);
         size_t jmp_to_next = proto_->instructions.size();
         Emit(OpCode::JMP, 0);
+        FreeRegs(next_reg_ - elif_regs_before);
 
         CompileChunk(elif_body);
 
@@ -710,16 +770,22 @@ void Compiler::CompileIf(const IfStmt* stmt) {
     for (size_t idx : exit_jmps) {
         PatchJump(idx);
     }
-
-    FreeRegs(1);
 }
 
 void Compiler::CompileWhile(const WhileStmt* stmt) {
+    auto saved_breaks = std::move(pending_breaks_);
+    auto saved_continues = std::move(pending_continues_);
+    pending_breaks_.clear();
+    pending_continues_.clear();
+
     size_t loop_start = proto_->instructions.size();
+
+    uint16_t regs_before = next_reg_;
     auto cond_reg = CompileExpr(stmt->condition);
     Emit(OpCode::TEST, cond_reg, 0);
     size_t jmp_out = proto_->instructions.size();
     Emit(OpCode::JMP, 0);
+    FreeRegs(next_reg_ - regs_before);
 
     CompileChunk(stmt->body);
 
@@ -739,6 +805,9 @@ void Compiler::CompileWhile(const WhileStmt* stmt) {
         PatchContinueJump(patch.instr_idx, loop_start);
     }
     pending_continues_.clear();
+
+    pending_breaks_ = std::move(saved_breaks);
+    pending_continues_ = std::move(saved_continues);
 }
 
 void Compiler::CompileFor(const ForStmt* stmt) {
@@ -749,9 +818,7 @@ void Compiler::CompileForIterator(const ForStmt* stmt) {
     IteratorKind kind = DetectIteratorKind(stmt->iterable);
     switch (kind) {
         case IteratorKind::List:
-            // Static AST shape doesn't prove this is a list — e.g. `for x in co do`
-            // where `co = coroutine(f)` looks identical to `for x in a_list do` at
-            // this level. Defer to a runtime type check instead of guessing.
+
             CompileForDynamic(stmt);
             break;
         case IteratorKind::Coroutine:
@@ -772,70 +839,149 @@ Compiler::IteratorKind Compiler::DetectIteratorKind(const std::shared_ptr<ExprNo
 }
 
 void Compiler::CompileForList(const ForStmt* stmt) {
+    auto saved_breaks = std::move(pending_breaks_);
+    auto saved_continues = std::move(pending_continues_);
+    pending_breaks_.clear();
+    pending_continues_.clear();
+
     const auto& var_name = stmt->var_name;
-    auto list_var = AddConstant(MakeString("__for_list"));
-    auto len_var = AddConstant(MakeString("__for_len"));
-    auto idx_var = AddConstant(MakeString("__for_idx"));
-    auto elem_var = AddConstant(MakeString(var_name));
-    
-    auto list_reg = CompileExpr(stmt->iterable);
-    Emit(OpCode::SETGLOBAL, list_reg, list_var);
-    FreeRegs(1);
-    
+    bool use_locals = !is_top_level_;
+
+    if (!use_locals) {
+        auto list_var = AddConstant(MakeString("__for_list"));
+        auto len_var = AddConstant(MakeString("__for_len"));
+        auto idx_var = AddConstant(MakeString("__for_idx"));
+        auto elem_var = AddConstant(MakeString(var_name));
+
+        auto list_reg = CompileExpr(stmt->iterable);
+        Emit(OpCode::SETGLOBAL, list_reg, list_var);
+        FreeRegs(1);
+
+        auto len_func = AllocReg();
+        Emit(OpCode::GETGLOBAL, len_func, AddConstant(MakeString("len")));
+        auto len_arg = AllocReg();
+        Emit(OpCode::GETGLOBAL, len_arg, list_var);
+        Emit(OpCode::CALL, len_func, 1, 1);
+        Emit(OpCode::SETGLOBAL, len_func, len_var);
+        FreeRegs(2);
+
+        auto zero_c = AddConstant(Value::Number(0));
+        auto zero_reg = AllocReg();
+        Emit(OpCode::LOADK, zero_reg, zero_c);
+        Emit(OpCode::SETGLOBAL, zero_reg, idx_var);
+        FreeRegs(1);
+
+        size_t loop_start = proto_->instructions.size();
+
+        auto elem_reg = AllocReg();
+        auto idx_get = AllocReg();
+        auto list_get = AllocReg();
+        auto len_get = AllocReg();
+        auto cond_reg = AllocReg();
+        auto one_c = AddConstant(Value::Number(1));
+        auto add_reg = AllocReg();
+
+        Emit(OpCode::GETGLOBAL, list_get, list_var);
+        Emit(OpCode::GETGLOBAL, idx_get, idx_var);
+        Emit(OpCode::GETINDEX, elem_reg, list_get, idx_get);
+        Emit(OpCode::SETGLOBAL, elem_reg, elem_var);
+
+        CompileChunk(stmt->body);
+
+        Emit(OpCode::GETGLOBAL, idx_get, idx_var);
+        Emit(OpCode::LOADK, add_reg, one_c);
+        Emit(OpCode::ADD, add_reg, idx_get, add_reg);
+        Emit(OpCode::SETGLOBAL, add_reg, idx_var);
+
+        Emit(OpCode::GETGLOBAL, cond_reg, idx_var);
+        Emit(OpCode::GETGLOBAL, len_get, len_var);
+        Emit(OpCode::LT, cond_reg, cond_reg, len_get);
+        Emit(OpCode::TEST, cond_reg, 0);
+
+        size_t jmp_out = proto_->instructions.size();
+        Emit(OpCode::JMP, 0);
+
+        int32_t back_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(proto_->instructions.size()) - 1;
+        Emit(OpCode::JMP);
+        proto_->instructions.back().bx32 = back_offset;
+
+        PatchJump(jmp_out);
+
+        for (auto& patch : pending_breaks_) {
+            PatchJump(patch.instr_idx);
+        }
+        pending_breaks_.clear();
+
+        for (auto& patch : pending_continues_) {
+            PatchContinueJump(patch.instr_idx, loop_start);
+        }
+        pending_continues_.clear();
+
+        pending_breaks_ = std::move(saved_breaks);
+        pending_continues_ = std::move(saved_continues);
+        return;
+    }
+
+    uint16_t list_reg_local = AllocReg();
+    auto iter_reg = CompileExpr(stmt->iterable);
+    Emit(OpCode::MOVE, list_reg_local, iter_reg);
+    FreeRegs(next_reg_ - (list_reg_local + 1));
+
+    uint16_t len_reg_local = AllocReg();
     auto len_func = AllocReg();
     Emit(OpCode::GETGLOBAL, len_func, AddConstant(MakeString("len")));
     auto len_arg = AllocReg();
-    Emit(OpCode::GETGLOBAL, len_arg, list_var);
+    Emit(OpCode::MOVE, len_arg, list_reg_local);
     Emit(OpCode::CALL, len_func, 1, 1);
-    Emit(OpCode::SETGLOBAL, len_func, len_var);
-    FreeRegs(2);
-    
-    // El índice del loop arranca en 0, no en nil -- list[0] tiene que ser
-    // el primer elemento leído. Antes esto emitía LOADNIL, así que la
-    // primera vuelta indexaba list[nil] (imprimía nil) y el resto de las
-    // vueltas quedaban corridas una posición (list[1], list[2], ... en vez
-    // de list[0], list[1], ...), porque idx = nil + 1 en la ADD de abajo
-    // la VM lo trata como 0 + 1 = 1.
+    Emit(OpCode::MOVE, len_reg_local, len_func);
+    FreeRegs(next_reg_ - (len_reg_local + 1));
+
+    uint16_t idx_reg_local = AllocReg();
     auto zero_c = AddConstant(Value::Number(0));
-    Emit(OpCode::LOADK, 1, zero_c);
-    Emit(OpCode::SETGLOBAL, 1, idx_var);
-    
-    size_t loop_start = proto_->instructions.size();
-    
-    auto elem_reg = AllocReg();
-    auto idx_get = AllocReg();
-    auto list_get = AllocReg();
-    auto len_get = AllocReg();
-    auto cond_reg = AllocReg();
+    auto zero_reg = AllocReg();
+    Emit(OpCode::LOADK, zero_reg, zero_c);
+    Emit(OpCode::MOVE, idx_reg_local, zero_reg);
+    FreeRegs(next_reg_ - (idx_reg_local + 1));
+
+    bool has_local_elem = locals_.find(var_name) != locals_.end();
+    uint16_t elem_reg_local = has_local_elem ? locals_.at(var_name) : AllocReg();
+    if (!has_local_elem) {
+        locals_[var_name] = elem_reg_local;
+    }
+
     auto one_c = AddConstant(Value::Number(1));
-    auto add_reg = AllocReg();
-    
-    Emit(OpCode::GETGLOBAL, list_get, list_var);
-    Emit(OpCode::GETGLOBAL, idx_get, idx_var);
-    Emit(OpCode::GETINDEX, elem_reg, list_get, idx_get);
-    Emit(OpCode::SETGLOBAL, elem_reg, elem_var);
-    
+    size_t loop_start = proto_->instructions.size();
+
+    uint16_t regs_before = next_reg_;
+    auto elem_get = AllocReg();
+    Emit(OpCode::GETINDEX, elem_get, list_reg_local, idx_reg_local);
+    Emit(OpCode::MOVE, elem_reg_local, elem_get);
+    FreeRegs(next_reg_ - regs_before);
+
     CompileChunk(stmt->body);
-    
-    Emit(OpCode::GETGLOBAL, idx_get, idx_var);
+
+    regs_before = next_reg_;
+    auto add_reg = AllocReg();
     Emit(OpCode::LOADK, add_reg, one_c);
-    Emit(OpCode::ADD, add_reg, idx_get, add_reg);
-    Emit(OpCode::SETGLOBAL, add_reg, idx_var);
-    
-    Emit(OpCode::GETGLOBAL, cond_reg, idx_var);
-    Emit(OpCode::GETGLOBAL, len_get, len_var);
-    Emit(OpCode::LT, cond_reg, cond_reg, len_get);
+    Emit(OpCode::ADD, add_reg, idx_reg_local, add_reg);
+    Emit(OpCode::MOVE, idx_reg_local, add_reg);
+    FreeRegs(next_reg_ - regs_before);
+
+    regs_before = next_reg_;
+    auto cond_reg = AllocReg();
+    Emit(OpCode::LT, cond_reg, idx_reg_local, len_reg_local);
     Emit(OpCode::TEST, cond_reg, 0);
-    
+    FreeRegs(next_reg_ - regs_before);
+
     size_t jmp_out = proto_->instructions.size();
     Emit(OpCode::JMP, 0);
-    
+
     int32_t back_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(proto_->instructions.size()) - 1;
     Emit(OpCode::JMP);
     proto_->instructions.back().bx32 = back_offset;
-    
+
     PatchJump(jmp_out);
-    
+
     for (auto& patch : pending_breaks_) {
         PatchJump(patch.instr_idx);
     }
@@ -845,62 +991,149 @@ void Compiler::CompileForList(const ForStmt* stmt) {
         PatchContinueJump(patch.instr_idx, loop_start);
     }
     pending_continues_.clear();
+
+    pending_breaks_ = std::move(saved_breaks);
+    pending_continues_ = std::move(saved_continues);
 }
 
 void Compiler::CompileForCoroutine(const ForStmt* stmt) {
+    auto saved_breaks = std::move(pending_breaks_);
+    auto saved_continues = std::move(pending_continues_);
+    pending_breaks_.clear();
+    pending_continues_.clear();
+
     const auto& var_name = stmt->var_name;
-    auto iter_var = AddConstant(MakeString("__iter"));
-    auto resume_var = AddConstant(MakeString("__resume"));
-    auto val_var = AddConstant(MakeString("__val"));
-    auto elem_var = AddConstant(MakeString(var_name));
-    
-    auto iter_reg = CompileExpr(stmt->iterable);
-    Emit(OpCode::SETGLOBAL, iter_reg, iter_var);
-    
+    bool use_locals = !is_top_level_;
+
+    if (!use_locals) {
+        auto iter_var = AddConstant(MakeString("__iter"));
+        auto resume_var = AddConstant(MakeString("__resume"));
+        auto val_var = AddConstant(MakeString("__val"));
+        auto elem_var = AddConstant(MakeString(var_name));
+
+        auto iter_reg = CompileExpr(stmt->iterable);
+        Emit(OpCode::SETGLOBAL, iter_reg, iter_var);
+        FreeRegs(1);
+
+        auto resume_func = AllocReg();
+        Emit(OpCode::GETGLOBAL, resume_func, AddConstant(MakeString("resume")));
+        Emit(OpCode::SETGLOBAL, resume_func, resume_var);
+        FreeRegs(1);
+
+        size_t loop_start = proto_->instructions.size();
+
+        auto resume_get = AllocReg();
+        Emit(OpCode::GETGLOBAL, resume_get, resume_var);
+        auto arg_get = AllocReg();
+        Emit(OpCode::GETGLOBAL, arg_get, iter_var);
+
+        Emit(OpCode::CALL, resume_get, 1, 1);
+
+        auto val_reg = AllocReg();
+        Emit(OpCode::MOVE, val_reg, resume_get);
+        Emit(OpCode::SETGLOBAL, val_reg, val_var);
+
+        auto nil_k = AddConstant(Value::Nil());
+        auto nil_reg = AllocReg();
+        Emit(OpCode::LOADK, nil_reg, nil_k);
+        auto cond_reg = AllocReg();
+        Emit(OpCode::NE, cond_reg, val_reg, nil_reg);
+        Emit(OpCode::TEST, cond_reg, 0);
+
+        size_t jmp_out = proto_->instructions.size();
+        Emit(OpCode::JMP, 0);
+
+        auto zero_k = AddConstant(Value::Number(0));
+        auto elem_get = AllocReg();
+        Emit(OpCode::GETGLOBAL, elem_get, val_var);
+        auto idx_reg = AllocReg();
+        Emit(OpCode::LOADK, idx_reg, zero_k);
+        auto first_elem = AllocReg();
+        Emit(OpCode::GETINDEX, first_elem, elem_get, idx_reg);
+        Emit(OpCode::SETGLOBAL, first_elem, elem_var);
+
+        CompileChunk(stmt->body);
+
+        int32_t back_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(proto_->instructions.size()) - 1;
+        Emit(OpCode::JMP);
+        proto_->instructions.back().bx32 = back_offset;
+
+        PatchJump(jmp_out);
+
+        for (auto& patch : pending_breaks_) {
+            PatchJump(patch.instr_idx);
+        }
+        pending_breaks_.clear();
+
+        for (auto& patch : pending_continues_) {
+            PatchContinueJump(patch.instr_idx, loop_start);
+        }
+        pending_continues_.clear();
+
+        pending_breaks_ = std::move(saved_breaks);
+        pending_continues_ = std::move(saved_continues);
+        return;
+    }
+
+    uint16_t iter_reg_local = AllocReg();
+    auto iterable_reg = CompileExpr(stmt->iterable);
+    Emit(OpCode::MOVE, iter_reg_local, iterable_reg);
+    FreeRegs(next_reg_ - (iter_reg_local + 1));
+
+    uint16_t resume_reg_local = AllocReg();
     auto resume_func = AllocReg();
     Emit(OpCode::GETGLOBAL, resume_func, AddConstant(MakeString("resume")));
-    Emit(OpCode::SETGLOBAL, resume_func, resume_var);
-    
+    Emit(OpCode::MOVE, resume_reg_local, resume_func);
+    FreeRegs(next_reg_ - (resume_reg_local + 1));
+
+    uint16_t val_reg_local = AllocReg();
+
+    bool has_local_elem = locals_.find(var_name) != locals_.end();
+    uint16_t elem_reg_local = has_local_elem ? locals_.at(var_name) : AllocReg();
+    if (!has_local_elem) {
+        locals_[var_name] = elem_reg_local;
+    }
+
     size_t loop_start = proto_->instructions.size();
-    
+
+    uint16_t regs_before = next_reg_;
     auto resume_get = AllocReg();
-    Emit(OpCode::GETGLOBAL, resume_get, resume_var);
+    Emit(OpCode::MOVE, resume_get, resume_reg_local);
     auto arg_get = AllocReg();
-    Emit(OpCode::GETGLOBAL, arg_get, iter_var);
-    
+    Emit(OpCode::MOVE, arg_get, iter_reg_local);
     Emit(OpCode::CALL, resume_get, 1, 1);
-    
-    auto val_reg = AllocReg();
-    Emit(OpCode::MOVE, val_reg, resume_get);
-    Emit(OpCode::SETGLOBAL, val_reg, val_var);
-    
+    Emit(OpCode::MOVE, val_reg_local, resume_get);
+    FreeRegs(next_reg_ - regs_before);
+
+    regs_before = next_reg_;
     auto nil_k = AddConstant(Value::Nil());
     auto nil_reg = AllocReg();
     Emit(OpCode::LOADK, nil_reg, nil_k);
     auto cond_reg = AllocReg();
-    Emit(OpCode::NE, cond_reg, val_reg, nil_reg);
+    Emit(OpCode::NE, cond_reg, val_reg_local, nil_reg);
     Emit(OpCode::TEST, cond_reg, 0);
-    
+    FreeRegs(next_reg_ - regs_before);
+
     size_t jmp_out = proto_->instructions.size();
     Emit(OpCode::JMP, 0);
-    
+
+    regs_before = next_reg_;
     auto zero_k = AddConstant(Value::Number(0));
-    auto elem_get = AllocReg();
-    Emit(OpCode::GETGLOBAL, elem_get, val_var);
     auto idx_reg = AllocReg();
     Emit(OpCode::LOADK, idx_reg, zero_k);
     auto first_elem = AllocReg();
-    Emit(OpCode::GETINDEX, first_elem, elem_get, idx_reg);
-    Emit(OpCode::SETGLOBAL, first_elem, elem_var);
-    
+    Emit(OpCode::GETINDEX, first_elem, val_reg_local, idx_reg);
+    Emit(OpCode::MOVE, elem_reg_local, first_elem);
+    FreeRegs(next_reg_ - regs_before);
+
     CompileChunk(stmt->body);
-    
+
     int32_t back_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(proto_->instructions.size()) - 1;
     Emit(OpCode::JMP);
     proto_->instructions.back().bx32 = back_offset;
-    
+
     PatchJump(jmp_out);
-    
+
     for (auto& patch : pending_breaks_) {
         PatchJump(patch.instr_idx);
     }
@@ -910,48 +1143,41 @@ void Compiler::CompileForCoroutine(const ForStmt* stmt) {
         PatchContinueJump(patch.instr_idx, loop_start);
     }
     pending_continues_.clear();
+
+    pending_breaks_ = std::move(saved_breaks);
+    pending_continues_ = std::move(saved_continues);
 }
 
 void Compiler::CompileForDynamic(const ForStmt* stmt) {
     auto iter_reg = CompileExpr(stmt->iterable);
-    
+
     auto type_func = AllocReg();
     Emit(OpCode::GETGLOBAL, type_func, AddConstant(MakeString("type")));
     auto type_arg = AllocReg();
     Emit(OpCode::MOVE, type_arg, iter_reg);
     Emit(OpCode::CALL, type_func, 1, 1);
-    
+
     auto coro_str_k = AddConstant(MakeString("coroutine"));
     auto coro_str_reg = AllocReg();
     Emit(OpCode::LOADK, coro_str_reg, coro_str_k);
     auto cmp_reg = AllocReg();
     Emit(OpCode::EQ, cmp_reg, type_func, coro_str_reg);
     Emit(OpCode::TEST, cmp_reg, 1);
-    
+
     size_t jmp_to_list = proto_->instructions.size();
     Emit(OpCode::JMP, 0);
-    
+
     CompileForCoroutine(stmt);
-    
+
     size_t jmp_end = proto_->instructions.size();
     Emit(OpCode::JMP, 0);
-    
+
     PatchJump(jmp_to_list);
     CompileForList(stmt);
-    
+
     PatchJump(jmp_end);
 }
 
-// Emits, at the very start of a function/method/lambda body, a check-and-assign
-// block for every parameter that has a default expression:
-//
-//   if (ARGC <= param_index) param_reg = <default expr>
-//
-// ARGC is the number of arguments the caller actually supplied (never counting
-// an implicit `this`), which the VM tracks per call frame. param_reg_base is
-// the register holding the first declared parameter (1 for plain functions,
-// lambdas, and methods alike, since register 0 is reserved — `this` for
-// methods, unused otherwise).
 void Compiler::EmitDefaultsPrologue(const std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>>& params,
                                      uint16_t param_reg_base) {
     for (size_t i = 0; i < params.size(); ++i) {
@@ -969,16 +1195,16 @@ void Compiler::EmitDefaultsPrologue(const std::vector<std::pair<std::string, std
 
         auto cond_reg = AllocReg();
         Emit(OpCode::LE, cond_reg, argc_reg, idx_reg);
-        FreeRegs(2); // argc_reg, idx_reg no longer needed
+        FreeRegs(2);
 
         Emit(OpCode::TEST, cond_reg, 0);
         size_t jmp_have_arg = proto_->instructions.size();
         Emit(OpCode::JMP, 0);
-        FreeRegs(1); // cond_reg no longer needed
+        FreeRegs(1);
 
         auto val_reg = CompileExpr(def);
         Emit(OpCode::MOVE, param_reg, val_reg);
-        FreeRegs(1); // val_reg
+        FreeRegs(1);
 
         PatchJump(jmp_have_arg);
     }
@@ -986,8 +1212,9 @@ void Compiler::EmitDefaultsPrologue(const std::vector<std::pair<std::string, std
 
 void Compiler::CompileFunc(const FuncDef* func) {
     RejectMemberModifiersOutsideClass(func->is_static, func->is_private,
-                                       ("func " + func->name).c_str());
+                                       ("func " + func->name).c_str(), func->line);
     Compiler sub;
+    sub.is_top_level_ = false;
     sub.proto_ = std::make_shared<Proto>();
     sub.source_name_ = source_name_;
     sub.proto_->source_name = source_name_;
@@ -1022,6 +1249,7 @@ void Compiler::CompileFunc(const FuncDef* func) {
 }
 
 void Compiler::CompileChunk(const std::vector<std::shared_ptr<StmtNode>>& stmts) {
+    RejectDuplicateFuncDefs(stmts);
     for (size_t i = 0; i < stmts.size(); i++) {
         if (i == stmts.size() - 1) {
             result_reg_ = CompileExprToReg(stmts[i]);
@@ -1051,7 +1279,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
         return CompileExpr(e->expr);
     }
     if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
-        RejectMemberModifiersOutsideClass(a->is_static, a->is_private, "asignacion");
+        RejectMemberModifiersOutsideClass(a->is_static, a->is_private, "asignacion", a->line);
         if (!a->target) {
             FreeRegs(1);
             return 0;
@@ -1060,17 +1288,37 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
             bool in_method = locals_.find("this") != locals_.end();
             bool has_local = locals_.find(n->name) != locals_.end();
             bool is_known_attr = instance_attrs_.find(n->name) != instance_attrs_.end();
-            auto val_reg = CompileExpr(a->value);
+            uint16_t regs_before = next_reg_;
+
             if (in_method && n->name != "this" && !has_local && is_known_attr) {
+                auto val_reg = CompileExpr(a->value);
                 auto attr_idx = AddConstant(MakeString(n->name));
                 auto this_reg = locals_.at("this");
                 Emit(OpCode::SETATTR, this_reg, attr_idx, val_reg);
-                FreeRegs(1);
+                FreeRegs(next_reg_ - regs_before);
                 return 0;
             }
+
+            if (!is_top_level_ && n->name != "this") {
+                if (has_local) {
+                    uint16_t local_reg = locals_.at(n->name);
+                    auto val_reg = CompileExpr(a->value);
+                    Emit(OpCode::MOVE, local_reg, val_reg);
+                    FreeRegs(next_reg_ - regs_before);
+                    return 0;
+                }
+                uint16_t local_reg = AllocReg();
+                auto val_reg = CompileExpr(a->value);
+                Emit(OpCode::MOVE, local_reg, val_reg);
+                locals_[n->name] = local_reg;
+                FreeRegs(next_reg_ - (local_reg + 1));
+                return 0;
+            }
+
+            auto val_reg = CompileExpr(a->value);
             auto idx = AddConstant(MakeString(n->name));
             Emit(OpCode::SETGLOBAL, val_reg, idx);
-            FreeRegs(1);
+            FreeRegs(next_reg_ - regs_before);
             return 0;
         }
         if (auto* i = dynamic_cast<IndexExpr*>(a->target.get())) {
@@ -1092,19 +1340,19 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
                     is_this = true;
                 }
             }
-            
+
             auto val_reg = CompileExpr(a->value);
-            
+
             uint16_t obj_reg;
             if (is_this && locals_.find("this") != locals_.end()) {
                 obj_reg = locals_.at("this");
             } else {
                 obj_reg = CompileExpr(a_expr->obj);
             }
-            
+
             auto attr_idx = AddConstant(MakeString(a_expr->attr));
             Emit(OpCode::SETATTR, obj_reg, attr_idx, val_reg);
-            
+
             if (!is_this) {
                 FreeRegs(1);
             }
@@ -1115,21 +1363,28 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
         return 0;
     }
     if (auto* a = dynamic_cast<AugAssignStmt*>(stmt.get())) {
+        uint16_t regs_before = next_reg_;
         auto target_reg = CompileExpr(a->target);
         auto val_reg = CompileExpr(a->value);
         auto result_reg = AllocReg();
         Emit(BinOpToOpcode(a->op), result_reg, target_reg, val_reg);
         if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
+
+            if (!is_top_level_ && n->name != "this" && locals_.find(n->name) != locals_.end()) {
+                Emit(OpCode::MOVE, locals_.at(n->name), result_reg);
+                FreeRegs(next_reg_ - regs_before);
+                return 0;
+            }
             auto idx = AddConstant(MakeString(n->name));
             Emit(OpCode::SETGLOBAL, result_reg, idx);
-            FreeRegs(2);
+            FreeRegs(next_reg_ - regs_before);
             return 0;
         }
         if (auto* i = dynamic_cast<IndexExpr*>(a->target.get())) {
             auto obj_reg = CompileExpr(i->obj);
             auto idx_reg = CompileExpr(i->index);
             Emit(OpCode::SETINDEX, obj_reg, idx_reg, result_reg);
-            FreeRegs(3);
+            FreeRegs(next_reg_ - regs_before);
             return 0;
         }
         if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
@@ -1139,30 +1394,29 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
                     is_this = true;
                 }
             }
-            
+
             uint16_t obj_reg;
             if (is_this && locals_.find("this") != locals_.end()) {
                 obj_reg = locals_.at("this");
             } else {
                 obj_reg = CompileExpr(a_expr->obj);
             }
-            
+
             auto attr_idx = AddConstant(MakeString(a_expr->attr));
             Emit(OpCode::SETATTR, obj_reg, attr_idx, result_reg);
-            
-            if (!is_this) {
-                FreeRegs(1);
-            }
+
+            FreeRegs(next_reg_ - regs_before);
             return 0;
         }
-        FreeRegs(1);
+        FreeRegs(next_reg_ - regs_before);
         return 0;
     }
     if (auto* r = dynamic_cast<ReturnStmt*>(stmt.get())) {
         if (r->value) {
+            uint16_t regs_before = next_reg_;
             auto reg = CompileExpr(r->value);
             Emit(OpCode::RETURN, reg, 1);
-            FreeRegs(1);
+            FreeRegs(next_reg_ - regs_before);
         } else {
             Emit(OpCode::RETURN, 0, 0);
         }
@@ -1225,7 +1479,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
 void Compiler::CompileClass(const ClassDef* cls) {
     auto* class_obj = new ClassObj();
     class_obj->name = cls->name;
-    
+
     if (cls->base_class) {
         if (auto* base_name = dynamic_cast<NameExpr*>(cls->base_class.get())) {
             auto it = compiled_classes_.find(base_name->name);
@@ -1236,32 +1490,18 @@ void Compiler::CompileClass(const ClassDef* cls) {
                         class_obj->methods[mname] = mproto;
                     }
                 }
-                // OJO: los `attrs` static de la base NO se copian acá --
-                // eso los volvía dos valores independientes apenas
-                // existía una subclase (Sub.x dejaba de reflejar
-                // Base.x += 1). Static vive solo en la clase que lo
-                // declaró; GETATTR/SETATTR sobre Class recorren la
-                // cadena `__base__` (ver FindClassOwningAttr en
-                // vm.cpp) para encontrar esa clase dueña.
-                // Los defaults de instancia (atributos NO static) de la
-                // base también se heredan -- cada instancia de la clase
-                // hija sigue necesitando su propia copia independiente.
+
                 for (auto& [aname, aval] : base_class->instance_defaults) {
                     class_obj->instance_defaults[aname] = aval;
                 }
-                // Un miembro private de la base sigue siendo private
-                // para el AST/metadata (aunque el método heredado que lo
-                // usa internamente lo siga viendo, porque ese método ya
-                // fue compilado dentro del contexto de la base). Ver
-                // §3.3 del documento de diseño: acá solo se propaga la
-                // marca, no hay cambio de comportamiento en runtime.
+
                 for (auto& pname : base_class->private_members) {
                     class_obj->private_members.insert(pname);
                 }
             }
         }
     }
-    
+
     for (auto& stmt : cls->body) {
         if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
             if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
@@ -1277,13 +1517,7 @@ void Compiler::CompileClass(const ClassDef* cls) {
                 } else {
                     attr_val = Value::Nil();
                 }
-                // static -> compartido, vive solo en `attrs`.
-                // sin modificador (default) -> valor por defecto de
-                // instancia, vive en `instance_defaults` y se copia a
-                // cada InstanceObj nuevo (ver NEWINSTANCE/CALL en
-                // vm.cpp). Antes de la Fase C ambos casos caían en
-                // `attrs`, que es justamente el bug que hacía que
-                // `Clase.x = valor` nunca compartiera estado real.
+
                 if (a->is_static) {
                     class_obj->attrs[n->name] = attr_val;
                 } else {
@@ -1295,10 +1529,11 @@ void Compiler::CompileClass(const ClassDef* cls) {
             }
         }
     }
-        
+
     for (auto& stmt : cls->body) {
         if (auto* f = dynamic_cast<FuncDef*>(stmt.get())) {
             Compiler sub;
+            sub.is_top_level_ = false;
             sub.proto_ = std::make_shared<Proto>();
             sub.source_name_ = source_name_;
             sub.proto_->source_name = source_name_;
@@ -1306,26 +1541,18 @@ void Compiler::CompileClass(const ClassDef* cls) {
             sub.proto_->num_params = static_cast<uint8_t>(f->params.size() + 1);
             sub.proto_->is_vararg = f->is_vararg;
             sub.proto_->is_method = true;
-            
+
             sub.next_reg_ = static_cast<uint16_t>(f->params.size() + 1);
             sub.max_reg_ = sub.next_reg_;
-            // Un método `static` no recibe instancia: no se registra
-            // "this" como local, así que `this.algo` adentro no resuelve
-            // a un atributo (cae a búsqueda global, ver CompileExpr) y
-            // el bare-name-a-atributo tampoco aplica. Ver §3.1 del
-            // documento de diseño.
+
             if (!f->is_static) {
                 sub.locals_["this"] = 0;
             }
-            // El bare-name-resuelve-a-this.attr (instance_attrs_) solo
-            // debe aplicar a atributos de INSTANCIA, no a los `static`
-            // (esos se acceden siempre por NombreClase.attr de forma
-            // explícita, nunca implícita vía "this"). Antes de la Fase C
-            // esto iteraba sobre `class_obj->attrs`, que mezclaba ambos.
+
             for (auto& [attr_name, attr_val] : class_obj->instance_defaults) {
                 sub.instance_attrs_.insert(attr_name);
             }
-            
+
             for (size_t i = 0; i < f->params.size(); ++i) {
                 auto& pname = f->params[i].first;
                 sub.locals_[pname] = static_cast<uint16_t>(i + 1);
@@ -1335,18 +1562,10 @@ void Compiler::CompileClass(const ClassDef* cls) {
 
             sub.CompileChunk(f->body);
             sub.Emit(OpCode::RETURN);
-            
+
             uint16_t min_registers = static_cast<uint16_t>(f->params.size() + 1);
             sub.proto_->num_registers = std::max<uint16_t>(sub.max_reg_ + 1, min_registers);
-            
-            // Constructor: un método llamado igual que la clase (estilo
-            // C#, ej. `class Dog ... func Dog(name) ... end end`) se
-            // compila como __init__, el nombre real que busca el VM (ver
-            // vm.cpp:810). No hay resolución de sobrecarga por cantidad
-            // de parámetros en ningún otro lugar del lenguaje: si se
-            // definen dos constructores con el mismo nombre y distinta
-            // aridad, class_obj->methods es un mapa por nombre, así que
-            // el segundo simplemente pisa al primero -- no coexisten.
+
             bool is_constructor = f->name == cls->name;
             std::string method_name = is_constructor ? "__init__" : f->name;
             class_obj->methods[method_name] = sub.proto_;
@@ -1355,7 +1574,7 @@ void Compiler::CompileClass(const ClassDef* cls) {
             }
         }
     }
-    
+
     if (cls->base_class) {
         auto base_name_expr = dynamic_cast<NameExpr*>(cls->base_class.get());
         if (base_name_expr) {
@@ -1370,15 +1589,15 @@ void Compiler::CompileClass(const ClassDef* cls) {
         compiled_classes_[cls->name + ".__base__"] = class_obj;
     }
     compiled_classes_[cls->name] = class_obj;
-    
+
     Value class_val;
     class_val.type = ValueType::Class;
     class_val.obj = class_obj;
-    
+
     auto class_idx = AddConstant(class_val);
     auto reg = AllocReg();
     Emit(OpCode::LOADK, reg, class_idx);
-    
+
     auto name_idx = AddConstant(MakeString(cls->name));
     Emit(OpCode::SETGLOBAL, reg, name_idx);
 }
@@ -1389,29 +1608,25 @@ void Compiler::CompileImport(const ImportStmt* stmt) {
         if (i > 0) full_path += ".";
         full_path += stmt->module_path[i];
     }
-    
+
     auto module_idx = AddConstant(MakeString(full_path));
     auto import_reg = AllocReg();
     Emit(OpCode::GETGLOBAL, import_reg, AddConstant(MakeString("__import__")));
-    
+
     auto mod_arg_reg = AllocReg();
     Emit(OpCode::LOADK, mod_arg_reg, module_idx);
-    
+
     auto alias_arg_reg = AllocReg();
     Emit(OpCode::LOADK, alias_arg_reg, AddConstant(MakeString(stmt->alias)));
-    
+
     auto call_reg = AllocReg();
     Emit(OpCode::CALL, import_reg, 2, 1);
-    
+
     FreeRegs(4);
 }
 
 void Compiler::CompileExtern(const ExternStmt* stmt) {
-    // Fase 2 (ver EXTERN_FFI_DESIGN.md / EXTERN_FFI_TODO.md): el bloque
-    // `extern` genera un namespace (ModuleObj) con una función Native por
-    // cada declaración -- pero esa Native todavía no resuelve contra la
-    // librería real (eso es Fase 3). Llamar a `Alias.Func()` hoy falla
-    // con un error explícito en vez de compilar a nada / crashear.
+
     auto* mod = new ModuleObj();
     mod->name = stmt->alias;
     mod->library = stmt->library;
@@ -1451,29 +1666,16 @@ void Compiler::CompileTry(const TryStmt* stmt) {
     std::vector<size_t> except_jmps;
     std::vector<size_t> except_end_jmps;
 
-    // TRY's operand is patched below to jump straight to the first CATCH
-    // instruction -- that's where the VM must resume if try_body raises.
-    // (It must be a compile-time-known target: by the time an exception
-    // actually happens there's no way to discover where CATCH lives, since
-    // nothing has executed that far yet.)
     size_t try_instr_idx = proto_->instructions.size();
     Emit(OpCode::TRY, 0);
 
     CompileChunk(stmt->try_body);
 
-    // try_body finished with no exception: this handler is no longer
-    // needed for the rest of the construct (its own except/finally code
-    // shouldn't loop back into it), so pop it now.
     Emit(OpCode::TRY_END);
 
-    // Skip straight past all the except handlers and the re-raise
-    // fallback below, whether or not there's a finally clause. (Without
-    // this jump, a successful try with no finally block would previously
-    // fall straight through into the except-matching code.)
     size_t success_jmp = proto_->instructions.size();
     Emit(OpCode::JMP, 0);
 
-    // First CATCH starts here -- this is TRY's jump target.
     PatchJump(try_instr_idx);
 
     for (size_t i = 0; i < stmt->except_bodies.size(); ++i) {
@@ -1501,10 +1703,6 @@ void Compiler::CompileTry(const TryStmt* stmt) {
         PatchJump(catch_instr_idx);
     }
 
-    // Nothing matched: propagate outward. (The handler for this try was
-    // already popped in the VM's RAISE handling the moment it dispatched
-    // here, so this correctly reaches an outer handler instead of looping
-    // back into this same try.)
     {
         auto raise_reg = AllocReg();
         Emit(OpCode::GETGLOBAL, raise_reg, AddConstant(MakeString("__exception__")));
@@ -1512,8 +1710,6 @@ void Compiler::CompileTry(const TryStmt* stmt) {
         FreeRegs(1);
     }
 
-    // Success path and handled-exception path converge here, right before
-    // finally (or the true end of the construct if there's no finally).
     PatchJump(success_jmp);
     for (size_t jmp : except_end_jmps) {
         PatchJump(jmp);
@@ -1526,14 +1722,16 @@ void Compiler::CompileTry(const TryStmt* stmt) {
 
 void Compiler::CompileRaise(const RaiseStmt* stmt) {
     if (stmt->value) {
+        uint16_t regs_before = next_reg_;
         auto exc_reg = CompileExpr(stmt->value);
         Emit(OpCode::RAISE, exc_reg);
-        FreeRegs(1);
+        FreeRegs(next_reg_ - regs_before);
     } else {
+        uint16_t regs_before = next_reg_;
         auto raise_reg = AllocReg();
         Emit(OpCode::GETGLOBAL, raise_reg, AddConstant(MakeString("__exception__")));
         Emit(OpCode::RAISE, raise_reg);
-        FreeRegs(1);
+        FreeRegs(next_reg_ - regs_before);
     }
 }
 
@@ -1541,9 +1739,10 @@ void Compiler::CompileYield(const YieldStmt* stmt) {
     uint8_t count = 0;
     if (!stmt->values.empty()) {
         for (size_t i = 0; i < stmt->values.size(); ++i) {
+            uint16_t regs_before = next_reg_;
             auto val_reg = CompileExpr(stmt->values[i]);
             Emit(OpCode::MOVE, static_cast<uint16_t>(i), val_reg);
-            FreeRegs(1);
+            FreeRegs(next_reg_ - regs_before);
             count++;
         }
     }
@@ -1639,7 +1838,7 @@ std::string PeekNextToken(const std::string& s, size_t pos) {
     return std::string(1, s[pos]);
 }
 
-} // namespace
+}
 
 std::shared_ptr<ExprNode> Compiler::ParseFStringExpr(const std::string& expr_str) {
     size_t pos = 0;
@@ -1652,7 +1851,7 @@ std::shared_ptr<ExprNode> Compiler::ParseExpr(const std::string& s, size_t& pos)
 
 std::shared_ptr<ExprNode> Compiler::ParseOrExpr(const std::string& s, size_t& pos) {
     auto left = ParseAndExpr(s, pos);
-    
+
     while (true) {
         pos = SkipWhitespace(s, pos);
         std::string op = PeekNextToken(s, pos);
@@ -1666,7 +1865,7 @@ std::shared_ptr<ExprNode> Compiler::ParseOrExpr(const std::string& s, size_t& po
 
 std::shared_ptr<ExprNode> Compiler::ParseAndExpr(const std::string& s, size_t& pos) {
     auto left = ParseComparison(s, pos);
-    
+
     while (true) {
         pos = SkipWhitespace(s, pos);
         std::string op = PeekNextToken(s, pos);
@@ -1680,7 +1879,7 @@ std::shared_ptr<ExprNode> Compiler::ParseAndExpr(const std::string& s, size_t& p
 
 std::shared_ptr<ExprNode> Compiler::ParseComparison(const std::string& s, size_t& pos) {
     auto left = ParseAddSub(s, pos);
-    
+
     while (true) {
         pos = SkipWhitespace(s, pos);
         std::string op = PeekNextToken(s, pos);
@@ -1694,7 +1893,7 @@ std::shared_ptr<ExprNode> Compiler::ParseComparison(const std::string& s, size_t
 
 std::shared_ptr<ExprNode> Compiler::ParseAddSub(const std::string& s, size_t& pos) {
     auto left = ParseMulDiv(s, pos);
-    
+
     while (true) {
         pos = SkipWhitespace(s, pos);
         std::string op = PeekNextToken(s, pos);
@@ -1708,7 +1907,7 @@ std::shared_ptr<ExprNode> Compiler::ParseAddSub(const std::string& s, size_t& po
 
 std::shared_ptr<ExprNode> Compiler::ParseMulDiv(const std::string& s, size_t& pos) {
     auto left = ParseUnary(s, pos);
-    
+
     while (true) {
         pos = SkipWhitespace(s, pos);
         std::string op = PeekNextToken(s, pos);
@@ -1747,7 +1946,7 @@ std::shared_ptr<ExprNode> Compiler::ParseUnary(const std::string& s, size_t& pos
 
 std::shared_ptr<ExprNode> Compiler::ParsePower(const std::string& s, size_t& pos) {
     auto base = ParsePostfix(s, pos);
-    
+
     pos = SkipWhitespace(s, pos);
     if (StartsWith(s, pos, "**")) {
         pos += 2;
@@ -1759,11 +1958,11 @@ std::shared_ptr<ExprNode> Compiler::ParsePower(const std::string& s, size_t& pos
 
 std::shared_ptr<ExprNode> Compiler::ParsePostfix(const std::string& s, size_t& pos) {
     auto expr = ParsePrimary(s, pos);
-    
+
     while (true) {
         pos = SkipWhitespace(s, pos);
         if (pos >= s.size()) break;
-        
+
         if (s[pos] == '.') {
             pos++;
             std::string attr = ParseIdent(s, pos);
@@ -1802,7 +2001,7 @@ std::shared_ptr<ExprNode> Compiler::ParsePrimary(const std::string& s, size_t& p
     if (pos >= s.size()) {
         return std::make_shared<NilExpr>();
     }
-    
+
     if (s[pos] == '(') {
         pos++;
         pos = SkipWhitespace(s, pos);
@@ -1811,12 +2010,12 @@ std::shared_ptr<ExprNode> Compiler::ParsePrimary(const std::string& s, size_t& p
         if (pos < s.size() && s[pos] == ')') pos++;
         return expr;
     }
-    
+
     if (IsDigit(s[pos])) {
         double val = ParseNumber(s, pos);
         return std::make_shared<NumberExpr>(val);
     }
-    
+
     if (s[pos] == '"' || s[pos] == '\'') {
         char delim = s[pos];
         pos++;
@@ -1839,7 +2038,7 @@ std::shared_ptr<ExprNode> Compiler::ParsePrimary(const std::string& s, size_t& p
         if (pos < s.size() && s[pos] == delim) pos++;
         return std::make_shared<StringExpr>(val);
     }
-    
+
     if (s[pos] == 't' && StartsWith(s, pos, "true")) {
         pos += 4;
         return std::make_shared<BoolExpr>(true);
@@ -1852,7 +2051,7 @@ std::shared_ptr<ExprNode> Compiler::ParsePrimary(const std::string& s, size_t& p
         pos += 3;
         return std::make_shared<NilExpr>();
     }
-    
+
     std::string name = ParseIdent(s, pos);
     return std::make_shared<NameExpr>(name);
 }
@@ -1862,4 +2061,4 @@ uint16_t Compiler::CompileFStringExpression(const std::string& expr_str) {
     return CompileExpr(expr);
 }
 
-} // namespace ava
+}

@@ -1,9 +1,8 @@
 #include "vm.h"
 #include "vm_internal.h"
 #include "module.h"
+#include "vm_platform_accessor.h"
 #include "../frontend/frontend.h"
-#include <fstream>
-#include <sstream>
 #include <stdexcept>
 
 namespace ava {
@@ -62,18 +61,37 @@ Value VM::DoImport(const std::string& module_path, const std::string& alias) {
     
     if (!module_cache_.Exists(module_path)) {
         module_cache_.BeginLoading(module_path);
-        
-        std::ifstream file(resolved_path);
-        if (!file.is_open()) {
+
+        // Fase 4 (avapack): si hay un hook instalado (ver vm.h), esta es
+        // la unica ventana en la que un runtime empacado necesita que
+        // resolved_path exista en disco -- se materializa acá y se borra
+        // apenas termina el rdbuf() de abajo, no cuando termina de
+        // compilar ni cuando termina el programa. Sin hook (caso normal
+        // de ava_cli/avahost), before_module_read_hook_/after_module_read_hook_
+        // son std::function vacios y este bloque no hace nada distinto a
+        // antes de este cambio.
+        if (before_module_read_hook_) {
+            before_module_read_hook_(resolved_path);
+        }
+
+        // Fase 7 (avapack, filesystem virtual en memoria): antes esto leia
+        // con std::ifstream crudo, bypaseando el PAL por completo -- un
+        // MemoryFileSystem instalado via VmPlatformAccessor::SetOverride
+        // quedaba inerte porque nunca se lo llamaba desde aca. Ahora pasa
+        // siempre por el IPlatform activo (real o overrideado), igual que
+        // ya hacia ModuleResolver::ResolveModulePath (module.cpp).
+        std::string source;
+        bool read_ok = VmPlatformAccessor::Get().FileSystem().ReadFile(resolved_path, source);
+        if (!read_ok) {
+            if (after_module_read_hook_) after_module_read_hook_(resolved_path);
             module_cache_.EndLoading(module_path);
             throw std::runtime_error("could not open module file: " + resolved_path);
         }
-        
-        std::stringstream ss;
-        ss << file.rdbuf();
-        std::string source = ss.str();
-        file.close();
-        
+
+        if (after_module_read_hook_) {
+            after_module_read_hook_(resolved_path);
+        }
+
         std::string prev_dir = GetCurrentDir();
         std::string prev_module = current_module_;
         SetCurrentDir(GetFileDir(resolved_path));

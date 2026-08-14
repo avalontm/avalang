@@ -7,8 +7,8 @@
 #include <functional>
 #include <unordered_set>
 
-#include "design/avaui_text.h"
 #include "parser/AvauiParser.h"
+#include "parser/AvauiWriter.h"
 #include "components/IComponent.h"
 #include "components/PropertyValue.h"
 #include "events/AutoBind.h"
@@ -47,20 +47,7 @@ std::string SanitizeIdentifier(const std::string& s) {
     return out.empty() ? "handler" : out;
 }
 
-std::string PropValueToString(const avalang::ui::PropertyValue& pv) {
-    switch (pv.Type()) {
-        case avalang::ui::PropertyType::Bool: return pv.AsBool() ? "true" : "false";
-        case avalang::ui::PropertyType::Number: {
-            double n = pv.AsNumber();
-            if (n == static_cast<long long>(n)) return std::to_string(static_cast<long long>(n));
-            return std::to_string(n);
-        }
-        case avalang::ui::PropertyType::String: return pv.AsString();
-        default: return "";
-    }
 }
-
-} // namespace
 
 std::string GenerateNodeUid() {
     static std::atomic<uint64_t> counter{0};
@@ -113,8 +100,16 @@ bool LoadAvauiFile(const std::string& path, DesignDocument& out_doc, std::string
 bool SaveAvauiFile(const DesignDocument& doc, const std::string& path) {
     if (!doc.tree || !doc.tree->Root()) return false;
 
-    std::string text = WriteAvauiText(
-        doc.tree->Root(), doc.code_behind, doc.initial_state, doc.imports);
+    std::string text = [&] {
+        avalang::ui::parser::AvauiWriteOptions opts;
+        opts.code_behind = doc.code_behind;
+        opts.imports = doc.imports;
+        opts.initial_state.reserve(doc.initial_state.size());
+        for (const auto& row : doc.initial_state) {
+            opts.initial_state.push_back({row.key, row.value});
+        }
+        return avalang::ui::parser::WriteAvaui(doc.tree->Root(), opts);
+    }();
 
     std::ofstream out(path, std::ios::binary);
     if (!out) return false;
@@ -305,4 +300,4 @@ bool EditComponentNode(DesignDocument& doc, const std::string& nodeId, const std
     return true;
 }
 
-} // namespace studio::design
+}

@@ -1,5 +1,7 @@
 #include "theme/ProjectFontOverrides.h"
 
+#include "layout/FontRegistry.h"
+
 #include <cctype>
 #include <filesystem>
 #include <fstream>
@@ -38,11 +40,16 @@ bool ConsumeQuoted(const std::string& line, std::size_t& pos, std::string& out) 
     return true;
 }
 
-// Parses one `font "role" "name" "path"` line. Returns false for
-// anything else (blank, `#` comment, `import ...`, malformed `font`
-// line) -- app.ava lines this function doesn't recognize are always
-// silently skipped, never an error, same tolerance
-// app_manifest.cpp::ParseImportLine documents.
+// Parses one `font ...` line -- one, two, or three double-quoted
+// strings after `font` (see the syntax table in ProjectFontOverrides.h):
+//   font "path"                      -> app-wide default
+//   font "role" "path"               -> override for `role`, auto name
+//   font "role" "family" "path"      -> override for `role`, explicit name
+// Returns false for anything else (blank, `#` comment, `import ...`,
+// malformed `font` line, more than three quoted strings) -- app.ava
+// lines this function doesn't recognize are always silently skipped,
+// never an error, same tolerance app_manifest.cpp::ParseImportLine
+// documents.
 bool ParseFontLine(const std::string& rawLine, ProjectFontOverride& out) {
     const std::string line = Trim(rawLine);
     if (line.empty() || StartsWith(line, "#")) return false;
@@ -52,18 +59,48 @@ bool ParseFontLine(const std::string& rawLine, ProjectFontOverride& out) {
     if (line.size() > 4 && !std::isspace(static_cast<unsigned char>(line[4]))) return false;
 
     std::string rest = Trim(line.substr(4));
-    std::size_t pos = 0;
+
+    // Collect up to four quoted strings -- a fourth means the line is
+    // malformed (unsupported arity), not silently truncated.
+    std::vector<std::string> parts;
+    while (!rest.empty() && parts.size() <= 3) {
+        std::size_t pos = 0;
+        std::string part;
+        if (!ConsumeQuoted(rest, pos, part)) return false;
+        parts.push_back(std::move(part));
+        rest = Trim(rest.substr(pos));
+    }
 
     std::string role, name, path;
-    if (!ConsumeQuoted(rest, pos, role)) return false;
-    rest = Trim(rest.substr(pos));
-    pos = 0;
-    if (!ConsumeQuoted(rest, pos, name)) return false;
-    rest = Trim(rest.substr(pos));
-    pos = 0;
-    if (!ConsumeQuoted(rest, pos, path)) return false;
+    switch (parts.size()) {
+        case 1:
+            // font "path" -- app-wide default; no role, no explicit name.
+            path = parts[0];
+            break;
+        case 2:
+            // font "role" "path" -- name auto-generated below.
+            role = parts[0];
+            path = parts[1];
+            break;
+        case 3:
+            // font "role" "family" "path" -- explicit name, as before.
+            role = parts[0];
+            name = parts[1];
+            path = parts[2];
+            break;
+        default:
+            return false; // 0 or 4+ quoted strings: not a valid font line.
+    }
 
-    if (role.empty() || name.empty() || path.empty()) return false;
+    if (path.empty() || (parts.size() >= 2 && role.empty())) return false;
+
+    // Auto-generate the registry/CSS lookup key when the line didn't
+    // pin one explicitly: "AppDefaultFont" for the default, or the
+    // role name itself (e.g. "heading1") for a role override. Never
+    // shown to the user -- see the field doc comment in the header.
+    if (name.empty()) {
+        name = role.empty() ? "AppDefaultFont" : role;
+    }
 
     out.role = role;
     out.name = name;
@@ -107,6 +144,14 @@ std::vector<ProjectFontOverride> LoadProjectFontOverrides(const std::string& pro
 ProjectTheme::ProjectTheme(ITheme* base, std::vector<ProjectFontOverride> overrides)
     : base_(base) {
     for (auto& o : overrides) {
+        if (o.role.empty()) {
+            // `font "path"` with no role: app-wide default. A later
+            // default line replaces an earlier one (last one in
+            // app.ava wins), same as role-specific lines below.
+            defaultOverride_ = std::move(o);
+            hasDefault_ = true;
+            continue;
+        }
         const std::string role = o.role; // copy before move-into-map
         overridesByRole_.emplace(role, std::move(o));
     }
@@ -118,13 +163,18 @@ ThemeColor ProjectTheme::Color(const std::string& roleName, const ThemeColor& fa
 
 ThemeFont ProjectTheme::Font(const std::string& roleName, const ThemeFont& fallback) {
     ThemeFont font = base_->Font(roleName, fallback);
+    // Role-specific `font "role" ...` line wins over the app-wide
+    // default, which wins over whatever base_ (AvaStudio's built-in
+    // theme) already had. Only the identity of the font changes --
+    // size/weight/italic stay whatever the base theme already decided
+    // for this role (see class doc comment).
     const auto it = overridesByRole_.find(roleName);
     if (it != overridesByRole_.end()) {
-        // Only the identity of the font changes -- size/weight/italic
-        // stay whatever the base theme already decided for this role
-        // (see class doc comment).
         font.name = it->second.name;
         font.filePath = it->second.filePath;
+    } else if (hasDefault_) {
+        font.name = defaultOverride_.name;
+        font.filePath = defaultOverride_.filePath;
     }
     return font;
 }
@@ -142,7 +192,20 @@ bool ProjectTheme::HasColor(const std::string& roleName) const {
 }
 
 bool ProjectTheme::HasFont(const std::string& roleName) const {
-    return overridesByRole_.count(roleName) > 0 || base_->HasFont(roleName);
+    return overridesByRole_.count(roleName) > 0 || hasDefault_ || base_->HasFont(roleName);
+}
+
+void ProjectTheme::RegisterProjectFonts() const {
+    auto& registry = layout::FontRegistry::Instance();
+    if (hasDefault_ && !registry.HasFont(defaultOverride_.name)) {
+        registry.RegisterFontFile(defaultOverride_.name, defaultOverride_.filePath);
+    }
+    for (const auto& [role, override_] : overridesByRole_) {
+        (void)role;
+        if (!registry.HasFont(override_.name)) {
+            registry.RegisterFontFile(override_.name, override_.filePath);
+        }
+    }
 }
 
 uint32_t ProjectTheme::AbiVersion() const {

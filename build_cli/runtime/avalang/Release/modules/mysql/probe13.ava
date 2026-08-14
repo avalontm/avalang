@@ -1,0 +1,17 @@
+class C
+    func _bindParams(sql, params)
+        if params == nil then
+            return 0
+        end
+        print("[probe13] type(params)=" + type(params) + " len=" + str(len(params)) + " params[0]=" + str(params[0]))
+        return "ok"
+    end
+    func testA(values)
+        return this._bindParams("(?, ?)", values)
+    end
+end
+func main()
+    c = C()
+    print("probe13 (return 0 literal): " + c.testA(["Ada", true]))
+end
+main()

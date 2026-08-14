@@ -71,7 +71,7 @@ std::string ToDisplayString(const avalang::ui::PropertyValue& value) {
     }
 }
 
-} // namespace
+}
 
 const std::vector<ComponentTypeInfo>& GetComponentCatalog() {
     static const std::vector<ComponentTypeInfo> catalog = [] {
@@ -113,4 +113,4 @@ const ComponentTypeInfo* FindComponentType(const std::string& type) {
     return nullptr;
 }
 
-} // namespace studio::design
+}

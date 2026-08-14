@@ -1,0 +1,123 @@
+# styles.ava -- paleta visual del POS.
+#
+# Convencion de colores:
+#   16A34A  verde principal (confirmar / agregar)
+#   DC2626  rojo            (cancelar / quitar)
+#   F3F4F6  gris claro       (fondos / secundario)
+#   1F2937  gris oscuro      (texto principal)
+#   6B7280  gris medio       (texto secundario / muted)
+#   FFFFFF  blanco           (cards / superficies)
+#   E5E7EB  borde           (separadores sutiles)
+#   2563EB  azul             (links)
+
+style *
+    fontName = "assets/fonts/Poppins-Regular.ttf"
+    fontSize = 14
+    textColor = "1F2937"
+    padding = 8
+    margin = 4
+end
+
+# Boton primario: verde, touch-friendly.
+style button
+    backgroundColor = "16A34A"
+    textColor = "FFFFFF"
+    fontSize = 16
+    borderWidth = 0
+    borderRadius = 8
+end
+
+style button:hover
+    backgroundColor = "15803D"
+end
+
+style button:active
+    backgroundColor = "166534"
+end
+
+style button:disabled
+    backgroundColor = "9CA3AF"
+    textColor = "E5E7EB"
+end
+
+# Variante danger: rojo, para cancelar/quitar.
+style button.danger
+    backgroundColor = "DC2626"
+end
+
+style button.danger:hover
+    backgroundColor = "B91C1C"
+end
+
+# Variante ghost: gris claro, secundario.
+style button.ghost
+    backgroundColor = "F3F4F6"
+    textColor = "1F2937"
+end
+
+style button.ghost:hover
+    backgroundColor = "E5E7EB"
+end
+
+# Texto base.
+style text
+    fontSize = 14
+    textColor = "374151"
+end
+
+# Texto muted (subtitulos, helper).
+style text.muted
+    textColor = "6B7280"
+    fontSize = 13
+end
+
+# Texto titulo.
+style text.heading
+    fontName = "assets/fonts/Poppins-Bold.ttf"
+    fontSize = 20
+    textColor = "1F2937"
+end
+
+# Texto precio.
+style text.price
+    fontSize = 18
+    textColor = "16A34A"
+    fontName = "assets/fonts/Poppins-Bold.ttf"
+end
+
+style link
+    textColor = "2563EB"
+    fontSize = 14
+end
+
+style link:hover
+    textColor = "1D4ED8"
+end
+
+# Inputs.
+style textbox
+    backgroundColor = "FFFFFF"
+    borderColor = "D1D5DB"
+    borderWidth = 1
+    fontSize = 14
+end
+
+style textbox:focus
+    borderColor = "16A34A"
+    borderWidth = 2
+end
+
+# Contenedores / cards.
+style container
+    backgroundColor = "FFFFFF"
+    borderRadius = 12
+    borderColor = "E5E7EB"
+    borderWidth = 1
+end
+
+# Dialogo modal.
+style dialog
+    backgroundColor = "FFFFFF"
+    borderColor = "E5E7EB"
+    borderRadius = 12
+end

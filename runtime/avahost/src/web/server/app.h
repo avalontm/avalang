@@ -74,7 +74,8 @@ private:
                                    const std::string& pendingValue = "",
                                    int statusCode = 200,
                                    const std::string& cookieHeader = "",
-                                   const std::string& userAgent = "");
+                                   const std::string& userAgent = "",
+                                   bool isErrorPage = false);
     HttpResponse RunScriptRoute(const std::string& filePath, const RequestContext& ctx);
 
     // Custom error pages, same convention-over-configuration spirit as

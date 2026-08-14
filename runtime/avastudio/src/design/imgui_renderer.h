@@ -25,7 +25,8 @@ protected:
     void OnDrawText(float x, float y, const char* text, float fontSize,
                     const char* fontName, const Color& color,
                     const std::string& clickHandler,
-                    const std::string& className) override;
+                    const std::string& className,
+                    float maxWidth) override;
     void OnDrawImage(float x, float y, float width, float height,
                      const char* imagePath) override;
     void OnDrawHtmlFragment(const std::string& html) override;

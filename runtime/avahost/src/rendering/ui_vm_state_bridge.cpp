@@ -1,11 +1,9 @@
 #include "ui_vm_state_bridge.h"
 
-#include <cctype>
-#include <sstream>
-
 #include <nlohmann/json.hpp>
 
 #include "components/PropertyValue.h"
+#include "parser/AvauiPropertyCoercion.h"
 #include "state/PropertyValueEquals.h"
 
 #include "runtime/runtime_host.h"
@@ -13,65 +11,22 @@
 using nlohmann::json;
 using avalang::ui::PropertyType;
 using avalang::ui::PropertyValue;
+using avalang::ui::parser::InferValue;
 
 namespace avahost {
 
 namespace {
 
-// Mirrors RuntimeHost::BindState's own anonymous-namespace LooksNumeric
-// exactly (digits/one-dot/optional-leading-sign) -- a third copy of the
-// same grammar Ava Studio's state_eval.cpp already carries too. Kept
-// local rather than exposed from runtime_host.cpp/state_eval.cpp,
-// same "no shared internal library across that boundary" note
-// runtime_host.cpp's own copy already documents.
-bool LooksNumeric(const std::string& v) {
-    if (v.empty()) return false;
-    size_t i = 0;
-    if (v[i] == '+' || v[i] == '-') ++i;
-    if (i >= v.size()) return false;
-    bool hasDigits = false;
-    bool hasDot = false;
-    for (; i < v.size(); ++i) {
-        if (std::isdigit(static_cast<unsigned char>(v[i]))) {
-            hasDigits = true;
-        } else if (v[i] == '.' && !hasDot) {
-            hasDot = true;
-        } else {
-            return false;
-        }
-    }
-    return hasDigits;
-}
-
-// Raw source text (e.g. "0", "true", "Hola") -> PropertyValue, using
-// the exact same inference rule RuntimeHost::BindState applies when it
-// pushes a `state` block's raw text onto VM globals -- required so a
-// VmBackedState's *initial* cached value matches what the VM global
-// BindState just set from the same text, without a redundant read-back.
 PropertyValue RawTextToPropertyValue(const std::string& raw) {
-    if (raw == "true" || raw == "false") {
-        return PropertyValue(raw == "true");
-    }
-    if (LooksNumeric(raw)) {
-        return PropertyValue(std::strtod(raw.c_str(), nullptr));
-    }
-    return PropertyValue(raw);
+    return InferValue(raw);
 }
 
-// PropertyValue -> raw text, the inverse of the above and of
-// RuntimeHost::ExportStateJson's own per-type formatting (NumberToDisplayString
-// et al) -- kept consistent so round-tripping a value through
-// BindState/ExportStateJson never drifts from what RawTextToPropertyValue
-// would have parsed it back into.
 std::string PropertyValueToRawText(const PropertyValue& value) {
     switch (value.Type()) {
         case PropertyType::Bool:
             return value.AsBool() ? "true" : "false";
-        case PropertyType::Number: {
-            std::ostringstream oss;
-            oss << value.AsNumber();
-            return oss.str();
-        }
+        case PropertyType::Number:
+            return avalang::ui::parser::NumberToDisplayString(value.AsNumber());
         case PropertyType::String:
             return value.AsString();
         case PropertyType::Nil:
@@ -80,9 +35,9 @@ std::string PropertyValueToRawText(const PropertyValue& value) {
     }
 }
 
-}  // namespace
+}
 
-// --------------------------- VmBackedState ---------------------------
+
 
 VmBackedState::VmBackedState(RuntimeHost& host, std::string key, PropertyValue initial)
     : host_(host), key_(std::move(key)), value_(std::move(initial)) {}
@@ -90,11 +45,11 @@ VmBackedState::VmBackedState(RuntimeHost& host, std::string key, PropertyValue i
 const PropertyValue& VmBackedState::Value() const { return value_; }
 
 void VmBackedState::Set(PropertyValue value) {
-    // Push through to the VM first (single-key BindState call -- see
-    // ui_vm_state_bridge.h's class comment for why this reuses
-    // RuntimeHost's existing bulk API instead of a new single-global
-    // method), then update the local cache/notify -- same order
-    // RuntimeHost::BindState followed by a read would produce.
+
+
+
+
+
     json single = json::object();
     single[key_] = PropertyValueToRawText(value);
     host_.BindState(single.dump());
@@ -117,9 +72,9 @@ void VmBackedState::Unsubscribe(std::size_t subscriptionId) {
 }
 
 void VmBackedState::RefreshFromVm() {
-    // ExportStateJson reads this key's *current* VM global back out --
-    // exactly what's needed after a handler mutated it directly
-    // (`counter = counter + 1`), bypassing this class's Set() entirely.
+
+
+
     json template_ = json::object();
     template_[key_] = PropertyValueToRawText(value_);
     std::string exported = host_.ExportStateJson(template_.dump());
@@ -128,7 +83,7 @@ void VmBackedState::RefreshFromVm() {
     try {
         parsed = json::parse(exported);
     } catch (const json::exception&) {
-        return;  // malformed -- keep the cache as-is, fail soft
+        return;
     }
     if (!parsed.is_object() || !parsed.contains(key_)) return;
 
@@ -140,9 +95,9 @@ void VmBackedState::RefreshFromVm() {
 void VmBackedState::NotifyIfChanged(const PropertyValue& newValue) {
     if (avalang::ui::state::PropertyValueEquals(value_, newValue)) return;
     value_ = newValue;
-    // Snapshot before invoking, same tolerance StateImpl::Set documents
-    // for a handler that subscribes/unsubscribes (even itself) as a
-    // reaction to this very change.
+
+
+
     auto snapshot = subscribers_;
     for (auto& [id, handler] : snapshot) {
         (void)id;
@@ -150,7 +105,7 @@ void VmBackedState::NotifyIfChanged(const PropertyValue& newValue) {
     }
 }
 
-// --------------------------- VmStateBridge ---------------------------
+
 
 VmStateBridge::VmStateBridge(RuntimeHost& host) : host_(host) {}
 
@@ -169,10 +124,10 @@ void VmStateBridge::Bind(const std::unordered_map<std::string, std::string>& sta
 
 void VmStateBridge::BindWithOverlay(const std::unordered_map<std::string, std::string>& stateSpec,
                                       const std::string& cachedStateJson) {
-    // Fase 20.2.4: cached values win over file defaults for keys that
-    // exist in both (mirror of AvaHostApp's stateCache_ merge in
-    // web/server/app.cpp, just one layer up so the adapter doesn't
-    // need to know about the JSON shape directly).
+
+
+
+
     json spec = json::object();
     for (const auto& [key, raw] : stateSpec) spec[key] = raw;
     if (!cachedStateJson.empty()) {
@@ -185,9 +140,9 @@ void VmStateBridge::BindWithOverlay(const std::unordered_map<std::string, std::s
                 }
             }
         } catch (const json::exception&) {
-            // Malformed cache (shouldn't happen, ExportStateJson only
-            // writes valid JSON) -- fall through with file defaults
-            // rather than fail the request.
+
+
+
         }
     }
     templateStateJson_ = spec.dump();
@@ -221,4 +176,4 @@ std::string VmStateBridge::EvalIdentifier(const std::string& raw) const {
     return host_.EvalPropertyExpr(raw);
 }
 
-}  // namespace avahost
+}

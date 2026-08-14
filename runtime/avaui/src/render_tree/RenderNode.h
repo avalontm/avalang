@@ -55,6 +55,7 @@ public:
     int OverlayPriority() const override { return overlayPriority_; }
     std::string ScrollDirection() const override { return scrollDirection_; }
     std::string BindingWarning() const override { return bindingWarning_; }
+    bool Wrap() const override { return wrap_; }
 
     // Setters (used during tree build)
     void SetBackgroundColor(const std::string& color) { bgColor_ = color; }
@@ -79,6 +80,7 @@ public:
     void SetOverlayPriority(int p) { overlayPriority_ = p; }
     void SetScrollDirection(std::string d) { scrollDirection_ = std::move(d); }
     void SetBindingWarning(std::string w) { bindingWarning_ = std::move(w); }
+    void SetWrap(bool w) { wrap_ = w; }
 
 private:
     avalang::ui::ComponentId componentId_;
@@ -118,6 +120,7 @@ private:
     int overlayPriority_ = 0;
     std::string scrollDirection_ = "vertical";
     std::string bindingWarning_;
+    bool wrap_ = false;
 
     // Layout-provided geometry
     LayoutRect rect_ = {0, 0, 0, 0};

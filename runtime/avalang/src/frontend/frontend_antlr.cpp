@@ -157,6 +157,15 @@ std::shared_ptr<Proto> CompileSource(const std::string& source, const std::strin
         return proto;
     } catch (const std::bad_any_cast& e) {
         throw CompileError("Bad any_cast during compilation: " + std::string(e.what()), 0, 0, source_name);
+    } catch (const AvaError& e) {
+        // Semantic checks in Compiler (duplicate func defs, static/private
+        // outside a class, etc.) already know the offending line and throw
+        // AvaError/CompileError with it set -- preserve that instead of
+        // collapsing to 0,0 like the generic std::exception catch below
+        // does, or AvaStudio's HighlightError (editor_panel.cpp) has
+        // nothing to highlight with.
+        throw CompileError("Compilation error: " + std::string(e.what()), e.line, e.column,
+                            e.source.empty() ? source_name : e.source);
     } catch (const std::exception& e) {
         throw CompileError("Compilation error: " + std::string(e.what()), 0, 0, source_name);
     }

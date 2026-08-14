@@ -1,33 +1,199 @@
-#include "avalang.h"
 #include "vm/vm.h"
 #include "vm/value.h"
 #include "frontend/frontend.h"
-#include "ui/component.h"
-#include "ui/tree.h"
-#include "ui/avaui_text.h"
+#include "components/IComponent.h"
+#include "components/ComponentTree.h"
+#include "components/PropertyValue.h"
+#include "parser/AvauiParser.h"
+#include "parser/AvauiWriter.h"
+#include "parser/AvauiPropertyCoercion.h"
+#include "events/AutoBind.h"
 #include "builtins/builtin.h"
 #include "builtins/builtin_natives.h"
 #include "ui/builtins.h"
+#include "compiler/proto_io.h"
+#include "compiler/obfuscate.h"
 
 #include <cstring>
 #include <cstdlib>
 #include <sstream>
 
+
 using namespace ava;
+
+#include "avalang.h"
 
 struct AvaModule {
     std::shared_ptr<Proto> proto;
 };
 
-namespace {
-
-char* DupString(const std::string& s) {
+static char* DupString(const std::string& s) {
     char* out = static_cast<char*>(std::malloc(s.size() + 1));
     std::memcpy(out, s.c_str(), s.size() + 1);
     return out;
 }
 
-} // namespace
+static int LayoutNameToId(const std::string& type) {
+    if (type == "Column") return 1;
+    if (type == "Row") return 2;
+    if (type == "Stack") return 3;
+    if (type == "Grid") return 4;
+    if (type == "Flex") return 5;
+    return 0;
+}
+
+static avalang::ui::PropertyValue ToPropertyValue(ava_value_t v) {
+    switch (v.type) {
+        case AVA_BOOL:   return avalang::ui::PropertyValue(v.as.b != 0);
+        case AVA_NUMBER: return avalang::ui::PropertyValue(v.as.n);
+        case AVA_STRING: {
+            Value sv = FromC(v);
+            if (sv.type == ValueType::String && sv.obj) {
+                return avalang::ui::PropertyValue(static_cast<StringObj*>(sv.obj)->data);
+            }
+            return avalang::ui::PropertyValue(std::string());
+        }
+        default: {
+            Value sv = FromC(v);
+            if (sv.type == ValueType::String && sv.obj) {
+                return avalang::ui::PropertyValue(static_cast<StringObj*>(sv.obj)->data);
+            }
+            return avalang::ui::PropertyValue(std::string());
+        }
+    }
+}
+
+static ava_value_t ToAvaValue(const avalang::ui::PropertyValue& pv) {
+    switch (pv.Type()) {
+        case avalang::ui::PropertyType::Bool:
+            return ava_value_t{AVA_BOOL, {.b = pv.AsBool() ? 1 : 0}};
+        case avalang::ui::PropertyType::Number:
+            return ava_value_t{AVA_NUMBER, {.n = pv.AsNumber()}};
+        case avalang::ui::PropertyType::String: {
+            const std::string& s = pv.AsString();
+            auto* so = new StringObj(s);
+            Value v; v.type = ValueType::String; v.obj = so;
+            return ToC(v);
+        }
+        default:
+            return ava_value_t{AVA_NIL, {0}};
+    }
+}
+
+static std::string StateMapToJson(const std::unordered_map<std::string, std::string>& state) {
+    std::ostringstream oss;
+    oss << "{";
+    bool first = true;
+    for (const auto& [k, v] : state) {
+        if (!first) oss << ", ";
+        oss << "\"" << k << "\": \"" << v << "\"";
+        first = false;
+    }
+    oss << "}";
+    return oss.str();
+}
+
+static std::string ImportsToJson(const std::vector<std::string>& imports) {
+    std::ostringstream oss;
+    oss << "[";
+    for (size_t i = 0; i < imports.size(); ++i) {
+        if (i > 0) oss << ", ";
+        oss << "\"" << imports[i] << "\"";
+    }
+    oss << "]";
+    return oss.str();
+}
+
+static std::string RoutesToJson(const std::vector<avalang::ui::parser::RouteDeclaration>& routes) {
+    std::ostringstream oss;
+    oss << "[";
+    for (size_t i = 0; i < routes.size(); ++i) {
+        if (i > 0) oss << ", ";
+        oss << "{\"template\": \"" << routes[i].route_template << "\", \"parameters\": [";
+        for (size_t j = 0; j < routes[i].parameters.size(); ++j) {
+            if (j > 0) oss << ", ";
+            oss << "{\"name\": \"" << routes[i].parameters[j].name << "\"";
+            oss << ", \"optional\": " << (routes[i].parameters[j].kind == avalang::ui::parser::RouteParameterKind::Optional ? "true" : "false");
+            if (!routes[i].parameters[j].constraint.empty()) {
+                oss << ", \"constraint\": \"" << routes[i].parameters[j].constraint << "\"";
+            }
+            oss << "}";
+        }
+        oss << "]}";
+    }
+    oss << "]";
+    return oss.str();
+}
+
+static void ComponentToJson(std::ostream& os, avalang::ui::IComponent* comp, int indent) {
+    if (!comp) return;
+    std::string pad(indent * 2, ' ');
+    os << pad << "{\n";
+    os << pad << "  \"type\": \"" << comp->TypeName() << "\"";
+    const auto* idProp = comp->GetProperty("id");
+    if (idProp && idProp->Type() == avalang::ui::PropertyType::String && !idProp->AsString().empty()) {
+        os << ",\n" << pad << "  \"id\": \"" << idProp->AsString() << "\"";
+    }
+    int layout = 0;
+    const auto* layoutProp = comp->GetProperty("__layout");
+    if (layoutProp && layoutProp->Type() == avalang::ui::PropertyType::Number) {
+        layout = static_cast<int>(layoutProp->AsNumber());
+    } else {
+        layout = LayoutNameToId(comp->TypeName());
+    }
+    os << ",\n" << pad << "  \"layout\": " << layout;
+    auto names = comp->PropertyNames();
+    bool has_props = false;
+    for (const auto& name : names) {
+        if (name == "id" || name == "__layout") continue;
+        has_props = true;
+        break;
+    }
+    if (has_props) {
+        os << ",\n" << pad << "  \"properties\": {";
+        bool first = true;
+        for (const auto& name : names) {
+            if (name == "id" || name == "__layout") continue;
+            const auto* pv = comp->GetProperty(name);
+            if (!pv) continue;
+            if (!first) os << ", ";
+            os << "\"" << name << "\": ";
+            switch (pv->Type()) {
+                case avalang::ui::PropertyType::String: {
+                    os << "\"";
+                    for (char c : pv->AsString()) {
+                        if (c == '"' || c == '\\') os << '\\';
+                        os << c;
+                    }
+                    os << "\"";
+                    break;
+                }
+                case avalang::ui::PropertyType::Number:
+                    os << pv->AsNumber();
+                    break;
+                case avalang::ui::PropertyType::Bool:
+                    os << (pv->AsBool() ? "true" : "false");
+                    break;
+                default:
+                    os << "null";
+                    break;
+            }
+            first = false;
+        }
+        os << "}";
+    }
+    auto children = comp->Children();
+    if (!children.empty()) {
+        os << ",\n" << pad << "  \"children\": [\n";
+        for (size_t i = 0; i < children.size(); ++i) {
+            ComponentToJson(os, children[i], indent + 2);
+            if (i < children.size() - 1) os << ",";
+            os << "\n";
+        }
+        os << pad << "  ]";
+    }
+    os << "\n" << pad << "}";
+}
 
 extern "C" {
 
@@ -35,9 +201,6 @@ AVA_API AvaVM* ava_vm_create() {
     VM* vm = new VM();
     RegisterBuiltinMethods(reinterpret_cast<AvaVM*>(vm));
     RegisterBuiltinGlobals(reinterpret_cast<AvaVM*>(vm));
-    // Fase 6 (08_DESIGNER_VIEW_PLAN.md): `ui.*` disponible en toda VM,
-    // no solo en la del Designer -- ver core/src/ui/builtins.h para el
-    // alcance (a proposito acotado) de lo que registra.
     ava::ui::RegisterUIBuiltins(reinterpret_cast<AvaVM*>(vm));
     return reinterpret_cast<AvaVM*>(vm);
 }
@@ -124,6 +287,59 @@ AVA_API AvaModule* ava_compile(AvaVM* vm, const char* source, const char* source
 
 AVA_API void ava_module_destroy(AvaModule* module) {
     delete module;
+}
+
+AVA_API uint8_t* ava_module_serialize(AvaModule* module, const AvaModuleSerializeOptions* options,
+                                       size_t* out_len, char** out_symbol_map) {
+    if (out_len) *out_len = 0;
+    if (out_symbol_map) *out_symbol_map = DupString("");
+    if (!module || !module->proto) return nullptr;
+
+    AvaModuleSerializeOptions opts{};
+    if (options) opts = *options;
+
+    if (opts.obfuscate) {
+        ObfuscateOptions oopts;
+        oopts.module_seed = opts.obfuscate_seed;
+        oopts.strip_debug_lines = true;
+        oopts.obfuscate_strings = opts.obfuscate_strings != 0;
+        oopts.flatten_control_flow = opts.flatten_control_flow != 0;
+        std::vector<SymbolMapEntry> symbol_map;
+        ObfuscateProto(*module->proto, oopts, out_symbol_map ? &symbol_map : nullptr);
+        if (out_symbol_map && !symbol_map.empty()) {
+            std::free(*out_symbol_map);
+            *out_symbol_map = DupString(FormatSymbolMap(symbol_map));
+        }
+    }
+
+    ProtoIoOptions pio;
+    pio.strip_debug_info = opts.strip_debug_info != 0;
+    std::vector<uint8_t> bytes = SerializeProto(*module->proto, pio);
+
+    uint8_t* buf = static_cast<uint8_t*>(std::malloc(bytes.size() > 0 ? bytes.size() : 1));
+    if (!buf) return nullptr;
+    if (!bytes.empty()) std::memcpy(buf, bytes.data(), bytes.size());
+    if (out_len) *out_len = bytes.size();
+    return buf;
+}
+
+AVA_API AvaModule* ava_module_deserialize(AvaVM* vm, const uint8_t* bytes, size_t len, char** out_error) {
+    (void)vm;
+    std::vector<uint8_t> buf(bytes, bytes + len);
+    std::string err;
+    auto proto = DeserializeProto(buf, &err);
+    if (!proto) {
+        if (out_error) *out_error = DupString(err);
+        return nullptr;
+    }
+    auto* module = new AvaModule();
+    module->proto = proto;
+    return module;
+}
+
+AVA_API void ava_module_deobfuscate_strings(AvaModule* module, uint64_t seed) {
+    if (!module || !module->proto) return;
+    DeobfuscateStrings(*module->proto, seed);
 }
 
 AVA_API void ava_run(AvaVM* vm, AvaModule* module, ava_value_t* out_result, char** out_error) {
@@ -355,17 +571,6 @@ AVA_API size_t ava_dict_entries(AvaVM*, ava_value_t dict, void** out_entries) {
     Value v = FromC(dict);
     auto* d = static_cast<DictObj*>(v.obj);
 
-    // d->entries is std::vector<std::pair<std::string, Value>> -- a
-    // completely different byte layout from the C-ABI ava_dict_pair_t
-    // {const char* key; size_t key_len; ava_value_t value;} that callers
-    // expect. Handing out d->entries.data() directly (as before) made
-    // callers read raw std::string/Value bytes as if they were a
-    // key pointer + key_len, which was undefined behavior -- most
-    // visibly a garbage key_len large enough that the caller's
-    // `std::string(key, key_len)` threw std::bad_alloc. Rebuild a real,
-    // correctly-laid-out array here instead. d->c_entries_cache lives as
-    // long as the dict, so the pointer stays valid for the caller's
-    // immediate, read-only use after this call.
     d->c_entries_cache.clear();
     d->c_entries_cache.reserve(d->entries.size());
     for (auto& [key, value] : d->entries) {
@@ -409,23 +614,22 @@ AVA_API int ava_last_error_column(AvaVM* vm) {
     return vm ? reinterpret_cast<VM*>(vm)->last_error_column : 0;
 }
 
-// Caller owns the returned string and must free it with ava_string_free,
-// same convention as out_error in ava_compile/ava_run/ava_call/ava_import.
-// Returns an empty (non-null) string when the file is unknown, e.g. the
-// error happened in the same file the embedder already has open.
 AVA_API char* ava_last_error_source(AvaVM* vm) {
     if (!vm) return DupString("");
     return DupString(reinterpret_cast<VM*>(vm)->last_error_source);
 }
 
 struct AvaComponent {
-    std::shared_ptr<ava::ui::Component> comp;
-    explicit AvaComponent(const std::string& type) : comp(std::make_shared<ava::ui::Component>(type)) {}
+    avalang::ui::IComponent* comp;
+    std::unique_ptr<avalang::ui::ComponentTree> owned_tree;
+
+    explicit AvaComponent(avalang::ui::IComponent* c, std::unique_ptr<avalang::ui::ComponentTree> t = nullptr)
+        : comp(c), owned_tree(std::move(t)) {}
 };
 
 struct AvaComponentTree {
-    std::shared_ptr<ava::ui::ComponentTree> tree;
-    AvaComponentTree() : tree(std::make_shared<ava::ui::ComponentTree>()) {}
+    std::unique_ptr<avalang::ui::ComponentTree> tree;
+    AvaComponentTree() : tree(avalang::ui::ComponentTree::Create()) {}
 };
 
 AVA_API AvaComponentTree* ava_ui_create_tree(void) {
@@ -437,7 +641,9 @@ AVA_API void ava_ui_destroy_tree(AvaComponentTree* tree) {
 }
 
 AVA_API AvaComponent* ava_ui_create_component(const char* type) {
-    return new AvaComponent(type);
+    auto tree = avalang::ui::ComponentTree::Create();
+    auto* comp = tree->CreateComponent(type ? type : "");
+    return new AvaComponent(comp, std::move(tree));
 }
 
 AVA_API void ava_ui_destroy_component(AvaComponent* component) {
@@ -445,36 +651,38 @@ AVA_API void ava_ui_destroy_component(AvaComponent* component) {
 }
 
 AVA_API void ava_ui_set_property(AvaComponent* comp, const char* key, ava_value_t value) {
-    if (!comp) return;
-    comp->comp->SetProperty(key, FromC(value));
+    if (!comp || !key) return;
+    comp->comp->SetProperty(key, ToPropertyValue(value));
 }
 
 AVA_API int ava_ui_has_property(AvaComponent* comp, const char* key) {
-    if (!comp) return 0;
+    if (!comp || !key) return 0;
     return comp->comp->HasProperty(key) ? 1 : 0;
 }
 
 AVA_API ava_value_t ava_ui_get_property(AvaComponent* comp, const char* key) {
-    if (!comp) return ava_value_t{AVA_NIL, {0}};
-    return ToC(comp->comp->GetProperty(key));
+    if (!comp || !key) return ava_value_t{AVA_NIL, {0}};
+    const auto* pv = comp->comp->GetProperty(key);
+    if (!pv) return ava_value_t{AVA_NIL, {0}};
+    return ToAvaValue(*pv);
 }
 
 AVA_API void ava_ui_remove_property(AvaComponent* comp, const char* key) {
-    if (!comp) return;
+    if (!comp || !key) return;
     comp->comp->RemoveProperty(key);
 }
 
 AVA_API size_t ava_ui_property_count(AvaComponent* comp) {
     if (!comp) return 0;
-    return comp->comp->GetAllProperties().size();
+    return comp->comp->PropertyNames().size();
 }
 
 AVA_API const char* ava_ui_property_key_at(AvaComponent* comp, size_t index) {
     if (!comp) return nullptr;
-    const auto& props = comp->comp->GetAllProperties();
-    if (index >= props.size()) return nullptr;
+    auto names = comp->comp->PropertyNames();
+    if (index >= names.size()) return nullptr;
     static thread_local std::string key_str;
-    key_str = props[index].first;
+    key_str = names[index];
     return key_str.c_str();
 }
 
@@ -485,72 +693,86 @@ AVA_API void ava_ui_add_child(AvaComponent* parent, AvaComponent* child) {
 
 AVA_API void ava_ui_remove_child(AvaComponent* parent, AvaComponent* child) {
     if (!parent || !child) return;
-    parent->comp->RemoveChild(child->comp.get());
+    parent->comp->RemoveChild(child->comp);
 }
 
 AVA_API size_t ava_ui_child_count(AvaComponent* parent) {
     if (!parent) return 0;
-    return parent->comp->GetChildren().size();
+    return parent->comp->Children().size();
 }
 
 AVA_API AvaComponent* ava_ui_get_child(AvaComponent* parent, size_t index) {
     if (!parent) return nullptr;
-    const auto& children = parent->comp->GetChildren();
+    auto children = parent->comp->Children();
     if (index >= children.size()) return nullptr;
-    auto* wrapper = new AvaComponent(children[index]->GetType());
-    wrapper->comp = children[index];
-    return wrapper;
+    return new AvaComponent(children[index]);
 }
 
 AVA_API void ava_ui_set_event(AvaComponent* comp, const char* event, ava_value_t callback) {
-    if (!comp) return;
-    comp->comp->SetEvent(event, FromC(callback));
+    if (!comp || !event) return;
+    comp->comp->SetProperty(event, ToPropertyValue(callback));
 }
 
 AVA_API int ava_ui_has_event(AvaComponent* comp, const char* event) {
-    if (!comp) return 0;
-    return comp->comp->HasEvent(event) ? 1 : 0;
+    if (!comp || !event) return 0;
+    if (!comp->comp->HasProperty(event)) return 0;
+    return avalang::ui::IsEventPropertyName(event) ? 1 : 0;
 }
 
 AVA_API ava_value_t ava_ui_get_event(AvaComponent* comp, const char* event) {
-    if (!comp) return ava_value_t{AVA_NIL, {0}};
-    return ToC(comp->comp->GetEvent(event));
+    if (!comp || !event) return ava_value_t{AVA_NIL, {0}};
+    const auto* pv = comp->comp->GetProperty(event);
+    if (!pv) return ava_value_t{AVA_NIL, {0}};
+    return ToAvaValue(*pv);
 }
 
 AVA_API size_t ava_ui_event_count(AvaComponent* comp) {
     if (!comp) return 0;
-    return comp->comp->GetAllEvents().size();
+    size_t count = 0;
+    for (const auto& name : comp->comp->PropertyNames()) {
+        if (avalang::ui::IsEventPropertyName(name)) ++count;
+    }
+    return count;
 }
 
 AVA_API const char* ava_ui_event_key_at(AvaComponent* comp, size_t index) {
     if (!comp) return nullptr;
-    const auto& events = comp->comp->GetAllEvents();
-    if (index >= events.size()) return nullptr;
+    std::vector<std::string> event_names;
+    for (const auto& name : comp->comp->PropertyNames()) {
+        if (avalang::ui::IsEventPropertyName(name)) {
+            event_names.push_back(name);
+        }
+    }
+    if (index >= event_names.size()) return nullptr;
     static thread_local std::string key_str;
-    key_str = events[index].first;
+    key_str = event_names[index];
     return key_str.c_str();
 }
 
 AVA_API void ava_ui_set_id(AvaComponent* comp, const char* id) {
     if (!comp) return;
-    comp->comp->SetId(id);
+    comp->comp->SetProperty("id", avalang::ui::PropertyValue(std::string(id ? id : "")));
 }
 
 AVA_API const char* ava_ui_get_id(AvaComponent* comp) {
     if (!comp) return nullptr;
+    const auto* pv = comp->comp->GetProperty("id");
+    if (!pv || pv->Type() != avalang::ui::PropertyType::String) return "";
     static thread_local std::string id_str;
-    id_str = comp->comp->GetId();
+    id_str = pv->AsString();
     return id_str.c_str();
 }
 
 AVA_API void ava_ui_set_layout(AvaComponent* comp, int layout) {
     if (!comp) return;
-    comp->comp->SetLayout(layout);
+    comp->comp->SetProperty("__layout", avalang::ui::PropertyValue(static_cast<double>(layout)));
 }
 
 AVA_API int ava_ui_get_layout(AvaComponent* comp) {
     if (!comp) return 0;
-    return comp->comp->GetLayout();
+    const auto* pv = comp->comp->GetProperty("__layout");
+    if (!pv || pv->Type() != avalang::ui::PropertyType::Number) return 0;
+    return static_cast<int>(pv->AsNumber());
 }
 
 AVA_API void ava_ui_set_root(AvaComponentTree* tree, AvaComponent* root) {
@@ -560,90 +782,25 @@ AVA_API void ava_ui_set_root(AvaComponentTree* tree, AvaComponent* root) {
 
 AVA_API AvaComponent* ava_ui_get_root(AvaComponentTree* tree) {
     if (!tree) return nullptr;
-    auto root = tree->tree->GetRoot();
+    auto* root = tree->tree->Root();
     if (!root) return nullptr;
-    auto* wrapper = new AvaComponent(root->GetType());
-    wrapper->comp = root;
-    return wrapper;
+    return new AvaComponent(root);
 }
 
 AVA_API const char* ava_ui_get_component_type(AvaComponent* comp) {
     if (!comp) return nullptr;
     static thread_local std::string type_str;
-    type_str = comp->comp->GetType();
+    type_str = comp->comp->TypeName();
     return type_str.c_str();
-}
-
-static void ComponentToJson(std::ostream& os, ava::ui::Component* comp, int indent) {
-    if (!comp) return;
-    std::string pad(indent * 2, ' ');
-    os << pad << "{\n";
-    os << pad << "  \"type\": \"" << comp->GetType() << "\"";
-    if (!comp->GetId().empty()) {
-        os << ",\n" << pad << "  \"id\": \"" << comp->GetId() << "\"";
-    }
-    os << ",\n" << pad << "  \"layout\": " << comp->GetLayout();
-    const auto& props = comp->GetAllProperties();
-    // Events (click/onchange/etc.) live in a separate map from regular
-    // properties on Component (see component.h: properties_ vs events_),
-    // but the C# side (NativeComponentParser.JsonToComponentNode) only
-    // knows about a single "properties" bag per node -- it has no
-    // "events" key to read. Emit both into the same JSON object so an
-    // event handler set via SetEvent() actually reaches the host instead
-    // of silently disappearing at the JSON boundary.
-    if (!props.empty() || !comp->GetAllEvents().empty()) {
-        os << ",\n" << pad << "  \"properties\": {";
-        bool first = true;
-        auto writeEntry = [&](const std::string& k, const Value& v) {
-            if (!first) os << ", ";
-            os << "\"" << k << "\": ";
-            if (v.type == ava::ValueType::String) {
-                os << "\"";
-                if (v.obj) {
-                    const std::string& s = static_cast<ava::StringObj*>(v.obj)->data;
-                    for (char c : s) {
-                        if (c == '"' || c == '\\') os << '\\';
-                        os << c;
-                    }
-                }
-                os << "\"";
-            } else if (v.type == ava::ValueType::Number) {
-                os << v.n;
-            } else if (v.type == ava::ValueType::Bool) {
-                os << (v.b ? "true" : "false");
-            } else {
-                os << "null";
-            }
-            first = false;
-        };
-        for (const auto& [k, v] : props) {
-            writeEntry(k, v);
-        }
-        for (const auto& [k, v] : comp->GetAllEvents()) {
-            writeEntry(k, v);
-        }
-        os << "}";
-    }
-    const auto& children = comp->GetChildren();
-    if (!children.empty()) {
-        os << ",\n" << pad << "  \"children\": [\n";
-        for (size_t i = 0; i < children.size(); ++i) {
-            ComponentToJson(os, children[i].get(), indent + 2);
-            if (i < children.size() - 1) os << ",";
-            os << "\n";
-        }
-        os << pad << "  ]";
-    }
-    os << "\n" << pad << "}";
 }
 
 AVA_API const char* ava_ui_tree_to_json(AvaComponentTree* tree) {
     if (!tree) return "";
     static thread_local std::ostringstream oss;
     oss.str(""); oss.clear();
-    auto root = tree->tree->GetRoot();
+    auto* root = tree->tree->Root();
     if (root) {
-        ComponentToJson(oss, root.get(), 0);
+        ComponentToJson(oss, root, 0);
     }
     static thread_local std::string result;
     result = oss.str();
@@ -663,19 +820,27 @@ AVA_API AvaComponentTree* ava_ui_parse_avaui_text(
     char** out_extends,
     char** out_routes_json
 ) {
-    ava::ui::ParsedAvaui parsed = ava::ui::ParseAvauiText(text ? text : "");
+    auto* result = new AvaComponentTree();
 
-    auto* tree = new AvaComponentTree();
-    tree->tree->SetRoot(parsed.root);
+    try {
+        auto parsed = avalang::ui::parser::AvauiParser::Parse(text ? text : "");
+        result->tree = std::move(parsed.tree);
 
-    if (out_state_json) *out_state_json = DupString(ava::ui::StateToJson(parsed.state));
-    if (out_imports_json) *out_imports_json = DupString(ava::ui::ImportsToJson(parsed.imports));
-    if (out_methods_text) *out_methods_text = DupString(parsed.methods_text);
-    if (out_error) *out_error = DupString(""); // forgiving parser -- see avaui_text.h
-    if (out_extends) *out_extends = DupString(parsed.extends);
-    if (out_routes_json) *out_routes_json = DupString(ava::ui::RoutesToJson(parsed.routes));
+        if (out_state_json) *out_state_json = DupString(StateMapToJson(parsed.state));
+        if (out_imports_json) *out_imports_json = DupString(ImportsToJson(parsed.imports));
+        if (out_methods_text) *out_methods_text = DupString(parsed.code);
+        if (out_error) *out_error = DupString("");
+        if (out_extends) *out_extends = DupString(parsed.extends);
+        if (out_routes_json) *out_routes_json = DupString(RoutesToJson(parsed.routes));
 
-    return tree;
+        return result;
+    } catch (const std::exception& e) {
+        if (out_error) *out_error = DupString(e.what());
+        return result;
+    } catch (...) {
+        if (out_error) *out_error = DupString("unknown parse error");
+        return result;
+    }
 }
 
 AVA_API char* ava_ui_write_avaui_text(
@@ -687,20 +852,64 @@ AVA_API char* ava_ui_write_avaui_text(
     const char* routes_json
 ) {
     if (!tree) return DupString("");
-    auto root = tree->tree->GetRoot();
+    auto* root = tree->tree->Root();
     if (!root) return DupString("");
 
-    auto state = ava::ui::StateFromJson(state_json ? state_json : "{}");
-    auto imports = ava::ui::ImportsFromJson(imports_json ? imports_json : "[]");
-    std::string methods = methods_text ? methods_text : "";
-    std::string extends_str = extends ? extends : "";
-    auto routes = ava::ui::RoutesFromJson(routes_json ? routes_json : "[]");
+    avalang::ui::parser::AvauiWriteOptions opts;
+    opts.code_behind = methods_text ? methods_text : "";
+    opts.extends = extends ? extends : "";
 
-    return DupString(ava::ui::WriteAvauiText(*root, state, imports, methods, extends_str, routes));
+    if (state_json && *state_json) {
+        std::istringstream ss(state_json);
+        std::string line;
+        while (std::getline(ss, line)) {
+            auto eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            std::string key = line.substr(0, eq);
+            std::string val = line.substr(eq + 1);
+            if (!key.empty() && !val.empty()) {
+                opts.initial_state.push_back({key, val});
+            }
+        }
+    }
+
+    if (imports_json && *imports_json) {
+        std::istringstream ss(imports_json);
+        std::string line;
+        while (std::getline(ss, line)) {
+            std::string trimmed = line;
+            trimmed.erase(0, trimmed.find_first_not_of(" \t[]\""));
+            trimmed.erase(trimmed.find_last_not_of(" \t\"]") + 1);
+            if (!trimmed.empty()) {
+                opts.imports.push_back(trimmed);
+            }
+        }
+    }
+
+    if (routes_json && *routes_json) {
+        std::istringstream ss(routes_json);
+        std::string line;
+        while (std::getline(ss, line)) {
+            auto tplStart = line.find("\"template\"");
+            if (tplStart == std::string::npos) continue;
+            auto colon = line.find(":", tplStart);
+            if (colon == std::string::npos) continue;
+            auto q1 = line.find("\"", colon);
+            if (q1 == std::string::npos) continue;
+            auto q2 = line.find("\"", q1 + 1);
+            if (q2 == std::string::npos) continue;
+            std::string tpl = line.substr(q1 + 1, q2 - q1 - 1);
+            if (!tpl.empty()) {
+                opts.routes.push_back({tpl});
+            }
+        }
+    }
+
+    return DupString(avalang::ui::parser::WriteAvaui(root, opts));
 }
 
 AVA_API void ava_ui_text_free(char* text) {
     std::free(text);
 }
 
-} // extern "C"
+}

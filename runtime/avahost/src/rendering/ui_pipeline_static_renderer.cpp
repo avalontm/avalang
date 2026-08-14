@@ -8,6 +8,8 @@
 #include "theme/ITheme.h"
 #include "theme/RenderTheme.h"
 #include "theme/ProjectFontOverrides.h"
+#include "theme/ProjectStyleOverrides.h"
+#include "theme/ProjectAnimationOverrides.h"
 #include "layout/LayoutEngine.h"
 #include "render_tree/IRenderTree.h"
 #include "scene/ISceneGraph.h"
@@ -59,7 +61,27 @@ bool RenderAvauiStatic(const std::string& avauiSource, const UiPipelineRenderOpt
         avalang::ui::theme::ProjectTheme projectTheme(
             themeProvider->Current(),
             avalang::ui::theme::LoadProjectFontOverrides(options.projectRoot));
-        avalang::ui::RenderTheme::Apply(parsed.tree.get(), &projectTheme);
+        // Register every app.ava font up front -- see the doc comment
+        // on ProjectTheme::RegisterProjectFonts for why this can't be
+        // left to RenderTheme::Apply's lazy per-component path alone.
+        projectTheme.RegisterProjectFonts();
+        // Project-configured per-control-type styles (`style *` /
+        // `style <type>` blocks in whichever file(s) app.ava's
+        // `style "..."` lines declare, see
+        // theme/ProjectStyleOverrides.h). Same harmless-passthrough
+        // stance as ProjectFontOverrides above: a no-op when app.ava
+        // declares no style files.
+        avalang::ui::theme::ProjectStyleSheet projectStyles =
+            avalang::ui::theme::LoadProjectStyleOverrides(options.projectRoot);
+        avalang::ui::RenderTheme::Apply(parsed.tree.get(), &projectTheme, &projectStyles);
+
+        // Project-configured dialog open/close animation overrides
+        // (`animation "..."` lines in app.ava, see
+        // theme/ProjectAnimationOverrides.h). Same harmless-passthrough
+        // stance as ProjectStyleSheet above: a no-op (built-in 160ms
+        // fade) when app.ava declares no animation files.
+        avalang::ui::theme::ProjectAnimationSheet projectAnimations =
+            avalang::ui::theme::LoadProjectAnimationOverrides(options.projectRoot);
 
         // Layout (Fase 3)
         auto layoutEngine = avalang::ui::LayoutEngine::Create();
@@ -105,6 +127,17 @@ bool RenderAvauiStatic(const std::string& avauiSource, const UiPipelineRenderOpt
             htmlRenderer->SetTitle(options.title);
             htmlRenderer->SetExtraHead(options.extraHead);
             htmlRenderer->SetExtraBodyEnd(options.extraBodyEnd);
+            // Lets the <style> block emit :hover/:focus/:active/
+            // :disabled rules for whatever `style <type>:<state>`
+            // blocks app.ava's declared style file(s) set -- see
+            // theme/ProjectStyleOverrides.h and
+            // HTMLRenderer::EmitProjectStateCSS.
+            htmlRenderer->SetProjectStyles(&projectStyles);
+            // Lets EmitHTMLHeader's dialog fade-in/out keyframes use
+            // whatever `animation dialog:open`/`animation
+            // dialog:close` blocks app.ava's declared animation
+            // file(s) set -- see theme/ProjectAnimationOverrides.h.
+            htmlRenderer->SetProjectAnimations(&projectAnimations);
         }
         avalang::ui::RenderCommandSink sink;
         avalang::ui::SceneCommandWalker::Walk(*sceneGraph, sink, *renderer);

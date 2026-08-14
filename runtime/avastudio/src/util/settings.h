@@ -42,6 +42,30 @@ struct StudioSettings {
     // working). main.cpp is what actually reads/writes this map at
     // runtime (see `panel_open` there); this is only the persisted form.
     std::vector<std::string> closed_panels;
+
+    // --- "Build" panel (see panels/build_panel.h) --------------------
+    // Packages the current project into a distributable .exe by
+    // shelling out to `ava_cli build` (runtime/avacli), which drives
+    // runtime/avapack. Persisted so re-opening Ava Studio doesn't need
+    // every field re-entered -- most only need to be set once per
+    // machine/checkout. Empty string means "not set yet / auto-detect",
+    // documented per-field in build_panel.cpp.
+
+    std::string build_project_dir;   // --project. "" = use the Explorer panel's open folder.
+    std::string build_entry_file;    // --entry, relative to build_project_dir. "" = auto-detect main.ava.
+    std::string build_out_dir;       // --out (directory mode). "" = <project>/dist.
+    std::string build_repo_root;     // --repo-root, the AvaLang repo checkout. "" = auto-detect.
+    std::string build_ava_cli_path;  // Path to ava_cli(.exe). "" = auto-detect next to ava_studio.exe.
+    std::string build_key_file;      // --key-file (optional, 32 raw AES-256 bytes). "" = random key per build.
+    std::string build_vcpkg_root;    // VCPKG_ROOT env var for ava_cli's cmake configure step (see
+                                      // install.bat). "" = use the VCPKG_ROOT already in the
+                                      // environment, else auto-detect <repo_root>/vcpkg.
+
+    bool build_obfuscate = false;             // --obfuscate
+    bool build_obfuscate_strings = false;     // --obfuscate-strings (requires build_obfuscate)
+    bool build_flatten_control_flow = false;  // --flatten-control-flow (requires build_obfuscate)
+    bool build_zero_disk = false;             // --zero-disk
+    bool build_debug_unencrypted = false;     // --debug (NOT for distribution, see avapack/README.md)
 };
 
 // Loads persisted settings from the per-user config folder (same place

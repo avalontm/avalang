@@ -28,11 +28,11 @@ std::string GenerateNodeUid();
 
 DesignDocument NewBlankAvauiDocument();
 
-// Parses .avaui source text (via avaui's own AvauiParser -- the single
-// parser, Fase 4) into a fresh DesignDocument. Shared by LoadAvauiFile
-// (reads `text` from disk) and editor_panel.cpp's Code -> Design toggle
-// (parses the in-editor buffer directly, so unsaved hand-edits made in
-// Code view aren't lost/discarded on the way back to Design view).
+
+
+
+
+
 bool ParseAvauiText(const std::string& text, DesignDocument& out_doc, std::string& out_error);
 
 bool LoadAvauiFile(const std::string& path, DesignDocument& out_doc, std::string& out_error);
@@ -57,4 +57,4 @@ std::string AddComponentNode(DesignDocument& doc, const std::string& parentId, c
 bool EditComponentNode(DesignDocument& doc, const std::string& nodeId, const std::vector<PropertyRow>& properties,
                         const std::string* newId);
 
-} // namespace studio::design
+}

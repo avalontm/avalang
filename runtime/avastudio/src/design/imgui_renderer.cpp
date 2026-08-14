@@ -111,7 +111,8 @@ void ImGuiRenderer::OnDrawEllipse(float cx, float cy, float rx, float ry,
 void ImGuiRenderer::OnDrawText(float x, float y, const char* text, float fontSize,
                                const char* fontName, const Color& color,
                                const std::string& clickHandler,
-                               const std::string& className) {
+                               const std::string& className,
+                               float maxWidth) {
     (void)clickHandler;
     (void)className;
     // `fontName` is ignored for now -- ImGui has no trivial "load a
@@ -123,7 +124,9 @@ void ImGuiRenderer::OnDrawText(float x, float y, const char* text, float fontSiz
     (void)fontName;
     if (!drawList_ || !text) return;
 
-    drawList_->AddText(ImGui::GetFont(), fontSize, P(x, y), ToImU32(color), text);
+    const float wrapWidth = (maxWidth > 0.0f) ? maxWidth : 0.0f;
+    drawList_->AddText(ImGui::GetFont(), fontSize, P(x, y), ToImU32(color), text,
+                        nullptr, wrapWidth);
 }
 
 void ImGuiRenderer::OnDrawImage(float x, float y, float width, float height,
@@ -194,7 +197,7 @@ void ImGuiRenderer::OnDrawButton(float x, float y, float width, float height,
     if (offsetY < 0.0f) offsetY = 0.0f;
 
     OnDrawText(x + offsetX, y + offsetY, text, fontSize, fontName, textColor, std::string(),
-               std::string());
+               std::string(), -1.0f);
 }
 
 } // namespace avalang::ui

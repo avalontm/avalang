@@ -84,6 +84,22 @@ bool IsSlot(const IComponent* component) {
     return component->TypeName() == "Slot";
 }
 
+// Opt-in multi-line wrapping for Text/Label (see TextMeasure.h's
+// WrapTextLines). Off by default -- every existing Text/Label in a
+// project keeps today's single-line, intrinsic-width-hugs-the-text
+// behavior unless the author explicitly asks to wrap. Wrapping only
+// actually takes effect when the component ALSO has an explicit
+// `width` (see the Text/Label branch below): ComputeIntrinsicSize
+// runs bottom-up, before any top-down slot/available-width is known,
+// so a wrap target has to come from something already known at this
+// point -- an author-given width is that anchor, the same anchor
+// `width` already is for every other explicit-size override in this
+// function.
+bool ReadWrapFlag(const IComponent* component) {
+    const PropertyValue* value = component->GetProperty("wrap");
+    return value && value->Type() == PropertyType::Bool && value->AsBool();
+}
+
 // True if `component` should claim a share of its Row/Column parent's
 // leftover main-axis space: either an explicit `grow = true`, or a
 // Slot that hasn't explicitly opted out (see IsSlot above). Checked
@@ -177,6 +193,28 @@ IntrinsicSize LayoutEngineImpl::ComputeIntrinsicSize(IComponent* component) {
         } else {
             size.width = textWidth;
             size.height = textHeight;
+
+            // Wrap (Text/Label only, not Button/Link -- see
+            // ReadWrapFlag): needs an explicit `width` to wrap against,
+            // read directly here rather than waiting for the generic
+            // explicit-width override below, since that override runs
+            // after this branch and this is the one place that also
+            // needs to know the *wrapped* height, not just the width.
+            // A component with `wrap = true` but no explicit width
+            // falls through unchanged (single line, hugs textWidth) --
+            // there's nothing to wrap against yet at this bottom-up
+            // pass (see ReadWrapFlag's comment).
+            double explicitWidthForWrap = 0.0;
+            if (ReadWrapFlag(component) &&
+                TryReadNumber(component, "width", &explicitWidthForWrap) &&
+                explicitWidthForWrap > 0.0 &&
+                textWidth > explicitWidthForWrap) {
+                std::vector<std::string> lines =
+                    WrapTextLines(text, fontSize, fontName, explicitWidthForWrap);
+                double lineHeight = WrappedLineHeight(fontSize, fontName);
+                size.width = explicitWidthForWrap;
+                size.height = lineHeight * static_cast<double>(lines.size());
+            }
         }
     } else if (typeName == "TextBox" || typeName == "ComboBox") {
         // Neither has label text to measure the way Button/Text do
@@ -371,24 +409,42 @@ LayoutRect LayoutEngineImpl::PlaceComponent(IComponent* component, LayoutNode* n
     auto intrinsicIt = intrinsic_.find(component->Id());
     const IntrinsicSize intrinsicSize = intrinsicIt != intrinsic_.end() ? intrinsicIt->second : IntrinsicSize{};
 
+    // A Dialog is exempted from the normal "clamp to available space"
+    // rule below. It's centered against rootViewport_ (LayoutNodeRecursive)
+    // purely so it can float freely over the whole page -- that slot was
+    // never meant to also cap its SIZE. Row/Column/Stack arrangement
+    // (ArrangeRowOrColumn/ArrangeStack) never shrinks a child to fit
+    // whatever box its parent ended up with -- every child keeps its own
+    // intrinsic/explicit size and is simply stacked -- so clamping the
+    // Dialog's own height to marginedBox.height while its inner column
+    // (title + message + button row) kept its full natural height meant
+    // the last child (typically the button row) got positioned past the
+    // bottom edge of the now-too-short card, visibly spilling outside the
+    // dialog's own painted background. Always sizing a Dialog to its real
+    // intrinsic content instead keeps the card and its content consistent;
+    // on a viewport too short for it, the worst case is the centered card
+    // extending past the top/bottom edge (clipped by #ava-viewport's own
+    // overflow:hidden) rather than its buttons detaching from the card.
+    const bool isDialog = IsDialog(component);
+
     double explicitWidth;
     double width;
     if (TryReadNumber(component, "width", &explicitWidth)) {
-        width = std::min(explicitWidth, marginedBox.width);
+        width = isDialog ? explicitWidth : std::min(explicitWidth, marginedBox.width);
     } else if (hAlign == LayoutAlignment::Stretch) {
         width = marginedBox.width;
     } else {
-        width = std::min(intrinsicSize.width, marginedBox.width);
+        width = isDialog ? intrinsicSize.width : std::min(intrinsicSize.width, marginedBox.width);
     }
 
     double explicitHeight;
     double height;
     if (TryReadNumber(component, "height", &explicitHeight)) {
-        height = std::min(explicitHeight, marginedBox.height);
+        height = isDialog ? explicitHeight : std::min(explicitHeight, marginedBox.height);
     } else if (vAlign == LayoutAlignment::Stretch) {
         height = marginedBox.height;
     } else {
-        height = std::min(intrinsicSize.height, marginedBox.height);
+        height = isDialog ? intrinsicSize.height : std::min(intrinsicSize.height, marginedBox.height);
     }
 
     LayoutRect ownRect;
@@ -431,9 +487,9 @@ void LayoutEngineImpl::LayoutNodeRecursive(IComponent* component, LayoutNode* no
 
     const std::string& typeName = component->TypeName();
     if (typeName == "Row") {
-        ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/true);
+        ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/true, /*allowOverflow=*/false);
     } else if (typeName == "Column") {
-        ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/false);
+        ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/false, /*allowOverflow=*/false);
     } else if (typeName == "ScrollView") {
         // Structurally identical to Row/Column -- a ScrollView is just a
         // Row/Column whose content is allowed to be taller/wider than the
@@ -444,9 +500,9 @@ void LayoutEngineImpl::LayoutNodeRecursive(IComponent* component, LayoutNode* no
         // with Rects that extend past `contentBox` on the scroll axis --
         // exactly the overflow SceneCommandWalker turns into a real
         // scrollable region on web (see its "ScrollView" case).
-        ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/IsHorizontalDirection(component));
+        ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/IsHorizontalDirection(component), /*allowOverflow=*/true);
     } else if (typeName == "Flex") {
-        ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/IsHorizontalDirection(component));
+        ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/IsHorizontalDirection(component), /*allowOverflow=*/true);
     } else if (typeName == "Grid") {
         ArrangeGrid(component, node, contentBox);
     } else {
@@ -462,7 +518,7 @@ void LayoutEngineImpl::LayoutNodeRecursive(IComponent* component, LayoutNode* no
 }
 
 void LayoutEngineImpl::ArrangeRowOrColumn(IComponent* component, LayoutNode* node, const LayoutRect& contentBox,
-                                           bool isRow) {
+                                           bool isRow, bool allowOverflow) {
     std::vector<IComponent*> children = component->Children();
     if (children.empty()) {
         return;
@@ -561,14 +617,43 @@ void LayoutEngineImpl::ArrangeRowOrColumn(IComponent* component, LayoutNode* nod
     double remaining = std::max(0.0, sizingPool - fixedTotal);
     double autoShare = autoCount > 0 ? remaining / autoCount : 0.0;
 
+    // When `allowOverflow == false` (plain Row/Column, not ScrollView/
+    // Flex) and the fixed/intrinsic children together exceed the
+    // available main-axis space, scale every fixed child's main-axis
+    // size down proportionally so they collectively fit. This is the
+    // fix for the over-sized dialog button row spilling past the dialog
+    // card's right edge: a Row of two buttons with no explicit `width`
+    // hugs its intrinsic content (~363px of button text + padding + a
+    // 12px gap), which is wider than the 320px slot the dialog's inner
+    // Column handed it, and without this proportional shrink the row
+    // simply overflowed to the right (Aceptar's right edge 35px past
+    // the dialog card). ScrollView/Flex pass `allowOverflow == true`
+    // because their whole purpose is to let content exceed the box and
+    // scroll/shrink-wrap past it -- shrinking there would clip the
+    // scrollable content to the viewport and break scrolling. Only
+    // fixed children are scaled (childMainSize[i] >= 0.0): grow
+    // children already took `autoShare`, which is 0 when there's no
+    // remaining space (so they collapse to zero width rather than
+    // contribute to the overflow), and Dialogs are exempt (positioned/
+    // centered against rootViewport_, must keep their full size).
+    // Per-child clamping (the earlier attempt) was wrong: clamping each
+    // child to the FULL mainAvailable left every child claiming the
+    // entire pool, so two buttons each took 308px and still overflowed.
+    // Scaling proportionally divides the pool among all fixed children
+    // so their sum fits.
+    double fixedScale = 1.0;
+    if (!allowOverflow && fixedTotal > sizingPool && fixedTotal > 0.0) {
+        fixedScale = sizingPool / fixedTotal;
+    }
+
     // Pass 2: place each child in turn along the main axis. Cross-axis
     // alignment is the child's own "align" property; the main axis is
-    // always Stretch, since the slot we hand each child is already
-    // sized to exactly its allotment (fixed/intrinsic size or
-    // autoShare).
+    // always Stretch, since the slot we hand each child is already sized
+    // to exactly its allotment (fixed/intrinsic size scaled by
+    // fixedScale, or autoShare).
     double cursor = isRow ? contentBox.x : contentBox.y;
     for (size_t i = 0; i < children.size(); ++i) {
-        double mainContentSize = childMainSize[i] >= 0.0 ? childMainSize[i] : autoShare;
+        double mainContentSize = childMainSize[i] >= 0.0 ? childMainSize[i] * fixedScale : autoShare;
         double slotMainLength = mainContentSize + childMarginMain[i];
 
         LayoutRect childSlot;

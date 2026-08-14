@@ -142,11 +142,16 @@ public:
     // verbatim) against this VM so every top-level `func Name(...) ...
     // end` becomes a callable global -- same model as Studio's
     // BindCodeBehind. Call after BindState, before InvokeHandler, so a
-    // handler body sees this request's state. Best-effort: a
-    // compile/run error here is swallowed silently (nothing sensible to
-    // surface for a `code` block failing mid-request; the page still
-    // renders with whatever state BindState set).
-    void BindCodeBehind(const std::string& methodsText);
+    // handler body sees this request's state. Returns false and fills
+    // `outError` (optional) if the block fails to compile or throws
+    // while running -- previously this was swallowed silently, which
+    // meant every function the block declares (e.g. an event handler
+    // like `OnAddToCart`) silently never became callable, and the only
+    // symptom was a later, unrelated-looking "attempt to call a
+    // non-callable value" from InvokeHandler. Callers that don't care
+    // may omit outError; the page still renders with whatever state
+    // BindState set even on failure.
+    bool BindCodeBehind(const std::string& methodsText, std::string* outError = nullptr);
 
     // Calls `handlerName()` (zero-arg) against this VM -- e.g. the
     // "OnGuardarClick" a button's `data-handler` attribute names (see
@@ -215,6 +220,40 @@ public:
 private:
     AvaVM* vm_ = nullptr;
     std::string consoleCaptureBuffer_;
+
+    // --- Namespaced ("dialog.confirmDialogOpen") state keys ------------
+    // A state key coming out of ComponentResolver::MergeStateMap is
+    // either a plain global name ("counter") or, for a component
+    // imported with `as alias` (ComponentResolver.cpp's
+    // BuildRenameMap/SplitImportAlias), "alias.name". BindState and
+    // ExportStateJson both special-case the latter: instead of one flat
+    // VM global per key (which "alias.name" can't be -- it's not a
+    // valid AvaLang identifier), the whole "alias" namespace lives in a
+    // single real Dict global named "alias", with "name" as one of its
+    // entries. A page's own `code` block then reads/writes it with
+    // ordinary AvaLang attribute syntax (`dialog.confirmDialogOpen =
+    // true`), which the VM already resolves generically for Dict values
+    // (OpGetAttr/OpSetAttr in vm_classes.cpp) -- no VM/compiler changes
+    // needed for this feature, only how these two methods reach into
+    // globals.
+
+    // Splits "dialog.confirmDialogOpen" into ("dialog", "confirmDialogOpen").
+    // Returns false for a plain, unprefixed key ("counter") -- the far
+    // more common case -- in which BindState/ExportStateJson fall back
+    // to their original flat-global behavior untouched.
+    static bool SplitNamespacedKey(const std::string& key, std::string& outNamespace, std::string& outField);
+
+    // Fetches the Dict global already bound under `ns`, or creates and
+    // binds a fresh empty one if there isn't one yet. Reusing an
+    // existing dict (rather than always creating a new one) matters
+    // because ui_vm_state_bridge.cpp's VmBackedState::Set calls
+    // BindState with just ONE key at a time -- always recreating "ns"
+    // would silently drop every sibling field a previous call already
+    // set. Mirrors the create-populate-set-then-release pattern
+    // ui_vm_event_bridge.cpp's BindComponentRefsNative already uses for
+    // per-component dicts (ava_set_global retains what it's given, so
+    // the local reference this returns is released before returning).
+    ava_value_t GetOrCreateDictGlobal(const std::string& ns);
 };
 
 } // namespace avahost

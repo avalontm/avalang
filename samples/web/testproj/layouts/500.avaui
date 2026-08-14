@@ -9,7 +9,7 @@ view
         gap = 12
 
         text
-            text = "404"
+            text = "500"
             fontSize = 48
         end
 

@@ -1,0 +1,511 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+  </PropertyGroup>
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="MinSizeRel|x64">
+      <Configuration>MinSizeRel</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="RelWithDebInfo|x64">
+      <Configuration>RelWithDebInfo</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{E7237C77-8CFF-3FF7-8ECF-9FCDAA0D532F}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <VcpkgEnabled>false</VcpkgEnabled>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <Platform>x64</Platform>
+    <ProjectName>avalang_ui</ProjectName>
+    <VCProjectUpgraderObjectName>NoUpgrade</VCProjectUpgraderObjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <CharacterSet>Unicode</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <CharacterSet>Unicode</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <CharacterSet>Unicode</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <CharacterSet>Unicode</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="do_not_import_user.props" Condition="exists('do_not_import_user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <_ProjectFileVersion>10.0.20506.1</_ProjectFileVersion>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">D:\_CODE_\avalang\build_pack\runtime\avalang\Debug\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">avalang_ui.dir\Debug\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">avalang_ui</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">.dll</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</GenerateManifest>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">D:\_CODE_\avalang\build_pack\runtime\avalang\Release\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">avalang_ui.dir\Release\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">avalang_ui</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='Release|x64'">.dll</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</GenerateManifest>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">D:\_CODE_\avalang\build_pack\runtime\avalang\MinSizeRel\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">avalang_ui.dir\MinSizeRel\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">avalang_ui</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">.dll</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">false</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">true</GenerateManifest>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">D:\_CODE_\avalang\build_pack\runtime\avalang\RelWithDebInfo\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">avalang_ui.dir\RelWithDebInfo\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">avalang_ui</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">.dll</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">true</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">true</GenerateManifest>
+  </PropertyGroup>
+  <PropertyGroup />
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>D:\_CODE_\avalang\runtime\avaui\src;D:\_CODE_\avalang;D:\_CODE_\avalang\runtime\avaui\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "D:/_CODE_/Avalon/vcpkg/installed/x64-windows-static-md/include"</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+      <BufferSecurityCheck></BufferSecurityCheck>
+      <CallingConvention></CallingConvention>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <FloatingPointModel></FloatingPointModel>
+      <ForceConformanceInForLoopScope></ForceConformanceInForLoopScope>
+      <InlineFunctionExpansion>Disabled</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>Disabled</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RemoveUnreferencedCodeData></RemoveUnreferencedCodeData>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <SupportJustMyCode></SupportJustMyCode>
+      <TreatWChar_tAsBuiltInType></TreatWChar_tAsBuiltInType>
+      <UseFullPaths>false</UseFullPaths>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;AVA_UI_BUILD_SHARED;AVA_UI_BUILDING_LIBRARY;UNICODE;_UNICODE;CMAKE_INTDIR="Debug";avalang_ui_EXPORTS</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;AVA_UI_BUILD_SHARED;AVA_UI_BUILDING_LIBRARY;UNICODE;_UNICODE;CMAKE_INTDIR=\"Debug\";avalang_ui_EXPORTS</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>D:\_CODE_\avalang\runtime\avaui\src;D:\_CODE_\avalang;D:\_CODE_\avalang\runtime\avaui\third_party\stb;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>D:\_CODE_\avalang\runtime\avaui\src;D:\_CODE_\avalang;D:\_CODE_\avalang\runtime\avaui\third_party\stb;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <PostBuildEvent>
+      <Message></Message>
+      <Command>setlocal
+D:\_CODE_\Avalon\vcpkg\vcpkg.exe z-applocal --target-binary=D:/_CODE_/avalang/build_pack/runtime/avalang/Debug/avalang_ui.dll --installed-bin-dir=D:/_CODE_/Avalon/vcpkg/installed/x64-windows-static-md/debug/bin
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+    </PostBuildEvent>
+    <Link>
+      <AdditionalDependencies>D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\debug\lib\glm.lib;gdi32.lib;user32.lib;shcore.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <DataExecutionPrevention></DataExecutionPrevention>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImageHasSafeExceptionHandlers></ImageHasSafeExceptionHandlers>
+      <ImportLibrary>D:/_CODE_/avalang/build_pack/runtime/avalang/Debug/avalang_ui.lib</ImportLibrary>
+      <LinkErrorReporting></LinkErrorReporting>
+      <ProgramDataBaseFile>D:/_CODE_/avalang/build_pack/runtime/avalang/Debug/avalang_ui.pdb</ProgramDataBaseFile>
+      <RandomizedBaseAddress></RandomizedBaseAddress>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>D:\_CODE_\avalang\runtime\avaui\src;D:\_CODE_\avalang;D:\_CODE_\avalang\runtime\avaui\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "D:/_CODE_/Avalon/vcpkg/installed/x64-windows-static-md/include"</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <BufferSecurityCheck></BufferSecurityCheck>
+      <CallingConvention></CallingConvention>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <FloatingPointModel></FloatingPointModel>
+      <ForceConformanceInForLoopScope></ForceConformanceInForLoopScope>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MaxSpeed</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RemoveUnreferencedCodeData></RemoveUnreferencedCodeData>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <SupportJustMyCode></SupportJustMyCode>
+      <TreatWChar_tAsBuiltInType></TreatWChar_tAsBuiltInType>
+      <UseFullPaths>false</UseFullPaths>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;AVA_UI_BUILD_SHARED;AVA_UI_BUILDING_LIBRARY;UNICODE;_UNICODE;CMAKE_INTDIR="Release";avalang_ui_EXPORTS</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;AVA_UI_BUILD_SHARED;AVA_UI_BUILDING_LIBRARY;UNICODE;_UNICODE;CMAKE_INTDIR=\"Release\";avalang_ui_EXPORTS</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>D:\_CODE_\avalang\runtime\avaui\src;D:\_CODE_\avalang;D:\_CODE_\avalang\runtime\avaui\third_party\stb;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>D:\_CODE_\avalang\runtime\avaui\src;D:\_CODE_\avalang;D:\_CODE_\avalang\runtime\avaui\third_party\stb;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <PostBuildEvent>
+      <Message></Message>
+      <Command>setlocal
+D:\_CODE_\Avalon\vcpkg\vcpkg.exe z-applocal --target-binary=D:/_CODE_/avalang/build_pack/runtime/avalang/Release/avalang_ui.dll --installed-bin-dir=D:/_CODE_/Avalon/vcpkg/installed/x64-windows-static-md/bin
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+    </PostBuildEvent>
+    <Link>
+      <AdditionalDependencies>D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\lib\glm.lib;gdi32.lib;user32.lib;shcore.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <DataExecutionPrevention></DataExecutionPrevention>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImageHasSafeExceptionHandlers></ImageHasSafeExceptionHandlers>
+      <ImportLibrary>D:/_CODE_/avalang/build_pack/runtime/avalang/Release/avalang_ui.lib</ImportLibrary>
+      <LinkErrorReporting></LinkErrorReporting>
+      <ProgramDataBaseFile>D:/_CODE_/avalang/build_pack/runtime/avalang/Release/avalang_ui.pdb</ProgramDataBaseFile>
+      <RandomizedBaseAddress></RandomizedBaseAddress>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>D:\_CODE_\avalang\runtime\avaui\src;D:\_CODE_\avalang;D:\_CODE_\avalang\runtime\avaui\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "D:/_CODE_/Avalon/vcpkg/installed/x64-windows-static-md/include"</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <BufferSecurityCheck></BufferSecurityCheck>
+      <CallingConvention></CallingConvention>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <FloatingPointModel></FloatingPointModel>
+      <ForceConformanceInForLoopScope></ForceConformanceInForLoopScope>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MinSpace</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RemoveUnreferencedCodeData></RemoveUnreferencedCodeData>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <SupportJustMyCode></SupportJustMyCode>
+      <TreatWChar_tAsBuiltInType></TreatWChar_tAsBuiltInType>
+      <UseFullPaths>false</UseFullPaths>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;AVA_UI_BUILD_SHARED;AVA_UI_BUILDING_LIBRARY;UNICODE;_UNICODE;CMAKE_INTDIR="MinSizeRel";avalang_ui_EXPORTS</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;AVA_UI_BUILD_SHARED;AVA_UI_BUILDING_LIBRARY;UNICODE;_UNICODE;CMAKE_INTDIR=\"MinSizeRel\";avalang_ui_EXPORTS</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>D:\_CODE_\avalang\runtime\avaui\src;D:\_CODE_\avalang;D:\_CODE_\avalang\runtime\avaui\third_party\stb;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>D:\_CODE_\avalang\runtime\avaui\src;D:\_CODE_\avalang;D:\_CODE_\avalang\runtime\avaui\third_party\stb;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <PostBuildEvent>
+      <Message></Message>
+      <Command>setlocal
+D:\_CODE_\Avalon\vcpkg\vcpkg.exe z-applocal --target-binary=D:/_CODE_/avalang/build_pack/runtime/avalang/MinSizeRel/avalang_ui.dll --installed-bin-dir=D:/_CODE_/Avalon/vcpkg/installed/x64-windows-static-md/bin
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+    </PostBuildEvent>
+    <Link>
+      <AdditionalDependencies>D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\lib\glm.lib;gdi32.lib;user32.lib;shcore.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <DataExecutionPrevention></DataExecutionPrevention>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImageHasSafeExceptionHandlers></ImageHasSafeExceptionHandlers>
+      <ImportLibrary>D:/_CODE_/avalang/build_pack/runtime/avalang/MinSizeRel/avalang_ui.lib</ImportLibrary>
+      <LinkErrorReporting></LinkErrorReporting>
+      <ProgramDataBaseFile>D:/_CODE_/avalang/build_pack/runtime/avalang/MinSizeRel/avalang_ui.pdb</ProgramDataBaseFile>
+      <RandomizedBaseAddress></RandomizedBaseAddress>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>D:\_CODE_\avalang\runtime\avaui\src;D:\_CODE_\avalang;D:\_CODE_\avalang\runtime\avaui\third_party\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "D:/_CODE_/Avalon/vcpkg/installed/x64-windows-static-md/include"</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <BufferSecurityCheck></BufferSecurityCheck>
+      <CallingConvention></CallingConvention>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <FloatingPointModel></FloatingPointModel>
+      <ForceConformanceInForLoopScope></ForceConformanceInForLoopScope>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MaxSpeed</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RemoveUnreferencedCodeData></RemoveUnreferencedCodeData>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <SupportJustMyCode></SupportJustMyCode>
+      <TreatWChar_tAsBuiltInType></TreatWChar_tAsBuiltInType>
+      <UseFullPaths>false</UseFullPaths>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;AVA_UI_BUILD_SHARED;AVA_UI_BUILDING_LIBRARY;UNICODE;_UNICODE;CMAKE_INTDIR="RelWithDebInfo";avalang_ui_EXPORTS</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;AVA_UI_BUILD_SHARED;AVA_UI_BUILDING_LIBRARY;UNICODE;_UNICODE;CMAKE_INTDIR=\"RelWithDebInfo\";avalang_ui_EXPORTS</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>D:\_CODE_\avalang\runtime\avaui\src;D:\_CODE_\avalang;D:\_CODE_\avalang\runtime\avaui\third_party\stb;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>D:\_CODE_\avalang\runtime\avaui\src;D:\_CODE_\avalang;D:\_CODE_\avalang\runtime\avaui\third_party\stb;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <PostBuildEvent>
+      <Message></Message>
+      <Command>setlocal
+D:\_CODE_\Avalon\vcpkg\vcpkg.exe z-applocal --target-binary=D:/_CODE_/avalang/build_pack/runtime/avalang/RelWithDebInfo/avalang_ui.dll --installed-bin-dir=D:/_CODE_/Avalon/vcpkg/installed/x64-windows-static-md/bin
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+    </PostBuildEvent>
+    <Link>
+      <AdditionalDependencies>D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\lib\glm.lib;gdi32.lib;user32.lib;shcore.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <DataExecutionPrevention></DataExecutionPrevention>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImageHasSafeExceptionHandlers></ImageHasSafeExceptionHandlers>
+      <ImportLibrary>D:/_CODE_/avalang/build_pack/runtime/avalang/RelWithDebInfo/avalang_ui.lib</ImportLibrary>
+      <LinkErrorReporting></LinkErrorReporting>
+      <ProgramDataBaseFile>D:/_CODE_/avalang/build_pack/runtime/avalang/RelWithDebInfo/avalang_ui.pdb</ProgramDataBaseFile>
+      <RandomizedBaseAddress></RandomizedBaseAddress>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\_CODE_\avalang\runtime\avaui\CMakeLists.txt">
+      <UseUtf8Encoding>Always</UseUtf8Encoding>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Building Custom Rule D:/_CODE_/avalang/runtime/avaui/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/_CODE_/avalang -BD:/_CODE_/avalang/build_pack --check-stamp-file D:/_CODE_/avalang/build_pack/runtime/avaui/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\share\glm\glmConfig-debug.cmake;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\share\glm\glmConfig-release.cmake;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\share\glm\glmConfig.cmake;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\share\glm\glmConfigVersion.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">D:\_CODE_\avalang\build_pack\runtime\avaui\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Building Custom Rule D:/_CODE_/avalang/runtime/avaui/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/_CODE_/avalang -BD:/_CODE_/avalang/build_pack --check-stamp-file D:/_CODE_/avalang/build_pack/runtime/avaui/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\share\glm\glmConfig-debug.cmake;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\share\glm\glmConfig-release.cmake;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\share\glm\glmConfig.cmake;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\share\glm\glmConfigVersion.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">D:\_CODE_\avalang\build_pack\runtime\avaui\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">Building Custom Rule D:/_CODE_/avalang/runtime/avaui/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/_CODE_/avalang -BD:/_CODE_/avalang/build_pack --check-stamp-file D:/_CODE_/avalang/build_pack/runtime/avaui/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\share\glm\glmConfig-debug.cmake;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\share\glm\glmConfig-release.cmake;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\share\glm\glmConfig.cmake;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\share\glm\glmConfigVersion.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">D:\_CODE_\avalang\build_pack\runtime\avaui\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">Building Custom Rule D:/_CODE_/avalang/runtime/avaui/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/_CODE_/avalang -BD:/_CODE_/avalang/build_pack --check-stamp-file D:/_CODE_/avalang/build_pack/runtime/avaui/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\share\glm\glmConfig-debug.cmake;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\share\glm\glmConfig-release.cmake;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\share\glm\glmConfig.cmake;D:\_CODE_\Avalon\vcpkg\installed\x64-windows-static-md\share\glm\glmConfigVersion.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">D:\_CODE_\avalang\build_pack\runtime\avaui\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">false</LinkObjects>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\UIModule.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\common\ColorParse.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\components\PropertyValue.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\components\Component.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\components\ComponentTreeImpl.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\components\ComponentTree.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\layout\LayoutProperties.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\layout\LayoutNode.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\layout\TextMeasure.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\layout\FontRegistry.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\resources\fonts\DefaultFontData.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\layout\LayoutEngineImpl.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\layout\LayoutEngine.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\state\StateImpl.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\state\IState.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\state\StateBindingImpl.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\state\StateBinding.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\events\Event.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\events\EventDispatcher.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\events\EventDispatcherFactory.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\render_tree\RenderNode.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\render_tree\RenderTree.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\render_tree\RenderTreeFactory.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\scene\SceneNode.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\scene\SceneGraph.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\scene\SceneGraphFactory.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\commands\RenderCommandSink.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\renderer\BaseRenderer.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\renderer\NullRenderer.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\renderer\RendererFactory.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\renderer\HTMLRenderer.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\parser\AvauiParser.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\parser\AvauiPropertyCoercion.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\parser\AvauiWriter.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\composition\ComposePageWithLayout.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\events\AutoBind.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\resolver\DottedPath.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\resolver\KnownComponentProperties.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\resolver\ComponentResolver.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\commands\SceneCommandWalker.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\resources\ResourceProvider.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\resources\ResourcePathResolver.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\resources\LocalizationProvider.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\theme\DefaultTheme.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\theme\RenderTheme.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\theme\ProjectFontOverrides.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\theme\ProjectStyleOverrides.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\theme\ProjectAnimationOverrides.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\Button.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\Text.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\Image.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\Container.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\TextBox.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\CheckBox.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\RadioButton.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\ComboBox.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\Dialog.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\Link.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\animation\IAnimatable.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\animation\Easing.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\animation\AnimationClock.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\animation\Timeline.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\animation\AnimationController.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\animation\AnimationBinding.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\registry\ComponentTypeRegistry.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\platform\windows\WinUIPlatformFactory.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\platform\windows\WinWindow.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\platform\windows\WinMouse.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\platform\windows\WinKeyboard.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\platform\windows\WinCursor.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\platform\windows\WinClipboard.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\platform\windows\WinDisplay.cpp" />
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\renderer\GdiRenderer.cpp" />
+  </ItemGroup>
+  <ItemGroup />
+  <ItemGroup>
+    <ProjectReference Include="D:\_CODE_\avalang\build_pack\ZERO_CHECK.vcxproj">
+      <Project>{651576B8-5DB0-3CE6-AFFE-52F6D6929743}</Project>
+      <Name>ZERO_CHECK</Name>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

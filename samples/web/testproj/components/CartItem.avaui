@@ -1,0 +1,42 @@
+params
+    name
+    qty
+    subtotal
+    index
+end
+
+view
+    row
+        padding = 12
+        gap = 12
+        borderWidth = 1
+        borderColor = "E5E7EB"
+        borderRadius = 8
+        backgroundColor = "FFFFFF"
+
+        text
+            text = name
+            grow = true
+            fontSize = 14
+        end
+
+        text
+            text = "x" + qty
+            textColor = "6B7280"
+            fontSize = 14
+        end
+
+        text
+            text = "$" + subtotal
+            fontSize = 14
+            textColor = "16A34A"
+        end
+
+        button
+            id = "CartItemRemoveBtn"
+            style = "danger"
+            text = "X"
+            click = OnRemoveFromCart(index)
+        end
+    end
+end

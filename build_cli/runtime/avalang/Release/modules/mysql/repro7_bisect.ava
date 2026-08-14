@@ -1,0 +1,91 @@
+import mysql
+
+class C
+    func _bindParams(sql, params)
+        if params == nil then
+            return sql
+        end
+        out = ""
+        pi = 0
+        i = 0
+        n = len(sql)
+        while i < n
+            c = sql.substring(i, i + 1)
+            if c == "?" then
+                if pi >= len(params) then
+                    raise "mysql: too many ?: " + sql
+                end
+                out = out + "[" + str(params[pi]) + "]"
+                pi = pi + 1
+            else
+                out = out + c
+            end
+            i = i + 1
+        end
+        if pi != len(params) then
+            raise "mysql: mismatch: " + sql
+        end
+        return out
+    end
+
+    func queryLike(sql, params)
+        finalSql = this._bindParams(sql, params)
+        return finalSql
+    end
+
+    func testA(data)
+        pairs = data.items()
+        values = []
+        i = 0
+        while i < len(pairs)
+            values.append(pairs[i][1])
+            i = i + 1
+        end
+        return this._bindParams("(?, ?)", values)
+    end
+
+    func testB(data)
+        pairs = data.items()
+        values = []
+        i = 0
+        while i < len(pairs)
+            values.append(pairs[i][1])
+            i = i + 1
+        end
+        return this.queryLike("(?, ?)", values)
+    end
+
+    func testC(data)
+        pairs = data.items()
+        values = []
+        i = 0
+        while i < len(pairs)
+            values.append(pairs[i][1])
+            i = i + 1
+        end
+        sql = this._bindParams("insert into t (a, b) values (?, ?)", values)
+        return sql
+    end
+
+    func testD(data)
+        pairs = data.items()
+        values = []
+        i = 0
+        while i < len(pairs)
+            values.append(pairs[i][1])
+            i = i + 1
+        end
+        sql = this.queryLike("insert into t (a, b) values (?, ?)", values)
+        return sql
+    end
+end
+
+func main()
+    c = C()
+    data = {name: "Ada", active: true}
+    print("A (1 nivel, dict+append):  " + c.testA(data))
+    print("B (2 niveles, dict+append): " + c.testB(data))
+    print("C (1 nivel, INSERT):        " + c.testC(data))
+    print("D (2 niveles, INSERT):      " + c.testD(data))
+end
+main()

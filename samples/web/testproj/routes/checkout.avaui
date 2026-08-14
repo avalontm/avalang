@@ -1,0 +1,126 @@
+extends layouts.main
+
+import components.confirmdialog
+import components.cartitem
+
+properties
+    title = "Checkout - POS"
+end
+
+state
+    cart = []
+    total = 0
+    saleConfirmed = false
+    cartItemIndex = 0
+    confirmDialogOpen = false
+    confirmDialogTitle = "Confirmar venta"
+    confirmDialogMessage = "Deseas registrar esta venta?"
+    confirmDialogConfirmText = "Confirmar"
+    confirmDialogCancelText = "Cancelar"
+end
+
+view
+    column
+        gap = 16
+
+        text
+            text = "Checkout"
+            style = "text.heading"
+            fontSize = 24
+        end
+
+        container
+            padding = 16
+            gap = 12
+
+            text
+                text = "Resumen de venta"
+                style = "text.heading"
+                fontSize = 18
+            end
+
+            scrollview
+                direction = "vertical"
+                gap = 8
+                padding = 8
+
+                text
+                    text = "Items en el carrito: " + len(cart)
+                    style = "text.muted"
+                end
+            end
+
+            row
+                gap = 12
+                padding = 12
+                borderWidth = 1
+                borderColor = "E5E7EB"
+                borderRadius = 8
+
+                text
+                    text = "Total:"
+                    fontSize = 18
+                    grow = true
+                end
+
+                text
+                    text = "$" + total
+                    style = "text.price"
+                    fontSize = 22
+                end
+            end
+        end
+
+        row
+            gap = 12
+
+            link
+                text = "Volver al POS"
+                href = "/pos"
+                textColor = "6B7280"
+            end
+
+            button
+                id = "ConfirmSaleBtn"
+                text = "Confirmar venta"
+                grow = true
+                click = OpenConfirmDialog("Confirmar venta", "Deseas registrar esta venta por $" + total + "?")
+            end
+        end
+
+        if saleConfirmed then
+            text
+                text = "Venta registrada correctamente."
+                textColor = "16A34A"
+                fontSize = 16
+            end
+
+            link
+                text = "Volver al POS"
+                href = "/pos"
+                textColor = "2563EB"
+            end
+        end
+
+        ConfirmDialog()
+    end
+end
+
+code
+    func OpenConfirmDialog(title, message)
+        confirmDialogTitle = title
+        confirmDialogMessage = message
+        confirmDialogOpen = true
+    end
+
+    func ConfirmDialogAccept()
+        saleConfirmed = true
+        cart = []
+        total = 0
+        confirmDialogOpen = false
+    end
+
+    func ConfirmDialogCancel()
+        confirmDialogOpen = false
+    end
+end

@@ -19,6 +19,34 @@ namespace {
 // rather than a system font.
 constexpr const char* kDefaultCssFontFamily = "AvaDefaultFont";
 
+// A `click`/`change` handler is normally just a bare call like
+// `OnAcceptConfirm()`, but it can just as legitimately carry string
+// arguments (`OpenConfirmDialog("Eliminar elemento", "¿Deseas...?")`,
+// see ConfirmDialog.avaui) -- those embedded double quotes were being
+// written straight into `data-handler="..."` with no escaping at all,
+// so the attribute value ended at the FIRST one (right after the
+// opening paren), silently truncating the handler to
+// `OpenConfirmDialog(` before it ever reached the browser's click
+// listener. `&`/`<` are escaped too for the same reason OnDrawLink's
+// `safeHref` already escapes its own attribute -- an HTML parser
+// decodes entities back to the real characters when reading the
+// attribute value, so this round-trips exactly, unlike the previous
+// raw embed.
+std::string EscapeHtmlAttr(const std::string& raw) {
+    std::string out;
+    out.reserve(raw.size());
+    for (char c : raw) {
+        switch (c) {
+            case '&': out += "&amp;"; break;
+            case '"': out += "&quot;"; break;
+            case '<': out += "&lt;"; break;
+            case '>': out += "&gt;"; break;
+            default: out += c;
+        }
+    }
+    return out;
+}
+
 // Minimal, dependency-free base64 encoder for embedding font bytes as
 // a data: URI in @font-face -- see EmitFontFaceRules. Not performance
 // sensitive (runs once per unique font per frame, not per glyph).
@@ -66,6 +94,84 @@ std::string EscapeForCssString(const std::string& s) {
         out += c;
     }
     return out;
+}
+
+// Resolved opacity/duration/easing values for one dialog open or
+// close transition, after ResolveDialogAnimation has already merged
+// the project's `animation dialog:<trigger>` override (if any, see
+// theme/ProjectAnimationOverrides.h) on top of the built-in default --
+// every field here is guaranteed to have a value, unlike
+// theme::AnimationOverride's std::optional ones, so EmitHTMLHeader's
+// call site never needs a fallback of its own.
+struct DialogAnimationValues {
+    double from;
+    double to;
+    std::string duration;
+    std::string easing;
+};
+
+// Merges the project-declared `animation dialog:<trigger>` block (if
+// `animations` is non-null and declares one) on top of the given
+// built-in defaults, field by field -- a project that only sets e.g.
+// `duration` still gets the built-in `from`/`to`/`easing`. `trigger`
+// is "open" or "close"; see EmitHTMLHeader's two call sites.
+DialogAnimationValues ResolveDialogAnimation(const theme::ProjectAnimationSheet* animations,
+                                              const std::string& trigger,
+                                              double defaultFrom, double defaultTo,
+                                              const std::string& defaultDuration,
+                                              const std::string& defaultEasing) {
+    DialogAnimationValues result{defaultFrom, defaultTo, defaultDuration, defaultEasing};
+    if (!animations) return result;
+    const theme::AnimationOverride o = animations->Resolve("dialog", trigger);
+    if (o.from) result.from = *o.from;
+    if (o.to) result.to = *o.to;
+    if (o.duration) result.duration = *o.duration;
+    if (o.easing) result.easing = *o.easing;
+    return result;
+}
+
+// Maps a lowercased .avaui component type name to the stable CSS
+// class HTMLRenderer (or SceneCommandWalker, for textbox/combobox)
+// already gives every no-custom-class instance of it -- see
+// OnDrawButton/OnDrawLink/OnDrawText below and SceneCommandWalker's
+// <input>/<select> markup. This is the complete list of types
+// EmitProjectStateCSS can target: row/column/container/dialog/... all
+// funnel through OnDrawRectangle's generic "ava-element" class with
+// no per-type marker (see OnDrawRectangle's className handling below),
+// so there's no selector for a project's `style container:hover`
+// block to attach to, and it's intentionally left out here rather
+// than papering over that with a wrong/misleading class name.
+const char* CssClassForControlType(const std::string& typeLower) {
+    if (typeLower == "button") return "ava-button";
+    if (typeLower == "textbox") return "ava-input";
+    if (typeLower == "combobox") return "ava-select";
+    if (typeLower == "link") return "ava-link";
+    if (typeLower == "text") return "ava-text";
+    return nullptr;
+}
+
+// Appends one `property: value !important;` per field `o` actually
+// set. `!important` is required, not decorative: every base/normal
+// style this renderer emits (backgroundColor, textColor, ...) is
+// written as an inline `style="..."` attribute (see OnDrawButton
+// etc.), and inline styles beat ANY class-based rule regardless of
+// specificity -- without `!important` here, a `.ava-button:hover`
+// rule would parse fine but never visibly win over the button's own
+// inline background-color.
+//
+// fontName/padding/margin/spacing are deliberately never written here:
+// those affect layout, which LayoutEngine already computed (and baked
+// into this element's inline left/top/width/height) before the
+// browser ever sees this rule -- swapping them per :hover/:focus would
+// desync the painted box from its measured one instead of just
+// repainting it.
+void AppendStateDeclarations(std::stringstream& css, const theme::ControlStyleOverride& o) {
+    if (o.backgroundColor) css << "background-color: #" << *o.backgroundColor << " !important; ";
+    if (o.textColor) css << "color: #" << *o.textColor << " !important; ";
+    if (o.borderColor) css << "border-color: #" << *o.borderColor << " !important; ";
+    if (o.borderWidth) css << "border-width: " << *o.borderWidth << "px !important; ";
+    if (o.borderRadius) css << "border-radius: " << *o.borderRadius << "px !important; ";
+    if (o.fontSize) css << "font-size: " << *o.fontSize << "px !important; ";
 }
 
 } // namespace
@@ -133,8 +239,18 @@ std::string HTMLRenderer::ResolveCssFontFamily(const char* fontName) {
     const std::string family = (fontName && fontName[0] != '\0' && std::string(fontName) != "Arial")
         ? std::string(fontName)
         : std::string(kDefaultCssFontFamily);
-    usedFontNames_.insert(family);
-    return family;
+    // The result is embedded inside a single-quoted CSS string within an
+    // already double-quoted HTML `style="..."` attribute (see OnDrawLabel/
+    // OnDrawButton/OnDrawLink) -- strip both quote characters so neither
+    // delimiter can be broken out of, regardless of what a project's
+    // styles.ava/app.ava font name/path happens to contain.
+    std::string sanitized;
+    sanitized.reserve(family.size());
+    for (char c : family) {
+        if (c != '\'' && c != '"') sanitized += c;
+    }
+    usedFontNames_.insert(sanitized);
+    return sanitized;
 }
 
 std::string HTMLRenderer::EmitFontFaceRules() const {
@@ -147,8 +263,23 @@ std::string HTMLRenderer::EmitFontFaceRules() const {
     // assumed: the CSS family name is just a label, but the bytes
     // behind it are pinned, not resolved independently by the browser
     // the way a bare `font-family: Arial` would be.
+    // Union of fonts THIS renderer instance actually drew
+    // (usedFontNames_) and every font the project has registered
+    // (FontRegistry::RegisteredFontNames) -- the latter is what makes
+    // a font referenced only inside a different renderer's spliced-in
+    // fragment (e.g. a page's title font, when the page and its layout
+    // are rendered as two separate HTMLRenderer instances -- see
+    // ui_pipeline_dynamic_renderer.cpp's RenderTreeFragment) still get
+    // its @font-face rule emitted here. A std::set keeps this
+    // deduplicated and gives EmitFontFaceRules its output in a stable
+    // order.
+    std::set<std::string> allFamilies = usedFontNames_;
+    for (const std::string& registered : layout::FontRegistry::Instance().RegisteredFontNames()) {
+        allFamilies.insert(registered);
+    }
+
     std::stringstream ss;
-    for (const std::string& family : usedFontNames_) {
+    for (const std::string& family : allFamilies) {
         const unsigned char* data = nullptr;
         std::size_t size = 0;
         // FontRegistry::Instance() is the same global instance
@@ -167,6 +298,31 @@ std::string HTMLRenderer::EmitFontFaceRules() const {
            << "font-weight: normal; font-style: normal; }\n";
     }
     return ss.str();
+}
+
+std::string HTMLRenderer::EmitProjectStateCSS() const {
+    if (!projectStyles_ || !projectStyles_->HasAnyStateStyles()) return "";
+
+    static const char* kTypes[] = {"button", "textbox", "combobox", "link", "text"};
+    static const char* kStates[] = {"hover", "focus", "active", "disabled"};
+
+    std::stringstream css;
+    for (const char* type : kTypes) {
+        const char* cssClass = CssClassForControlType(type);
+        if (!cssClass) continue; // unreachable for kTypes today, kept defensive
+        for (const char* state : kStates) {
+            const theme::ControlStyleOverride o = projectStyles_->ResolveState(type, state);
+            std::stringstream decls;
+            AppendStateDeclarations(decls, o);
+            const std::string declStr = decls.str();
+            if (declStr.empty()) continue; // project declared nothing for this type:state
+            const std::string pseudo = (std::string(state) == "disabled")
+                ? std::string(":disabled")
+                : (":" + std::string(state));
+            css << "." << cssClass << pseudo << " { " << declStr << "}\n";
+        }
+    }
+    return css.str();
 }
 
 std::string HTMLRenderer::EmitHTMLHeader() {
@@ -212,7 +368,49 @@ std::string HTMLRenderer::EmitHTMLHeader() {
           << "overflow: hidden; }\n";
     html_ << ".ava-element { position: absolute; box-sizing: border-box; }\n";
     html_ << ".ava-button { margin: 0; padding: 0; display: flex; align-items: center; "
-          << "justify-content: center; cursor: pointer; }\n";
+          << "justify-content: center; cursor: pointer; "
+          << "-webkit-appearance: none; -moz-appearance: none; appearance: none; }\n";
+    // Dialog open/close animation. `.ava-overlay-fragment` (see
+    // SceneCommandWalker.cpp) already wraps the backdrop AND every
+    // element the open dialog draws -- all of them siblings in a flat,
+    // fully-absolute-positioned DOM (not actually nested), so `opacity`
+    // is the only property that can animate the whole group in unison
+    // without becoming a new containing block for those absolute
+    // children (which `transform` would, desyncing their baked-in
+    // coordinates -- see the animation plan notes). Opening: the
+    // fragment is a brand-new DOM node on the render that sets
+    // isOpen=true (DecomposeDialog skips closed dialogs entirely, so
+    // there's no toggle to transition from), and a CSS `animation`
+    // plays automatically on insertion, unlike `transition`. Closing:
+    // the same isOpen=false render omits the fragment outright, so
+    // EventScriptTag's applyHtml() clones it before swapping, tags the
+    // clone `.ava-dialog-closing`, and removes it once this animation
+    // ends.
+    // Fields left unset by the project (or no `animation "..."` file
+    // declared at all -- projectAnimations_ is then either null or an
+    // empty sheet, ResolveDialogAnimation handles both the same way)
+    // fall back to these same built-in values, so a project that only
+    // overrides e.g. `duration` still gets the stock opacity range and
+    // easing for everything it didn't mention.
+    const DialogAnimationValues openAnim = ResolveDialogAnimation(
+        projectAnimations_, "open", /*defaultFrom=*/0.0, /*defaultTo=*/1.0,
+        /*defaultDuration=*/"160ms", /*defaultEasing=*/"ease-out");
+    const DialogAnimationValues closeAnim = ResolveDialogAnimation(
+        projectAnimations_, "close", /*defaultFrom=*/1.0, /*defaultTo=*/0.0,
+        /*defaultDuration=*/"160ms", /*defaultEasing=*/"ease-in");
+    html_ << "@keyframes ava-overlay-fade-in { from { opacity: " << openAnim.from
+          << "; } to { opacity: " << openAnim.to << "; } }\n";
+    html_ << "@keyframes ava-overlay-fade-out { from { opacity: " << closeAnim.from
+          << "; } to { opacity: " << closeAnim.to << "; } }\n";
+    html_ << ".ava-overlay-fragment { animation: ava-overlay-fade-in " << openAnim.duration
+          << " " << openAnim.easing << "; }\n";
+    html_ << ".ava-overlay-fragment.ava-dialog-closing { "
+          << "animation: ava-overlay-fade-out " << closeAnim.duration << " " << closeAnim.easing
+          << " forwards; pointer-events: none; }\n";
+    // Project-declared `style <type>:hover` / `:focus` / `:active` /
+    // `:disabled` blocks (app.ava's `style "..."` files) -- "" when
+    // none were declared, see EmitProjectStateCSS.
+    html_ << EmitProjectStateCSS();
     html_ << "</style>\n";
     html_ << "</head>\n";
     html_ << "<body>\n";
@@ -316,7 +514,7 @@ void HTMLRenderer::OnDrawRectangle(
           << GetClipCSS()
           << "\"";
     if (!clickHandler.empty()) {
-        bodyHtml_ << " data-event=\"click\" data-handler=\"" << clickHandler << "\"";
+        bodyHtml_ << " data-event=\"click\" data-handler=\"" << EscapeHtmlAttr(clickHandler) << "\"";
     }
     bodyHtml_ << "></div>\n";
 }
@@ -354,7 +552,7 @@ void HTMLRenderer::OnDrawEllipse(
           << GetClipCSS()
           << "\"";
     if (!clickHandler.empty()) {
-        bodyHtml_ << " data-event=\"click\" data-handler=\"" << clickHandler << "\"";
+        bodyHtml_ << " data-event=\"click\" data-handler=\"" << EscapeHtmlAttr(clickHandler) << "\"";
     }
     bodyHtml_ << "></div>\n";
 }
@@ -365,26 +563,27 @@ void HTMLRenderer::OnDrawText(
     float fontSize, const char* fontName,
     const Color& color,
     const std::string& clickHandler,
-    const std::string& className
+    const std::string& className,
+    float maxWidth
 ) {
     const bool hasClass = !className.empty();
-    // See OnDrawRectangle: a user class gets full, unfought control --
-    // font-size/font-family/color inline were overriding Tailwind's
-    // text-lg/font-semibold/text-color utilities the same way
-    // background-color/border did for rectangles. Same caveat applies:
-    // `class=` only works here (HTMLRenderer); it's a not-recommended
-    // escape hatch because GdiRenderer ignores it, so it breaks
-    // desktop/web parity -- prefer native LayoutEngine properties
-    // (fontSize, fontName, textColor) instead (see
-    // docs/AVAUI_NATIVE_RENDERING_FIX_PLAN.md).
+    const bool wrap = maxWidth > 0.0f;
     if (hasClass) {
         bodyHtml_ << "<div class=\"" << className << "\" style=\"";
     } else {
-        bodyHtml_ << "<div class=\"ava-element\" style=\"";
+        // "ava-text" (alongside the generic "ava-element" every
+        // no-custom-class element gets) is the selector project state
+        // styles hang off of for `style text:hover` etc. -- see
+        // EmitProjectStateCSS.
+        bodyHtml_ << "<div class=\"ava-element ava-text\" style=\"";
         bodyHtml_ << "left: " << x << "px; top: " << y << "px; ";
-        bodyHtml_ << "white-space: nowrap; ";
+        if (wrap) {
+            bodyHtml_ << "width: " << maxWidth << "px; white-space: normal; overflow-wrap: break-word; ";
+        } else {
+            bodyHtml_ << "white-space: nowrap; ";
+        }
         bodyHtml_ << "font-size: " << fontSize << "px; "
-              << "font-family: \"" << ResolveCssFontFamily(fontName) << "\", sans-serif; "
+              << "font-family: '" << ResolveCssFontFamily(fontName) << "', sans-serif; "
               << "color: " << ColorToHex(color) << "; ";
     }
     bodyHtml_ << "opacity: " << currentOpacity_ << "; "
@@ -392,7 +591,7 @@ void HTMLRenderer::OnDrawText(
           << GetClipCSS()
           << "\"";
     if (!clickHandler.empty()) {
-        bodyHtml_ << " data-event=\"click\" data-handler=\"" << clickHandler << "\"";
+        bodyHtml_ << " data-event=\"click\" data-handler=\"" << EscapeHtmlAttr(clickHandler) << "\"";
     }
     bodyHtml_ << ">" << (text ? text : "") << "</div>\n";
 }
@@ -441,7 +640,7 @@ void HTMLRenderer::OnDrawButton(
             bodyHtml_ << "border-radius: " << borderRadius << "px; ";
         }
         bodyHtml_ << "font-size: " << fontSize << "px; "
-              << "font-family: \"" << ResolveCssFontFamily(fontName) << "\", sans-serif; "
+              << "font-family: '" << ResolveCssFontFamily(fontName) << "', sans-serif; "
               << "color: " << ColorToHex(textColor) << "; ";
     }
     bodyHtml_ << "opacity: " << currentOpacity_ << "; "
@@ -452,7 +651,7 @@ void HTMLRenderer::OnDrawButton(
         bodyHtml_ << " disabled";
     }
     if (!clickHandler.empty()) {
-        bodyHtml_ << " data-event=\"click\" data-handler=\"" << clickHandler << "\"";
+        bodyHtml_ << " data-event=\"click\" data-handler=\"" << EscapeHtmlAttr(clickHandler) << "\"";
     }
     bodyHtml_ << ">" << (text ? text : "") << "</button>\n";
 }
@@ -490,7 +689,7 @@ void HTMLRenderer::OnDrawLink(
         bodyHtml_ << "left: " << x << "px; top: " << y << "px; "
               << "white-space: nowrap; text-decoration: none; "
               << "font-size: " << fontSize << "px; "
-              << "font-family: \"" << ResolveCssFontFamily(fontName) << "\", sans-serif; "
+              << "font-family: '" << ResolveCssFontFamily(fontName) << "', sans-serif; "
               << "color: " << ColorToHex(color) << "; ";
     }
     bodyHtml_ << "opacity: " << currentOpacity_ << "; "
@@ -498,7 +697,7 @@ void HTMLRenderer::OnDrawLink(
           << GetClipCSS()
           << "\"";
     if (!clickHandler.empty()) {
-        bodyHtml_ << " data-event=\"click\" data-handler=\"" << clickHandler << "\"";
+        bodyHtml_ << " data-event=\"click\" data-handler=\"" << EscapeHtmlAttr(clickHandler) << "\"";
     }
     bodyHtml_ << ">" << (text ? text : "") << "</a>\n";
 }

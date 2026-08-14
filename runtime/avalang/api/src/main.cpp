@@ -32,6 +32,21 @@ int main(int argc, char** argv) {
         }
     }
 
+    // argv[0] = ejecutable, argv[1] = script.ava -- argv[2..] son los
+    // argumentos del usuario para el script, expuestos como el global
+    // `args` (List de strings), igual que ava_cli.
+    {
+        ava::VM* raw_vm = reinterpret_cast<ava::VM*>(vm);
+        auto* list = new ava::ListObj();
+        for (int i = 2; i < argc; ++i) {
+            list->items.push_back(ava::Value::String(argv[i]));
+        }
+        ava::Value args_value;
+        args_value.type = ava::ValueType::List;
+        args_value.obj = list;
+        raw_vm->SetGlobal("args", args_value);
+    }
+
     char* error = nullptr;
     AvaModule* module = ava_compile(vm, buffer.str().c_str(), argv[1], &error);
     if (!module) {

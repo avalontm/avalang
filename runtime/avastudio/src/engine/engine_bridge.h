@@ -109,6 +109,29 @@ public:
     const std::vector<ConsoleLine>& Console() const { return console_; }
     void ClearConsole() { console_.clear(); }
 
+    // Appends one console line directly, without going through
+    // RunScript()/the VM print callback. Used by the out-of-process
+    // script runner (panels/terminal_panel.cpp's PollScriptRun) to mark
+    // run boundaries ("Run <path>") and the final Success/Error summary
+    // for a script that actually ran in a separate ava_cli.exe process,
+    // so the Terminal panel's scrollback looks the same either way.
+    void AppendConsoleLine(ConsoleLine::Kind kind, const std::string& text,
+                            const std::string& error_source = "", int error_line = 0,
+                            int error_column = 0) {
+        console_.push_back({kind, text, error_source, error_line, error_column});
+    }
+
+    // Splits `raw_text` on '\n' and appends each complete line as a
+    // Stdout ConsoleLine, buffering a trailing partial line (no newline
+    // yet) until the next call -- same line-buffering OnScriptPrint
+    // already does for the VM's own print callback, exposed here so the
+    // out-of-process runner's streamed stdout/stderr can reuse it
+    // instead of re-implementing the same buffering. Call
+    // FlushExternalOutput() once the producing process has exited to
+    // flush a final line with no trailing newline.
+    void AppendExternalOutput(const std::string& raw_text) { OnScriptPrint(raw_text); }
+    void FlushExternalOutput() { FlushPendingStdoutLine(); }
+
     // Called by the Terminal panel's console input box when the user
     // presses Enter. Echoes the text into the console like a terminal
     // would.

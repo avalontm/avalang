@@ -34,6 +34,12 @@ struct ExternFuncMeta {
 //   macOS) stdcall y cdecl son la misma ABI, así que esto no es un
 //   problema para builds x64 (que es el target de este proyecto,
 //   vcpkg triplet x64-windows-static-md). No probado en x86/ARM.
+// - En Windows, la llamada nativa corre bajo SEH (__try/__except): si un
+//   extern mal declarado (argumentos que no calzan con la firma real de
+//   C) hace que la DLL lea/escriba memoria invalida, eso ya no mata el
+//   proceso en silencio -- se convierte en un runtime_error normal que
+//   nombra la funcion que crasheo. No linux/macOS todavia (requeriria
+//   signal handlers en vez de SEH).
 extern "C" ava_value_t ava_extern_call(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 
 } // namespace ava

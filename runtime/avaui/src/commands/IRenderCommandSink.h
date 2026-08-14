@@ -51,7 +51,11 @@ public:
         float fontSize, const char* fontName,
         const Color& color,
         const std::string& clickHandler = std::string(),
-        const std::string& className = std::string()
+        const std::string& className = std::string(),
+        // <=0 means no wrap (unchanged nowrap behavior); >0 is the
+        // width, in px, to word-wrap `text` to. See RenderCommand.h's
+        // drawText.maxWidth.
+        float maxWidth = -1.0f
     ) = 0;
 
     virtual void DrawImage(

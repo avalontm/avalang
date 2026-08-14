@@ -93,6 +93,20 @@ public:
     bool GetFontBytes(const std::string& fontName, const unsigned char** outData,
                        std::size_t* outSize) const;
 
+    // Family names of every explicitly-registered custom font (never
+    // includes the built-in default). HTMLRenderer needs this in
+    // addition to its own per-frame usedFontNames_: when a page is
+    // composed from more than one HTMLRenderer instance (page fragment
+    // + layout, see ui_pipeline_dynamic_renderer.cpp's
+    // RenderTreeFragment), a font referenced only inside a spliced-in
+    // fragment never shows up in the FINAL renderer's own
+    // usedFontNames_ (that renderer never drew that text itself), so
+    // its @font-face rule would otherwise be silently missing from the
+    // assembled HTML even though the font is correctly registered.
+    // Emitting @font-face for every registered font, not just the
+    // ones this particular instance happened to draw, closes that gap.
+    std::vector<std::string> RegisteredFontNames() const;
+
 private:
     struct LoadedFont; // pImpl: keeps stb_truetype.h out of this header
     const LoadedFont* Resolve(const std::string& fontName) const;

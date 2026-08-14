@@ -2,6 +2,7 @@
 #define AVA_UI_LAYOUT_TEXTMEASURE_H
 
 #include <string>
+#include <vector>
 
 namespace avalang {
 namespace ui {
@@ -38,6 +39,39 @@ double EstimateTextWidth(const std::string& text, double fontSize, const std::st
 // flat multiplier). `fontName` may be empty to use the default font.
 // Returns 0.0 for a non-positive fontSize.
 double DefaultLineHeight(double fontSize, const std::string& fontName = std::string());
+
+// Greedy word-wrap of `text` into lines that each fit within maxWidth
+// px, measured with the same real glyph metrics EstimateTextWidth
+// uses (same font resolution: `fontName`, falling back to AvaUI's
+// embedded default). Words are never split mid-word -- a single word
+// wider than maxWidth on its own still gets its own line rather than
+// being cut, so wrapping never loses characters the way the old
+// fixed `white-space: nowrap` + no-width OnDrawText did (see
+// LayoutEngineImpl::ComputeIntrinsicSize's "wrap" handling and
+// HTMLRenderer/GdiRenderer's OnDrawText).
+//
+// Existing newline characters ('\n') in `text` always force a line
+// break, same as a real paragraph would, in addition to the
+// width-driven wrapping.
+//
+// Returns a single-element vector containing `text` unchanged if
+// maxWidth <= 0, text is empty, or text already fits within
+// maxWidth -- callers that only care about "does this need to wrap
+// at all" can check `result.size() > 1`.
+std::vector<std::string> WrapTextLines(const std::string& text, double fontSize,
+                                        const std::string& fontName, double maxWidth);
+
+// Vertical distance between the baselines of two consecutive wrapped
+// lines (DefaultLineHeight with a bit of extra leading, same
+// convention as a browser's default `line-height: normal` typically
+// landing a little above 1.0x the font's raw ascent+descent). Used by
+// both LayoutEngineImpl (to size a wrapped Text's intrinsic height)
+// and every OnDrawText implementation (to position each wrapped line)
+// -- kept as one function so the two stay in lockstep instead of two
+// renderers independently guessing a line-height multiplier that
+// could drift apart from what LayoutEngineImpl already reserved
+// space for.
+double WrappedLineHeight(double fontSize, const std::string& fontName = std::string());
 
 } // namespace layout
 } // namespace ui

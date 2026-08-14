@@ -1,6 +1,8 @@
 #include "vm.h"
 #include "vm_internal.h"
 
+#include <cstdio>
+
 namespace ava {
 
 void OpNewClass(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {

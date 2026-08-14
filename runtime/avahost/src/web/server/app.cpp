@@ -457,7 +457,8 @@ HttpResponse AvaHostApp::RenderAvaUiRoute(const std::string& filePath, const Req
                                             const std::string& pendingValue,
                                             int statusCode,
                                             const std::string& cookieHeader,
-                                            const std::string& userAgent) {
+                                            const std::string& userAgent,
+                                            bool isErrorPage) {
 #ifndef AVAHOST_HAS_UI_PIPELINE
     logger_.Error("avaui render of " + filePath +
                    " requested but AvaHost was built without AVA_BUILD_UI");
@@ -610,6 +611,27 @@ HttpResponse AvaHostApp::RenderAvaUiRoute(const std::string& filePath, const Req
         logger_.Error("avaui render failed for " + filePath +
                        (pendingHandler.empty() ? "" : " (handler '" + pendingHandler + "')") +
                        ": " + outError);
+
+        // layouts/500.avaui (if present) renders like any other page --
+        // same convention as layouts/404.avaui above -- instead of the
+        // plain-text fallback. `isErrorPage` guards against a broken
+        // 500.avaui itself re-entering this same branch and recursing
+        // forever; if the error page is the one that just failed, fall
+        // straight through to the plain-text response below.
+        if (!isErrorPage) {
+            if (auto errorPage = FindErrorPage(500)) {
+                RequestContext errorCtx;
+                errorCtx.method = ctx.method;
+                errorCtx.path = ctx.path;
+                errorCtx.query = ctx.query;
+                HttpResponse errorPageResponse = RenderAvaUiRoute(
+                    *errorPage, errorCtx, "", "", "", 500, cookieHeader, userAgent,
+                    /*isErrorPage=*/true);
+                errorPageResponse.SetHeader("Set-Cookie", BuildSessionSetCookie(sessionId, sessions_.TtlSeconds()));
+                return errorPageResponse;
+            }
+        }
+
         HttpResponse errorResponse = HttpResponse::ServerError(ErrorResponseText(
             "avaui engine render of " + filePath, outError));
         // The session was already created/resolved above even though
@@ -890,6 +912,16 @@ std::string AvaHostApp::EventScriptTag(int viewportWidth, int viewportHeight) co
            "    oldScrollviews.forEach(function(el){\n"
            "      savedScroll.push({top: el.scrollTop, left: el.scrollLeft});\n"
            "    });\n"
+           "    var closingClones = [];\n"
+           "    if (nextViewport && viewport) {\n"
+           "      var newIds = {};\n"
+           "      nextViewport.querySelectorAll('.ava-overlay-fragment[data-dialog-id]').forEach(function(el){\n"
+           "        newIds[el.getAttribute('data-dialog-id')] = true;\n"
+           "      });\n"
+           "      viewport.querySelectorAll('.ava-overlay-fragment[data-dialog-id]').forEach(function(el){\n"
+           "        if (!newIds[el.getAttribute('data-dialog-id')]) closingClones.push(el.cloneNode(true));\n"
+           "      });\n"
+           "    }\n"
            "    if (nextViewport && viewport) {\n"
            "      viewport.innerHTML = nextViewport.innerHTML;\n"
            "    } else {\n"
@@ -902,6 +934,18 @@ std::string AvaHostApp::EventScriptTag(int viewportWidth, int viewportHeight) co
            "      if (!pos) return;\n"
            "      el.scrollTop = pos.top;\n"
            "      el.scrollLeft = pos.left;\n"
+           "    });\n"
+           "    closingClones.forEach(function(clone){\n"
+           "      clone.classList.add('ava-dialog-closing');\n"
+           "      newScrollRoot.appendChild(clone);\n"
+           "      var done = false;\n"
+           "      var finish = function(){\n"
+           "        if (done) return;\n"
+           "        done = true;\n"
+           "        if (clone.parentNode) clone.parentNode.removeChild(clone);\n"
+           "      };\n"
+           "      clone.addEventListener('animationend', finish);\n"
+           "      setTimeout(finish, 400);\n"
            "    });\n"
            "    return newScrollRoot;\n"
            "  }\n"

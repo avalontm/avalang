@@ -1,0 +1,10 @@
+^D:\_CODE_\AVALANG\RUNTIME\AVACLI\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/_CODE_/avalang -BD:/_CODE_/avalang/build_cli --check-stamp-file D:/_CODE_/avalang/build_cli/runtime/avacli/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

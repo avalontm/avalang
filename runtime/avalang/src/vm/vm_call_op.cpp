@@ -130,7 +130,8 @@ void OpCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& 
         vm.frames_.pop_back();
         vm.frames_[frame_idx_fn].registers[save_a] = result;
     } else {
-        throw std::runtime_error("attempt to call a non-callable value");
+        throw std::runtime_error("attempt to call a non-callable value (type=" +
+                                  std::to_string(static_cast<int>(callee.type)) + ")");
     }
 }
 

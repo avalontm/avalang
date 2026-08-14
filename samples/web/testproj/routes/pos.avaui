@@ -1,0 +1,225 @@
+extends layouts.main
+
+import components.productcard
+import components.cartitem
+
+properties
+    title = "POS - Punto de Venta"
+end
+
+state
+    cart = []
+    total = 0
+end
+
+view
+    column
+        gap = 16
+
+        text
+            text = "Punto de Venta"
+            style = "text.heading"
+            fontSize = 24
+        end
+
+        row
+            gap = 16
+            grow = true
+
+            scrollview
+                direction = "vertical"
+                grow = true
+                padding = 16
+                gap = 12
+                backgroundColor = "FFFFFF"
+                borderRadius = 12
+                borderWidth = 1
+                borderColor = "E5E7EB"
+
+                text
+                    text = "Catalogo"
+                    style = "text.heading"
+                    fontSize = 18
+                end
+
+                row
+                    gap = 12
+                    ProductCard(name = "Cafe Americano", price = "2.50", productId = 1)
+                    ProductCard(name = "Capuccino", price = "3.50", productId = 2)
+                    ProductCard(name = "Latte", price = "3.80", productId = 3)
+                    ProductCard(name = "Te Verde", price = "2.00", productId = 4)
+                    ProductCard(name = "Croissant", price = "2.20", productId = 5)
+                end
+
+                row
+                    gap = 12
+                    ProductCard(name = "Medialuna", price = "1.80", productId = 6)
+                    ProductCard(name = "Cheesecake", price = "4.50", productId = 7)
+                    ProductCard(name = "Brownie", price = "3.20", productId = 8)
+                    ProductCard(name = "Cookie", price = "1.50", productId = 9)
+                    ProductCard(name = "Sandwich", price = "5.90", productId = 10)
+                end
+            end
+
+            column
+                width = 320
+                gap = 12
+                padding = 16
+                backgroundColor = "FFFFFF"
+                borderRadius = 12
+                borderWidth = 1
+                borderColor = "E5E7EB"
+
+                text
+                    text = "Carrito"
+                    style = "text.heading"
+                    fontSize = 18
+                end
+
+                scrollview
+                    direction = "vertical"
+                    grow = true
+                    gap = 8
+
+                    text
+                        text = "Items: " + len(cart)
+                        style = "text.muted"
+                    end
+                end
+
+                row
+                    gap = 12
+                    padding = 12
+                    borderWidth = 1
+                    borderColor = "E5E7EB"
+                    borderRadius = 8
+
+                    text
+                        text = "Total:"
+                        fontSize = 18
+                        grow = true
+                    end
+
+                    text
+                        text = "$" + total
+                        style = "text.price"
+                        fontSize = 22
+                    end
+                end
+
+                row
+                    gap = 12
+
+                    button
+                        id = "ClearCartBtn"
+                        style = "ghost"
+                        text = "Vaciar"
+                        click = OnClearCart()
+                    end
+
+                    button
+                        id = "CheckoutBtn"
+                        text = "Cobrar"
+                        grow = true
+                        click = OnCheckout()
+                    end
+                end
+            end
+        end
+    end
+end
+
+code
+    func OnAddToCart(id)
+        local product = FindProduct(id)
+        if product == nil then
+            return
+        end
+
+        local found = false
+        local i = 0
+        while i < len(cart)
+            if cart[i].id == id then
+                local old = cart[i]
+                local updated = {id: old.id, name: old.name, price: old.price, qty: old.qty + 1}
+                cart[i] = updated
+                found = true
+            end
+            i = i + 1
+        end
+
+        if not found then
+            local item = {id: id, name: product.name, price: product.price, qty: 1}
+            cart.append(item)
+        end
+
+        RecalcTotal()
+    end
+
+    func OnRemoveFromCart(idx)
+        if idx >= 0 and idx < len(cart) then
+            local newCart = []
+            local i = 0
+            while i < len(cart)
+                if i != idx then
+                    newCart.append(cart[i])
+                end
+                i = i + 1
+            end
+            cart = newCart
+        end
+        RecalcTotal()
+    end
+
+    func OnClearCart()
+        cart = []
+        total = 0
+    end
+
+    func OnCheckout()
+    end
+
+    func FindProduct(id)
+        if id == 1 then
+            return {name: "Cafe Americano", price: 2.50}
+        end
+        if id == 2 then
+            return {name: "Capuccino", price: 3.50}
+        end
+        if id == 3 then
+            return {name: "Latte", price: 3.80}
+        end
+        if id == 4 then
+            return {name: "Te Verde", price: 2.00}
+        end
+        if id == 5 then
+            return {name: "Croissant", price: 2.20}
+        end
+        if id == 6 then
+            return {name: "Medialuna", price: 1.80}
+        end
+        if id == 7 then
+            return {name: "Cheesecake", price: 4.50}
+        end
+        if id == 8 then
+            return {name: "Brownie", price: 3.20}
+        end
+        if id == 9 then
+            return {name: "Cookie", price: 1.50}
+        end
+        if id == 10 then
+            return {name: "Sandwich", price: 5.90}
+        end
+        return nil
+    end
+
+    func RecalcTotal()
+        local sum = 0
+        local i = 0
+        while i < len(cart)
+            sum = sum + cart[i].price * cart[i].qty
+            i = i + 1
+        end
+        total = sum
+    end
+end

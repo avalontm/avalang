@@ -205,7 +205,35 @@ void RenderTree::DecomposeButton(IComponent* comp, std::shared_ptr<RenderNode> p
     if (parent->ForegroundColor().empty()) {
         parent->SetForegroundColor("#000000");
     }
-    parent->SetFontSize(12);
+    if (const auto* fgColor = comp->GetProperty("textColor")) {
+        if (fgColor->Type() == PropertyType::String && !fgColor->AsString().empty()) {
+            parent->SetForegroundColor(Eval(fgColor->AsString()));
+        }
+    } else if (const auto* legacyColor = comp->GetProperty("color")) {
+        if (legacyColor->Type() == PropertyType::String && !legacyColor->AsString().empty()) {
+            parent->SetForegroundColor(Eval(legacyColor->AsString()));
+        }
+    }
+    // fontSize/fontName: same pattern as DecomposeText below -- read
+    // whatever RenderTheme::Apply already resolved onto the component
+    // (theme default, or a project override from app.ava) and copy it
+    // onto the RenderNode. Previously this unconditionally hardcoded
+    // SetFontSize(12) and never called SetFontName at all, so a Button
+    // always painted with RenderNode's own "Arial" default regardless
+    // of theme/app.ava -- the one control type that silently ignored
+    // both the theme's button font size and any custom font.
+    if (const auto* fontSize = comp->GetProperty("fontSize")) {
+        if (fontSize->Type() == PropertyType::Number || fontSize->Type() == PropertyType::String) {
+            parent->SetFontSize(static_cast<int>(EvalNumber(comp, "fontSize", parent->FontSize())));
+        }
+    } else {
+        parent->SetFontSize(12);
+    }
+    if (const auto* fontName = comp->GetProperty("fontName")) {
+        if (fontName->Type() == PropertyType::String) {
+            parent->SetFontName(Eval(fontName->AsString()));
+        }
+    }
 
     if (const auto* label = comp->GetProperty("text")) {
         if (label->Type() == PropertyType::String) {
@@ -243,6 +271,12 @@ void RenderTree::DecomposeText(IComponent* comp, std::shared_ptr<RenderNode> par
     if (const auto* fontName = comp->GetProperty("fontName")) {
         if (fontName->Type() == PropertyType::String) {
             parent->SetFontName(Eval(fontName->AsString()));
+        }
+    }
+
+    if (const auto* wrap = comp->GetProperty("wrap")) {
+        if (wrap->Type() == PropertyType::Bool) {
+            parent->SetWrap(wrap->AsBool());
         }
     }
 }

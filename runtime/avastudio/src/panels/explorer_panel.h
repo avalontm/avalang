@@ -33,6 +33,11 @@ struct ExplorerResult {
     // (EditorTab::file_path) under old_path so they keep tracking the
     // same file instead of the stale path.
     std::optional<std::pair<std::string, std::string>> file_renamed;
+    // Path the user picked via the right-click "Open in Explorer" menu
+    // item -- a file or a folder. Caller (main.cpp, which owns the
+    // platform-specific window/shell code) reveals it in the OS file
+    // manager via studio::titlebar::RevealInFileExplorer.
+    std::optional<std::string> reveal_in_file_manager;
 };
 
 // Draws the Explorer panel (left dock). `p_open`: same convention as

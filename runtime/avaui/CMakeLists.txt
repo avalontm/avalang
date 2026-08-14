@@ -70,6 +70,11 @@ set(AVA_UI_SOURCES
     # Phase 14 -- Parser .avaui -> ComponentTree
     src/parser/AvauiParser.cpp
     src/parser/AvauiPropertyCoercion.cpp
+    # Fase 1 (PLAN_CENTRALIZACION_AVAUI.md) -- Writer ComponentTree ->
+    # .avaui text, canonical inverse of AvauiParser::Parse for
+    # avalang::ui::IComponent. Independent of the VM-side writer in
+    # runtime/avalang/src/ui/avaui_text.cpp (see AvauiWriter.h).
+    src/parser/AvauiWriter.cpp
     # Composition: extends/slot() page+layout composition (motor unico Fase 1)
     src/composition/ComposePageWithLayout.cpp
 
@@ -96,6 +101,19 @@ set(AVA_UI_SOURCES
     # design-time preview so both resolve a project's custom font the
     # same way. See theme/ProjectFontOverrides.h.
     src/theme/ProjectFontOverrides.cpp
+    # Project-configured styles.ava (`style *` / `style <type>` blocks)
+    # -- simplified per-control-type theme overrides (color, font,
+    # padding, margin, ...), same "shared by AvaHost + AvaStudio"
+    # rationale as ProjectFontOverrides.cpp above. See
+    # theme/ProjectStyleOverrides.h.
+    src/theme/ProjectStyleOverrides.cpp
+    # Project-configured animations.ava (`animation <target>:<trigger>`
+    # blocks) -- today only `dialog:open`/`dialog:close`, overriding
+    # HTMLRenderer's built-in modal fade duration/easing/opacity
+    # range. Same "shared by AvaHost + AvaStudio", app.ava-declared-
+    # file rationale as ProjectStyleOverrides.cpp above. See
+    # theme/ProjectAnimationOverrides.h.
+    src/theme/ProjectAnimationOverrides.cpp
     # Phase 17 -- Controls: Button (primer control real, valida Theme + Resources)
     src/controls/Button.cpp
     # Phase 18 -- Controls: resto del set base
@@ -153,6 +171,22 @@ endif()
 if(AVA_BUILD_SHARED)
     add_library(avalang_ui SHARED ${AVA_UI_SOURCES})
     target_compile_definitions(avalang_ui PUBLIC AVA_UI_BUILD_SHARED)
+
+    # avalang.dll depende de avalang_ui.dll (ver target_link_libraries(avalang
+    # PRIVATE avalang_ui) en runtime/avalang/CMakeLists.txt). En Windows no hay
+    # RPATH, asi que avalang_ui.dll (y su import lib) tienen que terminar en la
+    # MISMA carpeta que avalang.dll/avalang.lib para que cualquier ejecutable
+    # que cargue avalang.dll (ava_cli, avapack_gen, el .exe empacado) pueda
+    # resolver esa dependencia transitiva al arrancar, y para que ese mismo
+    # directorio sirva como "carpeta prebuilt" completa y autocontenida (ver
+    # AVA_PACK_USE_PREBUILT_AVALANG en el CMakeLists.txt raiz). Sin esto, avaui
+    # cae en su carpeta de salida por defecto (runtime/avaui/<Config>/) y
+    # cualquier .exe en runtime/avalang/<Config>/ falla al iniciar con
+    # STATUS_DLL_NOT_FOUND (0xC0000135).
+    set_target_properties(avalang_ui PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runtime/avalang"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runtime/avalang"
+    )
 else()
     add_library(avalang_ui STATIC ${AVA_UI_SOURCES})
 endif()
@@ -305,4 +339,14 @@ if(AVA_BUILD_UI_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
     target_compile_features(ava_container_spacing_defaults_test PRIVATE cxx_std_20)
+endif()
+
+option(AVA_BUILD_DIALOG_SIZE_PROBE "Build the standalone Dialog layout probe" OFF)
+if(AVA_BUILD_DIALOG_SIZE_PROBE)
+    add_executable(ava_dialog_size_probe ${CMAKE_SOURCE_DIR}/tests/integration/avaui_demos/DialogSizeProbe.cpp)
+    target_link_libraries(ava_dialog_size_probe PRIVATE avalang_ui)
+    target_include_directories(ava_dialog_size_probe PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_features(ava_dialog_size_probe PRIVATE cxx_std_20)
 endif()

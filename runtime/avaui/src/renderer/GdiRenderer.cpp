@@ -1,6 +1,7 @@
 #include "renderer/GdiRenderer.h"
 
 #include "layout/FontRegistry.h"
+#include "layout/TextMeasure.h"
 
 namespace avalang {
 namespace ui {
@@ -227,11 +228,10 @@ void GdiRenderer::OnDrawText(
     float fontSize, const char* fontName,
     const Color& color,
     const std::string& clickHandler,
-    const std::string& className
+    const std::string& className,
+    float maxWidth
 ) {
     (void)clickHandler;
-    // See OnDrawRectangle: `class=` is a web-only, not-recommended
-    // escape hatch -- ignored here on purpose.
     (void)className;
     if (!memDC_ || !text) return;
 
@@ -240,7 +240,18 @@ void GdiRenderer::OnDrawText(
     HFONT oldFont = static_cast<HFONT>(SelectObject(memDC_, font));
     SetTextColor(memDC_, ToColorRef(color));
 
-    TextOutA(memDC_, static_cast<int>(x), static_cast<int>(y), text, static_cast<int>(lstrlenA(text)));
+    if (maxWidth > 0.0f) {
+        std::vector<std::string> lines = layout::WrapTextLines(
+            std::string(text), fontSize, fontName ? fontName : std::string(), maxWidth);
+        double lineHeight = layout::WrappedLineHeight(fontSize, fontName ? fontName : std::string());
+        for (size_t i = 0; i < lines.size(); ++i) {
+            const std::string& line = lines[i];
+            TextOutA(memDC_, static_cast<int>(x), static_cast<int>(y + i * lineHeight),
+                     line.c_str(), static_cast<int>(line.size()));
+        }
+    } else {
+        TextOutA(memDC_, static_cast<int>(x), static_cast<int>(y), text, static_cast<int>(lstrlenA(text)));
+    }
 
     SelectObject(memDC_, oldFont);
     DeleteObject(font);
@@ -307,7 +318,7 @@ void GdiRenderer::OnDrawButton(
     if (offsetX < 0.0f) offsetX = 0.0f;
     if (offsetY < 0.0f) offsetY = 0.0f;
 
-    OnDrawText(x + offsetX, y + offsetY, text, fontSize, fontName, textColor, std::string(), std::string());
+    OnDrawText(x + offsetX, y + offsetY, text, fontSize, fontName, textColor, std::string(), std::string(), -1.0f);
 }
 
 void GdiRenderer::OnDrawLink(

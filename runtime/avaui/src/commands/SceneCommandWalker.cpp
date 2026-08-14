@@ -87,10 +87,43 @@ bool AncestorIsOverlay(const std::shared_ptr<scene::ISceneNode>& node) {
 // the ScrollView is a full-page one, potentially far enough to look
 // like it never opened at all).
 const render::IRenderNode* NearestScrollAncestor(const std::shared_ptr<scene::ISceneNode>& node) {
+    // An overlay root itself (e.g. an open Dialog) is always painted in
+    // Pass 2 as a top-level sibling of #ava-viewport's content, never
+    // nested inside any ScrollView's `overflow: auto` <div> -- no matter
+    // where it sits in the component tree (see DecomposeDialog's own
+    // comment). The walk below only detects "stop, this is an overlay"
+    // once it reaches an ANCESTOR's render node, starting at
+    // node->Parent() -- so when `node` itself is the overlay root (the
+    // Dialog's own drawNode call from drawSubtree(root, isRoot=true)),
+    // it skips straight past that check and can return an outer
+    // ScrollView instead. That silently subtracted the ScrollView's
+    // global origin from the dialog panel's own x/y, shifting the
+    // dialog off its real, centered on-screen position -- while its
+    // children stayed correct, since for THEM the walk does hit the
+    // Dialog's IsOverlay() first and returns nullptr. Checking `node`
+    // itself first closes that gap.
+    const render::IRenderNode* selfRender = node ? node->GetRenderNode() : nullptr;
+    if (selfRender && selfRender->IsOverlay()) {
+        return nullptr;
+    }
     auto parent = node ? node->Parent() : nullptr;
     while (parent) {
         const render::IRenderNode* parentRender = parent->GetRenderNode();
         if (parentRender && parentRender->IsOverlay()) {
+            // Always stop at the overlay boundary -- an overlay's own
+            // ancestor ScrollViews (from wherever it sits in the
+            // component tree) must never apply to it or its
+            // descendants, per the comment above. But if the overlay
+            // ITSELF now scrolls its own content (a Dialog capped to a
+            // max on-screen height -- see its own dedicated branch in
+            // drawNode below, mirroring ScrollView's), it IS the
+            // correct, nearest scroll ancestor for anything between
+            // here and it: return it instead of nullptr so those
+            // descendants get DOM-nested with dialog-local coordinates,
+            // exactly like a real ScrollView's children already are.
+            if (parentRender->Type() == render::RenderNodeType::Dialog) {
+                return parentRender;
+            }
             return nullptr;
         }
         if (parentRender && parentRender->Type() == render::RenderNodeType::ScrollView) {
@@ -226,6 +259,87 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
             return;
         }
 
+        // A Dialog's content is fully user-customizable (any children,
+        // any amount of text), so its own on-screen height can never be
+        // trusted to fit the viewport -- LayoutEngineImpl.cpp sizes a
+        // Dialog to its full, uncapped intrinsic content height (see
+        // PlaceComponent's isDialog exemption there) so its box and its
+        // children's positions stay internally consistent, but nothing
+        // stops that intrinsic height from exceeding the screen for a
+        // sufficiently long dialog. Rather than let it spill past its
+        // own card (the bug this whole Dialog-sizing investigation
+        // started from) or run off the top/bottom of the viewport, cap
+        // the box's RENDERED height with CSS and make it scroll
+        // internally once content exceeds that cap -- mirroring
+        // ScrollView's own branch immediately above verbatim (DOM-nest
+        // children under this div via NearestScrollAncestor now also
+        // recognizing a Dialog as a scroll ancestor, and drawSubtree's
+        // matching close-tag below). `max-height: 90vh` is a relative
+        // viewport unit, not a value computed from the renderer's own
+        // pixel viewport size (no such accessor exists on IRenderer),
+        // so it stays correct across window resizes for free. The `top`
+        // position was centered assuming the full, uncapped height, so
+        // a capped dialog taller than 90vh renders slightly low rather
+        // than perfectly centered -- an acceptable trade-off next to a
+        // dialog that either runs off-screen or spills its own content
+        // past its card.
+        //
+        // Gated on IsOverlay(): a CLOSED dialog (DecomposeDialog set
+        // overlay=false, shouldFill=false, shouldStroke=false, and
+        // added no children) must NOT enter this branch -- doing so
+        // emitted an empty, transparent <div class="ava-dialog"> in
+        // pass 1 at whatever position the layout engine centered the
+        // (still-present-in-tree) Dialog node against rootViewport_.
+        // That position differs from the OPEN dialog's position
+        // (closing the dialog reflows its parent, shifting the
+        // rootViewport-centered box), so the closed-state HTML
+        // contained an invisible dialog card 16px away from where the
+        // open one sat. During the close animation, EventScriptTag's
+        // applyHtml() clones the old (open) fragment and fades it out
+        // ON TOP of this new (closed) HTML -- the 16px-offset
+        // transparent div bled through the fading clone, making the
+        // dialog appear to "jump" before disappearing. Skipping this
+        // branch for a non-overlay Dialog means the closed dialog
+        // emits NOTHING (ShouldFill/ShouldStroke both false, no
+        // dedicated type branch matches), and the close clone fades
+        // out cleanly over the page content with no ghost div
+        // underneath.
+        if (renderNode->Type() == render::RenderNodeType::Dialog &&
+            renderNode->IsOverlay() &&
+            renderer.SupportsScrollRegions()) {
+            Color fillColor = renderNode->ShouldFill()
+                                   ? common::ParseColor(renderNode->BackgroundColor())
+                                   : Color{0, 0, 0, 0};
+            Color borderColor = renderNode->ShouldStroke()
+                                     ? common::ParseColor(renderNode->BorderColor())
+                                     : Color{0, 0, 0, 0};
+            float borderWidth = renderNode->ShouldStroke()
+                                     ? static_cast<float>(renderNode->StrokeWidth())
+                                     : 0.0f;
+            auto toRgba = [](const Color& c) {
+                char buf[40];
+                std::snprintf(buf, sizeof(buf), "rgba(%d,%d,%d,%.3f)", c.r, c.g, c.b,
+                               c.a / 255.0f);
+                return std::string(buf);
+            };
+            std::string html =
+                "<div class=\"ava-element ava-dialog\" style=\"left:" + std::to_string(x) +
+                "px; top:" + std::to_string(y) + "px; width:" + std::to_string(w) +
+                "px; height:" + std::to_string(h) + "px; max-height:90vh; overflow-x:hidden; overflow-y:auto; background-color:" +
+                toRgba(fillColor) + "; ";
+            if (renderNode->ShouldStroke()) {
+                html += "border:" + std::to_string(borderWidth) + "px solid " +
+                        toRgba(borderColor) + "; ";
+            }
+            html += "border-radius:" + std::to_string(renderNode->BorderRadius()) + "px;\">";
+            // Deliberately NOT self-closed -- see ScrollView's identical
+            // comment above; drawSubtree closes this once the dialog's
+            // children (now DOM-nested, dialog-local coordinates) are
+            // done.
+            sink.DrawHtmlFragment(html);
+            return;
+        }
+
         if (renderNode->Type() == render::RenderNodeType::Button) {
             textStorage.push_back(renderNode->Text());
             textStorage.push_back(renderNode->FontName());
@@ -309,7 +423,7 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
             // data-handler target; the JS event bridge already maps
             // `oninput` -> DOM `input` and POSTs {handler, value} back.
             if (!handler.empty()) {
-                html += " data-event=\"oninput\" data-handler=\"" + handler + "\"";
+                html += " data-event=\"oninput\" data-handler=\"" + EscapeHtmlText(handler) + "\"";
             }
             html += " />";
             sink.DrawHtmlFragment(html);
@@ -346,8 +460,9 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
             const std::string& text = textStorage[textStorage.size() - 2];
             const std::string& fontName = textStorage.back();
             Color color = common::ParseColor(renderNode->ForegroundColor());
+            float maxWidth = renderNode->Wrap() ? w : -1.0f;
             sink.DrawText(x, y, text.c_str(), static_cast<float>(renderNode->FontSize()),
-                          fontName.c_str(), color, handler, cssClass);
+                          fontName.c_str(), color, handler, cssClass, maxWidth);
         }
 
         if (renderNode->Type() == render::RenderNodeType::Image ||
@@ -357,7 +472,7 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
         }
 
         if (renderNode->Type() == render::RenderNodeType::ComboBox) {
-            std::string html = "<select class=\"ava-element\" style=\"position:absolute; left:" +
+            std::string html = "<select class=\"ava-element ava-select\" style=\"position:absolute; left:" +
                                 std::to_string(x) + "px; top:" + std::to_string(y) +
                                 "px; width:" + std::to_string(w) + "px; height:" + std::to_string(h) + "px;\"";
             html += " data-comp-id=\"" + std::to_string(renderNode->Id()) + "\"";
@@ -370,7 +485,7 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
                 // dropdown before the user can pick an option. `change`
                 // only fires once an option is actually selected, after
                 // the native popup has already closed on its own.
-                html += " data-event=\"onchange\" data-handler=\"" + handler + "\"";
+                html += " data-event=\"onchange\" data-handler=\"" + EscapeHtmlText(handler) + "\"";
             }
             html += ">";
 
@@ -441,7 +556,9 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
                 drawSubtree(child, false);
             }
             const render::IRenderNode* rn = node ? node->GetRenderNode() : nullptr;
-            if (rn && rn->Type() == render::RenderNodeType::ScrollView && renderer.SupportsScrollRegions()) {
+            if (rn && renderer.SupportsScrollRegions() &&
+                (rn->Type() == render::RenderNodeType::ScrollView ||
+                 rn->Type() == render::RenderNodeType::Dialog)) {
                 sink.DrawHtmlFragment("</div>");
             }
         };
@@ -514,12 +631,22 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
         // page -- see the comment on Pass 2 above for why that's
         // necessary. Also still a marker wrapper for
         // ExtractOverlayFragments, as before.
+        // `data-dialog-id` is `renderNode->Id()` (the source component's
+        // stable ComponentId, unrelated to any user `id = "..."`
+        // property) -- not used for CSS or layout, only so
+        // EventScriptTag's applyHtml() (app.cpp) can tell "this overlay
+        // is still open in the new render" from "this overlay just
+        // closed" by diffing ids between the old and new DOM, since a
+        // closed dialog's fragment isn't in the new HTML at all to
+        // diff against structurally.
         sink.DrawHtmlFragment(
-            "<div class=\"ava-overlay-fragment\" style=\"position:relative; z-index:2147483647;\">");
+            "<div class=\"ava-overlay-fragment\" data-dialog-id=\"" +
+            std::to_string(renderNode ? renderNode->Id() : 0) +
+            "\" style=\"position:relative; z-index:2147483647;\">");
         if (renderNode && renderNode->HasBackdrop()) {
             sink.DrawHtmlFragment(
                 "<div class=\"ava-overlay-backdrop\" style=\"position:fixed; inset:0; "
-                "background:rgba(0,0,0,0.5);\"></div>");
+                "background:rgba(0,0,0,0.65);\"></div>");
         }
         drawSubtree(root, /*isRoot=*/true);
         sink.DrawHtmlFragment("</div>");

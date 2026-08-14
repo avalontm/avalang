@@ -108,6 +108,28 @@ public:
     void SetNavigateSink(NavigateSink sink);
     void Navigate(const std::string& route) const;
 
+    // Fase 4 (avapack, ver plan_ava_pack.md): hooks opcionales alrededor de
+    // la lectura de disco que hace DoImport (vm_import.cpp) para un modulo
+    // importado. Mismo patron que PrintSink/AlertSink/NavigateSink de
+    // arriba: sin hook instalado (nullptr, el default), DoImport se
+    // comporta EXACTAMENTE igual que antes de este cambio -- ava_cli y
+    // avahost normales nunca instalan esto y no se ven afectados.
+    //
+    // Pensado para runtime/avapack/src/main.cpp: en vez de volcar todo el
+    // proyecto (ya descifrado) al temp dir de una sola vez (lo que hacia
+    // la Fase 3), el .exe empacado deja el temp dir vacio y usa estos
+    // hooks para materializar (descifrar + escribir) cada archivo de
+    // modulo justo antes de que DoImport lo abra, y borrarlo apenas
+    // termina de leerlo -- el archivo en claro nunca vive en disco mas
+    // tiempo del que tarda ese std::ifstream en leerlo. Ver
+    // ModuleFileHook resolved_path: la ruta ya resuelta (dentro del temp
+    // dir) que DoImport esta por abrir/acaba de cerrar.
+    using ModuleFileHook = std::function<void(const std::string& resolved_path)>;
+    void SetBeforeModuleReadHook(ModuleFileHook hook);
+    void SetAfterModuleReadHook(ModuleFileHook hook);
+    const ModuleFileHook& GetBeforeModuleReadHook() const { return before_module_read_hook_; }
+    const ModuleFileHook& GetAfterModuleReadHook() const { return after_module_read_hook_; }
+
     // Structured position of the most recent error caught by the C API
     // (ava_compile/ava_run/ava_call/ava_import, see public/src/c_api.cpp).
     // 1-based; 0 = unknown. Set from AvaError::line/column when the C API
@@ -199,6 +221,8 @@ private:
     PrintSink print_sink_;
     AlertSink alert_sink_;
     NavigateSink navigate_sink_;
+    ModuleFileHook before_module_read_hook_;
+    ModuleFileHook after_module_read_hook_;
     std::string current_dir_;
     std::unordered_map<std::string, Value> globals_;
     std::vector<CallFrame> frames_;

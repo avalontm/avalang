@@ -131,9 +131,10 @@ set(STUDIO_SOURCES
     src/util/csv.cpp
     src/util/data_dir.cpp
     src/util/settings.cpp
+    src/util/ava_cli_locator.cpp
+    src/util/process_log.cpp
     src/design/component_catalog.cpp
     src/design/design_document.cpp
-    src/design/avaui_text.cpp
     src/design/component_resolver.cpp
     src/design/state_eval.cpp
     src/design/live_render_bridge.cpp
@@ -143,6 +144,7 @@ set(STUDIO_SOURCES
     src/panels/editor_panel.cpp
     src/panels/properties_panel.cpp
     src/panels/settings_panel.cpp
+    src/panels/build_panel.cpp
     src/panels/preview_panel.cpp
     src/panels/terminal_panel.cpp
     src/panels/logs_panel.cpp
@@ -180,6 +182,7 @@ target_include_directories(ava_studio PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party
     ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
     ${CMAKE_SOURCE_DIR}/runtime/avaui/src
+    ${CMAKE_SOURCE_DIR}/runtime/avalang
 )
 
 target_link_libraries(ava_studio PRIVATE avalang imgui_docking text_editor avalang_ui)
@@ -200,6 +203,29 @@ add_custom_command(TARGET ava_studio POST_BUILD
             "$<TARGET_FILE_DIR:ava_studio>/data"
     COMMENT "Copying data/ (keyword_docs.csv, builtin_signatures.csv, component_catalog.csv) next to ava_studio.exe"
 )
+
+# avalang.dll / avalang_ui.dll -- ava_studio.exe links directly against
+# these (see target_link_libraries above), so on a shared build
+# (AVA_BUILD_SHARED=ON, the default) they need to sit right next to the
+# .exe just to let it start, same reasoning as the plugins' own
+# POST_BUILD copy below. On a static build (AVA_BUILD_SHARED=OFF) both
+# are baked straight into ava_studio.exe and there's no .dll to copy --
+# TARGET_FILE would just point back at a static .lib, so this is
+# skipped entirely rather than emitting a no-op/self-copy command.
+# Mirrors build_studio.bat's own belt-and-suspenders copy of these same
+# two files, so the copy happens whether you build via the .bat or
+# straight from the Visual Studio IDE/MSBuild.
+if(AVA_BUILD_SHARED)
+    add_custom_command(TARGET ava_studio POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:avalang>"
+                "$<TARGET_FILE_DIR:ava_studio>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:avalang_ui>"
+                "$<TARGET_FILE_DIR:ava_studio>"
+        COMMENT "Copying avalang.dll / avalang_ui.dll next to ava_studio.exe"
+    )
+endif()
 
 if(WIN32)
     # dwmapi -- DwmExtendFrameIntoClientArea, used by
@@ -234,7 +260,6 @@ if(AVA_BUILD_STUDIO_TESTS)
     add_executable(ava_studio_grid_flex_regression_test
         ${CMAKE_SOURCE_DIR}/tests/unit/avastudio/GridFlexRegressionTest.cpp
         src/design/design_document.cpp
-        src/design/avaui_text.cpp
         src/design/live_render_bridge.cpp
     )
     target_include_directories(ava_studio_grid_flex_regression_test PRIVATE

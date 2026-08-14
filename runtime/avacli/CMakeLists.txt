@@ -10,9 +10,14 @@
 # avalang.h) para poder drenar el event loop async al final del
 # script -- por eso necesita los headers PRIVATE de avalang, no sólo
 # su API pública instalada.
+#
+# build_command.cpp (Fase 2 de avapack, ver runtime/avapack/README.md)
+# implementa el subcomando `ava_cli build`: usa platform/Platform.h
+# (IProcess) para invocar cmake sin pasar por system() crudo -- por eso
+# el include dir de runtime/avalang (no solo src/) está agregado abajo.
 # ---------------------------------------------------------------------
 
-add_executable(ava_cli src/main.cpp)
+add_executable(ava_cli src/main.cpp src/build_command.cpp)
 
 target_link_libraries(ava_cli PRIVATE avalang)
 
@@ -20,6 +25,7 @@ target_include_directories(ava_cli PRIVATE
     ${CMAKE_SOURCE_DIR}/runtime/avalang/src
     ${CMAKE_SOURCE_DIR}/runtime/avalang/api/src
     ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
+    ${CMAKE_SOURCE_DIR}/runtime/avalang
 )
 
 # En Windows no hay RPATH: ava_cli.exe necesita avalang.dll en su misma

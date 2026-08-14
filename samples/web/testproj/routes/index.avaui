@@ -1,66 +1,39 @@
 extends layouts.main
 
 properties
-    title = "My App"
-end
-
-state
-    counter = 0
+    title = "POS - Inicio"
 end
 
 view
     column
-        fill = "true"
-        padding = 20
-        gap = 16
+        padding = 48
+        gap = 24
+        align = "center"
 
         text
-            text = "Count: " + counter
+            text = "Punto de Venta"
+            fontName = "heading1"
             fontSize = 32
         end
 
-        row
-            gap = 12
-			height = 48
-			
-            button
-                id = "Decrease"
-                text = "-"
-                click = OnDecreaseClick()
-            end
+        text
+            text = "Sistema de ventas para cafe y panaderia."
+            style = "text.muted"
+            fontSize = 16
+        end
 
-            button
-                id = "Increase"
-                text = "+"
-                click = OnIncreaseClick()
-            end
-
-            button
-                id = "Clear"
-				grow = true
-                text = "Clear"
-                click = OnClearClick()
-            end
+        button
+            id = "StartPosBtn"
+            text = "Iniciar POS"
+            fontSize = 18
+            padding = 16
         end
 
         link
-            text = "Ver página de controles de test"
-            href = "/controls"
+            text = "Ir directamente al POS >"
+            href = "/pos"
             textColor = "2563EB"
+            fontSize = 16
         end
-    end
-end
-
-code
-    func OnDecreaseClick()
-        counter--
-    end
-
-    func OnIncreaseClick()
-        counter++
-    end
-
-    func OnClearClick()
-        counter = 0
     end
 end

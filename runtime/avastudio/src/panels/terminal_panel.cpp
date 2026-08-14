@@ -5,8 +5,147 @@
 #include "imgui.h"
 #include "imgui_stdlib.h"
 #include "palette.h"
+#include "platform/Platform.h"
+#include "platform/interfaces/IProcessStream.h"
 
 namespace studio {
+
+// --- background script run (out-of-process, via ava_cli.exe) ---------
+// Same shape as build_panel.cpp's StartBuild -- see ScriptRunState's
+// comment in terminal_panel.h for why Run works this way.
+void StartScriptRun(TerminalState& state, EngineBridge& engine, std::string ava_cli_path, std::string script_path) {
+    ScriptRunState& run = state.run;
+    if (run.running.load()) return;              // one run at a time
+    if (run.worker.joinable()) run.worker.join(); // previous run already finished, just reap it
+
+    // Same "Run <path>" marker EngineBridge::RunScript() itself pushes,
+    // written here (synchronously, on the UI thread that's calling
+    // StartScriptRun) so it shows up right away instead of waiting for
+    // the child process to produce its first byte of output.
+    engine.AppendConsoleLine(ConsoleLine::Kind::Info,
+                              "Run " + (script_path.empty() ? std::string("<script>") : script_path));
+
+    {
+        std::lock_guard<std::mutex> lock(run.mutex);
+        run.log.clear();
+        run.log_forwarded_upto = 0;
+        run.has_result = false;
+        run.result_consumed = false;
+        run.launch_failed = false;
+        run.exit_code = -1;
+    }
+    run.running = true;
+
+    run.worker = std::thread([&run, ava_cli_path = std::move(ava_cli_path),
+                               script_path = std::move(script_path)]() {
+        auto platform = ava::platform::Platform::Create();
+        ava::platform::IProcess& process = platform->Process();
+        auto* streaming = dynamic_cast<ava::platform::IProcessStream*>(&process);
+
+        bool launched = false;
+        int exit_code = -1;
+        std::vector<std::string> args{script_path};
+
+        if (streaming) {
+            launched = streaming->ExecuteStreaming(
+                ava_cli_path, args,
+                [&run](const std::string& chunk) {
+                    std::lock_guard<std::mutex> lock(run.mutex);
+                    run.log += chunk;
+                },
+                exit_code);
+        } else {
+            ava::platform::ProcessResult result;
+            launched = process.Execute(ava_cli_path, args, result);
+            if (launched) {
+                std::lock_guard<std::mutex> lock(run.mutex);
+                run.log = result.stdout_output;
+                if (!result.stderr_output.empty()) {
+                    if (!run.log.empty()) run.log += "\n";
+                    run.log += result.stderr_output;
+                }
+                exit_code = result.exit_code;
+            }
+        }
+
+        std::lock_guard<std::mutex> lock(run.mutex);
+        if (!launched) {
+            run.log = "error: could not run '" + ava_cli_path +
+                       "' -- check the ava_cli path under Build > Advanced.\n";
+            run.launch_failed = true;
+            run.exit_code = -1;
+        } else {
+            run.exit_code = exit_code;
+        }
+        run.has_result = true;
+        run.running = false;
+    });
+}
+
+void PollScriptRun(TerminalState& state, EngineBridge& engine) {
+    ScriptRunState& run = state.run;
+
+    std::string new_output;
+    bool finished_now = false;
+    bool launch_failed = false;
+    int exit_code = -1;
+    {
+        std::lock_guard<std::mutex> lock(run.mutex);
+        if (run.log.size() > run.log_forwarded_upto) {
+            new_output = run.log.substr(run.log_forwarded_upto);
+            run.log_forwarded_upto = run.log.size();
+        }
+        if (run.has_result && !run.result_consumed) {
+            finished_now = true;
+            launch_failed = run.launch_failed;
+            exit_code = run.exit_code;
+            run.result_consumed = true;
+        }
+    }
+
+    if (!new_output.empty()) engine.AppendExternalOutput(new_output);
+
+    if (finished_now) {
+        engine.FlushExternalOutput();
+
+        RunResult result;
+        if (launch_failed) {
+            // ava_cli_path itself couldn't be started -- not a script
+            // problem at all, most likely a misconfigured/missing
+            // ava_cli(.exe). The explanatory line is already in the
+            // console via AppendExternalOutput above (it's what
+            // StartScriptRun wrote into run.log).
+            result.success = false;
+            result.message = "could not launch ava_cli -- see message above";
+            engine.AppendConsoleLine(ConsoleLine::Kind::Error, result.message);
+        } else if (exit_code == 0) {
+            result.success = true;
+            result.message = "OK";
+            engine.AppendConsoleLine(ConsoleLine::Kind::Success, result.message);
+        } else if (exit_code == 1) {
+            // Normal compile/runtime error -- ava_cli.exe already printed
+            // "compile error: ..." / "runtime error: ..." above via
+            // stderr (see runtime/avacli/src/main.cpp), so the console
+            // already shows the actual message. This just marks the run
+            // as failed; no error_line/column, ava_cli doesn't expose
+            // those today (see ScriptRunState's comment on the trade-off).
+            result.success = false;
+            result.message = "script exited with an error -- see output above";
+            engine.AppendConsoleLine(ConsoleLine::Kind::Error, result.message);
+        } else {
+            // Neither a clean exit nor a normal script-level error --
+            // the child process itself died (e.g. a native access
+            // violation from an unsafe extern binding). AvaStudio is
+            // still alive to say so, which is the whole point.
+            result.success = false;
+            result.message = "the script crashed the process it ran in (exit code " +
+                              std::to_string(exit_code) + ") -- likely a native/extern call";
+            engine.AppendConsoleLine(ConsoleLine::Kind::Error, result.message);
+        }
+        state.last_run = result;
+        state.has_run_result = true;
+    }
+}
 
 namespace {
 

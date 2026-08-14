@@ -1,9 +1,0 @@
-class dog
-	func dog()
-
-	end
-
-	func say()
-		print("woof!!")
-	end
-end

@@ -73,4 +73,12 @@ bool SaveFileDialog(GLFWwindow* window, std::string& out_path, const std::string
 // cancelled.
 bool OpenFolderDialog(GLFWwindow* window, std::string& out_path, const std::string& initial_dir = "");
 
+// Reveals `path` in the OS file manager (Windows Explorer): opens its
+// containing folder with the item itself pre-selected/highlighted, same
+// as VSCode's "Reveal in File Explorer" / "Open Containing Folder". If
+// `path` is itself a folder, opens that folder's own contents instead of
+// selecting it inside its parent. No-op on platforms where this isn't
+// implemented (see file header comment).
+void RevealInFileExplorer(const std::string& path);
+
 } // namespace studio::titlebar

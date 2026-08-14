@@ -74,6 +74,19 @@ void VM::Navigate(const std::string& route) const {
     }
 }
 
+// Fase 4 (avapack): ver declaracion en vm.h. Sin hook instalado esto es
+// un no-op -- DoImport (vm_import.cpp) llama estos getters directo (no
+// necesitan degradar a ningun comportamiento por default como
+// Print/Alert/Navigate, porque "no hacer nada" ya ES el comportamiento
+// correcto de no tener el hook puesto).
+void VM::SetBeforeModuleReadHook(ModuleFileHook hook) {
+    before_module_read_hook_ = std::move(hook);
+}
+
+void VM::SetAfterModuleReadHook(ModuleFileHook hook) {
+    after_module_read_hook_ = std::move(hook);
+}
+
 bool VM::HasBuiltinMethod(const std::string& name) const {
     return builtin_methods_.find(name) != builtin_methods_.end();
 }

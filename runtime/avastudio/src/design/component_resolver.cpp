@@ -20,4 +20,4 @@ void ResolveImportsForDocument(DesignDocument& doc, const std::string& projectRo
     }
 }
 
-} // namespace studio::design
+}

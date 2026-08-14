@@ -32,4 +32,4 @@ LiveRenderResult BuildLiveRender(avalang::ui::ComponentTree* tree, int viewportW
                                   const std::string& extends = "",
                                   const std::string& projectRoot = "");
 
-} // namespace studio::design
+}

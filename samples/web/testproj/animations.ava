@@ -1,0 +1,30 @@
+# animations.ava -- animaciones de proyecto, mismo patron que styles.ava
+# (ver app.ava: se carga con `animation "animations.ava"`, igual que
+# `style "styles.ava"`).
+#
+# Hoy solo existe un target/trigger soportado por el renderer web:
+# dialog:open / dialog:close -- la entrada/salida del modal (control
+# `dialog`, ver routes/controls.avaui -> "ConfirmDialog"). Ambos
+# bloques son opcionales; cualquier campo que no se declare aqui cae
+# al valor por defecto embebido en HTMLRenderer (160ms, ease-out para
+# abrir, ease-in para cerrar, opacity 0->1 / 1->0).
+#
+# Nota tecnica: el modal se pinta como un grupo plano de elementos
+# `position:absolute` (backdrop + panel + su contenido), asi que la
+# unica propiedad animable en conjunto sin desincronizar coordenadas
+# es `opacity` -- por eso `from`/`to` son valores de opacidad (0-1 o
+# "0%"-"100%"), no offsets de posicion ni escalas.
+
+animation dialog:open
+    from = 0
+    to = 1
+    duration = "260ms"
+    easing = "ease-out"
+end
+
+animation dialog:close
+    from = 1
+    to = 0
+    duration = "200ms"
+    easing = "ease-in"
+end

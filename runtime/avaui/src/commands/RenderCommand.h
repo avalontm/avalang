@@ -57,6 +57,15 @@ struct RenderCommand {
         Color color;
         std::string clickHandler;
         std::string className;
+        // <=0 (the default) means "no wrap" -- unchanged, single-line
+        // nowrap behavior. >0 is the width, in px, the text should be
+        // wrapped to (word-wrap, never mid-word) before drawing -- see
+        // layout/TextMeasure.h's WrapTextLines, which every OnDrawText
+        // implementation calls with this same value so the lines a
+        // renderer actually paints match the lines LayoutEngineImpl
+        // already accounted for when it sized this Text's box (see
+        // LayoutEngineImpl::ComputeIntrinsicSize's "wrap" handling).
+        float maxWidth = -1.0f;
     } drawText;
 
     struct {

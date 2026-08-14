@@ -47,7 +47,8 @@ public:
         float fontSize, const char* fontName,
         const Color& color,
         const std::string& clickHandler = std::string(),
-        const std::string& className = std::string()
+        const std::string& className = std::string(),
+        float maxWidth = -1.0f
     ) override;
 
     void DrawImage(
@@ -133,7 +134,8 @@ protected:
         float fontSize, const char* fontName,
         const Color& color,
         const std::string& clickHandler,
-        const std::string& className
+        const std::string& className,
+        float maxWidth
     ) = 0;
 
     virtual void OnDrawImage(

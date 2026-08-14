@@ -1,8 +1,5 @@
-# Recursos globales de la app -- se cargan en <head> de todas
-# las páginas .avaui. Vacío por defecto: AvaUI no depende de
-# CSS/Tailwind para renderizar, usa primitivas nativas de
-# layout (row, column, padding, gap, align, width, height).
-# Si igual necesitás CSS propio o una librería JS externa,
-# declarala acá a mano, por ejemplo:
-#   import "css/app.css"
-#   import "js/some-lib.js"
+font "assets/fonts/Poppins-Regular.ttf"
+font "heading1" "assets/fonts/Poppins-Bold.ttf"
+
+style "styles.ava"
+animation "animations.ava"

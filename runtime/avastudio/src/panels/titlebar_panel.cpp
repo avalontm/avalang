@@ -289,6 +289,10 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
         if (ImGui::MenuItem("Run Script", "F5")) {
             editor_state.run_requested = true;
         }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Build Executable...", "Ctrl+B")) {
+            result.build_requested = true;
+        }
         ImGui::EndPopup();
     }
 

@@ -18,8 +18,8 @@ namespace studio {
 // which must also match the literal passed to each panel's
 // ImGui::Begin() call -- see explorer_panel.cpp, properties_panel.cpp,
 // preview_panel.cpp, terminal_panel.cpp, logs_panel.cpp.
-inline constexpr std::array<std::string_view, 6> kBuiltinPanelNames = {
-    "Explorer", "Properties", "Preview", "Terminal", "Output", "Settings",
+inline constexpr std::array<std::string_view, 7> kBuiltinPanelNames = {
+    "Explorer", "Properties", "Preview", "Terminal", "Output", "Settings", "Build",
 };
 
 } // namespace studio

@@ -1,11 +1,54 @@
 #pragma once
 
+#include <atomic>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 
 #include "engine/engine_bridge.h"
 
 namespace studio {
+
+// Background-thread state for one in-flight "Run" (see StartScriptRun
+// below). Same shape as BuildPanelState's own worker fields
+// (panels/build_panel.h) -- deliberately, since it's the same pattern:
+// the script runs out-of-process via ava_cli.exe instead of calling
+// EngineBridge::RunScript() directly on the UI thread, so that:
+//
+//  - A script that blocks on a native `extern` call (e.g. libmysql's
+//    mysql_real_connect with nothing listening on the other end) can no
+//    longer freeze the whole window -- AvaLang's coroutines/async
+//    (builtins/builtin_async.cpp) only cover bytecode-level yields and
+//    timers, they cannot hand control back mid a blocking native call
+//    (see vm_extern.cpp's ffi_call), so the only way to keep the UI
+//    thread free is to not run the blocking call ON the UI thread.
+//  - A hard native crash inside the script (e.g. an out-of-bounds
+//    pointer read through mem_peek_ptr, which is intentionally unchecked
+//    -- see builtins/builtin_mem.cpp) only takes down the child
+//    ava_cli.exe process, not AvaStudio itself.
+//
+// Trade-off, and it's a real one: EngineBridge::RunScript() (still used
+// for plugins' run_project_on_main_thread, see main.cpp) gets precise
+// error_line/error_column/error_source straight from
+// ava_last_error_line/column/source. ava_cli.exe today only prints
+// "compile error: ..." / "runtime error: ..." to stderr (see
+// runtime/avacli/src/main.cpp) with no structured position -- so a run
+// through this path can't click-to-jump to the offending line the way
+// an in-process run's Error console lines can. The error text itself
+// still comes through fine, just not the line highlight.
+struct ScriptRunState {
+    std::atomic<bool> running{false};
+    std::thread worker;
+
+    std::mutex mutex; // guards every field below
+    std::string log;  // ava_cli's stdout+stderr, interleaved, as it streams in
+    std::string::size_type log_forwarded_upto = 0;
+    bool has_result = false;    // true once the process has exited (or failed to launch)
+    bool result_consumed = false; // DrawTerminalPanel flips this once it has folded has_result into the console/TerminalState::last_run, so it only does that once
+    bool launch_failed = false; // true if ava_cli_path itself couldn't even be started (bad path) -- distinct from exit_code, which only means anything once a process actually ran
+    int exit_code = -1;         // 0 = success, 1 = normal compile/runtime error (see ava_cli's main.cpp), anything else = the child process itself crashed
+};
 
 // UI-only state for the Terminal panel. The actual scrollback (the
 // ConsoleLine history) lives in EngineBridge, not here -- see the
@@ -22,7 +65,45 @@ struct TerminalState {
     // std::min/max of the pair to get the actual [first, last] range).
     int selection_anchor = -1;
     int selection_cursor = -1;
+
+    // Backing state for the interactive Run button/shortcut (main.cpp),
+    // polled and folded into EngineBridge::Console()/last_run above by
+    // DrawTerminalPanel every frame. See ScriptRunState's own comment
+    // for why Run works this way instead of calling
+    // EngineBridge::RunScript() directly.
+    ScriptRunState run;
 };
+
+// Starts running `script_path` via `ava_cli_path` (e.g. the result of
+// DetectAvaCliPath() / StudioSettings::build_ava_cli_path -- same
+// resolution the Build panel already uses, see util/ava_cli_locator.h)
+// on a background thread. No-op if a run is already in flight
+// (state.run.running) -- caller should disable/hide the Run action
+// while that's true, same convention as BuildPanelState::building. Joins
+// any previous (already-finished) worker thread first, same as
+// StartBuild in build_panel.cpp.
+//
+// Does NOT save the active tab first -- callers must ensure
+// `script_path` reflects what they want to actually run (main.cpp calls
+// SaveTab() on the active tab right before this, since ava_cli.exe reads
+// the file from disk, unlike the old in-process RunScript() which ran
+// the editor's in-memory buffer directly).
+void StartScriptRun(TerminalState& state, EngineBridge& engine, std::string ava_cli_path, std::string script_path);
+
+// Folds ScriptRunState::run's progress into EngineBridge::Console() and,
+// once the run finishes, into TerminalState::last_run/has_run_result --
+// same fields EngineBridge::RunScript() itself sets, so callers that
+// read them (e.g. main.cpp's plugin_callbacks.get_last_run_output)
+// don't need to know whether the last run happened in-process or via
+// StartScriptRun.
+//
+// IMPORTANT: call this once a frame UNCONDITIONALLY, regardless of
+// whether the Terminal panel is currently open -- DrawTerminalPanel
+// itself is only called while its tab is open (see main.cpp), so a run
+// started while the panel is closed would otherwise sit finished in
+// ScriptRunState forever, never folded in, and
+// get_last_run_output()/has_run_result would silently go stale.
+void PollScriptRun(TerminalState& state, EngineBridge& engine);
 
 // Returned by DrawTerminalPanel when the user clicks an Error line in the
 // console that carries a known source position (ConsoleLine::error_line

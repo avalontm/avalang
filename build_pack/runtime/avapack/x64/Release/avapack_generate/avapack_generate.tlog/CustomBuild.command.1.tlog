@@ -1,0 +1,28 @@
+^D:\_CODE_\AVALANG\BUILD_PACK\CMAKEFILES\002AE447463D50FA224FD92B9E0612B0\EMBEDDED_PROJECT.CPP.RULE
+setlocal
+..\avalang\Release\avapack_gen.exe --project D:/_CODE_/avalang/build_studio/runtime/avastudio/Release/scripts --entry mysql_example.ava --out D:/_CODE_/avalang/build_pack/runtime/avapack/generated/embedded_project.cpp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\_CODE_\AVALANG\BUILD_PACK\CMAKEFILES\9BD70ADA9614D232A1D8FD89B4E6AA5E\AVAPACK_GENERATE.RULE
+setlocal
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^D:\_CODE_\AVALANG\RUNTIME\AVAPACK\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/_CODE_/avalang -BD:/_CODE_/avalang/build_pack --check-stamp-file D:/_CODE_/avalang/build_pack/runtime/avapack/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

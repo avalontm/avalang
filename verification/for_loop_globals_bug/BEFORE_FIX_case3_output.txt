@@ -1,0 +1,9 @@
+=== Caso 3: recursion DENTRO del cuerpo del for (disparador real) ===
+--- esperado: 12 lineas 'n i' (3 del walk(2) externo, 9 de los walk(1) internos) ---
+
+2 10
+1 10
+1 20
+1 30
+
+(contá las lineas de arriba: 12 = correcto / aislado por frame, menos de 12 = bug de globales compartidas confirmado)

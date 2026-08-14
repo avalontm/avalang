@@ -1,0 +1,74 @@
+import mysql
+
+func main()
+    print("=== diag6: aislar punto de cuelgue ===")
+
+    db = MySQL()
+    print("[1] MySQL() creado")
+
+    db.connect("127.0.0.1", "root", "", "test", 3306)
+    print("[2] connect() ok, server: " + db.serverInfo())
+
+    # Paso A: query minimo sin _bindParams ni information_schema
+    print("[3] probando mysql_query directo con SELECT 1 ...")
+    rc = MySQLNative.mysql_query(db.handle, "SELECT 1 AS uno")
+    print("[4] mysql_query rc=" + str(rc))
+
+    if rc != 0 then
+        print("[ERR] query fallo: " + db.error())
+        return
+    end
+
+    fc = MySQLNative.mysql_field_count(db.handle)
+    print("[5] field_count=" + str(fc))
+
+    if fc <= 0 then
+        print("[ERR] field_count <= 0, no hay resultado")
+        return
+    end
+
+    res = MySQLNative.mysql_store_result(db.handle)
+    print("[6] store_result, is_null=" + str(mem_is_null(res)))
+
+    if mem_is_null(res) then
+        print("[ERR] store_result devolvio NULL")
+        return
+    end
+
+    cols = MySQLNative.mysql_num_fields(res)
+    print("[7] num_fields=" + str(cols))
+
+    # Probar mysql_fetch_field_direct vs iterador
+    print("[8] probando mysql_fetch_field_direct(res, 0) ...")
+    field0 = MySQLNative.mysql_fetch_field_direct(res, 0)
+    print("[9] field_direct is_null=" + str(mem_is_null(field0)))
+    if not mem_is_null(field0) then
+        namePtr = mem_peek_ptr(field0, 0)
+        print("[10] namePtr is_null=" + str(mem_is_null(namePtr)))
+        if not mem_is_null(namePtr) then
+            print("[11] name='" + mem_peek_string(namePtr) + "'")
+        end
+    end
+
+    print("[12] probando mysql_fetch_row(res) ...")
+    row = MySQLNative.mysql_fetch_row(res)
+    print("[13] fetch_row is_null=" + str(mem_is_null(row)))
+
+    if not mem_is_null(row) then
+        print("[14] probando mem_peek_ptr(row, 0) ...")
+        cell = mem_peek_ptr(row, 0)
+        print("[15] cell is_null=" + str(mem_is_null(cell)))
+        if not mem_is_null(cell) then
+            print("[16] cell value='" + mem_peek_string(cell) + "'")
+        end
+    end
+
+    MySQLNative.mysql_free_result(res)
+    print("[17] free_result ok")
+
+    db.close()
+    print("[18] close ok, state=" + db.state)
+    print("=== diag6 completo ===")
+end
+
+main()

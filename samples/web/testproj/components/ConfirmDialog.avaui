@@ -1,0 +1,139 @@
+# ConfirmDialog -- reusable confirmation modal.
+#
+# USAGE
+# -----
+# 1) Import once per page/layout that needs it:
+#
+#       import components.confirmdialog
+#
+#    and drop it once anywhere in that page's `view` (it renders nothing
+#    until opened, see `state` below):
+#
+#       ConfirmDialog()
+#
+#    Call-site args on `ConfirmDialog(...)` only override properties on
+#    THIS file's single top-level node (the `dialog` below) -- that's how
+#    every component call in this engine works (see ComponentResolver::
+#    ApplyCallSiteOverrides), so only dialog-level things like `width` are
+#    meaningful there:
+#
+#       ConfirmDialog(width = 420)
+#
+# 2) To actually open it with a specific title/message at runtime, call
+#    the small helper below from any `click` handler in the IMPORTING
+#    page's own `code` block -- this is the real equivalent of
+#    `confirmdialog(par1, par2)`: a plain avalang function call with
+#    parameters, not a component tag (component tags like `ConfirmDialog()`
+#    above are resolved once when the page is built, not re-invoked per
+#    click -- see note at the bottom of this file for why):
+#
+#       func OpenConfirmDialog(title, message)
+#           confirmDialogTitle = title
+#           confirmDialogMessage = message
+#           confirmDialogOpen = true
+#       end
+#
+#       button
+#           text = "Eliminar elemento"
+#           click = OpenConfirmDialog("Eliminar elemento", "Esta acción no se puede deshacer. ¿Deseas continuar?")
+#       end
+#
+#    Copy that `OpenConfirmDialog` function into each page that imports
+#    ConfirmDialog (components can't ship their own code-behind in this
+#    engine -- only a page's own `code` block gets bound, see
+#    RenderAvauiDynamicWithState's `host.BindCodeBehind(parsed.code)`).
+#
+# 3) The page must also define what happens on each button, again by
+#    fixed name (same reason as above -- ConfirmDialog's own buttons
+#    can't call a function passed in from the call site):
+#
+#       func ConfirmDialogAccept()
+#           confirmDialogOpen = false
+#           # ... do the real action here ...
+#       end
+#
+#       func ConfirmDialogCancel()
+#           confirmDialogOpen = false
+#       end
+#
+# STATE
+# -----
+# These defaults merge into the importing page's state (only for keys the
+# page hasn't already declared itself -- see ComponentResolver::
+# MergeStateMap), so a page can override any of them by declaring the same
+# name in its own `state` block before ConfirmDialog's copy is merged in.
+state
+    confirmDialogOpen = false
+    confirmDialogTitle = "Confirmar acción"
+    confirmDialogMessage = "¿Deseas continuar?"
+    confirmDialogConfirmText = "Aceptar"
+    confirmDialogCancelText = "Cancelar"
+end
+
+view
+    dialog
+        id = "ConfirmDialog"
+        title = confirmDialogTitle
+        isOpen = confirmDialogOpen
+        dismissible = false
+        width = 400
+
+        column
+            gap = 16
+            padding = 24
+
+            text
+                text = confirmDialogTitle
+                fontSize = 18
+                width = 352
+                wrap = true
+            end
+
+            scrollview
+                height = 96
+
+                text
+                    text = confirmDialogMessage
+                    fontSize = 14
+                    textColor = "6B7280"
+                    width = 352
+                    wrap = true
+                end
+            end
+
+            row
+                gap = 12
+
+                button
+                    id = "ConfirmDialogCancelBtn"
+                    text = confirmDialogCancelText
+                    backgroundColor = "F3F4F6"
+                    textColor = "111827"
+                    click = ConfirmDialogCancel()
+                end
+
+                button
+                    id = "ConfirmDialogAcceptBtn"
+                    text = confirmDialogConfirmText
+                    backgroundColor = "DC2626"
+                    click = ConfirmDialogAccept()
+                end
+            end
+        end
+    end
+end
+
+# WHY NOT A LITERAL `confirmdialog(par1, par2)` CALL
+# ----------------------------------------------------
+# `Something(args)` in a .avaui `view` (like `ConfirmDialog()` above) is
+# resolved by ComponentResolver at BUILD time: it inlines this file's
+# children into the page's tree once, and only forwards `key = value`
+# args (no positional args -- see AvauiParser::ParseComponentCallArgs)
+# onto that file's own top-level node(s). It is not a function call that
+# runs again every time someone clicks a button, and click handlers on
+# nested nodes (the two buttons above) can't be swapped in from the call
+# site at all. A real per-click, parameterized "open the dialog with
+# this text" call is a normal avalang function -- `OpenConfirmDialog
+# (title, message)` in step 2 above -- because plain functions (unlike
+# component tags) really do take positional parameters and really do run
+# on demand.

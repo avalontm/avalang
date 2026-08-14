@@ -1,0 +1,232 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\UIModule.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\common\ColorParse.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\components\PropertyValue.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\components\Component.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\components\ComponentTreeImpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\components\ComponentTree.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\layout\LayoutProperties.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\layout\LayoutNode.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\layout\TextMeasure.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\layout\FontRegistry.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\resources\fonts\DefaultFontData.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\layout\LayoutEngineImpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\layout\LayoutEngine.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\state\StateImpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\state\IState.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\state\StateBindingImpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\state\StateBinding.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\events\Event.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\events\EventDispatcher.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\events\EventDispatcherFactory.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\render_tree\RenderNode.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\render_tree\RenderTree.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\render_tree\RenderTreeFactory.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\scene\SceneNode.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\scene\SceneGraph.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\scene\SceneGraphFactory.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\commands\RenderCommandSink.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\renderer\BaseRenderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\renderer\NullRenderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\renderer\RendererFactory.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\renderer\HTMLRenderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\parser\AvauiParser.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\parser\AvauiPropertyCoercion.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\parser\AvauiWriter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\composition\ComposePageWithLayout.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\events\AutoBind.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\resolver\DottedPath.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\resolver\KnownComponentProperties.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\resolver\ComponentResolver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\commands\SceneCommandWalker.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\resources\ResourceProvider.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\resources\ResourcePathResolver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\resources\LocalizationProvider.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\theme\DefaultTheme.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\theme\RenderTheme.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\theme\ProjectFontOverrides.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\theme\ProjectStyleOverrides.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\theme\ProjectAnimationOverrides.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\Button.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\Text.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\Image.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\Container.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\TextBox.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\CheckBox.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\RadioButton.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\ComboBox.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\Dialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\controls\Link.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\animation\IAnimatable.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\animation\Easing.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\animation\AnimationClock.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\animation\Timeline.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\animation\AnimationController.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\animation\AnimationBinding.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\registry\ComponentTypeRegistry.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\platform\windows\WinUIPlatformFactory.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\platform\windows\WinWindow.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\platform\windows\WinMouse.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\platform\windows\WinKeyboard.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\platform\windows\WinCursor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\platform\windows\WinClipboard.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\platform\windows\WinDisplay.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\_CODE_\avalang\runtime\avaui\src\renderer\GdiRenderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\_CODE_\avalang\runtime\avaui\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{EFD4688B-CB21-3A1C-AF08-70C4652F6AAE}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

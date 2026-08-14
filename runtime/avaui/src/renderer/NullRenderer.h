@@ -39,7 +39,8 @@ protected:
         float fontSize, const char* fontName,
         const Color& color,
         const std::string& clickHandler,
-        const std::string& className
+        const std::string& className,
+        float maxWidth
     ) override;
 
     void OnDrawImage(

@@ -188,6 +188,15 @@ bool FontRegistry::GetFontBytes(const std::string& fontName, const unsigned char
     return true;
 }
 
+std::vector<std::string> FontRegistry::RegisteredFontNames() const {
+    std::vector<std::string> names;
+    names.reserve(fonts_.size());
+    for (const auto& entry : fonts_) {
+        names.push_back(entry.first);
+    }
+    return names;
+}
+
 double FontRegistry::LineHeight(double fontSize, const std::string& fontName) const {
     if (fontSize <= 0.0) {
         return 0.0;

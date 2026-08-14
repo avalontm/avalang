@@ -4,7 +4,13 @@ view
         gap = 16
         borderWidth = 1
         borderColor = "E5E7EB"
-        height = 48
+        # 48 was too tight for an 18px title with 16px top+bottom
+        # padding (only 16px of content height left over vs. the
+        # ~22-24px a real line needs) -- the title got silently
+        # clamped/clipped, see LayoutEngineImpl::PlaceComponent's
+        # std::min(intrinsic, available) on a non-Stretch cross axis.
+        # 64 leaves enough room without changing the visual padding.
+        height = 64
         
         text
             text = "AvaHost"

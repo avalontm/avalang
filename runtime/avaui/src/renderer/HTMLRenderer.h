@@ -2,6 +2,8 @@
 #define AVA_UI_HTML_RENDERER_H
 
 #include "renderer/BaseRenderer.h"
+#include "theme/ProjectStyleOverrides.h"
+#include "theme/ProjectAnimationOverrides.h"
 #include <set>
 #include <sstream>
 #include <string>
@@ -22,6 +24,29 @@ public:
     void SetExtraHead(std::string html) { extraHead_ = std::move(html); }
     void SetExtraBodyEnd(std::string html) { extraBodyEnd_ = std::move(html); }
     void SetFragmentOnly(bool fragmentOnly) { fragmentOnly_ = fragmentOnly; }
+
+    // Non-owning, same convention as ITheme* elsewhere (see
+    // theme::ProjectTheme's base_ member) -- caller (the render
+    // pipeline) keeps the ProjectStyleSheet alive for this renderer's
+    // one frame. When set and it declares any `style <type>:hover` /
+    // `:focus` / `:active` / `:disabled` blocks, EmitHTMLHeader emits
+    // matching CSS rules for the handful of control types that get a
+    // stable class (see EmitProjectStateCSS in the .cpp). Null (the
+    // default) or a sheet with no state blocks is a harmless no-op.
+    void SetProjectStyles(const theme::ProjectStyleSheet* styles) { projectStyles_ = styles; }
+
+    // Non-owning, same convention as SetProjectStyles above -- caller
+    // (the render pipeline) keeps the ProjectAnimationSheet alive for
+    // this renderer's one frame. When set and it declares a
+    // `dialog:open` and/or `dialog:close` block (see
+    // theme/ProjectAnimationOverrides.h), EmitHTMLHeader uses those
+    // field(s) in place of the built-in 160ms ease-out/ease-in dialog
+    // fade -- any field the project didn't set keeps its built-in
+    // default. Null (the default) or a sheet with no `dialog:open`/
+    // `dialog:close` blocks is a harmless no-op (built-in fade only).
+    void SetProjectAnimations(const theme::ProjectAnimationSheet* animations) {
+        projectAnimations_ = animations;
+    }
 
     const std::string& Title() const { return title_; }
 
@@ -56,7 +81,8 @@ protected:
         float fontSize, const char* fontName,
         const Color& color,
         const std::string& clickHandler,
-        const std::string& className
+        const std::string& className,
+        float maxWidth
     ) override;
 
     void OnDrawImage(
@@ -124,11 +150,19 @@ private:
     std::string EmitHTMLHeader();
     std::string EmitHTMLFooter();
     std::string EmitFontFaceRules() const;
+    // Builds the `.ava-<type>:hover { ... }` etc. CSS rules from
+    // projectStyles_ -- see the .cpp for the type->class map and why
+    // every declaration is `!important`. Returns "" when
+    // projectStyles_ is null or declares no state blocks.
+    std::string EmitProjectStateCSS() const;
     void EmitCSSFromState();
 
     std::string ColorToHex(const Color& c) const;
     std::string GetTransformCSS() const;
     std::string GetClipCSS() const;
+
+    const theme::ProjectStyleSheet* projectStyles_ = nullptr;
+    const theme::ProjectAnimationSheet* projectAnimations_ = nullptr;
 };
 
 } // namespace ui

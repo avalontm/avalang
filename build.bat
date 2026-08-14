@@ -1,0 +1,1 @@
+.\build_cli\runtime\avalang\Release\ava_cli.exe build --project D:\_CODE_\avalang\samples\test --entry main.ava --out d:/test --repo-root D:\_CODE_\avalang

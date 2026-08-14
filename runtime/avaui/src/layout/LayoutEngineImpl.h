@@ -75,7 +75,21 @@ private:
     // each child's own "align" property; the main axis always behaves
     // as Stretch, since the slot handed to each child is already sized
     // exactly to its allotment.
-    void ArrangeRowOrColumn(IComponent* component, LayoutNode* node, const LayoutRect& contentBox, bool isRow);
+    //
+    // `allowOverflow` is true for ScrollView/Flex (whose whole purpose
+    // is to let content exceed the box and scroll/shrink-wrap past it)
+    // and false for plain Row/Column. When false, a child whose own
+    // intrinsic/fixed main-axis size exceeds the available space is
+    // clamped to that available space -- the previous behavior (let it
+    // overflow) made an over-sized row of buttons inside a dialog
+    // column visibly spill past the dialog card's right edge instead
+    // of fitting within the slot the column handed the row. ScrollView
+    // passes true because its scrolling contract depends on children's
+    // rects actually extending past contentBox on the scroll axis (see
+    // SceneCommandWalker's ScrollView branch, which turns that overflow
+    // into a real scrollable region); clamping there would clip the
+    // scroll content to the viewport and break scrolling.
+    void ArrangeRowOrColumn(IComponent* component, LayoutNode* node, const LayoutRect& contentBox, bool isRow, bool allowOverflow = false);
 
     // Overlays every child of `component` on the same `contentBox`,
     // each positioned/sized independently via its own "align-h"/

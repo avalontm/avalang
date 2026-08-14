@@ -11,6 +11,7 @@
 #include "theme/ITheme.h"
 #include "theme/RenderTheme.h"
 #include "theme/ProjectFontOverrides.h"
+#include "theme/ProjectStyleOverrides.h"
 #include "layout/LayoutEngine.h"
 #include "render_tree/IRenderTree.h"
 #include "scene/ISceneGraph.h"
@@ -31,7 +32,7 @@ std::filesystem::path ResolveDottedPath(const std::string& projectRoot, const st
     return avalang::ui::ResolveDottedAvauiPath(projectRoot, dotted);
 }
 
-} // namespace
+}
 
 LiveRenderResult BuildLiveRender(avalang::ui::ComponentTree* tree, int viewportWidth, int viewportHeight,
                                   const std::string& extends,
@@ -67,17 +68,27 @@ LiveRenderResult BuildLiveRender(avalang::ui::ComponentTree* tree, int viewportW
         out.error = "failed to create the default theme provider";
         return out;
     }
-    // Same app.ava `font "role" "name" "path"` overlay AvaHost's real
-    // render pipeline applies (ui_pipeline_static_renderer.cpp /
-    // ui_pipeline_dynamic_renderer.cpp) -- both call the exact same
-    // avaui parser (theme/ProjectFontOverrides.h), so the canvas
-    // preview and the actual served page resolve a project's custom
-    // font identically instead of drifting the way the original
-    // text/row overlap bug happened in the first place.
+
+
+
+
+
+
+
     avalang::ui::theme::ProjectTheme projectTheme(
         themeProvider->Current(),
         avalang::ui::theme::LoadProjectFontOverrides(projectRoot));
-    avalang::ui::RenderTheme::Apply(tree, &projectTheme);
+    // See ui_pipeline_static_renderer.cpp / ProjectTheme::RegisterProjectFonts --
+    // must run before RenderTheme::Apply so AvaStudio's live preview matches
+    // what AvaHost actually ships (a component with an explicit fontName
+    // never triggers RenderTheme's own lazy registration).
+    projectTheme.RegisterProjectFonts();
+    // See ui_pipeline_static_renderer.cpp -- same declared-style-file
+    // overlay (`style *` / `style <type>` blocks), so AvaStudio's live
+    // preview matches what AvaHost ships here too.
+    avalang::ui::theme::ProjectStyleSheet projectStyles =
+        avalang::ui::theme::LoadProjectStyleOverrides(projectRoot);
+    avalang::ui::RenderTheme::Apply(tree, &projectTheme, &projectStyles);
 
     out.layoutEngine = avalang::ui::LayoutEngine::Create();
     int effectiveW = viewportWidth;
@@ -122,4 +133,4 @@ LiveRenderResult BuildLiveRender(avalang::ui::ComponentTree* tree, int viewportW
     return out;
 }
 
-} // namespace studio::design
+}

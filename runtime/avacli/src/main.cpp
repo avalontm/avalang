@@ -1,15 +1,211 @@
 #include <cstdio>
+#include <cstdlib>
 #include <chrono>
 #include <fstream>
 #include <sstream>
+#include <string>
 #include <thread>
 #include "avalang.h"
 #include "vm/vm.h"
+#include "build_command.h"
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
+#define AVA_CLI_VERSION "0.1.0"
+
+namespace {
+
+// Carpeta `modules/` al lado del ejecutable (ava_cli.exe), usada como
+// stdlib_path del ModuleResolver -- mismo lugar que ya usa
+// AvaStudio (studio::util::ResolveDefaultModulesDir, avastudio/src/util/
+// data_dir.cpp) y que vm_extern.cpp ya usa para localizar DLLs nativas
+// de un `extern` (ModulesRoot). Antes ava_cli no configuraba ningun
+// stdlib_path: `import mysql` (o cualquier modulo empaquetado en
+// modules/<nombre>/index.ava junto a su .dll) resolvia en AvaStudio pero
+// fallaba corriendo el mismo script por linea de comandos. Con esto,
+// ambos frontends buscan modulos en el mismo lugar por default.
+//
+// Igual que StudioSettings::modules_path (avastudio/src/util/settings.h):
+// esto es solo el DEFAULT. El usuario lo puede pisar explicitamente sin
+// tocar C++, con --modules <dir> o la variable de entorno
+// AVA_MODULES_PATH (el flag gana si estan los dos puestos).
+std::string ModulesDirNextToExecutable() {
+#if defined(_WIN32)
+    char exe_path[MAX_PATH];
+    if (GetModuleFileNameA(nullptr, exe_path, MAX_PATH) > 0) {
+        std::string path(exe_path);
+        size_t sep = path.find_last_of("/\\");
+        if (sep != std::string::npos) {
+            return path.substr(0, sep) + "\\modules";
+        }
+    }
+#endif
+    return "modules";
+}
+
+// Extrae un flag "--nombre valor" de argv, en cualquier posicion antes del
+// script (que siempre es el primer argumento que no empieza con "--").
+// Devuelve "" y deja intacto argc/argv si no esta presente. Los flags
+// encontrados se remueven de la lista in-place para que el resto del
+// parsing (argv[1] = script, argv[2..] = argumentos del script) no se
+// entere de que existieron.
+std::string ExtractFlagValue(int& argc, char** argv, const char* flag_name) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == flag_name) {
+            if (i + 1 >= argc) return "";
+            std::string value = argv[i + 1];
+            for (int j = i; j + 2 < argc; ++j) {
+                argv[j] = argv[j + 2];
+            }
+            argc -= 2;
+            return value;
+        }
+    }
+    return "";
+}
+
+// Variable de entorno como fallback de un flag: el flag explicito en la
+// linea de comandos siempre gana si esta presente.
+std::string EnvOrDefault(const char* var_name) {
+    const char* value = std::getenv(var_name);
+    return value ? std::string(value) : "";
+}
+
+std::string CompilerTag() {
+#if defined(_MSC_VER)
+    #if defined(_WIN64)
+        return "[MSC v." + std::to_string(_MSC_VER) + " 64 bit (AMD64)]";
+    #else
+        return "[MSC v." + std::to_string(_MSC_VER) + " 32 bit (x86)]";
+    #endif
+#elif defined(__clang__)
+    return "[Clang " + std::to_string(__clang_major__) + "." +
+           std::to_string(__clang_minor__) + "." +
+           std::to_string(__clang_patchlevel__) + "]";
+#elif defined(__GNUC__)
+    return "[GCC " + std::to_string(__GNUC__) + "." +
+           std::to_string(__GNUC_MINOR__) + "." +
+           std::to_string(__GNUC_PATCHLEVEL__) + "]";
+#else
+    return "[unknown compiler]";
+#endif
+}
+
+// Expone los argumentos extra de la linea de comandos al script como el
+// global `args` (una List de strings), asi el codigo AvaLang puede leer
+// `ava_cli miscript.ava par1 par2` como args = ["par1", "par2"] -- igual
+// que sys.argv[1:] en Python o process.argv.slice(2) en Node. `extra`
+// arranca en el primer argumento DESPUES del path del script (no incluye
+// ni el nombre del ejecutable ni el path del .ava, que ya se resuelven
+// aparte via argv[1]).
+void SetScriptArgsGlobal(ava::VM* raw_vm, int argc, char** argv, int first_extra_index) {
+    auto* list = new ava::ListObj();
+    for (int i = first_extra_index; i < argc; ++i) {
+        list->items.push_back(ava::Value::String(argv[i]));
+    }
+    ava::Value args_value;
+    args_value.type = ava::ValueType::List;
+    args_value.obj = list;
+    raw_vm->SetGlobal("args", args_value);
+}
+
+std::string PlatformTag() {
+#if defined(_WIN32)
+    return "win32";
+#elif defined(__APPLE__)
+    return "darwin";
+#elif defined(__linux__)
+    return "linux";
+#else
+    return "unknown";
+#endif
+}
+
+void PrintBanner() {
+    std::printf("AvaLang %s (%s, %s) %s on %s\n",
+                AVA_CLI_VERSION, __DATE__, __TIME__,
+                CompilerTag().c_str(), PlatformTag().c_str());
+    std::printf("Type \"ava_cli --help\" for usage information.\n");
+}
+
+void PrintUsage(const char* argv0) {
+    std::printf(
+        "usage:\n"
+        "  %s <script.ava>              Compile and run an AvaLang script\n"
+        "  %s build [options]           Package an AvaLang project into a standalone executable\n"
+        "  %s --help, -h                Show this help message\n"
+        "  %s --version, -v             Show version information\n"
+        "\n"
+        "  --modules <dir>               Override the modules/ folder used to resolve\n"
+        "                                 `import` (default: modules/ next to this exe).\n"
+        "                                 Same effect as the AVA_MODULES_PATH env var;\n"
+        "                                 the flag wins if both are set.\n"
+        "\n"
+        "Run '%s build --help' for packaging options.\n",
+        argv0, argv0, argv0, argv0, argv0);
+}
+
+} // namespace
 
 int main(int argc, char** argv) {
+    // Force stdout/stderr fully unbuffered. The CRT auto-detects whether
+    // a stream is attached to a real console and only line-buffers in
+    // that case -- when a parent process redirects our stdout/stderr
+    // into a pipe (exactly what Ava Studio's Build panel does, so it can
+    // show this output live in its Output panel -- see
+    // ava::platform::windows::WinProcess::ExecuteStreaming), the CRT
+    // silently falls back to full buffering (several KB) instead. That
+    // means every std::printf/std::cout line below (and RunTool's own
+    // streamed cmake/msbuild output in build_command.cpp) would sit in
+    // our own buffer and only reach the pipe once it fills up or this
+    // process exits -- from the parent's side, indistinguishable from
+    // "nothing happened until the very end", which defeats the whole
+    // point of a real-time log. Unbuffered means every write reaches the
+    // pipe (and Ava Studio's reader thread) immediately.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s <script.ava>\n", argv[0]);
+        PrintBanner();
+        std::printf("\n");
+        PrintUsage(argv[0]);
         return 1;
+    }
+
+    // Override de resolucion de modulos -- se lee y se remueve de argv
+    // ANTES de mirar argv[1], para que "ava_cli.exe --modules X script.ava"
+    // y "ava_cli.exe script.ava --modules X" funcionen igual. Mismo par
+    // default-vacio/override-explicito que StudioSettings::modules_path en
+    // AvaStudio (ver ModulesDirNextToExecutable arriba). Un solo flag --
+    // antes existian --modules-path y --libraries-path por separado, pero
+    // ambos terminaban seteando lo mismo (stdlib_path_ del
+    // ModuleResolver), asi que quedaba como dos formas de decir lo mismo
+    // sin ninguna diferencia real de comportamiento. Unificado.
+    std::string modules_path_override = ExtractFlagValue(argc, argv, "--modules");
+    if (modules_path_override.empty()) modules_path_override = EnvOrDefault("AVA_MODULES_PATH");
+
+    std::string first_arg = argv[1];
+
+    if (first_arg == "--help" || first_arg == "-h") {
+        PrintBanner();
+        std::printf("\n");
+        PrintUsage(argv[0]);
+        return 0;
+    }
+
+    if (first_arg == "--version" || first_arg == "-v") {
+        std::printf("AvaLang %s (%s, %s) %s on %s\n",
+                     AVA_CLI_VERSION, __DATE__, __TIME__,
+                     CompilerTag().c_str(), PlatformTag().c_str());
+        return 0;
+    }
+
+    if (first_arg == "build") {
+        return RunBuildCommand(argc, argv);
     }
 
     std::ifstream file(argv[1]);
@@ -21,16 +217,23 @@ int main(int argc, char** argv) {
     buffer << file.rdbuf();
 
     AvaVM* vm = ava_vm_create();
-    
+
     {
+        ava::VM* raw_vm = reinterpret_cast<ava::VM*>(vm);
+        raw_vm->GetModuleResolver().SetStdlibPath(
+            modules_path_override.empty() ? ModulesDirNextToExecutable() : modules_path_override);
+
         std::string script_dir = argv[1];
         size_t sep = script_dir.find_last_of("/\\");
         if (sep != std::string::npos) {
             script_dir = script_dir.substr(0, sep);
-            ava::VM* raw_vm = reinterpret_cast<ava::VM*>(vm);
             raw_vm->GetModuleResolver().AddSearchPath(script_dir);
         }
     }
+
+    // argv[0] = ava_cli, argv[1] = script.ava -- todo lo que venga despues
+    // (argv[2..]) son los argumentos del usuario para el script.
+    SetScriptArgsGlobal(reinterpret_cast<ava::VM*>(vm), argc, argv, 2);
 
     char* error = nullptr;
     AvaModule* module = ava_compile(vm, buffer.str().c_str(), argv[1], &error);
@@ -53,12 +256,6 @@ int main(int argc, char** argv) {
 
     ava_module_destroy(module);
 
-    // Fase 5 (Async Runtime): el script "principal" ya termino, pero puede
-    // haber dejado set_timeout() pendientes -- sin esto el proceso saldria
-    // y los callbacks agendados nunca correrian (igual que Node.js
-    // mantiene el proceso vivo mientras haya timers pendientes). Loop
-    // simple: mientras haya timers en vuelo o trabajo ya listo para
-    // drenar, dormir un poco y volver a intentar.
     {
         ava::VM* raw_vm = reinterpret_cast<ava::VM*>(vm);
         while (raw_vm->HasPendingAsyncWork()) {

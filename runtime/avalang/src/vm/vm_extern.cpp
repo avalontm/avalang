@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <filesystem>
 #include <mutex>
 #include <stdexcept>
@@ -13,6 +14,12 @@
 
 #if defined(AVA_HAVE_LIBFFI)
 #include <ffi.h>
+#endif
+
+#if defined(_WIN32) && defined(AVA_HAVE_LIBFFI)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
 #endif
 
 namespace ava {
@@ -161,6 +168,35 @@ std::string PlatformLoadError() {
     return "(ver tambien " + ModulesRoot().string() + " para modulos nativos personalizados)";
 }
 
+#if defined(_WIN32) && defined(AVA_HAVE_LIBFFI)
+// A bad argument/return marshaling in a native call (wrong arg count,
+// wrong type width, wrong calling convention) can make libffi read or
+// write outside valid memory inside the target DLL. That raises a
+// Windows structured exception (access violation), not a C++
+// exception -- it never reaches a try/catch and kills the whole
+// process before anything gets to print. This turns that crash into a
+// normal AvaLang error instead, naming the call that failed.
+//
+// __try/__except cannot share a function with C++ objects that need
+// unwinding (MSVC error C2712), so this stays free of std::string/
+// std::vector/etc. and only takes raw pointers.
+DWORD SehFilter(EXCEPTION_POINTERS* info, DWORD* out_code) {
+    if (out_code && info && info->ExceptionRecord) {
+        *out_code = info->ExceptionRecord->ExceptionCode;
+    }
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+bool CallNativeGuarded(ffi_cif* cif, void* fn, void* ret, void** arg_values, DWORD* exception_code) {
+    __try {
+        ffi_call(cif, FFI_FN(fn), ret, arg_values);
+        return true;
+    } __except (SehFilter(GetExceptionInformation(), exception_code)) {
+        return false;
+    }
+}
+#endif
+
 } // namespace
 
 extern "C" ava_value_t ava_extern_call(AvaVM*, const ava_value_t* c_args, size_t count, void* user_data) {
@@ -243,7 +279,16 @@ extern "C" ava_value_t ava_extern_call(AvaVM*, const ava_value_t* c_args, size_t
     }
 
     ffi_cif cif;
-    ffi_type* ret_type = &ffi_type_sint64; // ver limitaciones en vm_extern.h
+    // ret_type = pointer: en x64 Windows, puntero e int64 ambos viajan en
+    // RAX (8 bytes), pero declarar el retorno como `pointer` es semántica-
+    // mente correcto para funciones como mysql_init/mysql_store_result/
+    // mysql_fetch_row/mysql_fetch_field que devuelven punteros. Antes usaba-
+    // mos sint64 para todo, que funcionaba por casualidad en x64 pero era
+    // fragile en otras ABIs y dejaba el código inconsistente con la reali-
+    // dad del FFI. Para retornos int (mysql_query, mysql_errno, etc.) esto
+    // sigue siendo correcto: un int de 8 bytes cabe exacto en el espacio
+    // de un puntero en x64.
+    ffi_type* ret_type = &ffi_type_pointer; // ver limitaciones en vm_extern.h
     ffi_status status = ffi_prep_cif(
         &cif, FFI_DEFAULT_ABI, static_cast<unsigned int>(count), ret_type, arg_types.data());
     if (status != FFI_OK) {
@@ -251,7 +296,21 @@ extern "C" ava_value_t ava_extern_call(AvaVM*, const ava_value_t* c_args, size_t
     }
 
     long long result = 0;
-    ffi_call(&cif, FFI_FN(sym), &result, count > 0 ? arg_values.data() : nullptr);
+    void** ffi_args = count > 0 ? arg_values.data() : nullptr;
+
+#if defined(_WIN32)
+    DWORD exception_code = 0;
+    if (!CallNativeGuarded(&cif, sym, &result, ffi_args, &exception_code)) {
+        char code_buf[16];
+        std::snprintf(code_buf, sizeof(code_buf), "0x%08lX", static_cast<unsigned long>(exception_code));
+        throw std::runtime_error(
+            "extern: '" + where + "' crashed the native call (exception " + code_buf +
+            "). This usually means the extern signature doesn't match the real C "
+            "function (argument count/order/type) -- check it against the library's header.");
+    }
+#else
+    ffi_call(&cif, FFI_FN(sym), &result, ffi_args);
+#endif
 
     return ToC(Value::Number(static_cast<double>(result)));
 #endif
