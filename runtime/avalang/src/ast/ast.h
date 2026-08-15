@@ -80,7 +80,9 @@ struct CallExpr : ExprNode {
 
 struct BaseExpr : ExprNode {
     std::vector<std::shared_ptr<ExprNode>> args;
-    explicit BaseExpr(std::vector<std::shared_ptr<ExprNode>> a = {}) : args(std::move(a)) {}
+    std::string method_name; // defaults to "__init__" when base.NAME(...) is not used
+    explicit BaseExpr(std::vector<std::shared_ptr<ExprNode>> a = {}, std::string m = "__init__")
+        : args(std::move(a)), method_name(std::move(m)) {}
 };
 
 struct IndexExpr : ExprNode {
@@ -279,9 +281,9 @@ struct ExternStmt : StmtNode {
         : library(std::move(lib)), alias(std::move(a)), functions(std::move(f)) {}
 };
 
-struct YieldStmt : StmtNode {
+struct YieldExpr : ExprNode {
     std::vector<std::shared_ptr<ExprNode>> values;
-    explicit YieldStmt(std::vector<std::shared_ptr<ExprNode>> v = {}) : values(std::move(v)) {}
+    explicit YieldExpr(std::vector<std::shared_ptr<ExprNode>> v = {}) : values(std::move(v)) {}
 };
 
 struct Chunk {

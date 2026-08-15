@@ -165,14 +165,22 @@ std::unordered_map<EventHandlerKey, std::unique_ptr<VmEventHandler>, EventHandle
 std::mutex g_eventHandlersMutex;
 
 const std::unordered_map<std::string, avalang::ui::events::EventType>& EventPropertyMap() {
+    // Keys must match the actual .avaui property names (see
+    // AutoBind.cpp's EventPropNamesSet() and every real .avaui file:
+    // "click", "mouseEnter", "mouseLeave", "focus", "blur", "keyDown",
+    // "keyUp" -- camelCase, no "on" prefix, same convention as "click").
+    // The previous "onmouseenter"/"onfocus"/etc. keys here never matched
+    // any property a component actually has, so GetProperty() always
+    // returned null for them and only "click" ever got wired -- every
+    // other event type silently did nothing.
     static const std::unordered_map<std::string, avalang::ui::events::EventType> map = {
         {"click", avalang::ui::events::EventType::Click},
-        {"onmouseenter", avalang::ui::events::EventType::MouseEnter},
-        {"onmouseleave", avalang::ui::events::EventType::MouseLeave},
-        {"onfocus", avalang::ui::events::EventType::Focus},
-        {"onblur", avalang::ui::events::EventType::Blur},
-        {"onkeydown", avalang::ui::events::EventType::KeyDown},
-        {"onkeyup", avalang::ui::events::EventType::KeyUp},
+        {"mouseEnter", avalang::ui::events::EventType::MouseEnter},
+        {"mouseLeave", avalang::ui::events::EventType::MouseLeave},
+        {"focus", avalang::ui::events::EventType::Focus},
+        {"blur", avalang::ui::events::EventType::Blur},
+        {"keyDown", avalang::ui::events::EventType::KeyDown},
+        {"keyUp", avalang::ui::events::EventType::KeyUp},
     };
     return map;
 }

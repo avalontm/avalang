@@ -20,33 +20,10 @@ namespace {
 struct Line {
     int indent;
     std::string text;
-
-
-
-
-
     std::string rawText;
-
-
-
-
-
-
-
-
-
 
     int lineNo;
 };
-
-
-
-
-
-
-
-
-
 
 std::string StripComment(const std::string& raw) {
     bool inString = false;
@@ -76,24 +53,6 @@ std::vector<Line> Tokenize(const std::string& source) {
         ++lineNo;
         std::string stripped = StripComment(raw);
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         size_t firstNonSpace = 0;
         int indentColumn = 0;
         for (; firstNonSpace < stripped.size(); ++firstNonSpace) {
@@ -111,11 +70,6 @@ std::vector<Line> Tokenize(const std::string& source) {
         std::string text = Trim(stripped);
         if (text.empty()) continue;
 
-
-
-
-
-
         std::string rawText = Trim(raw.substr(firstNonSpace));
         lines.push_back({indentColumn, text, rawText, lineNo});
     }
@@ -124,12 +78,8 @@ std::vector<Line> Tokenize(const std::string& source) {
 
 bool IsPropertyLine(const std::string& text) {
 
-
-
     return text.find('=') != std::string::npos;
 }
-
-
 
 std::pair<std::string, std::string> SplitProperty(const Line& line) {
     size_t eq = line.text.find('=');
@@ -141,20 +91,6 @@ std::pair<std::string, std::string> SplitProperty(const Line& line) {
     return {key, value};
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 bool IsComponentCall(const std::string& text, std::string* nameOut, std::string* argsOut = nullptr) {
     if (text.empty() || text.back() != ')') return false;
     size_t open = text.find('(');
@@ -162,12 +98,6 @@ bool IsComponentCall(const std::string& text, std::string* nameOut, std::string*
     std::string name = Trim(text.substr(0, open));
     if (name.empty()) return false;
 
-    // `name` must be a bare identifier (e.g. "ProductCard"), not an
-    // arbitrary expression. Without this, something like
-    // `text = "Items: " + len(cart)` -- which also ends in ')' and has a
-    // '(' -- would be misdetected as a call to a component named
-    // `text = "Items: " + len`. A real component-call header never
-    // contains whitespace or '=' before the '('.
     for (char c : name) {
         if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_')) {
             return false;
@@ -181,17 +111,6 @@ bool IsComponentCall(const std::string& text, std::string* nameOut, std::string*
     }
     return true;
 }
-
-
-
-
-
-
-
-
-
-
-
 
 void ParseComponentCallArgs(const std::string& argsText, IComponent* comp, int lineNo) {
     std::string args = Trim(argsText);
@@ -225,13 +144,6 @@ void ParseComponentCallArgs(const std::string& argsText, IComponent* comp, int l
         SetPropertyWithAlias(comp, key, InferValue(value));
     }
 }
-
-
-
-
-
-
-
 
 void ParseAnimateBlock(const std::vector<Line>& lines, size_t& idx, int headerIndent,
                        ComponentId target, std::vector<AnimationSpec>* animations) {
@@ -270,21 +182,103 @@ void ParseAnimateBlock(const std::vector<Line>& lines, size_t& idx, int headerIn
     throw ParseError("unterminated 'animate' block (missing 'end')", headerIndent);
 }
 
-
-
-
-
 bool IsAnimateHeader(const std::string& text) {
     return text == "animate";
 }
 
+bool IsIfHeader(const std::string& text, std::string* condOut) {
+    static const std::string kPrefix = "if ";
+    static const std::string kSuffix = " then";
+    if (text.size() <= kPrefix.size() + kSuffix.size()) return false;
+    if (text.compare(0, kPrefix.size(), kPrefix) != 0) return false;
+    if (text.compare(text.size() - kSuffix.size(), kSuffix.size(), kSuffix) != 0) return false;
+    if (condOut) {
+        *condOut = Trim(text.substr(kPrefix.size(),
+                                     text.size() - kPrefix.size() - kSuffix.size()));
+        if (condOut->empty()) return false;
+    }
+    return true;
+}
 
+bool IsForHeader(const std::string& text, std::string* varOut, std::string* iterOut) {
+    static const std::string kPrefix = "for ";
+    if (text.size() <= kPrefix.size()) return false;
+    if (text.compare(0, kPrefix.size(), kPrefix) != 0) return false;
+    std::string rest = text.substr(kPrefix.size());
+    size_t inPos = rest.find(" in ");
+    if (inPos == std::string::npos) return false;
+    std::string var = Trim(rest.substr(0, inPos));
+    std::string iter = Trim(rest.substr(inPos + 4));
+    if (var.empty() || iter.empty()) return false;
+    for (char c : var) {
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_')) return false;
+    }
+    if (std::isdigit(static_cast<unsigned char>(var[0]))) return false;
+    if (varOut) *varOut = var;
+    if (iterOut) *iterOut = iter;
+    return true;
+}
 
+IComponent* ParseComponent(const std::vector<Line>& lines, size_t& idx, ComponentTree* tree,
+                           std::vector<AnimationSpec>* animations);
 
+void ParseComponentBody(IComponent* comp, const Line& header, const std::vector<Line>& lines,
+                        size_t& idx, ComponentTree* tree, std::vector<AnimationSpec>* animations) {
+    while (idx < lines.size()) {
+        const Line& line = lines[idx];
+        if (line.indent <= header.indent) {
+            if (line.indent == header.indent && line.text == "end") {
+                ++idx;
+                return;
+            }
+            throw ParseError("unterminated component block (expected 'end' at column " +
+                                  std::to_string(header.indent) + ")",
+                              line.lineNo);
+        }
+        if (IsAnimateHeader(line.text)) {
+            int animateIndent = line.indent;
+            ++idx;
+            ParseAnimateBlock(lines, idx, animateIndent, comp->Id(), animations);
+        } else if (std::string peekName; IsComponentCall(line.text, &peekName, nullptr)) {
+            IComponent* child = ParseComponent(lines, idx, tree, animations);
+            comp->AddChild(child);
+        } else if (IsIfHeader(line.text, nullptr) || IsForHeader(line.text, nullptr, nullptr)) {
+            IComponent* child = ParseComponent(lines, idx, tree, animations);
+            comp->AddChild(child);
+        } else if (IsPropertyLine(line.text)) {
+            auto kv = SplitProperty(line);
+            SetPropertyWithAlias(comp, kv.first, InferValue(kv.second));
+            ++idx;
+        } else {
+            IComponent* child = ParseComponent(lines, idx, tree, animations);
+            comp->AddChild(child);
+        }
+    }
+    throw ParseError("unterminated component block (missing 'end')", header.lineNo);
+}
 
 IComponent* ParseComponent(const std::vector<Line>& lines, size_t& idx, ComponentTree* tree,
                            std::vector<AnimationSpec>* animations) {
     const Line& header = lines[idx];
+
+    std::string condText;
+    if (IsIfHeader(header.text, &condText)) {
+        IComponent* comp = tree->CreateComponent("If");
+        comp->SetProperty("condition", PropertyValue(condText));
+        ++idx;
+        ParseComponentBody(comp, header, lines, idx, tree, animations);
+        return comp;
+    }
+
+    std::string loopVar, iterExpr;
+    if (IsForHeader(header.text, &loopVar, &iterExpr)) {
+        IComponent* comp = tree->CreateComponent("For");
+        comp->SetProperty("loopVar", PropertyValue(loopVar));
+        comp->SetProperty("iterable", PropertyValue(iterExpr));
+        ++idx;
+        ParseComponentBody(comp, header, lines, idx, tree, animations);
+        return comp;
+    }
 
     std::string callName;
     std::string callArgs;
@@ -292,16 +286,7 @@ IComponent* ParseComponent(const std::vector<Line>& lines, size_t& idx, Componen
         ++idx;
         IComponent* comp = tree->CreateComponent(CanonicalTypeName(callName));
 
-
-
-
-
-
         comp->SetProperty("__unresolvedImportCall", PropertyValue(true));
-
-
-
-
 
         ParseComponentCallArgs(callArgs, comp, header.lineNo);
         return comp;
@@ -318,43 +303,9 @@ IComponent* ParseComponent(const std::vector<Line>& lines, size_t& idx, Componen
     }
 
     ++idx;
-    while (idx < lines.size()) {
-        const Line& line = lines[idx];
-        if (line.indent <= header.indent) {
-            if (line.indent == header.indent && line.text == "end") {
-                ++idx;
-                return comp;
-            }
-            throw ParseError("unterminated component block (expected 'end' at column " +
-                                  std::to_string(header.indent) + ")",
-                              line.lineNo);
-        }
-        if (IsAnimateHeader(line.text)) {
-            int animateIndent = line.indent;
-            ++idx;
-            ParseAnimateBlock(lines, idx, animateIndent, comp->Id(), animations);
-        } else if (std::string peekName; IsComponentCall(line.text, &peekName, nullptr)) {
-            // Must be checked before IsPropertyLine: a component-call
-            // line like `ProductCard(name = "Latte", price = "3.80")`
-            // contains '=' too, so IsPropertyLine alone would wrongly
-            // swallow it as a single bogus property.
-            IComponent* child = ParseComponent(lines, idx, tree, animations);
-            comp->AddChild(child);
-        } else if (IsPropertyLine(line.text)) {
-            auto kv = SplitProperty(line);
-            SetPropertyWithAlias(comp, kv.first, InferValue(kv.second));
-            ++idx;
-        } else {
-            IComponent* child = ParseComponent(lines, idx, tree, animations);
-            comp->AddChild(child);
-        }
-    }
-    throw ParseError("unterminated component block (missing 'end')", header.lineNo);
+    ParseComponentBody(comp, header, lines, idx, tree, animations);
+    return comp;
 }
-
-
-
-
 
 std::vector<IComponent*> ParseViewBody(const std::vector<Line>& lines, size_t& idx,
                                         int headerIndent, ComponentTree* tree,
@@ -371,7 +322,8 @@ std::vector<IComponent*> ParseViewBody(const std::vector<Line>& lines, size_t& i
                                   std::to_string(headerIndent) + ")",
                               line.lineNo);
         }
-        if (IsPropertyLine(line.text)) {
+        if (IsPropertyLine(line.text) && !IsIfHeader(line.text, nullptr) &&
+            !IsForHeader(line.text, nullptr, nullptr)) {
             throw ParseError("unexpected property directly inside 'view' "
                               "(properties belong to a component)",
                               line.lineNo);
@@ -380,8 +332,6 @@ std::vector<IComponent*> ParseViewBody(const std::vector<Line>& lines, size_t& i
     }
     throw ParseError("unterminated 'view' block (missing 'end')", headerIndent);
 }
-
-
 
 
 void ParseFlatBlock(const std::vector<Line>& lines, size_t& idx, int headerIndent,
@@ -407,12 +357,6 @@ void ParseFlatBlock(const std::vector<Line>& lines, size_t& idx, int headerInden
     throw ParseError("unterminated block (missing 'end')", headerIndent);
 }
 
-// `params` block: one declared call-site argument per line. A bare
-// name (`productId`) is required; `name = default` (parsed via
-// InferValue, same typing a real call-site argument gets) makes it
-// optional. Deliberately its own parser, not ParseFlatBlock -- a
-// required param has no '=' at all, which IsPropertyLine/SplitProperty
-// (state/style/properties blocks) require.
 void ParseParamsBlock(const std::vector<Line>& lines, size_t& idx, int headerIndent,
                        std::vector<ParamDeclaration>* out) {
     while (idx < lines.size()) {
@@ -445,15 +389,6 @@ void ParseParamsBlock(const std::vector<Line>& lines, size_t& idx, int headerInd
     }
     throw ParseError("unterminated 'params' block (missing 'end')", headerIndent);
 }
-
-
-
-
-
-
-
-
-
 
 std::string ParseRawBlock(const std::vector<Line>& lines, size_t& idx, int headerIndent) {
     std::string raw;

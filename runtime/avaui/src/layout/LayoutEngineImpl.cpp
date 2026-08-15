@@ -273,7 +273,7 @@ IntrinsicSize LayoutEngineImpl::ComputeIntrinsicSize(IComponent* component) {
         }
         size.width = mainTotal + padding.left + padding.right;
         size.height = crossMax + padding.top + padding.bottom;
-    } else if (typeName == "Column") {
+    } else if (typeName == "Column" || typeName == "For" || typeName == "If") {
         double mainTotal = 0.0;
         double crossMax = 0.0;
         for (const IntrinsicSize& childSize : childSizes) {
@@ -488,7 +488,7 @@ void LayoutEngineImpl::LayoutNodeRecursive(IComponent* component, LayoutNode* no
     const std::string& typeName = component->TypeName();
     if (typeName == "Row") {
         ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/true, /*allowOverflow=*/false);
-    } else if (typeName == "Column") {
+    } else if (typeName == "Column" || typeName == "For" || typeName == "If") {
         ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/false, /*allowOverflow=*/false);
     } else if (typeName == "ScrollView") {
         // Structurally identical to Row/Column -- a ScrollView is just a

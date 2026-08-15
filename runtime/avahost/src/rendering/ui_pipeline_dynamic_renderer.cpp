@@ -10,6 +10,7 @@
 #include "components/ComponentTree.h"
 #include "composition/ComposePageWithLayout.h"
 #include "parser/AvauiParser.h"
+#include "parser/AvauiPropertyCoercion.h"
 #include "theme/ITheme.h"
 #include "theme/RenderTheme.h"
 #include "theme/ProjectFontOverrides.h"
@@ -242,16 +243,133 @@ void ApplyPendingControlValue(VmStateBridge& stateBridge, avalang::ui::IComponen
     }
 }
 
-void ResolveImportsAndMergeState(const std::string& projectRoot,
-                                  const std::string& componentsDir,
+void ResolveImportsAndMergeState(UiComponentResolver& resolver,
                                   avalang::ui::parser::ParsedAvaui& parsed,
                                   std::unordered_map<std::string, std::string>& mergedState) {
-    if (componentsDir.empty() || parsed.imports.empty()) return;
+    if (parsed.imports.empty()) return;
     if (!parsed.tree) return;
 
     mergedState = parsed.state;
-    UiComponentResolver resolver(projectRoot, componentsDir);
     resolver.ResolveImports(parsed.tree.get(), parsed.imports, mergedState);
+}
+
+avalang::ui::IComponent* CloneComponentSubtree(const avalang::ui::IComponent* src,
+                                                avalang::ui::IComponent* parent,
+                                                avalang::ui::ComponentTree* tree) {
+    if (!src || !tree) return nullptr;
+    avalang::ui::IComponent* clone = tree->CreateComponent(src->TypeName());
+    if (!clone) return nullptr;
+
+    for (const auto& name : src->PropertyNames()) {
+        if (const auto* p = src->GetProperty(name)) {
+            clone->SetProperty(name, *p);
+        }
+    }
+    if (parent) parent->AddChild(clone);
+
+    for (avalang::ui::IComponent* child : src->Children()) {
+        CloneComponentSubtree(child, clone, tree);
+    }
+    return clone;
+}
+
+void BakeCallSiteExpressions(RuntimeHost& host, avalang::ui::IComponent* node) {
+    if (!node) return;
+
+    if (UiComponentResolver::IsComponentCall(node)) {
+        for (const auto& propName : node->PropertyNames()) {
+            if (propName == "id" || propName == "__unresolvedImportCall") continue;
+            const auto* prop = node->GetProperty(propName);
+            if (!prop || prop->Type() != avalang::ui::PropertyType::String) continue;
+
+            bool ok = false;
+            std::string literal = host.EvalExprToLiteral(prop->AsString(), ok);
+            if (ok) {
+                node->SetProperty(propName, avalang::ui::parser::InferValue(literal));
+            }
+        }
+    }
+
+    for (avalang::ui::IComponent* child : node->Children()) {
+        BakeCallSiteExpressions(host, child);
+    }
+}
+
+bool EvalConditionBool(RuntimeHost& host, const std::string& expr) {
+    bool ok = false;
+    std::string literal = host.EvalExprToLiteral(expr, ok);
+    return ok && literal == "true";
+}
+
+int EvalListLength(RuntimeHost& host, const std::string& iterExpr) {
+    bool ok = false;
+    std::string literal = host.EvalExprToLiteral("len(" + iterExpr + ")", ok);
+    if (!ok) return 0;
+    try {
+        return std::stoi(literal);
+    } catch (const std::exception&) {
+        return 0;
+    }
+}
+
+void ExpandControlFlow(RuntimeHost& host, UiComponentResolver& resolver,
+                        avalang::ui::ComponentTree* tree,
+                        const std::vector<std::string>& imports,
+                        std::unordered_map<std::string, std::string>& mergedState,
+                        avalang::ui::IComponent* node) {
+    if (!node || !tree) return;
+
+    std::vector<avalang::ui::IComponent*> children = node->Children();
+    for (avalang::ui::IComponent* child : children) {
+        if (child->TypeName() == "If") {
+            const auto* cond = child->GetProperty("condition");
+            bool visible = cond && cond->Type() == avalang::ui::PropertyType::String &&
+                           EvalConditionBool(host, cond->AsString());
+            if (!visible) {
+                for (avalang::ui::IComponent* grandchild : std::vector<avalang::ui::IComponent*>(child->Children())) {
+                    child->RemoveChild(grandchild);
+                }
+                continue;
+            }
+            ExpandControlFlow(host, resolver, tree, imports, mergedState, child);
+        } else if (child->TypeName() == "For") {
+            const auto* loopVarProp = child->GetProperty("loopVar");
+            const auto* iterProp = child->GetProperty("iterable");
+            if (!loopVarProp || !iterProp) continue;
+
+            std::string loopVar = loopVarProp->AsString();
+            std::string iterExpr = iterProp->AsString();
+
+            std::vector<avalang::ui::IComponent*> templateChildren = child->Children();
+            for (avalang::ui::IComponent* templateChild : templateChildren) {
+                child->RemoveChild(templateChild);
+            }
+
+            int count = EvalListLength(host, iterExpr);
+            for (int i = 0; i < count; ++i) {
+                host.EvalAssignGlobal(loopVar, iterExpr + "[" + std::to_string(i) + "]");
+                host.EvalAssignGlobal("index", std::to_string(i));
+
+                for (avalang::ui::IComponent* templateChild : templateChildren) {
+                    avalang::ui::IComponent* clone = CloneComponentSubtree(templateChild, child, tree);
+                    if (!clone) continue;
+                    BakeCallSiteExpressions(host, clone);
+
+                    if (UiComponentResolver::IsComponentCall(clone)) {
+                        std::vector<avalang::ui::IComponent*> resolved =
+                            resolver.ResolveCallSite(clone, tree, imports, mergedState);
+                        child->RemoveChild(clone);
+                        for (avalang::ui::IComponent* r : resolved) {
+                            child->AddChild(r);
+                        }
+                    }
+                }
+            }
+            ExpandControlFlow(host, resolver, tree, imports, mergedState, child);
+        } else {
+            ExpandControlFlow(host, resolver, tree, imports, mergedState, child);
+        }
+    }
 }
 
 // Splits a rendered page fragment into `mainHtml` (everything else)
@@ -362,8 +480,8 @@ bool RenderAvauiDynamicWithState(RuntimeHost& host, const std::string& avauiSour
         }
 
         std::unordered_map<std::string, std::string> mergedState = parsed.state;
-        ResolveImportsAndMergeState(options.projectRoot, options.componentsDir,
-                                     parsed, mergedState);
+        UiComponentResolver resolver(options.projectRoot, options.componentsDir);
+        ResolveImportsAndMergeState(resolver, parsed, mergedState);
 
         VmStateBridge stateBridge(host);
         stateBridge.BindWithOverlay(mergedState, cachedStateJson);
@@ -399,6 +517,8 @@ bool RenderAvauiDynamicWithState(RuntimeHost& host, const std::string& avauiSour
             ExportComponentProps(host, root);
             stateBridge.RefreshAll();
         }
+
+        ExpandControlFlow(host, resolver, parsed.tree.get(), parsed.imports, mergedState, root);
 
         if (!RenderTreeFragment(parsed.tree.get(), options, /*fragmentOnly=*/false,
                                 /*slotContent=*/std::string(), outHtml, outError,
@@ -490,12 +610,13 @@ bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, Runtim
         }
 
         stage = "resolve imports/state (page)";
+        UiComponentResolver resolver(projectRoot, options.componentsDir);
         std::unordered_map<std::string, std::string> mergedState = parsed.state;
-        ResolveImportsAndMergeState(projectRoot, options.componentsDir, parsed, mergedState);
+        ResolveImportsAndMergeState(resolver, parsed, mergedState);
         if (haveLayout) {
             stage = "resolve imports/state (layout)";
             std::unordered_map<std::string, std::string> layoutState;
-            ResolveImportsAndMergeState(projectRoot, options.componentsDir, layoutParsed, layoutState);
+            ResolveImportsAndMergeState(resolver, layoutParsed, layoutState);
             // Page state wins on key collisions -- same "first writer
             // wins" rule UiComponentResolver::MergeStateMap already
             // applies when a page and an imported component both
@@ -576,6 +697,14 @@ bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, Runtim
             }
             stage = "refresh state (post-handler)";
             stateBridge.RefreshAll();
+        }
+
+        stage = "expand control flow (page)";
+        ExpandControlFlow(host, resolver, parsed.tree.get(), parsed.imports, mergedState, root);
+        if (haveLayout) {
+            stage = "expand control flow (layout)";
+            ExpandControlFlow(host, resolver, layoutParsed.tree.get(), layoutParsed.imports,
+                               mergedState, layoutParsed.tree->Root());
         }
 
         // Find where the layout's `slot()` placeholder actually lands

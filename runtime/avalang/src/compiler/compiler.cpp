@@ -21,6 +21,7 @@ void Compiler::Reset() {
     locals_.clear();
     pending_breaks_.clear();
     pending_continues_.clear();
+    pending_finally_stack_.clear();
     parent_locals_.clear();
     parent_ = nullptr;
 }
@@ -347,7 +348,20 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
     }
 
     if (auto* c = dynamic_cast<CallExpr*>(expr.get())) {
-        auto callee_reg = CompileExpr(c->callee);
+        auto callee_val_reg = CompileExpr(c->callee);
+        // CompileExpr(c->callee) may return a "borrowed" register -- e.g. a
+        // local variable's own storage slot (NameExpr for a local returns
+        // it->second directly, no copy) -- rather than a freshly allocated
+        // temporary. CALL below writes the call's return value into the "a"
+        // register of the call frame, which is callee_reg itself; if we used
+        // the borrowed register directly as callee_reg, a call would
+        // overwrite the local variable holding the callee with the return
+        // value, corrupting it for any later use (e.g. calling the same
+        // local function-valued variable/parameter a second time). Always
+        // copy into a fresh call-frame base register first so locals/upvalues
+        // survive the call.
+        auto callee_reg = AllocReg();
+        Emit(OpCode::MOVE, callee_reg, callee_val_reg);
         uint8_t argc = static_cast<uint8_t>(c->args.size());
 
         uint16_t call_frame_end = callee_reg + 1 + argc;
@@ -451,7 +465,7 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
             throw std::runtime_error("base() can only be used inside a method");
         }
 
-        auto method_idx = AddConstant(MakeString("__init__"));
+        auto method_idx = AddConstant(MakeString(s->method_name));
         uint8_t argc = static_cast<uint8_t>(s->args.size());
 
         uint16_t call_frame_end = 1 + argc;
@@ -499,7 +513,16 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
         sub.EmitDefaultsPrologue(l->defaults, 1);
 
         sub.CompileChunk(l->body);
-        sub.Emit(OpCode::RETURN);
+        // Same convention as named functions (see CompileFunctionDecl):
+        // if the body's last statement was a bare expression, CompileChunk
+        // leaves its register in sub.result_reg_ so it becomes the implicit
+        // return value. Previously this was `sub.Emit(OpCode::RETURN);`
+        // with no operands, which always fell into the a=0/b=0 -> Nil
+        // branch and silently discarded the last expression's value for
+        // any lambda that didn't end in an explicit `return`.
+        uint8_t ret_a = sub.result_reg_ > 0 ? static_cast<uint8_t>(sub.result_reg_) : 0;
+        uint8_t ret_b = sub.result_reg_ > 0 ? 1 : 0;
+        sub.Emit(OpCode::RETURN, ret_a, ret_b);
         sub.proto_->num_registers = std::max<uint16_t>(sub.max_reg_ + 1, sub.next_reg_);
 
         uint16_t child_idx = static_cast<uint16_t>(proto_->child_protos.size());
@@ -508,6 +531,36 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
         auto reg = AllocReg();
         Emit(OpCode::CLOSURE, reg, child_idx);
         return reg;
+    }
+
+    if (auto* y = dynamic_cast<YieldExpr*>(expr.get())) {
+        // Base register doubles as the expression's result: OpYield packs
+        // the yielded values (or nil, if none) back into registers[base]
+        // once it runs, and -- once the coroutine is resumed with a value --
+        // that same register is where the resume value lands too, so
+        // whatever calls CompileExpr on a YieldExpr gets `yield`'s result
+        // like any other expression (e.g. `x = yield a, b`, `f(yield v)`).
+        //
+        // Unlike the old statement form, base is a freshly allocated
+        // register (not hardcoded to 0) so `yield` composes safely as a
+        // sub-expression without clobbering whatever else is live in reg 0
+        // (e.g. `this` in a method).
+        auto base_reg = AllocReg();
+        uint8_t count = static_cast<uint8_t>(y->values.size());
+
+        uint16_t yield_frame_end = base_reg + count;
+        if (next_reg_ < yield_frame_end) {
+            next_reg_ = yield_frame_end;
+            if (next_reg_ > max_reg_) max_reg_ = next_reg_;
+        }
+        for (size_t i = 0; i < y->values.size(); ++i) {
+            uint16_t regs_before = next_reg_;
+            auto val_reg = CompileExpr(y->values[i]);
+            Emit(OpCode::MOVE, static_cast<uint16_t>(base_reg + i), val_reg);
+            FreeRegs(next_reg_ - regs_before);
+        }
+        Emit(OpCode::YIELD, base_reg, count);
+        return base_reg;
     }
 
     throw std::runtime_error("unknown expr type in compiler");
@@ -742,11 +795,6 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
         return;
     }
 
-    if (auto* y = dynamic_cast<YieldStmt*>(stmt.get())) {
-        CompileYield(y);
-        return;
-    }
-
     if (auto* ma = dynamic_cast<MultiAssignStmt*>(stmt.get())) {
         CompileMultiAssign(ma);
         return;
@@ -922,6 +970,14 @@ void Compiler::CompileForList(const ForStmt* stmt, uint32_t depth) {
         auto one_c = AddConstant(Value::Number(1));
         auto add_reg = AllocReg();
 
+        Emit(OpCode::GETGLOBAL, cond_reg, idx_var);
+        Emit(OpCode::GETGLOBAL, len_get, len_var);
+        Emit(OpCode::LT, cond_reg, cond_reg, len_get);
+        Emit(OpCode::TEST, cond_reg, 0);
+
+        size_t jmp_out = proto_->instructions.size();
+        Emit(OpCode::JMP, 0);
+
         Emit(OpCode::GETGLOBAL, list_get, list_var);
         Emit(OpCode::GETGLOBAL, idx_get, idx_var);
         Emit(OpCode::GETINDEX, elem_reg, list_get, idx_get);
@@ -935,14 +991,6 @@ void Compiler::CompileForList(const ForStmt* stmt, uint32_t depth) {
         Emit(OpCode::LOADK, add_reg, one_c);
         Emit(OpCode::ADD, add_reg, idx_get, add_reg);
         Emit(OpCode::SETGLOBAL, add_reg, idx_var);
-
-        Emit(OpCode::GETGLOBAL, cond_reg, idx_var);
-        Emit(OpCode::GETGLOBAL, len_get, len_var);
-        Emit(OpCode::LT, cond_reg, cond_reg, len_get);
-        Emit(OpCode::TEST, cond_reg, 0);
-
-        size_t jmp_out = proto_->instructions.size();
-        Emit(OpCode::JMP, 0);
 
         int32_t back_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(proto_->instructions.size()) - 1;
         Emit(OpCode::JMP);
@@ -996,6 +1044,15 @@ void Compiler::CompileForList(const ForStmt* stmt, uint32_t depth) {
     size_t loop_start = proto_->instructions.size();
 
     uint16_t regs_before = next_reg_;
+    auto cond_reg = AllocReg();
+    Emit(OpCode::LT, cond_reg, idx_reg_local, len_reg_local);
+    Emit(OpCode::TEST, cond_reg, 0);
+    FreeRegs(next_reg_ - regs_before);
+
+    size_t jmp_out = proto_->instructions.size();
+    Emit(OpCode::JMP, 0);
+
+    regs_before = next_reg_;
     auto elem_get = AllocReg();
     Emit(OpCode::GETINDEX, elem_get, list_reg_local, idx_reg_local);
     Emit(OpCode::MOVE, elem_reg_local, elem_get);
@@ -1011,15 +1068,6 @@ void Compiler::CompileForList(const ForStmt* stmt, uint32_t depth) {
     Emit(OpCode::ADD, add_reg, idx_reg_local, add_reg);
     Emit(OpCode::MOVE, idx_reg_local, add_reg);
     FreeRegs(next_reg_ - regs_before);
-
-    regs_before = next_reg_;
-    auto cond_reg = AllocReg();
-    Emit(OpCode::LT, cond_reg, idx_reg_local, len_reg_local);
-    Emit(OpCode::TEST, cond_reg, 0);
-    FreeRegs(next_reg_ - regs_before);
-
-    size_t jmp_out = proto_->instructions.size();
-    Emit(OpCode::JMP, 0);
 
     int32_t back_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(proto_->instructions.size()) - 1;
     Emit(OpCode::JMP);
@@ -1436,6 +1484,14 @@ void Compiler::CompileForDict(const ForStmt* stmt, uint32_t depth) {
         auto one_c = AddConstant(Value::Number(1));
         auto add_reg = AllocReg();
 
+        Emit(OpCode::GETGLOBAL, cond_reg, idx_var);
+        Emit(OpCode::GETGLOBAL, len_get, len_var);
+        Emit(OpCode::LT, cond_reg, cond_reg, len_get);
+        Emit(OpCode::TEST, cond_reg, 0);
+
+        size_t jmp_out = proto_->instructions.size();
+        Emit(OpCode::JMP, 0);
+
         Emit(OpCode::GETGLOBAL, keys_get, keys_var);
         Emit(OpCode::GETGLOBAL, idx_get, idx_var);
         Emit(OpCode::GETINDEX, elem_reg, keys_get, idx_get);
@@ -1449,14 +1505,6 @@ void Compiler::CompileForDict(const ForStmt* stmt, uint32_t depth) {
         Emit(OpCode::LOADK, add_reg, one_c);
         Emit(OpCode::ADD, add_reg, idx_get, add_reg);
         Emit(OpCode::SETGLOBAL, add_reg, idx_var);
-
-        Emit(OpCode::GETGLOBAL, cond_reg, idx_var);
-        Emit(OpCode::GETGLOBAL, len_get, len_var);
-        Emit(OpCode::LT, cond_reg, cond_reg, len_get);
-        Emit(OpCode::TEST, cond_reg, 0);
-
-        size_t jmp_out = proto_->instructions.size();
-        Emit(OpCode::JMP, 0);
 
         int32_t back_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(proto_->instructions.size()) - 1;
         Emit(OpCode::JMP);
@@ -1612,13 +1660,31 @@ void Compiler::CompileFunc(const FuncDef* func) {
     }
     sub.max_reg_ = sub.next_reg_;
 
+    // Named nested functions (func inc() ... end declared inside another
+    // function body) must be able to close over the enclosing function's
+    // locals, same as anonymous lambdas do (see the LambdaExpr case above).
+    // Without this, any reference inside the nested function to a name that
+    // isn't one of its own params/locals silently falls through to the
+    // "auto-declare a fresh local" branch in AssignStmt (or a global lookup
+    // on read), so the outer variable is never actually captured -- each
+    // call gets its own throwaway copy instead of sharing the parent's.
+    // Top-level functions have no enclosing locals_ to capture (is_top_level_
+    // compiler instance has none for real locals), so this is a no-op there.
+    for (auto& [name, reg] : locals_) {
+        if (name != "this") {
+            sub.parent_locals_.push_back({name, reg});
+            sub.proto_->upvalue_descs.push_back({true, reg});
+            sub.next_reg_++;
+        }
+    }
+
     sub.EmitDefaultsPrologue(func->params, 1);
 
     sub.CompileChunk(func->body);
     uint8_t ret_a = sub.result_reg_ > 0 ? static_cast<uint8_t>(sub.result_reg_) : 0;
     uint8_t ret_b = sub.result_reg_ > 0 ? 1 : 0;
     sub.Emit(OpCode::RETURN, ret_a, static_cast<uint16_t>(ret_b), 0);
-    sub.proto_->num_registers = sub.max_reg_ + 1;
+    sub.proto_->num_registers = std::max<uint16_t>(sub.max_reg_ + 1, sub.next_reg_);
 
     uint16_t child_idx = static_cast<uint16_t>(proto_->child_protos.size());
     proto_->child_protos.push_back(sub.proto_);
@@ -1806,9 +1872,23 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
         if (r->value) {
             uint16_t regs_before = next_reg_;
             auto reg = CompileExpr(r->value);
+            // Bug #42: antes, un 'return' dentro de un try saltaba directo
+            // a OpCode::RETURN y el/los 'finally' que lo envolvian nunca se
+            // ejecutaban (cierres de archivos, locks, cleanup, etc. se
+            // perdian en silencio). Ahora compilamos los finally's
+            // pendientes -- del mas anidado al mas externo -- justo antes
+            // de emitir el RETURN. 'reg' queda a salvo: todavia no se hizo
+            // FreeRegs, asi que el bloque finally solo usa registros por
+            // encima de next_reg_ actual y no lo pisa.
+            for (auto it = pending_finally_stack_.rbegin(); it != pending_finally_stack_.rend(); ++it) {
+                CompileChunk(**it);
+            }
             Emit(OpCode::RETURN, reg, 1);
             FreeRegs(next_reg_ - regs_before);
         } else {
+            for (auto it = pending_finally_stack_.rbegin(); it != pending_finally_stack_.rend(); ++it) {
+                CompileChunk(**it);
+            }
             Emit(OpCode::RETURN, 0, 0);
         }
         return 0;
@@ -1858,10 +1938,6 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
     }
     if (auto* raise_stmt = dynamic_cast<RaiseStmt*>(stmt.get())) {
         CompileRaise(raise_stmt);
-        return 0;
-    }
-    if (auto* yield_stmt = dynamic_cast<YieldStmt*>(stmt.get())) {
-        CompileYield(yield_stmt);
         return 0;
     }
     return 0;
@@ -2082,6 +2158,17 @@ void Compiler::CompileTry(const TryStmt* stmt) {
     size_t try_instr_idx = proto_->instructions.size();
     Emit(OpCode::TRY, 0);
 
+    // Bug #42 (finally con return): mientras compilamos el cuerpo del try
+    // y los except's, este TryStmt cuenta como "finally pendiente" -- si
+    // CompileStmt encuentra un ReturnStmt en ese cuerpo, inyecta este
+    // finally_body antes del RETURN. Se saca de la pila ANTES de compilar
+    // el propio finally_body (mas abajo) para que un return dentro del
+    // finally no se re-dispare a si mismo.
+    bool has_finally = !stmt->finally_body.empty();
+    if (has_finally) {
+        pending_finally_stack_.push_back(&stmt->finally_body);
+    }
+
     CompileChunk(stmt->try_body);
 
     Emit(OpCode::TRY_END);
@@ -2116,6 +2203,10 @@ void Compiler::CompileTry(const TryStmt* stmt) {
         PatchJump(catch_instr_idx);
     }
 
+    if (has_finally) {
+        pending_finally_stack_.pop_back();
+    }
+
     {
         auto raise_reg = AllocReg();
         Emit(OpCode::GETGLOBAL, raise_reg, AddConstant(MakeString("__exception__")));
@@ -2146,20 +2237,6 @@ void Compiler::CompileRaise(const RaiseStmt* stmt) {
         Emit(OpCode::RAISE, raise_reg);
         FreeRegs(next_reg_ - regs_before);
     }
-}
-
-void Compiler::CompileYield(const YieldStmt* stmt) {
-    uint8_t count = 0;
-    if (!stmt->values.empty()) {
-        for (size_t i = 0; i < stmt->values.size(); ++i) {
-            uint16_t regs_before = next_reg_;
-            auto val_reg = CompileExpr(stmt->values[i]);
-            Emit(OpCode::MOVE, static_cast<uint16_t>(i), val_reg);
-            FreeRegs(next_reg_ - regs_before);
-            count++;
-        }
-    }
-    Emit(OpCode::YIELD, 0, count);
 }
 
 namespace {
@@ -2415,6 +2492,80 @@ std::shared_ptr<ExprNode> Compiler::ParsePrimary(const std::string& s, size_t& p
         return std::make_shared<NilExpr>();
     }
 
+    // Nested f-string, e.g. {$"inner{x}"} used inside an outer f-string
+    // interpolation. Reuses the same {..}-counting fragment split as the
+    // top-level FSTRING token (see AstBuilder::visitFstringAtom) so nested
+    // braces/quotes inside it are handled the same way.
+    if (s[pos] == '$' && pos + 1 < s.size() && s[pos + 1] == '"') {
+        pos += 2;
+        size_t start = pos;
+        while (pos < s.size() && s[pos] != '"') {
+            if (s[pos] == '\\' && pos + 1 < s.size()) pos += 2;
+            else pos++;
+        }
+        std::string raw = s.substr(start, pos - start);
+        if (pos < s.size() && s[pos] == '"') pos++;
+
+        std::vector<std::pair<bool, std::string>> fragments;
+        std::string current_literal;
+        size_t j = 0;
+        while (j < raw.size()) {
+            if (raw[j] == '{') {
+                if (j + 1 < raw.size() && raw[j + 1] == '{') {
+                    current_literal += '{';
+                    j += 2;
+                } else {
+                    if (!current_literal.empty()) {
+                        fragments.push_back({false, current_literal});
+                        current_literal.clear();
+                    }
+                    size_t fstart = j + 1;
+                    size_t brace_count = 1;
+                    j++;
+                    while (j < raw.size() && brace_count > 0) {
+                        if (raw[j] == '{') brace_count++;
+                        else if (raw[j] == '}') brace_count--;
+                        j++;
+                    }
+                    if (brace_count == 0) {
+                        std::string expr_str = raw.substr(fstart, j - fstart - 1);
+                        if (!expr_str.empty()) {
+                            fragments.push_back({true, expr_str});
+                        }
+                    }
+                }
+            } else if (raw[j] == '}') {
+                if (j + 1 < raw.size() && raw[j + 1] == '}') {
+                    current_literal += '}';
+                    j += 2;
+                } else {
+                    current_literal += '}';
+                    j++;
+                }
+            } else if (raw[j] == '\\' && j + 1 < raw.size()) {
+                char next = raw[j + 1];
+                switch (next) {
+                    case 'n': current_literal += '\n'; break;
+                    case 't': current_literal += '\t'; break;
+                    case 'r': current_literal += '\r'; break;
+                    case 'b': current_literal += '\b'; break;
+                    case '"': current_literal += '"'; break;
+                    case '\'': current_literal += '\''; break;
+                    case '\\': current_literal += '\\'; break;
+                    default: current_literal += raw[j]; current_literal += raw[j + 1]; break;
+                }
+                j += 2;
+            } else {
+                current_literal += raw[j];
+                j++;
+            }
+        }
+        if (!current_literal.empty()) {
+            fragments.push_back({false, current_literal});
+        }
+        return std::make_shared<FStringExpr>(fragments);
+    }
+
     if (s[pos] == '(') {
         pos++;
         pos = SkipWhitespace(s, pos);
@@ -2422,6 +2573,54 @@ std::shared_ptr<ExprNode> Compiler::ParsePrimary(const std::string& s, size_t& p
         pos = SkipWhitespace(s, pos);
         if (pos < s.size() && s[pos] == ')') pos++;
         return expr;
+    }
+
+    if (s[pos] == '[') {
+        pos++;
+        std::vector<std::shared_ptr<ExprNode>> items;
+        pos = SkipWhitespace(s, pos);
+        if (pos < s.size() && s[pos] != ']') {
+            items.push_back(ParseExpr(s, pos));
+            pos = SkipWhitespace(s, pos);
+            while (pos < s.size() && s[pos] == ',') {
+                pos++;
+                pos = SkipWhitespace(s, pos);
+                if (pos < s.size() && s[pos] == ']') break; // trailing comma
+                items.push_back(ParseExpr(s, pos));
+                pos = SkipWhitespace(s, pos);
+            }
+        }
+        if (pos < s.size() && s[pos] == ']') pos++;
+        return std::make_shared<ListExpr>(items);
+    }
+
+    if (s[pos] == '{') {
+        pos++;
+        std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> entries;
+        pos = SkipWhitespace(s, pos);
+        while (pos < s.size() && s[pos] != '}') {
+            std::string key;
+            if (s[pos] == '"' || s[pos] == '\'') {
+                char delim = s[pos];
+                pos++;
+                while (pos < s.size() && s[pos] != delim) { key += s[pos]; pos++; }
+                if (pos < s.size() && s[pos] == delim) pos++;
+            } else {
+                key = ParseIdent(s, pos);
+            }
+            pos = SkipWhitespace(s, pos);
+            if (pos < s.size() && s[pos] == ':') pos++;
+            pos = SkipWhitespace(s, pos);
+            auto val = ParseExpr(s, pos);
+            entries.push_back({key, val});
+            pos = SkipWhitespace(s, pos);
+            if (pos < s.size() && s[pos] == ',') {
+                pos++;
+                pos = SkipWhitespace(s, pos);
+            }
+        }
+        if (pos < s.size() && s[pos] == '}') pos++;
+        return std::make_shared<DictExpr>(entries);
     }
 
     if (IsDigit(s[pos])) {

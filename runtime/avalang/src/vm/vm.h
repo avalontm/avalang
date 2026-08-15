@@ -58,6 +58,7 @@ public:
     void RaiseException(const Value& exc);
     Value GetAndClearException();
     bool HasException() const;
+    size_t GetCurrentFrameIndex() const { return frames_.size() - 1; }
 
     Coroutine* CreateCoroutine(const Value& func);
 
@@ -155,6 +156,7 @@ public:
 
     struct ExceptionHandler {
         size_t catch_pc;
+        size_t frame_idx;
     };
 
 // Internal implementation friends - allow access to private members from vm_internal implementations

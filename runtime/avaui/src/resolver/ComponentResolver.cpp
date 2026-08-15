@@ -365,6 +365,18 @@ ComponentResolver::ComponentResolver(std::string projectRoot, std::string compon
 
 bool ComponentResolver::IsComponentCall(const IComponent* comp) {
     if (!comp) return false;
+    // `slot()` is parsed with call syntax (see AvauiParser::ParseComponent),
+    // so it also gets the generic "__unresolvedImportCall" marker like any
+    // other Component(...) call site -- but it is a built-in layout
+    // placeholder (RenderTree.cpp's `typeName == "Slot"` -> RenderNodeType::
+    // Slot), not something with a components/Slot.avaui file to load. Left
+    // unguarded, LoadComponent() below fails to find that file, the call
+    // site resolves to zero children, and ResolveChildrenOf still deletes
+    // the original node because `changed` was set -- silently dropping the
+    // page's entire content wherever the layout put `slot()`. Treat it as
+    // an ordinary node instead of a call site so it survives resolution
+    // intact for SceneCommandWalker to splice the page fragment into.
+    if (comp->TypeName() == "Slot") return false;
     if (const auto* prop = comp->GetProperty("__unresolvedImportCall")) {
         if (prop->Type() == PropertyType::Bool && prop->AsBool()) {
             return true;
@@ -470,6 +482,7 @@ void ComponentResolver::ResolveChildrenOf(IComponent* parent,
                                            std::unordered_map<std::string, std::string>& mergedState,
                                            const ImportMap& importMap, int depth) {
     if (!parent || !tree || depth > kMaxDepth) return;
+    if (parent->TypeName() == "For") return;
 
     auto slotNames = parent->SlotNames();
     for (const auto& slot : slotNames) {
@@ -481,52 +494,10 @@ void ComponentResolver::ResolveChildrenOf(IComponent* parent,
         bool changed = false;
         for (IComponent* child : originals) {
             if (IsComponentCall(child)) {
-                std::string typeName = child->TypeName();
-                const CacheEntry* comp = LoadComponent(typeName, mergedState, importMap);
-                if (comp && comp->parsed.tree) {
-                    // Fail fast, at resolve time, on a bad call site --
-                    // see ValidateCallSiteArgs's own comment. No-op for
-                    // any component that doesn't declare a `params`
-                    // block yet.
-                    ValidateCallSiteArgs(typeName, child, comp->parsed.params);
-
-                    // Empty for a plain (unaliased) import, matching
-                    // MergeStateMap's own alias lookup above -- so
-                    // renameMap below comes back empty and every clone's
-                    // properties pass through RenameStateReferences
-                    // completely untouched, exactly like before this
-                    // feature existed.
-                    std::string alias;
-                    auto importIt = importMap.find(typeName);
-                    if (importIt != importMap.end()) alias = importIt->second.alias;
-                    std::unordered_map<std::string, std::string> renameMap =
-                        BuildRenameMap(comp->parsed.state, alias);
-
-                    IComponent* compRoot = comp->parsed.tree->Root();
-                    if (compRoot) {
-                        for (const auto& srcChild : compRoot->Children()) {
-                            IComponent* cloned = CloneInto(srcChild, nullptr, tree);
-                            if (cloned) {
-                                RenameStateReferences(cloned, renameMap);
-                                ApplyCallSiteOverrides(child, cloned);
-                                // Inline the call site's own arguments
-                                // (productId=3, name="Latte", ...) as
-                                // literals across the whole cloned
-                                // subtree -- ApplyCallSiteOverrides only
-                                // reaches the root's own properties,
-                                // which isn't enough for nested `text =
-                                // name` bindings or a `click =
-                                // OnAddToCart(productId)` handler call
-                                // several levels down.
-                                SubstituteCallArgs(cloned, BuildArgValueMap(
-                                    child, comp->parsed.state, comp->parsed.params));
-                                news.push_back(cloned);
-                            }
-                        }
-                    }
-                    changed = true;
-                    continue;
-                }
+                std::vector<IComponent*> resolved = ResolveOneCallSite(child, tree, mergedState, importMap);
+                for (IComponent* c : resolved) news.push_back(c);
+                changed = true;
+                continue;
             }
             news.push_back(child);
         }
@@ -540,6 +511,52 @@ void ComponentResolver::ResolveChildrenOf(IComponent* parent,
             ResolveChildrenOf(c, tree, mergedState, importMap, depth + 1);
         }
     }
+}
+
+std::vector<IComponent*> ComponentResolver::ResolveOneCallSite(
+        IComponent* callSite, ComponentTree* tree,
+        std::unordered_map<std::string, std::string>& mergedState,
+        const ImportMap& importMap) {
+    std::vector<IComponent*> resolved;
+    if (!callSite || !tree) return resolved;
+
+    std::string typeName = callSite->TypeName();
+    const CacheEntry* comp = LoadComponent(typeName, mergedState, importMap);
+    if (!comp || !comp->parsed.tree) return resolved;
+
+    ValidateCallSiteArgs(typeName, callSite, comp->parsed.params);
+
+    std::string alias;
+    auto importIt = importMap.find(typeName);
+    if (importIt != importMap.end()) alias = importIt->second.alias;
+    std::unordered_map<std::string, std::string> renameMap =
+        BuildRenameMap(comp->parsed.state, alias);
+
+    IComponent* compRoot = comp->parsed.tree->Root();
+    if (!compRoot) return resolved;
+
+    for (const auto& srcChild : compRoot->Children()) {
+        IComponent* cloned = CloneInto(srcChild, nullptr, tree);
+        if (!cloned) continue;
+        RenameStateReferences(cloned, renameMap);
+        ApplyCallSiteOverrides(callSite, cloned);
+        SubstituteCallArgs(cloned, BuildArgValueMap(callSite, comp->parsed.state, comp->parsed.params));
+        resolved.push_back(cloned);
+    }
+    return resolved;
+}
+
+std::vector<IComponent*> ComponentResolver::ResolveCallSite(
+        IComponent* callSite, ComponentTree* tree, const std::vector<std::string>& imports,
+        std::unordered_map<std::string, std::string>& mergedState) {
+    if (!callSite || !tree || !IsComponentCall(callSite)) return {};
+
+    ImportMap importMap = BuildImportMap(imports);
+    std::vector<IComponent*> resolved = ResolveOneCallSite(callSite, tree, mergedState, importMap);
+    for (IComponent* c : resolved) {
+        ResolveChildrenOf(c, tree, mergedState, importMap, 0);
+    }
+    return resolved;
 }
 
 IComponent* ComponentResolver::CloneInto(const IComponent* src,

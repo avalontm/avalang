@@ -13,6 +13,37 @@ static std::string stripQuotes(const std::string& s) {
     return s;
 }
 
+// Strips the surrounding quotes from a raw STRING token AND resolves the
+// escape sequences the grammar's ESCAPE_SEQ fragment allows inside one
+// (\b \t \n \r \" \' \\). stripQuotes() alone leaves those as literal
+// backslash-letter pairs, which is wrong for actual string content -- use
+// this instead wherever a STRING token's *value* (not just its raw text)
+// is needed.
+static std::string unescapeString(const std::string& raw_token) {
+    std::string s = stripQuotes(raw_token);
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '\\' && i + 1 < s.size()) {
+            char next = s[i + 1];
+            switch (next) {
+                case 'b': out += '\b'; break;
+                case 't': out += '\t'; break;
+                case 'n': out += '\n'; break;
+                case 'r': out += '\r'; break;
+                case '"': out += '"'; break;
+                case '\'': out += '\''; break;
+                case '\\': out += '\\'; break;
+                default: out += '\\'; out += next; break;
+            }
+            i++;
+        } else {
+            out += s[i];
+        }
+    }
+    return out;
+}
+
 static BinOp compOpToBinOp(const std::string& txt) {
     if (txt == "==") return BinOp::Eq;
     if (txt == "!=") return BinOp::Ne;
@@ -66,7 +97,7 @@ static void ResolveMemberModifiers(const std::vector<AvaLangParser::MemberModifi
 }
 
 std::shared_ptr<ExprNode> AstBuilder::makeString(const std::string& s) {
-    return std::make_shared<StringExpr>(stripQuotes(s));
+    return std::make_shared<StringExpr>(unescapeString(s));
 }
 
 std::shared_ptr<ExprNode> AstBuilder::exprFromAny(const std::any& a) {
@@ -121,6 +152,9 @@ std::shared_ptr<ExprNode> AstBuilder::exprFromAny(const std::any& a) {
     }
     if (a.type() == typeid(std::shared_ptr<FStringExpr>)) {
         return std::any_cast<std::shared_ptr<FStringExpr>>(a);
+    }
+    if (a.type() == typeid(std::shared_ptr<YieldExpr>)) {
+        return std::any_cast<std::shared_ptr<YieldExpr>>(a);
     }
     return nullptr;
 }
@@ -193,10 +227,6 @@ std::shared_ptr<StmtNode> AstBuilder::stmtFromAny(const std::any& a) {
     try {
         auto try_stmt = std::any_cast<std::shared_ptr<TryStmt>>(a);
         return try_stmt;
-    } catch (...) {}
-    try {
-        auto yield_stmt = std::any_cast<std::shared_ptr<YieldStmt>>(a);
-        return yield_stmt;
     } catch (...) {}
     try {
         auto extern_stmt = std::any_cast<std::shared_ptr<ExternStmt>>(a);
@@ -347,7 +377,6 @@ std::any AstBuilder::visitSmallStatement(AvaLangParser::SmallStatementContext* c
     if (ctx->localStatement())    return visitLocalStatement(ctx->localStatement());
     if (ctx->importStatement())   return visitImportStatement(ctx->importStatement());
     if (ctx->raiseStatement())    return visitRaiseStatement(ctx->raiseStatement());
-    if (ctx->yieldStatement())    return visitYieldStatement(ctx->yieldStatement());
     if (ctx->incDecStatement())  return visitIncDecStatement(ctx->incDecStatement());
     if (ctx->modifiedAssignStatement()) return visitModifiedAssignStatement(ctx->modifiedAssignStatement());
     throw std::runtime_error("unsupported small statement");
@@ -392,7 +421,23 @@ std::any AstBuilder::visitAugAssignStatement(AvaLangParser::AugAssignStatementCo
 
 std::any AstBuilder::visitReturnStatement(AvaLangParser::ReturnStatementContext* ctx) {
     if (ctx->exprList() && !ctx->exprList()->expr().empty()) {
-        return std::make_shared<ReturnStmt>(exprFromAny(ctx->exprList()->expr(0)->accept(this)));
+        auto exprs = ctx->exprList()->expr();
+        if (exprs.size() == 1) {
+            return std::make_shared<ReturnStmt>(exprFromAny(exprs[0]->accept(this)));
+        }
+        // Bug critico: 'return a, b, c' descartaba silenciosamente todos los
+        // valores salvo el primero (solo se tomaba exprList()->expr(0)).
+        // AvaLang no soporta destructuring de asignacion (x, y = v, w esta
+        // explicitamente rechazado en visitAssignStatement), asi que en vez
+        // de inventar un tipo tupla nuevo o tocar la VM, empaquetamos los
+        // valores en una lista real -- no se pierde nada y el caller puede
+        // indexar/iterar el resultado como cualquier otra lista.
+        std::vector<std::shared_ptr<ExprNode>> items;
+        items.reserve(exprs.size());
+        for (auto* e : exprs) {
+            items.push_back(exprFromAny(e->accept(this)));
+        }
+        return std::make_shared<ReturnStmt>(std::make_shared<ListExpr>(items));
     }
     return std::make_shared<ReturnStmt>();
 }
@@ -506,9 +551,9 @@ std::any AstBuilder::visitExternFuncDeclaration(AvaLangParser::ExternFuncDeclara
 }
 
 std::any AstBuilder::visitExternStatement(AvaLangParser::ExternStatementContext* ctx) {
-    // stripQuotes espera el texto crudo del token STRING (con comillas);
+    // unescapeString espera el texto crudo del token STRING (con comillas);
     // ver definición arriba, usada igual para importStatement/StringExpr.
-    auto library = stripQuotes(ctx->STRING()->getText());
+    auto library = unescapeString(ctx->STRING()->getText());
     auto alias = ctx->NAME()->getText();
 
     std::vector<ExternFuncDecl> functions;
@@ -861,7 +906,7 @@ std::any AstBuilder::visitDictLiteral(AvaLangParser::DictLiteralContext* ctx) {
     for (auto* de : ctx->dictEntry()) {
         std::string key;
         if (de->NAME()) key = de->NAME()->getText();
-        else if (de->STRING()) key = stripQuotes(de->STRING()->getText());
+        else if (de->STRING()) key = unescapeString(de->STRING()->getText());
         entries.push_back({key, exprFromAny(de->expr()->accept(this))});
     }
     return std::make_shared<DictExpr>(entries);
@@ -882,7 +927,41 @@ std::any AstBuilder::visitBaseAtom(AvaLangParser::BaseAtomContext* ctx) {
             }
         }
     }
-    return std::make_shared<BaseExpr>(args);
+    // 'base.NAME(args)' calls the parent's NAME method; plain 'base(args)'
+    // keeps calling the parent constructor (__init__), same as before.
+    std::string method_name = ctx->NAME() ? ctx->NAME()->getText() : "__init__";
+    std::shared_ptr<ExprNode> expr = std::make_shared<BaseExpr>(args, method_name);
+
+    for (auto* t : ctx->trailer()) {
+        if (auto* attr = dynamic_cast<AvaLangParser::AttrTrailerContext*>(t)) {
+            expr = std::make_shared<AttrExpr>(expr, attr->NAME()->getText());
+        } else if (auto* idx = dynamic_cast<AvaLangParser::IndexTrailerContext*>(t)) {
+            auto idx_expr = exprFromAny(idx->expr()->accept(this));
+            expr = std::make_shared<IndexExpr>(expr, idx_expr);
+        } else if (auto* slice = dynamic_cast<AvaLangParser::SliceTrailerContext*>(t)) {
+            auto slice_result = slice->accept(this);
+            auto slice_expr = std::any_cast<std::shared_ptr<SliceExpr>>(slice_result);
+            slice_expr->obj = expr;
+            expr = slice_expr;
+        } else if (auto* call = dynamic_cast<AvaLangParser::CallTrailerContext*>(t)) {
+            std::vector<std::shared_ptr<ExprNode>> call_args;
+            if (call->argList()) {
+                for (auto* a : call->argList()->arg()) {
+                    if (auto* named = dynamic_cast<AvaLangParser::NamedArgContext*>(a)) {
+                        call_args.push_back(exprFromAny(named->expr()->accept(this)));
+                    } else if (auto* pos = dynamic_cast<AvaLangParser::PositionalArgContext*>(a)) {
+                        call_args.push_back(exprFromAny(pos->expr()->accept(this)));
+                    }
+                }
+            }
+            expr = std::make_shared<CallExpr>(expr, call_args);
+        } else if (dynamic_cast<AvaLangParser::IncTrailerContext*>(t)) {
+            expr = std::make_shared<UnOpExpr>(UnOp::Inc, expr);
+        } else if (dynamic_cast<AvaLangParser::DecTrailerContext*>(t)) {
+            expr = std::make_shared<UnOpExpr>(UnOp::Dec, expr);
+        }
+    }
+    return expr;
 }
 
 std::any AstBuilder::visitImportStatement(AvaLangParser::ImportStatementContext* ctx) {
@@ -908,14 +987,14 @@ std::any AstBuilder::visitRaiseStatement(AvaLangParser::RaiseStatementContext* c
     return std::make_shared<RaiseStmt>(value);
 }
 
-std::any AstBuilder::visitYieldStatement(AvaLangParser::YieldStatementContext* ctx) {
+std::any AstBuilder::visitYieldAtom(AvaLangParser::YieldAtomContext* ctx) {
     std::vector<std::shared_ptr<ExprNode>> values;
     if (ctx->exprList()) {
         for (auto* e : ctx->exprList()->expr()) {
             values.push_back(exprFromAny(e->accept(this)));
         }
     }
-    return std::make_shared<YieldStmt>(values);
+    return std::make_shared<YieldExpr>(values);
 }
 
 std::any AstBuilder::visitSliceTrailer(AvaLangParser::SliceTrailerContext* ctx) {

@@ -49,9 +49,6 @@ std::vector<RuntimeHost::RouteTemplate> RuntimeHost::ParseRouteDeclarations(cons
     if (tree) ava_ui_destroy_tree(tree);
     if (!routesJson) return result;
 
-
-
-
     try {
         json parsed = json::parse(routesJson);
         for (const auto& routeObj : parsed) {
@@ -67,8 +64,6 @@ std::vector<RuntimeHost::RouteTemplate> RuntimeHost::ParseRouteDeclarations(cons
             result.push_back(std::move(tmpl));
         }
     } catch (const json::exception&) {
-
-
 
     }
 
@@ -119,15 +114,6 @@ void RuntimeHost::SetRequestContext(const RequestContext& ctx) {
     ava_dict_set(vm_, request, "params", params);
     ava_dict_set(vm_, request, "query", query);
 
-
-
-
-
-
-
-
-
-
     ava_set_global(vm_, "request", request);
 }
 
@@ -171,9 +157,6 @@ bool RuntimeHost::RunScriptCapturingOutput(const std::string& source, const std:
 
     bool success = RunScript(source, scriptName, outError);
 
-
-
-
     ava_vm_set_print_callback(vm_, nullptr, nullptr);
 
     return success;
@@ -188,24 +171,20 @@ bool RuntimeHost::SplitNamespacedKey(const std::string& key, std::string& outNam
 }
 
 ava_value_t RuntimeHost::GetOrCreateDictGlobal(const std::string& ns) {
-    ava_value_t existing = ava_get_global(vm_, ns.c_str());  // retained, see VM::GetGlobal
+    ava_value_t existing = ava_get_global(vm_, ns.c_str()); 
     if (existing.type == AVA_DICT) {
-        return existing;  // caller owns this reference and must release it when done
+        return existing; 
     }
-    ava_value_release(vm_, existing);  // safe no-op for Nil; drops a wrongly-typed collision otherwise
+    ava_value_release(vm_, existing);  
 
     ava_value_t created = ava_dict_create(vm_);
-    ava_set_global(vm_, ns.c_str(), created);  // SetGlobal retains internally
-    ava_value_release(vm_, created);           // drop our local ref; the global now owns the only one
-    return ava_get_global(vm_, ns.c_str());    // fetch again -> caller gets a fresh, owned reference
+    ava_set_global(vm_, ns.c_str(), created);  
+    ava_value_release(vm_, created);          
+    return ava_get_global(vm_, ns.c_str());   
 }
 
 namespace {
 
-// Quotes+escapes a string for embedding back into AvaLang source text
-// (the mirror image of AvauiPropertyCoercion's Unquote). Only needs to
-// handle what round-tripping through our own SerializeAvaValueToLiteral
-// below can produce, but escapes generally for safety.
 std::string QuoteForAvaLang(const std::string& s) {
     std::string out = "\"";
     for (char c : s) {
@@ -222,21 +201,6 @@ std::string QuoteForAvaLang(const std::string& s) {
     return out;
 }
 
-// Renders a live VM value back into AvaLang literal source text, e.g.
-// {id: 3, name: "Latte"} or [1, 2, 3]. This is what makes List/Dict
-// state (e.g. `cart = []` in a page's `state` block, then mutated with
-// `cart.append(...)`) actually survive being exported to the
-// session's cached-state JSON and re-bound on the next request --
-// previously ExportStateJson's `default:` case for AVA_LIST/AVA_DICT
-// just echoed back whatever raw text was already cached (see fix
-// notes), so appended items were silently dropped on every request
-// after the one that added them, and BindState's InferValue() doesn't
-// recognize `[`/`{` syntax either, so even the *first* render turned
-// `cart = []` into the four-character string "[]" instead of an empty
-// list -- calling `cart.append(...)` on that string is exactly the
-// "attempt to call a non-callable value" seen at runtime (`.append`
-// isn't a builtin string method, so the lookup falls through to nil,
-// and nil isn't callable).
 std::string SerializeAvaValueToLiteral(AvaVM* vm, ava_value_t value) {
     switch (value.type) {
         case AVA_BOOL:
@@ -299,8 +263,6 @@ void RuntimeHost::BindState(const std::string& stateJson) {
 
     for (auto it = parsed.begin(); it != parsed.end(); ++it) {
 
-
-
         const std::string raw = it.value().is_string() ? it.value().get<std::string>() : it.value().dump();
 
         ava_value_t value{};
@@ -317,19 +279,6 @@ void RuntimeHost::BindState(const std::string& stateJson) {
                 value.as.n = pv.AsNumber();
                 break;
             default: {
-                // InferValue only distinguishes Bool/Number/(everything
-                // else is String) -- it has no concept of List/Dict, so
-                // raw text like "[]" or "[{id: 1, qty: 2}]" (state
-                // written by SerializeAvaValueToLiteral above, or a
-                // page's own `state` block default such as `cart =
-                // []`) lands here too, indistinguishable from an actual
-                // string value. Trim and sniff for `[`/`{` before
-                // falling back to wrapping raw as a literal VM string:
-                // if it looks like a list/dict literal, compile+run it
-                // as a real AvaLang expression (same technique
-                // EvalPropertyExpr already uses for property
-                // expressions) so `cart` actually becomes a List, not
-                // the four-character string "[]".
                 size_t start = raw.find_first_not_of(" \t\r\n");
                 bool looksComplex = start != std::string::npos &&
                                      (raw[start] == '[' || raw[start] == '{');
@@ -345,18 +294,6 @@ void RuntimeHost::BindState(const std::string& stateJson) {
                         ava_run(vm_, exprModule, &exprResult, &exprRunError);
                         ava_module_destroy(exprModule);
                         if (!exprRunError) {
-                            // ava_get_global hands back an owned, extra
-                            // reference (see its doc comment in
-                            // vm_core.cpp) on top of whatever the
-                            // globals table itself holds -- tracked via
-                            // valueOwnedFromGetGlobal below so it gets
-                            // released once `value` has been handed off
-                            // (ava_dict_set takes the reference as-is;
-                            // ava_set_global/SetGlobal Retains its own
-                            // copy instead of adopting this one, so
-                            // without the release this leaks one
-                            // refcount per List/Dict state key on every
-                            // request).
                             value = ava_get_global(vm_, "__avahost_state_init__");
                             valueOwnedFromGetGlobal = true;
                             handled = true;
@@ -383,27 +320,11 @@ void RuntimeHost::BindState(const std::string& stateJson) {
 #endif
         std::string ns, field;
         if (SplitNamespacedKey(it.key(), ns, field)) {
-            // A key like "dialog.confirmDialogOpen" (from an aliased
-            // `import ... as dialog` -- see ComponentResolver.cpp's
-            // BuildRenameMap): bind it as a field on a real Dict global
-            // named "dialog" instead of a flat global, so a page's own
-            // `code` block can read/write it as ordinary AvaLang
-            // attribute syntax (`dialog.confirmDialogOpen = true`),
-            // which the VM already resolves generically for Dict values
-            // (OpGetAttr/OpSetAttr in vm_classes.cpp) -- no VM/compiler
-            // changes needed.
             ava_value_t dict = GetOrCreateDictGlobal(ns);
-            // ava_dict_set stores `value` as-is without retaining it
-            // (same as ui_vm_event_bridge.cpp's BindComponentRefsNative
-            // relies on) -- the dict now owns the only reference to
-            // `value`, so it must NOT also be released here.
             ava_dict_set(vm_, dict, field.c_str(), value);
             ava_value_release(vm_, dict);
         } else {
             ava_set_global(vm_, it.key().c_str(), value);
-            // SetGlobal Retains its own copy rather than adopting this
-            // one (unlike ava_dict_set above) -- see
-            // valueOwnedFromGetGlobal's comment where it's set.
             if (valueOwnedFromGetGlobal) ava_value_release(vm_, value);
         }
     }
@@ -439,15 +360,6 @@ bool RuntimeHost::BindCodeBehind(const std::string& methodsText, std::string* ou
 
 bool RuntimeHost::InvokeHandler(const std::string& handlerName, std::string& outError) {
     if (!vm_ || handlerName.empty()) return false;
-
-
-
-
-
-
-
-
-
     const std::string source = "__avahost_invoke__ = " + handlerName +
 #ifdef AVAHOST_HAS_UI_PIPELINE
                                 (LooksLikeCall(handlerName) ? "" : "()");
@@ -455,18 +367,6 @@ bool RuntimeHost::InvokeHandler(const std::string& handlerName, std::string& out
                                 "()";
 #endif
 
-    // Diagnostic pre-check: resolve just the callee name (the part
-    // before '(', or the whole string if it's a bare name) as a VM
-    // global *before* attempting the call. A closure/func defined by
-    // BindCodeBehind should show up here as AVA_FUNCTION -- if it
-    // instead comes back AVA_NIL, the handler's `func` declaration
-    // never ran (or ran against a different VM instance), and if it
-    // comes back some other type, something else clobbered that name
-    // between BindCodeBehind and this call. Either way this turns the
-    // VM's generic "attempt to call a non-callable value" -- which by
-    // itself doesn't say whether the problem is "never defined" vs
-    // "defined as the wrong thing" vs "a call-mechanics bug in the VM
-    // itself" -- into a message that actually distinguishes those.
     {
         std::string calleeName = handlerName;
         auto paren = calleeName.find('(');
@@ -509,9 +409,6 @@ bool RuntimeHost::InvokeHandler(const std::string& handlerName, std::string& out
         return false;
     }
 
-
-
-
     ava_value_t invokeResult = ava_get_global(vm_, "__avahost_invoke__");
     if (invokeResult.type == AVA_STRING) ava_value_release(vm_, invokeResult);
     return true;
@@ -519,10 +416,6 @@ bool RuntimeHost::InvokeHandler(const std::string& handlerName, std::string& out
 
 bool RuntimeHost::InvokeHandlerIfDefined(const std::string& handlerName, std::string& outError) {
     if (!vm_ || handlerName.empty()) return true;
-
-
-
-
 
     ava_value_t existing = ava_get_global(vm_, handlerName.c_str());
     bool isFunction = (existing.type == AVA_FUNCTION);
@@ -534,11 +427,6 @@ bool RuntimeHost::InvokeHandlerIfDefined(const std::string& handlerName, std::st
 
 std::string RuntimeHost::EvalPropertyExpr(const std::string& rawValue) {
     if (!vm_ || rawValue.empty()) return rawValue;
-
-
-
-
-
 
     const std::string source = "__avahost_eval__ = (" + rawValue + ")";
 
@@ -583,15 +471,64 @@ std::string RuntimeHost::EvalPropertyExpr(const std::string& rawValue) {
             return display;
         }
         case AVA_NIL:
-
-
             return rawValue;
         default:
-
-
             ava_value_release(vm_, value);
             return rawValue;
     }
+}
+
+std::string RuntimeHost::EvalExprToLiteral(const std::string& expr, bool& ok) {
+    ok = false;
+    if (!vm_ || expr.empty()) return "";
+
+    const std::string source = "__avahost_literal__ = (" + expr + ")";
+    char* compileError = nullptr;
+    AvaModule* module = ava_compile(vm_, source.c_str(), "<avahost-literal-eval>", &compileError);
+    if (!module) {
+        if (compileError) ava_string_free(compileError);
+        return "";
+    }
+
+    ava_value_t result{};
+    char* runError = nullptr;
+    ava_run(vm_, module, &result, &runError);
+    ava_module_destroy(module);
+    if (runError) {
+        ava_string_free(runError);
+        return "";
+    }
+
+    ava_value_t value = ava_get_global(vm_, "__avahost_literal__");
+    std::string literal = SerializeAvaValueToLiteral(vm_, value);
+
+    if (value.type != AVA_BOOL && value.type != AVA_NUMBER) {
+        ava_value_release(vm_, value);
+    }
+    ok = true;
+    return literal;
+}
+
+bool RuntimeHost::EvalAssignGlobal(const std::string& name, const std::string& expr) {
+    if (!vm_ || name.empty()) return false;
+
+    const std::string source = name + " = (" + expr + ")";
+    char* compileError = nullptr;
+    AvaModule* module = ava_compile(vm_, source.c_str(), "<avahost-loop-bind>", &compileError);
+    if (!module) {
+        if (compileError) ava_string_free(compileError);
+        return false;
+    }
+
+    ava_value_t result{};
+    char* runError = nullptr;
+    ava_run(vm_, module, &result, &runError);
+    ava_module_destroy(module);
+    if (runError) {
+        ava_string_free(runError);
+        return false;
+    }
+    return true;
 }
 
 std::string RuntimeHost::ExportStateJson(const std::string& templateStateJson) {
@@ -612,16 +549,8 @@ std::string RuntimeHost::ExportStateJson(const std::string& templateStateJson) {
         bool isDictField = false;
 
         if (SplitNamespacedKey(it.key(), ns, field)) {
-            // Mirror of BindState's write side: "dialog.confirmDialogOpen"
-            // reads the "confirmDialogOpen" entry out of the "dialog"
-            // Dict global instead of a flat global of that (invalid,
-            // dotted) name.
-            ava_value_t nsVal = ava_get_global(vm_, ns.c_str());  // owned, must release
+            ava_value_t nsVal = ava_get_global(vm_, ns.c_str());
             if (nsVal.type == AVA_DICT) {
-                // ava_dict_get returns a BORROWED reference straight into
-                // the dict's own entries (unlike ava_get_global, it does
-                // not Retain -- see c_api.cpp) -- `value` must NOT be
-                // released below, only `nsVal` is ours to release.
                 value = ava_dict_get(vm_, nsVal, field.c_str());
                 isDictField = true;
             }
@@ -654,15 +583,6 @@ std::string RuntimeHost::ExportStateJson(const std::string& templateStateJson) {
             }
             case AVA_LIST:
             case AVA_DICT:
-                // Previously this fell into `default:` below, which
-                // just echoed back whatever text was already in the
-                // incoming template/cached JSON -- meaning a List/Dict
-                // state var's real, current contents (e.g. `cart`
-                // after `cart.append(...)`) were silently discarded on
-                // every export, and the *next* request re-bound the
-                // stale echoed text (see BindState's matching fix).
-                // Serialize the live value back to AvaLang literal
-                // source text instead, so it actually round-trips.
                 out[it.key()] = SerializeAvaValueToLiteral(vm_, value);
                 if (!isDictField) ava_value_release(vm_, value);
                 break;
@@ -684,10 +604,6 @@ void RuntimeHost::BeginConsoleCapture() {
     ava_vm_set_print_callback(
         vm_,
         [](const char* utf8, size_t len, void* userData) {
-
-
-
-
 
             static_cast<std::string*>(userData)->append(utf8, len);
             std::fwrite(utf8, 1, len, stdout);

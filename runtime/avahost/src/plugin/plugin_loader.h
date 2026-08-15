@@ -3,11 +3,11 @@
 // instantiates their IPlugin via the avahost_create_plugin symbol
 // (plan section 17).
 //
-// Windows-only for now (see docs/PAL_PROGRESS.md): goes through the
-// PAL's ILibraryLoader (core/platform/interfaces/ILibrary.h) instead
-// of calling LoadLibrary/GetProcAddress/FreeLibrary directly, per PAL
-// Fase 2. The Linux/macOS path is paused (PAL backends still stub), so
-// there is intentionally no dlopen/dlsym branch here anymore.
+// Goes through the PAL's ILibraryLoader (core/platform/interfaces/
+// ILibrary.h) instead of calling LoadLibrary/dlopen directly -- picks
+// WinLibraryLoader (.dll) on Windows or LinLibraryLoader (.so) on
+// Linux at compile time (see plugin_loader.cpp). macOS (.dylib) is
+// still unwired.
 #include <memory>
 #include <string>
 #include <vector>

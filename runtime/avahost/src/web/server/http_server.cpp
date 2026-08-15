@@ -106,7 +106,9 @@ void HttpServer::HandleConnection(Socket socket, const RequestHandler& handler) 
     } else {
         try {
             response = handler(request);
-        } catch (const SehException& ex) {
+        }
+#if defined(_WIN32)
+        catch (const SehException& ex) {
             // A real native crash (access violation, etc.) that
             // InstallSehTranslator() converted into a C++ exception --
             // see core/seh_guard.h. This is almost certainly the cause
@@ -116,7 +118,9 @@ void HttpServer::HandleConnection(Socket socket, const RequestHandler& handler) 
             logger_.Error("CRASH while handling " + request.method + " " + request.path +
                            " -- " + ex.what());
             response = HttpResponse::ServerError("500 Internal Server Error");
-        } catch (const std::exception& ex) {
+        }
+#endif
+        catch (const std::exception& ex) {
             logger_.Error("unhandled exception while handling " + request.method + " " +
                            request.path + ": " + ex.what());
             response = HttpResponse::ServerError("500 Internal Server Error");

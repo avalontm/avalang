@@ -2,6 +2,7 @@
 #include "vm_internal.h"
 #include "vm_helpers.h"
 #include <cmath>
+#include <stdexcept>
 
 namespace ava {
 
@@ -47,18 +48,39 @@ void OpMul(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& v
 }
 
 void OpDiv(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+    double divisor = frame.registers[in.c].n;
+    if (divisor == 0.0) {
+        throw std::runtime_error("division by zero");
+    }
     frame.registers[in.a] = Value::Number(
-        frame.registers[in.b].n / frame.registers[in.c].n);
+        frame.registers[in.b].n / divisor);
 }
 
 void OpIdiv(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+    double divisor = frame.registers[in.c].n;
+    if (divisor == 0.0) {
+        throw std::runtime_error("division by zero");
+    }
     frame.registers[in.a] = Value::Number(
-        std::floor(frame.registers[in.b].n / frame.registers[in.c].n));
+        std::floor(frame.registers[in.b].n / divisor));
 }
 
 void OpMod(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
-    frame.registers[in.a] = Value::Number(
-        std::fmod(frame.registers[in.b].n, frame.registers[in.c].n));
+    double divisor = frame.registers[in.c].n;
+    if (divisor == 0.0) {
+        throw std::runtime_error("modulo by zero");
+    }
+    // fmod() gives a C-style truncated remainder (sign follows the
+    // dividend), but OpIdiv (//) above uses floor(a/b) -- a different
+    // rounding convention. That mismatch broke the standard identity
+    // (a // b) * b + (a % b) == a for negative operands. Adjust fmod's
+    // result to floor-mod (sign follows the divisor) so % stays
+    // consistent with //, matching Python's convention.
+    double r = std::fmod(frame.registers[in.b].n, divisor);
+    if (r != 0.0 && ((r < 0) != (divisor < 0))) {
+        r += divisor;
+    }
+    frame.registers[in.a] = Value::Number(r);
 }
 
 void OpPow(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {

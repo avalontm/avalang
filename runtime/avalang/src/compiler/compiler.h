@@ -58,6 +58,15 @@ private:
     std::vector<JmpPatch> pending_breaks_;
     std::vector<JmpPatch> pending_continues_;
 
+    // Bug #42: pila de bloques 'finally' de los try/except que se estan
+    // compilando en este momento (uno por cada TryStmt anidado que
+    // todavia no termino de compilarse), de mas interno a mas externo.
+    // CompileStmt lo consulta al compilar un ReturnStmt para inyectar
+    // esos finally's (mas interno primero) antes del OpCode::RETURN --
+    // ver CompileTry y CompileStmt. Guarda punteros porque vive dentro
+    // del AST (TryStmt ya es dueño del vector), no hace falta copiarlo.
+    std::vector<const std::vector<std::shared_ptr<StmtNode>>*> pending_finally_stack_;
+
     uint32_t for_depth_ = 0;
 
     void Reset();
@@ -88,7 +97,6 @@ private:
     void CompileExtern(const ExternStmt* stmt);
     void CompileTry(const TryStmt* stmt);
     void CompileRaise(const RaiseStmt* stmt);
-    void CompileYield(const YieldStmt* stmt);
     void CompileMultiAssign(const MultiAssignStmt* stmt);
     uint16_t CompileFStringExpression(const std::string& expr_str);
 

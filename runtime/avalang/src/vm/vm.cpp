@@ -10,6 +10,9 @@ Value VM::ExecuteFrame(size_t frame_idx) {
     auto& code = frames_[frame_idx].proto->instructions;
     auto& K = frames_[frame_idx].proto->constants;
 
+    bool need_restart = false;
+    do {
+    need_restart = false;
     try {
     while (frames_[frame_idx].pc < code.size()) {
         const Instr& in = code[frames_[frame_idx].pc++];
@@ -340,10 +343,55 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 throw std::runtime_error("unknown opcode: " + std::to_string(static_cast<int>(in.op)));
         }
     }
+    } catch (const AvaRaiseException& e) {
+        if (!exception_handlers_.empty()) {
+            auto handler = exception_handlers_.back();
+            if (handler.frame_idx == frame_idx) {
+                exception_handlers_.pop_back();
+                // Calls that were aborted mid-propagation (OpCall/OpBaseCall/
+                // constructor calls) never reached their normal-path
+                // frames_.pop_back(), so any frames pushed above the frame
+                // that's catching this exception are now stale garbage.
+                // Trim them so frames_.size()-1 (used by OpTry to compute a
+                // NEW handler's frame_idx) reflects reality again -- otherwise
+                // a later try/catch registers a handler with an inflated
+                // frame_idx that never matches, and its exceptions escape
+                // uncaught.
+                if (frames_.size() > frame_idx + 1) {
+                    frames_.resize(frame_idx + 1);
+                }
+                frames_[frame_idx].pc = handler.catch_pc;
+                need_restart = true;
+            } else {
+                throw;
+            }
+        } else {
+            throw;
+        }
     } catch (const std::exception& e) {
         HandleFrameError(*this, frame_idx, e);
-        throw;
+        if (!exception_handlers_.empty()) {
+            auto handler = exception_handlers_.back();
+            if (handler.frame_idx == frame_idx) {
+                Value msg;
+                msg.type = ValueType::String;
+                msg.obj = new StringObj(e.what());
+                RaiseException(msg);
+                exception_handlers_.pop_back();
+                // Same stale-frame cleanup as above (see comment there).
+                if (frames_.size() > frame_idx + 1) {
+                    frames_.resize(frame_idx + 1);
+                }
+                frames_[frame_idx].pc = handler.catch_pc;
+                need_restart = true;
+            } else {
+                throw;
+            }
+        } else {
+            throw;
+        }
     }
+    } while (need_restart);
 
     return Value::Nil();
 }

@@ -33,7 +33,6 @@ smallStatement
     | importStatement
     | localStatement
     | raiseStatement
-    | yieldStatement
     | incDecStatement
     | modifiedAssignStatement
     ;
@@ -144,10 +143,6 @@ localStatement
 
 raiseStatement
     : 'raise' expr
-    ;
-
-yieldStatement
-    : 'yield' exprList?
     ;
 
 // --- compound statements ------------------------------------------------
@@ -322,7 +317,8 @@ primary
     | listLiteral                   # listAtom
     | dictLiteral                   # dictAtom
     | '(' expr ')'                  # groupAtom
-    | 'base' '(' argList? ')'      # baseAtom
+    | 'base' ('.' NAME)? '(' argList? ')' trailer*  # baseAtom
+    | 'yield' exprList?             # yieldAtom
     ;
 
 listLiteral
@@ -371,7 +367,28 @@ STRING
     ;
 
 FSTRING
-    : '$"' ( ~["\\\r\n] | ESCAPE_SEQ | '{' | '}' )* '"'
+    : '$"' FSTR_ITEM* '"'
+    ;
+
+fragment FSTR_ITEM
+    : ~["\\{}\r\n]
+    | ESCAPE_SEQ
+    | '{{'
+    | '}}'
+    | '{' FSTR_INNER* '}'
+    ;
+
+// Content of a {...} interpolation inside an FSTRING. Recursive so that
+// nested braces (dict literals, nested f-strings) and quoted strings
+// (which may themselves contain '{'/'}' as ordinary characters) are
+// consumed as a unit instead of the lexer mistaking an interpolation's
+// internal '"' for the closing quote of the whole f-string.
+fragment FSTR_INNER
+    : ~["'{}\r\n]
+    | ESCAPE_SEQ
+    | '{' FSTR_INNER* '}'
+    | '"' ( ~["\\\r\n] | ESCAPE_SEQ )* '"'
+    | '\'' ( ~['\\\r\n] | ESCAPE_SEQ )* '\''
     ;
 
 fragment ESCAPE_SEQ

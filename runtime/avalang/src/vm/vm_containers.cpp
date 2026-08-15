@@ -3,6 +3,18 @@
 
 namespace ava {
 
+// Normalizes a possibly-negative user-supplied index (Python-style: -1 is
+// the last element) against a container's length, before it's handed to
+// ValidateIntegerIndex (which rejects negatives outright). Slicing
+// (builtin_slice) already does this; single-element indexing (x[i]) did
+// not, so `lst[-1]` used to fail while `lst[-3:]` worked fine.
+static double NormalizeIndex(double n, size_t len) {
+    if (n < 0) {
+        n += static_cast<double>(len);
+    }
+    return n;
+}
+
 void OpNewList(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
     auto* list = new ListObj();
     Value v; v.type = ValueType::List; v.obj = list;
@@ -29,7 +41,7 @@ void OpGetIndex(CallFrame& frame, const Instr& in, const std::vector<Value>& K, 
             return;
         }
         auto* list = static_cast<ListObj*>(obj.obj);
-        size_t pos = ValidateIntegerIndex(idx.n, "list index");
+        size_t pos = ValidateIntegerIndex(NormalizeIndex(idx.n, list->items.size()), "list index");
         if (pos < list->items.size()) {
             frame.registers[in.a] = list->items[pos];
         } else {
@@ -38,7 +50,7 @@ void OpGetIndex(CallFrame& frame, const Instr& in, const std::vector<Value>& K, 
     } else if (obj.type == ValueType::Dict) {
         auto* dict = static_cast<DictObj*>(obj.obj);
         if (idx.type == ValueType::Number) {
-            size_t pos = ValidateIntegerIndex(idx.n, "dict index");
+            size_t pos = ValidateIntegerIndex(NormalizeIndex(idx.n, dict->entries.size()), "dict index");
             if (pos < dict->entries.size()) {
                 auto sv = Value(); sv.type = ValueType::String; sv.obj = new StringObj(dict->entries[pos].first);
                 frame.registers[in.a] = sv;
@@ -59,7 +71,7 @@ void OpGetIndex(CallFrame& frame, const Instr& in, const std::vector<Value>& K, 
     } else if (obj.type == ValueType::String) {
         if (idx.type == ValueType::Number) {
             auto* str = static_cast<StringObj*>(obj.obj);
-            size_t pos = ValidateIntegerIndex(idx.n, "string index");
+            size_t pos = ValidateIntegerIndex(NormalizeIndex(idx.n, str->data.size()), "string index");
             if (pos < str->data.size()) {
                 Value sv; sv.type = ValueType::String; sv.obj = new StringObj(std::string(1, str->data[pos]));
                 frame.registers[in.a] = sv;
@@ -83,7 +95,7 @@ void OpSetIndex(CallFrame& frame, const Instr& in, const std::vector<Value>& K, 
             return;
         }
         auto* list = static_cast<ListObj*>(obj.obj);
-        size_t pos = ValidateIntegerIndex(idx.n, "list index");
+        size_t pos = ValidateIntegerIndex(NormalizeIndex(idx.n, list->items.size()), "list index");
         if (pos < list->items.size()) {
             list->items[pos] = val;
         }

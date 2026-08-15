@@ -17,9 +17,6 @@ namespace {
 
 Value MakeNilV() { return Value::Nil(); }
 
-// Mirrors NumberToString in core/src/vm/vm.cpp (kept file-local there),
-// duplicated here so str()/print() format numbers identically to the
-// VM's own ADD-with-string-coercion path.
 std::string NumberToString(double n) {
     if (std::abs(n - std::round(n)) < 0.0000001)
         return std::to_string(static_cast<long long>(std::round(n)));
@@ -110,7 +107,6 @@ std::string ToDisplayString(const Value& v) {
     }
 }
 
-// Best-effort numeric coercion, used by math builtins (abs/round/floor/...).
 double AsNumber(const Value& v) {
     switch (v.type) {
         case ValueType::Number: return v.n;
@@ -123,9 +119,6 @@ double AsNumber(const Value& v) {
     }
 }
 
-// Collects the values to operate over for variadic-or-single-list builtins
-// like min/max/sum/any/all/sorted/reversed: if called with exactly one
-// list argument, iterate its items; otherwise treat every arg as an item.
 std::vector<Value> CollectItems(const std::vector<Value>& args) {
     if (args.size() == 1 && args[0].type == ValueType::List) {
         return static_cast<ListObj*>(args[0].obj)->items;
@@ -172,11 +165,7 @@ ava_value_t builtin_float(AvaVM*, const ava_value_t* args, size_t count, void*) 
 }
 
 ava_value_t builtin_print(AvaVM* vm, const ava_value_t* args, size_t count, void*) {
-    // Built as a single line + trailing newline (rather than the old
-    // per-argument fputc/fputs calls straight to stdout) so an embedder's
-    // print sink (see VM::SetPrintSink / ava_vm_set_print_callback) gets
-    // one clean chunk per print() call instead of 2-3 fragments -- makes
-    // it trivial to render as one console line in a host UI.
+
     std::string line;
     for (size_t i = 0; i < count; ++i) {
         if (i > 0) line += ' ';
@@ -357,6 +346,10 @@ ava_value_t builtin_slice(AvaVM*, const ava_value_t* args, size_t count, void*) 
     Value obj = FromC(args[0]);
     if (obj.type != ValueType::List && obj.type != ValueType::String) return ToC(Value::Nil());
 
+    auto has_arg = [&](size_t i) -> bool {
+        if (i >= count) return false;
+        return FromC(args[i]).type != ValueType::Nil;
+    };
     auto get_num = [&](size_t i, double def) -> double {
         if (i >= count) return def;
         Value v = FromC(args[i]);
@@ -366,21 +359,40 @@ ava_value_t builtin_slice(AvaVM*, const ava_value_t* args, size_t count, void*) 
         return def;
     };
 
+    bool has_start = has_arg(1);
+    bool has_end = has_arg(2);
+    bool has_step = has_arg(3);
+
+    double step_d = has_step ? get_num(3, 1) : 1;
+    if (step_d == 0) step_d = 1;
+    long long step = static_cast<long long>(step_d);
+
+    auto compute_bounds = [&](size_t len, long long& start, long long& end) {
+        if (step > 0) {
+            start = has_start ? static_cast<long long>(get_num(1, 0)) : 0;
+            end = has_end ? static_cast<long long>(get_num(2, static_cast<double>(len))) : static_cast<long long>(len);
+            if (start < 0) start += static_cast<long long>(len);
+            if (end < 0) end += static_cast<long long>(len);
+            if (start < 0) start = 0;
+            if (end > static_cast<long long>(len)) end = static_cast<long long>(len);
+            if (end < start) end = start;
+        } else {
+            start = has_start ? static_cast<long long>(get_num(1, static_cast<double>(len) - 1)) : static_cast<long long>(len) - 1;
+            end = has_end ? static_cast<long long>(get_num(2, -1)) : -1;
+            if (start < 0) start += static_cast<long long>(len);
+            if (has_end && end < 0) end += static_cast<long long>(len);
+            if (start >= static_cast<long long>(len)) start = static_cast<long long>(len) - 1;
+            if (start < -1) start = -1;
+            if (end < -1) end = -1;
+            if (end > start) end = start;
+        }
+    };
+
     if (obj.type == ValueType::List) {
         auto* list = static_cast<ListObj*>(obj.obj);
         size_t len = list->items.size();
-        double start_d = get_num(1, 0);
-        double end_d = get_num(2, static_cast<double>(len));
-        double step_d = get_num(3, 1);
-        if (step_d == 0) step_d = 1;
-        long long start = static_cast<long long>(start_d);
-        long long end = static_cast<long long>(end_d);
-        long long step = static_cast<long long>(step_d);
-        if (start < 0) start += len;
-        if (end < 0) end += len;
-        if (start < 0) start = 0;
-        if (end > static_cast<long long>(len)) end = len;
-        if (end < start && step > 0) end = start;
+        long long start, end;
+        compute_bounds(len, start, end);
 
         auto* result = new ListObj();
         if (step > 0) {
@@ -389,7 +401,7 @@ ava_value_t builtin_slice(AvaVM*, const ava_value_t* args, size_t count, void*) 
                     result->items.push_back(list->items[i]);
                 }
             }
-        } else if (step < 0) {
+        } else {
             for (long long i = start; i > end; i += step) {
                 if (i >= 0 && i < static_cast<long long>(len)) {
                     result->items.push_back(list->items[i]);
@@ -402,24 +414,15 @@ ava_value_t builtin_slice(AvaVM*, const ava_value_t* args, size_t count, void*) 
 
     auto* str = static_cast<StringObj*>(obj.obj);
     size_t len = str->data.size();
-    double start_d = get_num(1, 0);
-    double end_d = get_num(2, static_cast<double>(len));
-    double step_d = get_num(3, 1);
-    if (step_d == 0) step_d = 1;
-    long long start = static_cast<long long>(start_d);
-    long long end = static_cast<long long>(end_d);
-    long long step = static_cast<long long>(step_d);
-    if (start < 0) start += len;
-    if (end < 0) end += len;
-    if (start < 0) start = 0;
-    if (end > static_cast<long long>(len)) end = len;
+    long long start, end;
+    compute_bounds(len, start, end);
 
     std::string result;
     if (step > 0) {
         for (long long i = start; i < end; i += step) {
             if (i >= 0 && i < static_cast<long long>(len)) result += str->data[i];
         }
-    } else if (step < 0) {
+    } else {
         for (long long i = start; i > end; i += step) {
             if (i >= 0 && i < static_cast<long long>(len)) result += str->data[i];
         }

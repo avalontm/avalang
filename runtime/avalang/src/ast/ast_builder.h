@@ -33,7 +33,7 @@ public:
     std::any visitClassDeclaration(AvaLangParser::ClassDeclarationContext* ctx) override;
     std::any visitImportStatement(AvaLangParser::ImportStatementContext* ctx) override;
     std::any visitRaiseStatement(AvaLangParser::RaiseStatementContext* ctx) override;
-    std::any visitYieldStatement(AvaLangParser::YieldStatementContext* ctx) override;
+    std::any visitYieldAtom(AvaLangParser::YieldAtomContext* ctx) override;
     std::any visitTryStatement(AvaLangParser::TryStatementContext* ctx) override;
     std::any visitIncDecStatement(AvaLangParser::IncDecStatementContext* ctx) override;
     std::any visitModifiedFuncDeclaration(AvaLangParser::ModifiedFuncDeclarationContext* ctx) override;

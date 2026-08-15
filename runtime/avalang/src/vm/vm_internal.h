@@ -12,6 +12,10 @@
 
 namespace ava {
 
+struct AvaRaiseException : public std::exception {
+    const char* what() const noexcept override { return "ava raise"; }
+};
+
 // Opcode implementations
 void OpAdd(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
 void OpSub(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);

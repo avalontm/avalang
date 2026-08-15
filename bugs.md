@@ -360,6 +360,70 @@ error at test.ava:3:1: asignacion multiple requiere 'x = v, y = w' (cada asignac
 - **Archivos**: `runtime/avalang/src/ast/ast_builder.cpp`.
 - **Estado**: ✅ corregido y verificado.
 
+### Bug 39 — `yield` era statement, no expresión (no se podía capturar el valor de `resume()`)
+- **Síntoma**: `x = yield v` no era válido (yield solo existía como `yieldStatement` suelto); tampoco se podía anidar en una expresión (`f(yield v)`, `1 + (yield v)`).
+- **Causa**: La gramática tenía `yieldStatement: 'yield' exprList?` como alternativa de `smallStatement`, separada de `primary`. El AST tenía `YieldStmt : StmtNode` en vez de un nodo de expresión.
+- **Fix**: Movido `yield` de `yieldStatement` a una alternativa de `primary` (`'yield' exprList? # yieldAtom`) en `AvaLang.g4`, y regenerado el parser ANTLR. `YieldStmt` → `YieldExpr : ExprNode` en `ast.h`. `ast_builder.cpp` ahora tiene `visitYieldAtom` en vez de `visitYieldStatement`, despachado desde `exprFromAny`. El compilador movió la lógica de `CompileStmt`/`CompileYield(YieldStmt*)` a un caso dentro de `CompileExpr`.
+- **Archivos**: `runtime/avalang/grammar/AvaLang.g4`, `runtime/avalang/src/ast/ast.h`, `runtime/avalang/src/ast/ast_builder.h`, `runtime/avalang/src/ast/ast_builder.cpp`, `runtime/avalang/src/compiler/compiler.h`, `runtime/avalang/src/compiler/compiler.cpp`.
+- **Estado**: ✅ corregido y verificado.
+
+### Bug 40 — Registro base de `yield` hardcodeado a 0 (no componía como sub-expresión)
+- **Síntoma**: Al implementar `yield` como expresión, empacar los valores yielded usaba `Emit(OpCode::YIELD, 0, count)` con el registro 0 fijo — chocaba con lo que ya viviera ahí (ej. `this`/`self` dentro de un método) al usar `yield` como sub-expresión.
+- **Fix**: El registro base ahora se asigna dinámicamente con `AllocReg()`, mismo patrón que usa `CallExpr` para empacar argumentos.
+- **Archivos**: `runtime/avalang/src/compiler/compiler.cpp`.
+- **Estado**: ✅ corregido y verificado.
+
+### Bug 41 — `resume(co, valor)` siempre escribía en `frames_[0]` al reanudar
+- **Síntoma**: `x = yield v` nunca capturaba el valor pasado a `resume()` — quedaba como el valor yielded original, no el de resume.
+- **Causa**: La rama `ValueType::Coroutine` de `VM::Call()` en `vm_call.cpp` escribía los argumentos de `resume()` siempre en `frames_[0]`, sin importar en qué frame (posiblemente anidado) ocurrió el `yield`.
+- **Fix**: Al reanudar una coroutine ya suspendida, se recupera la instrucción `YIELD` que la puso a dormir (leyendo `pc - 1` del frame en el tope de la pila de la coroutine) y se escribe el valor de `resume()` exactamente en el registro que esa instrucción expone como resultado (empacado en lista si son más de un valor, igual que hace `yield`).
+- **Archivos**: `runtime/avalang/src/vm/vm_call.cpp`.
+- **Estado**: ✅ corregido y verificado.
+
+### Bug 42 — Lambdas (`func() ... end`) sin `return` explícito siempre devolvían `nil`
+- **Síntoma**: `f = func() 1 + 2 end; f()` devolvía `nil` en vez de `3`. Las funciones con nombre (`func f() ... end`) sí devolvían el valor de la última expresión suelta; las lambdas no.
+- **Causa**: En el compile de `LambdaExpr`, se emitía `sub.Emit(OpCode::RETURN);` sin operandos `a`/`b`, lo que siempre caía en la rama `b=0` → `Value::Nil()`, ignorando `sub.result_reg_` (que `CompileChunk` sí deja seteado cuando el último statement del cuerpo es una expresión suelta).
+- **Fix**: Igual convención que `CompileFunctionDecl` para funciones con nombre: `uint8_t ret_a = sub.result_reg_ > 0 ? sub.result_reg_ : 0; uint8_t ret_b = sub.result_reg_ > 0 ? 1 : 0; sub.Emit(OpCode::RETURN, ret_a, ret_b);`. Las short lambdas (`(x) => expr`) no sufrían el bug porque ya envuelven su cuerpo en un `ReturnStmt` explícito — ambos caminos comparten la misma `LambdaExpr` compilada, así que el fix cubre los dos casos sin tocar el short-lambda path.
+- **Archivos**: `runtime/avalang/src/compiler/compiler.cpp`.
+- **Estado**: ✅ corregido y verificado.
+
+### Bug 43 — `list_length` registrado apuntando a `builtin_str_length` en vez de `builtin_list_length`
+- **Síntoma**: `[1,2,3].length()` devolvía `nil` en vez de `3`, aunque la función global `len(lst)` sí funcionaba bien.
+- **Causa**: `builtin_registry.cpp` registraba el método `"list_length"` apuntando a `builtin_str_length` (que solo maneja `AVA_STRING` y devuelve `nil` para cualquier otro tipo) — copy-paste error. La función correcta `builtin_list_length` (que sí maneja `AVA_LIST` con `ava_list_length`) ya existía en `builtin_lists.cpp` pero nunca se usaba.
+- **Fix**: Cambiado el registro a `raw_vm->RegisterBuiltinMethod("list_length", builtin_list_length, nullptr);`.
+- **Archivos**: `runtime/avalang/src/builtins/builtin_registry.cpp`.
+- **Estado**: ✅ corregido y verificado.
+
+### Bug 44 — Indexado simple con índice negativo (`lst[-1]`) fallaba, a diferencia del slicing negativo
+- **Síntoma**: `lst[-1]` lanzaba `runtime error: list index: index must not be negative, got -1`, mientras que `lst[-3:]` (slicing) sí funcionaba con índices negativos. Mismo problema en `s[-1]` (strings), `d[-1]` (dict por posición), y en asignación `lst[-1] = v`.
+- **Causa**: `OpGetIndex`/`OpSetIndex` en `vm_containers.cpp` llamaban a `ValidateIntegerIndex` directo sobre el índice crudo, sin normalizar negativos. `builtin_slice` (usado para `x[a:b:c]`) sí hacía `start += len` para negativos, pero esa normalización nunca se aplicó al indexado de un solo elemento.
+- **Fix**: Añadida `NormalizeIndex(double n, size_t len)` en `vm_containers.cpp`, que aplica `n += len` cuando `n < 0`, aplicada antes de `ValidateIntegerIndex` en los tres tipos (`List`, `Dict` por posición, `String`) tanto en lectura (`OpGetIndex`) como en escritura (`OpSetIndex`).
+- **Archivos**: `runtime/avalang/src/vm/vm_containers.cpp`.
+- **Estado**: ✅ corregido y verificado.
+
+### Bug 45 — `%` (módulo) usaba `fmod` truncado, inconsistente con `//` (floor division)
+- **Síntoma**: `(-7 // 3) * 3 + (-7 % 3)` daba `-10` en vez de `-7` — la identidad matemática que debe cumplir división entera + módulo estaba rota. `-7 % 3` daba `-1` (estilo C) en vez de `2` (floor-mod, consistente con `-7 // 3 == -3`).
+- **Causa**: `OpIdiv` en `vm_arith.cpp` usa `std::floor(a/b)` (floor division, estilo Python), pero `OpMod` usaba `std::fmod(a,b)` (resto truncado, estilo C, signo sigue al dividendo) — dos convenciones de redondeo distintas que no son consistentes entre sí.
+- **Fix**: `OpMod` ahora ajusta el resultado de `fmod` sumando el divisor cuando el signo del resultado no coincide con el signo del divisor, recuperando el floor-mod correcto y restaurando la identidad `(a // b) * b + (a % b) == a`.
+- **Archivos**: `runtime/avalang/src/vm/vm_arith.cpp`.
+- **Estado**: ✅ corregido y verificado.
+
+### Bug 46 — Slicing con step negativo y bounds por defecto (`x[::-1]`) devolvía vacío
+- **Síntoma**: `s[::-1]` (reversa completa de string) y `lst[::-1]` (reversa completa de lista) devolvían `""`/`[]` en vez de la secuencia invertida. También fallaba con solo `start` explícito y step negativo (ej. `s[9::-1]`).
+- **Causa**: `builtin_slice` en `builtin_natives.cpp` usaba defaults fijos `start=0, end=len` sin importar el signo de `step`. Con `step=-1` y esos defaults, el loop quedaba `for (i=0; i>len; i-=1)` — la condición es falsa desde la primera iteración (`0 > len` nunca es cierto), así que el resultado siempre era vacío.
+- **Fix**: Reescrito `builtin_slice` para calcular los bounds por defecto según el signo de `step` (estilo Python): con step positivo, `start=0, end=len` (como antes); con step negativo, `start=len-1, end=-1` (sentinel que representa "hasta antes del índice 0 inclusive", que **no** se normaliza sumando `len` como sí se hace con un valor negativo explícito del usuario — de lo contrario el sentinel se convertiría en `len-1` y reproduciría el mismo bug). Aplicado igual para listas y strings.
+- **Archivos**: `runtime/avalang/src/builtins/builtin_natives.cpp`.
+- **Estado**: ✅ corregido y verificado.
+
+> **Nota de sesión (re-aplicación tras reset de filesystem):** al retomar este repo desde un zip, los bugs #43, #44 y #45 aparecían documentados como corregidos aquí, pero el fix ya NO estaba en el código fuente (`list_length` volvía a apuntar a `builtin_str_length`, `OpGetIndex`/`OpSetIndex` volvían a usar `ValidateIntegerIndex` sin `NormalizeIndex`, y `OpMod` volvía a usar `fmod` truncado sin el ajuste floor-mod) — la doc sobrevivió al reset pero el código no. Se re-aplicaron los tres fixes exactamente como se describen arriba y se re-verificaron con scripts .ava reales (index negativo en list/dict/string tanto en lectura como en asignación, `-7 % 3 == 2`, identidad `(a//b)*b + a%b == a`, `[1,2,3].length()`). El bug de call-clobbering (registro del callee sobrescrito por el valor de retorno) y el de lambdas sin `return` explícito sí sobrevivieron al reset y siguen andando bien.
+
+### Bug 47 — Funciones anidadas *con nombre* (`func inc() ... end` dentro de otra función) no capturaban upvalues del scope padre
+- **Síntoma**: Un closure hecho con función anónima (`inc = func() ... end` o `(x) => ...`) capturaba correctamente variables del scope padre entre llamadas sucesivas, pero la misma lógica escrita como función anidada *con nombre* (`func inc() ... end`) no — cada llamada operaba sobre una variable nueva en vez de compartir la del padre. Repro: un `make_counter()` que devuelve `inc` daba `1, 1, 1` en vez de `1, 2, 3`.
+- **Causa**: `Compiler::CompileFunc` (usado para cualquier `FuncDef`, sea top-level o anidado) nunca poblaba `sub.parent_locals_` ni `sub.proto_->upvalue_descs` con las locals del compiler padre — a diferencia del caso `LambdaExpr` en `CompileExpr`, que sí lo hace. Sin esa info, cualquier nombre no encontrado como local/param dentro de la función anidada no resolvía como upvalue (`FindUpvalue` siempre devolvía -1), y `AssignStmt` caía en la rama de "auto-declarar variable local nueva" en vez de usar `SETUPVAL`.
+- **Fix**: Se agregó a `CompileFunc` el mismo loop que ya usa `LambdaExpr` (itera `locals_` del compiler padre, excluyendo `this`, y llena `parent_locals_`/`upvalue_descs` de `sub`), y se ajustó `sub.proto_->num_registers` para reservar espacio también para esos upvalues (mismo cálculo `std::max(max_reg_+1, next_reg_)` que ya usa `LambdaExpr`).
+- **Archivos**: `runtime/avalang/src/compiler/compiler.cpp`.
+- **Estado**: ✅ corregido y verificado.
+
 ## Tests creados
 
 | Script | Cobertura | Estado |

@@ -44,6 +44,11 @@ public:
                         const std::vector<std::string>& imports,
                         std::unordered_map<std::string, std::string>& mergedState);
 
+    std::vector<IComponent*> ResolveCallSite(IComponent* callSite,
+                                             ComponentTree* tree,
+                                             const std::vector<std::string>& imports,
+                                             std::unordered_map<std::string, std::string>& mergedState);
+
     static bool IsComponentCall(const IComponent* comp);
 
 private:
@@ -84,6 +89,11 @@ private:
                            ComponentTree* tree,
                            std::unordered_map<std::string, std::string>& mergedState,
                            const ImportMap& importMap, int depth);
+
+    std::vector<IComponent*> ResolveOneCallSite(IComponent* callSite,
+                                                ComponentTree* tree,
+                                                std::unordered_map<std::string, std::string>& mergedState,
+                                                const ImportMap& importMap);
 
     IComponent* CloneInto(const IComponent* src,
                           IComponent* parent,

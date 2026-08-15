@@ -124,8 +124,43 @@ Value VM::Call(const Value& callable, const std::vector<Value>& args) {
             resume_frame.argc = static_cast<uint32_t>(args.size());
             frames_.push_back(resume_frame);
         } else {
-            for (size_t i = 0; i < args.size() && i < frames_[0].registers.size(); ++i) {
-                frames_[0].registers[i] = args[i];
+            // Resuming a coroutine that's already suspended on a `yield`:
+            // whatever's passed to resume() now becomes the *result* of that
+            // `yield` expression, not a fresh set of call arguments. The
+            // frame that's about to continue is frames_.back() (the one that
+            // was actively running when the whole call chain suspended), and
+            // its pc already advanced past the YIELD instruction that put it
+            // to sleep -- so code[pc-1] IS that YIELD instruction, and its
+            // `a` field tells us exactly which register to overwrite with
+            // the resume value (packed into a list the same way multi-value
+            // yields are packed, so `x = yield a, b` / `resume(co, 1, 2)`
+            // lines up with `x, y = yield a, b`-style unpacking).
+            auto& top_frame = frames_.back();
+            bool wrote_resume_value = false;
+            if (top_frame.proto && top_frame.pc > 0 &&
+                top_frame.pc <= top_frame.proto->instructions.size()) {
+                const Instr& yield_in = top_frame.proto->instructions[top_frame.pc - 1];
+                if (yield_in.op == OpCode::YIELD && yield_in.a < top_frame.registers.size()) {
+                    Value resume_val = Value::Nil();
+                    if (args.size() == 1) {
+                        resume_val = args[0];
+                    } else if (args.size() > 1) {
+                        auto* list = new ListObj();
+                        list->items = args;
+                        resume_val.type = ValueType::List;
+                        resume_val.obj = list;
+                    }
+                    top_frame.registers[yield_in.a] = resume_val;
+                    wrote_resume_value = true;
+                }
+            }
+            if (!wrote_resume_value) {
+                // Defensive fallback (should not normally happen): keep the
+                // old behavior so a malformed/unexpected suspension point
+                // doesn't silently drop the resume args.
+                for (size_t i = 0; i < args.size() && i < frames_[0].registers.size(); ++i) {
+                    frames_[0].registers[i] = args[i];
+                }
             }
         }
 

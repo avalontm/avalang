@@ -2,18 +2,32 @@
 
 #include <filesystem>
 
+#if defined(_WIN32)
 #include "platform/windows/WinLibrary.h"
+#else
+#include "platform/linux/LinLibrary.h"
+#endif
 
 namespace fs = std::filesystem;
 
 namespace avahost {
 
 namespace {
+#if defined(_WIN32)
 constexpr const char* kPluginExtension = ".dll";
+#else
+// Linux/macOS plugin shared objects use the platform's native extension
+// instead of .dll -- see PluginLoader() below for the matching loader.
+constexpr const char* kPluginExtension = ".so";
+#endif
 } // namespace
 
 PluginLoader::PluginLoader()
+#if defined(_WIN32)
     : loader_(std::make_unique<ava::platform::windows::WinLibraryLoader>()) {}
+#else
+    : loader_(std::make_unique<ava::platform::linux_::LinLibraryLoader>()) {}
+#endif
 
 PluginLoader::~PluginLoader() {
     UnloadAll();

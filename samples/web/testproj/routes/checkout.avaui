@@ -44,9 +44,8 @@ view
                 gap = 8
                 padding = 8
 
-                text
-                    text = "Items en el carrito: " + len(cart)
-                    style = "text.muted"
+                for item in cart
+                    CartItem(name = item.name, qty = item.qty, subtotal = item.price * item.qty, index = index)
                 end
             end
 
@@ -122,5 +121,30 @@ code
 
     func ConfirmDialogCancel()
         confirmDialogOpen = false
+    end
+
+    func OnRemoveFromCart(idx)
+        if idx >= 0 and idx < len(cart) then
+            local newCart = []
+            local i = 0
+            while i < len(cart)
+                if i != idx then
+                    newCart.append(cart[i])
+                end
+                i = i + 1
+            end
+            cart = newCart
+        end
+        RecalcTotal()
+    end
+
+    func RecalcTotal()
+        local sum = 0
+        local i = 0
+        while i < len(cart)
+            sum = sum + cart[i].price * cart[i].qty
+            i = i + 1
+        end
+        total = sum
     end
 end

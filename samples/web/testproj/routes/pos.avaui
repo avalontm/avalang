@@ -2,6 +2,7 @@ extends layouts.main
 
 import components.productcard
 import components.cartitem
+import components.confirmdialog
 
 properties
     title = "POS - Punto de Venta"
@@ -81,9 +82,8 @@ view
                     grow = true
                     gap = 8
 
-                    text
-                        text = "Items: " + len(cart)
-                        style = "text.muted"
+                    for item in cart
+                        CartItem(name = item.name, qty = item.qty, subtotal = item.price * item.qty, index = index)
                     end
                 end
 
@@ -126,6 +126,8 @@ view
                 end
             end
         end
+
+        ConfirmDialog()
     end
 end
 
@@ -177,6 +179,23 @@ code
     end
 
     func OnCheckout()
+        if len(cart) == 0 then
+            return
+        end
+
+        confirmDialogTitle = "Confirmar venta"
+        confirmDialogMessage = "Deseas cobrar $" + total + "?"
+        confirmDialogOpen = true
+    end
+
+    func ConfirmDialogAccept()
+        confirmDialogOpen = false
+        cart = []
+        total = 0
+    end
+
+    func ConfirmDialogCancel()
+        confirmDialogOpen = false
     end
 
     func FindProduct(id)
