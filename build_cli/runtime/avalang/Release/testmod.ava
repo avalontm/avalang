@@ -1,5 +1,0 @@
-func greet(name)
-    return "hola desde modulo, " + name
-end
-
-PI = 3.14159

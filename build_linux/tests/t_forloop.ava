@@ -1,6 +1,0 @@
-l = [10, 20, 30]
-print("before for")
-for x in l then
-    print("x = " + str(x))
-end
-print("after for")

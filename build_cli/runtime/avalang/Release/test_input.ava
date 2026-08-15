@@ -1,8 +1,0 @@
-func main()
-    print("test de input/output")
-    name = input("escribe tu nombre: ")
-    print("hola, " + name + "!")
-    age = input("tu edad: ")
-    print("en 10 años tendras " + str(int(age) + 10))
-end
-main()

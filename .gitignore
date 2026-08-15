@@ -4,6 +4,7 @@ build_avaui/
 build_avahost/
 build_studio/
 build_linux/
+build_pack/
 bin/
 dist/
 out/

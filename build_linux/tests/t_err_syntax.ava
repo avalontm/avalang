@@ -1,4 +1,0 @@
-x = 1
-while x < 3 then
-    print(x)
-end

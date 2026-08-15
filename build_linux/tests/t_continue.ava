@@ -1,8 +1,0 @@
-ct = 0
-for k in range(10) then
-    if k % 2 == 0 then
-        continue
-    end
-    ct = ct + 1
-end
-print("continue count: " + str(ct))

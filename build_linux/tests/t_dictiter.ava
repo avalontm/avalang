@@ -1,9 +1,0 @@
-d = {name: "Ada", age: 36, lang: "AvaLang"}
-print("type of d: " + type(d))
-print("keys: " + str(d.keys()))
-print("keys len: " + str(len(d.keys())))
-print("=== for k in d ===")
-for k in d then
-    print("key: " + k)
-end
-print("=== done ===")

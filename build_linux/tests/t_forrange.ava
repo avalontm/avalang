@@ -1,5 +1,0 @@
-print("start for")
-for x in range(3) then
-    print("x = " + str(x))
-end
-print("end for")

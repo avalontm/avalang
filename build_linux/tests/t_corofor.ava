@@ -1,8 +1,0 @@
-func gen()
-    yield 1
-    yield 2
-end
-g = coroutine(gen)
-for v in g then
-    print("v=" + str(v))
-end
