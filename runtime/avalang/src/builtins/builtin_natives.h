@@ -26,6 +26,7 @@ ava_value_t builtin_str(AvaVM* vm, const ava_value_t* args, size_t count, void* 
 ava_value_t builtin_int(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_float(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_print(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_input(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 
 ava_value_t builtin_abs(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_round(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
@@ -42,6 +43,7 @@ ava_value_t builtin_any(AvaVM* vm, const ava_value_t* args, size_t count, void* 
 ava_value_t builtin_all(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_len(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_range(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_slice(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 
 // __import__(module_path, alias) -- backs the `import` statement. The
 // compiler (core/src/compiler/compiler.cpp CompileImport) emits a

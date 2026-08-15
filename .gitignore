@@ -35,6 +35,13 @@ compile_commands.json
 *.lib
 *.pdb
 *.lnk
+# Explicit: never allow build artifacts inside source trees
+runtime/**/*.o
+runtime/**/*.obj
+runtime/**/*.so
+runtime/**/*.dll
+runtime/**/*.a
+runtime/**/*.lib
 
 # IDE and editor
 .vs/

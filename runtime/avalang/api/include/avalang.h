@@ -143,6 +143,25 @@ AVA_API void ava_vm_set_print_callback(
     void* user_data
 );
 
+/* Input sink: called once per `input(prompt)` call from a running script,
+ * with the prompt text (UTF-8, without trailing newline) as `utf8`/`len`.
+ * The callback reads a line from the host's stdin (or wherever it wants)
+ * and returns it as a malloc'd UTF-8 string (without the trailing newline)
+ * that the VM frees with ava_string_free. Returning NULL signals EOF and
+ * the script sees an empty string (matching Python's behavior).
+ *
+ * Without a callback installed (fn = NULL, the default), the `input`
+ * builtin reads from the platform's native console (IConsole::ReadLine),
+ * so a CLI like ava_cli works out of the box. A GUI host (Ava Studio)
+ * that has no real stdin installs this to route input to its own UI. */
+typedef char* (*AvaInputFn)(const char* prompt_utf8, size_t prompt_len, void* user_data);
+
+AVA_API void ava_vm_set_input_callback(
+    AvaVM* vm,
+    AvaInputFn fn,
+    void* user_data
+);
+
 /* Alert/Navigate sinks (08_DESIGNER_VIEW_PLAN.md Fase 6, Anexo 9.17's
  * pendientes 1-2): mismo mecanismo que AvaPrintFn de arriba, un evento
  * por llamada de script a `ui.alert(msg)` / `ui.navigate(route)` (ver

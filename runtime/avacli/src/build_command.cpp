@@ -389,9 +389,21 @@ std::optional<fs::path> FindDllForExternName(const fs::path& libraries_dir, cons
     std::error_code ec;
     if (!fs::exists(libraries_dir, ec) || !fs::is_directory(libraries_dir, ec)) return std::nullopt;
 
-    std::string wanted = name + ".dll";
-    std::transform(wanted.begin(), wanted.end(), wanted.begin(),
-                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    // Espeja vm_extern.cpp::CandidateFileNames: en Windows busca <name>.dll;
+    // en Linux busca lib<name>.so y <name>.so (en ese orden, igual que el VM).
+#if defined(_WIN32)
+    std::vector<std::string> wanted_names = { name + ".dll" };
+#else
+    std::vector<std::string> wanted_names = { "lib" + name + ".so", name + ".so" };
+#endif
+
+    std::vector<std::string> wanted_lower;
+    for (auto& w : wanted_names) {
+        std::string wl = w;
+        std::transform(wl.begin(), wl.end(), wl.begin(),
+                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        wanted_lower.push_back(wl);
+    }
 
     for (auto it = fs::recursive_directory_iterator(
              libraries_dir, fs::directory_options::skip_permission_denied, ec);
@@ -399,9 +411,12 @@ std::optional<fs::path> FindDllForExternName(const fs::path& libraries_dir, cons
         std::error_code fe;
         if (!it->is_regular_file(fe)) continue;
         std::string fname = it->path().filename().string();
-        std::transform(fname.begin(), fname.end(), fname.begin(),
+        std::string fname_lower = fname;
+        std::transform(fname_lower.begin(), fname_lower.end(), fname_lower.begin(),
                         [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (fname == wanted) return it->path();
+        for (auto& w : wanted_lower) {
+            if (fname_lower == w) return it->path();
+        }
     }
     return std::nullopt;
 }

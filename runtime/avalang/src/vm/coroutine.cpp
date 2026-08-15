@@ -23,21 +23,10 @@ void OpYield(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM&
     }
 
     vm.is_coroutine_suspended_ = true;
-    // Return the yielded value - ExecuteFrame will return it up the stack
-    // The caller (OpCall/OpBaseCall/OpYield handling) will handle the suspension
-    // We need to throw a special sentinel or use the return value mechanism
-    // For now, we set the flag and return; the dispatcher handles the rest
     frame.registers[in.a] = result;
 }
 
 void OpResume(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
-    // `frame` referencia un elemento de vm.frames_ tal como estaba ANTES
-    // de este opcode. Más abajo, vm.frames_ se reasigna por completo
-    // (swap + copy) para cambiar al stack de la coroutine y luego volver
-    // al original -- eso puede mover/destruir el buffer donde vive
-    // `frame`, dejando la referencia colgante. Guardamos el índice ahora,
-    // mientras `frame` todavía es válida, y lo usamos al final en vez de
-    // reusar `frame` directamente.
     size_t frame_idx = static_cast<size_t>(&frame - vm.frames_.data());
     auto& co_val = frame.registers[in.b];
     if (co_val.type != ValueType::Coroutine) {
@@ -78,9 +67,6 @@ void OpResume(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM
     }
     vm.frames_[0].argc = static_cast<uint32_t>(args.size());
 
-    // FASE 1: mismo fix que VM::Call -- resetear el flag antes de
-    // reanudar y usarlo (no el tipo de `result`) para decidir status,
-    // y reanudar desde el frame mas profundo, no siempre frame 0.
     vm.is_coroutine_suspended_ = false;
     Value result = vm.ResumeFromTop();
 
@@ -90,6 +76,8 @@ void OpResume(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM
     co->frames = vm.frames_;
     co->status = vm.is_coroutine_suspended_ ? CoStatus::Suspended : CoStatus::Dead;
     vm.frames_ = vm.saved_frames_;
+
+    vm.is_coroutine_suspended_ = false;
 
     vm.frames_[frame_idx].registers[in.a] = result;
 }

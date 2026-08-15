@@ -11,9 +11,12 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Force vcpkg to use static-md triplet where antlr4-runtime is installed
-set(VCPKG_TARGET_TRIPLET x64-windows-static-md)
-set(ENV{VCPKG_TARGET_TRIPLET} x64-windows-static-md)
-list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/vcpkg/installed/x64-windows-static-md")
+# (Windows only -- en Linux/macOS se usan deps del sistema via find_package)
+if(WIN32)
+    set(VCPKG_TARGET_TRIPLET x64-windows-static-md)
+    set(ENV{VCPKG_TARGET_TRIPLET} x64-windows-static-md)
+    list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/vcpkg/installed/x64-windows-static-md")
+endif()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 option(AVA_BUILD_SHARED "Build avalang as a shared library (.dll/.so)" ON)

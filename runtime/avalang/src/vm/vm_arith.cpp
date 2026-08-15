@@ -1,5 +1,6 @@
 #include "vm.h"
 #include "vm_internal.h"
+#include "vm_helpers.h"
 #include <cmath>
 
 namespace ava {
@@ -9,10 +10,10 @@ void OpAdd(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& v
     auto& Rb = frame.registers[in.b];
     auto& Rc = frame.registers[in.c];
     if (Rb.type == ValueType::String || Rc.type == ValueType::String) {
-        std::string s1 = Rb.type == ValueType::String
-            ? static_cast<StringObj*>(Rb.obj)->data : NumberToString(Rb.n);
-        std::string s2 = Rc.type == ValueType::String
-            ? static_cast<StringObj*>(Rc.obj)->data : NumberToString(Rc.n);
+        std::string s1 = (Rb.type == ValueType::String)
+            ? static_cast<StringObj*>(Rb.obj)->data : ValueToString(Rb);
+        std::string s2 = (Rc.type == ValueType::String)
+            ? static_cast<StringObj*>(Rc.obj)->data : ValueToString(Rc);
         Value v; v.type = ValueType::String; v.obj = new StringObj(s1 + s2);
         Ra = v;
     } else if (Rb.type == ValueType::List && Rc.type == ValueType::List) {

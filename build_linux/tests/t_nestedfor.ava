@@ -1,0 +1,6 @@
+for outer in range(3) then
+    for inner in range(3) then
+        print("outer=" + str(outer) + " inner=" + str(inner))
+    end
+end
+print("=== DONE ===")

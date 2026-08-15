@@ -135,7 +135,7 @@ elseif(UNIX)
         platform/linux/LinTimer.cpp
         platform/linux/LinPlatform.cpp
     )
-    message(STATUS "avalang: Linux PAL backend is a STUB (Phase 5 not implemented yet)")
+    message(STATUS "avalang: Linux PAL backend functional (POSIX + pthread + dl)")
 else()
     message(FATAL_ERROR "avalang: unsupported target platform (no PAL backend available)")
 endif()
@@ -178,19 +178,36 @@ if(AVA_HAVE_ANTLR)
     elseif(TARGET antlr4_shared)
         set(_ava_antlr_target antlr4_shared)
     else()
-        message(FATAL_ERROR "avalang: antlr4-runtime_FOUND es TRUE pero no existe ni "
-                             "el target antlr4_static ni antlr4_shared. Revisa la version "
-                             "del paquete vcpkg instalado.")
+        # Debian/Ubuntu: no hay target de vcpkg, pero FindAntlr4Jar detecto
+        # los headers y la lib via find_path/find_library y seteo
+        # antlr4-runtime_FOUND a mano. Usamos esas variables directamente.
+        set(_ava_antlr_target "")
+        if(ANTLR4_RUNTIME_INCLUDE_DIR)
+            target_include_directories(avalang PRIVATE ${ANTLR4_RUNTIME_INCLUDE_DIR})
+        endif()
+        if(ANTLR4_RUNTIME_LIBRARY)
+            target_link_libraries(avalang PRIVATE ${ANTLR4_RUNTIME_LIBRARY})
+        endif()
     endif()
-    message(STATUS "AvaLang debug: usando target ANTLR = '${_ava_antlr_target}'")
-
-    target_link_libraries(avalang PRIVATE ${_ava_antlr_target})
+    if(_ava_antlr_target)
+        message(STATUS "AvaLang debug: usando target ANTLR = '${_ava_antlr_target}'")
+        target_link_libraries(avalang PRIVATE ${_ava_antlr_target})
+        if(_ava_antlr_target STREQUAL "antlr4_static")
+            # Requerido para que antlr4-runtime.h no marque sus clases como
+            # dllimport (lo cual rompe el link contra una lib estatica).
+            target_compile_definitions(avalang PRIVATE ANTLR4CPP_STATIC)
+        endif()
+    else()
+        message(STATUS "AvaLang debug: usando antlr4-runtime del sistema (Debian/Ubuntu)")
+    endif()
+    # Debian/Ubuntu: el config package define ANTLR4_INCLUDE_DIR apuntando
+    # a /usr/include/antlr4-runtime (los headers viven en un subdirectorio).
+    # El target antlr4_static del sistema NO propaga el include dir, asi que
+    # lo añadimos a mano para que #include "antlr4-runtime.h" resuelva.
+    if(ANTLR4_INCLUDE_DIR)
+        target_include_directories(avalang PRIVATE ${ANTLR4_INCLUDE_DIR})
+    endif()
     target_compile_definitions(avalang PRIVATE AVA_HAVE_ANTLR)
-    if(_ava_antlr_target STREQUAL "antlr4_static")
-        # Requerido para que antlr4-runtime.h no marque sus clases como
-        # dllimport (lo cual rompe el link contra una lib estatica).
-        target_compile_definitions(avalang PRIVATE ANTLR4CPP_STATIC)
-    endif()
 endif()
 
 target_compile_definitions(avalang PRIVATE AVA_BUILDING_LIBRARY)
@@ -205,6 +222,17 @@ if(UNIX AND NOT APPLE)
     # toolchains modernas ya lo integran en libc, pero enlazarlo no hace
     # daño y evita romper en distros mas viejas).
     target_link_libraries(avalang PRIVATE dl)
+    # pthread: std::thread/std::mutex/std::condition_variable (usados por
+    # LinThread/LinMutex/LinTimer y el async runtime del VM) envuelven
+    # pthread en glibc; -lpthread es necesario en toolchains viejos y no
+    # hace daño en modernos.
+    target_link_libraries(avalang PRIVATE pthread)
+    # clock_gettime/nanosleep (LinClock) vivian en librt en glibc vieja;
+    # en modernas estan en libc pero enlazar rt no hace daño.
+    find_library(RT_LIBRARY rt)
+    if(RT_LIBRARY)
+        target_link_libraries(avalang PRIVATE ${RT_LIBRARY})
+    endif()
 endif()
 
 # NOTE: symbol visibility is intentionally left at the compiler default

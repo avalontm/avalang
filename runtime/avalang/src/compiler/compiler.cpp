@@ -103,6 +103,20 @@ bool Compiler::IsShortCircuit(BinOp op) {
     return op == BinOp::And || op == BinOp::Or;
 }
 
+int16_t Compiler::FindUpvalue(const std::string& name) {
+    for (size_t upval_idx = 0; upval_idx < proto_->upvalue_descs.size(); ++upval_idx) {
+        auto& uvd = proto_->upvalue_descs[upval_idx];
+        if (uvd.from_parent_local) {
+            for (auto& [pname, preg] : parent_locals_) {
+                if (pname == name && preg == uvd.index) {
+                    return static_cast<int16_t>(upval_idx);
+                }
+            }
+        }
+    }
+    return -1;
+}
+
 static void RejectMemberModifiersOutsideClass(bool is_static, bool is_private, const char* kind,
                                                int line) {
     if (is_static || is_private) {
@@ -244,9 +258,9 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
             if (b->op == BinOp::And) {
                 auto left_reg = CompileExpr(b->left);
                 auto result_reg = AllocReg();
-                auto jmp_falsy = proto_->instructions.size();
                 Emit(OpCode::NEK, result_reg, left_reg, zero_idx);
                 Emit(OpCode::TEST, result_reg, 0);
+                size_t jmp_falsy = proto_->instructions.size();
                 Emit(OpCode::JMP, 0);
                 auto right_reg = CompileExpr(b->right);
                 Emit(OpCode::MOVE, result_reg, right_reg);
@@ -259,9 +273,9 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
             } else {
                 auto left_reg = CompileExpr(b->left);
                 auto result_reg = AllocReg();
-                auto jmp_truthy = proto_->instructions.size();
                 Emit(OpCode::EQK, result_reg, left_reg, zero_idx);
                 Emit(OpCode::TEST, result_reg, 0);
+                size_t jmp_truthy = proto_->instructions.size();
                 Emit(OpCode::JMP, 0);
                 auto right_reg = CompileExpr(b->right);
                 Emit(OpCode::MOVE, result_reg, right_reg);
@@ -295,7 +309,7 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
                 auto result = AllocReg();
                 Emit(OpCode::INC, result, reg);
 
-                if (!is_top_level_ && n->name != "this" && locals_.find(n->name) != locals_.end()) {
+                if (!is_top_level_ && (n->name != "this" && n->name != "self") && locals_.find(n->name) != locals_.end()) {
                     Emit(OpCode::MOVE, locals_.at(n->name), result);
                 } else {
                     auto idx = AddConstant(MakeString(n->name));
@@ -314,7 +328,7 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
                 Emit(OpCode::MOVE, original, reg);
                 auto result = AllocReg();
                 Emit(OpCode::DEC, result, reg);
-                if (!is_top_level_ && n->name != "this" && locals_.find(n->name) != locals_.end()) {
+                if (!is_top_level_ && (n->name != "this" && n->name != "self") && locals_.find(n->name) != locals_.end()) {
                     Emit(OpCode::MOVE, locals_.at(n->name), result);
                 } else {
                     auto idx = AddConstant(MakeString(n->name));
@@ -522,7 +536,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
             bool is_known_attr = instance_attrs_.find(n->name) != instance_attrs_.end();
             uint16_t regs_before = next_reg_;
 
-            if (in_method && n->name != "this" && !has_local && is_known_attr) {
+            if (in_method && (n->name != "this" && n->name != "self") && !has_local && is_known_attr) {
                 auto val_reg = CompileExpr(a->value);
                 auto attr_idx = AddConstant(MakeString(n->name));
                 auto this_reg = locals_.at("this");
@@ -531,11 +545,19 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
                 return;
             }
 
-            if (!is_top_level_ && n->name != "this") {
+            if (!is_top_level_ && (n->name != "this" && n->name != "self")) {
                 if (has_local) {
                     uint16_t local_reg = locals_.at(n->name);
                     auto val_reg = CompileExpr(a->value);
                     Emit(OpCode::MOVE, local_reg, val_reg);
+                    FreeRegs(next_reg_ - regs_before);
+                    return;
+                }
+
+                int16_t upval_idx = FindUpvalue(n->name);
+                if (upval_idx >= 0) {
+                    auto val_reg = CompileExpr(a->value);
+                    Emit(OpCode::SETUPVAL, val_reg, static_cast<uint16_t>(upval_idx));
                     FreeRegs(next_reg_ - regs_before);
                     return;
                 }
@@ -570,7 +592,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
         if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
             bool is_this = false;
             if (auto* name = dynamic_cast<NameExpr*>(a_expr->obj.get())) {
-                if (name->name == "this") {
+                if ((name->name == "this" || name->name == "self")) {
                     is_this = true;
                 }
             }
@@ -603,7 +625,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
         Emit(BinOpToOpcode(a->op), result_reg, target_reg, val_reg);
         if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
 
-            if (!is_top_level_ && n->name != "this" && locals_.find(n->name) != locals_.end()) {
+            if (!is_top_level_ && (n->name != "this" && n->name != "self") && locals_.find(n->name) != locals_.end()) {
                 Emit(OpCode::MOVE, locals_.at(n->name), result_reg);
                 FreeRegs(next_reg_ - regs_before);
                 return;
@@ -623,7 +645,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
         if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
             bool is_this = false;
             if (auto* name = dynamic_cast<NameExpr*>(a_expr->obj.get())) {
-                if (name->name == "this") {
+                if ((name->name == "this" || name->name == "self")) {
                     is_this = true;
                 }
             }
@@ -725,6 +747,11 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
         return;
     }
 
+    if (auto* ma = dynamic_cast<MultiAssignStmt*>(stmt.get())) {
+        CompileMultiAssign(ma);
+        return;
+    }
+
     (void)stmt;
 }
 
@@ -815,16 +842,29 @@ void Compiler::CompileFor(const ForStmt* stmt) {
 }
 
 void Compiler::CompileForIterator(const ForStmt* stmt) {
+    uint32_t my_depth = for_depth_++;
     IteratorKind kind = DetectIteratorKind(stmt->iterable);
-    switch (kind) {
-        case IteratorKind::List:
 
-            CompileForDynamic(stmt);
-            break;
-        case IteratorKind::Coroutine:
-            CompileForCoroutine(stmt);
-            break;
+    if (kind == IteratorKind::Coroutine) {
+        CompileForCoroutine(stmt, my_depth);
+        for_depth_--;
+        return;
     }
+    if (dynamic_cast<DictExpr*>(stmt->iterable.get())) {
+        CompileForDict(stmt, my_depth);
+        for_depth_--;
+        return;
+    }
+    if (dynamic_cast<ListExpr*>(stmt->iterable.get()) ||
+        dynamic_cast<StringExpr*>(stmt->iterable.get()) ||
+        dynamic_cast<CallExpr*>(stmt->iterable.get())) {
+        CompileForList(stmt, my_depth);
+        for_depth_--;
+        return;
+    }
+
+    CompileForDynamic(stmt, my_depth);
+    for_depth_--;
 }
 
 Compiler::IteratorKind Compiler::DetectIteratorKind(const std::shared_ptr<ExprNode>& iterable) {
@@ -838,7 +878,7 @@ Compiler::IteratorKind Compiler::DetectIteratorKind(const std::shared_ptr<ExprNo
     return IteratorKind::List;
 }
 
-void Compiler::CompileForList(const ForStmt* stmt) {
+void Compiler::CompileForList(const ForStmt* stmt, uint32_t depth) {
     auto saved_breaks = std::move(pending_breaks_);
     auto saved_continues = std::move(pending_continues_);
     pending_breaks_.clear();
@@ -848,9 +888,10 @@ void Compiler::CompileForList(const ForStmt* stmt) {
     bool use_locals = !is_top_level_;
 
     if (!use_locals) {
-        auto list_var = AddConstant(MakeString("__for_list"));
-        auto len_var = AddConstant(MakeString("__for_len"));
-        auto idx_var = AddConstant(MakeString("__for_idx"));
+        std::string d = std::to_string(depth);
+        auto list_var = AddConstant(MakeString("__for_list_" + d));
+        auto len_var = AddConstant(MakeString("__for_len_" + d));
+        auto idx_var = AddConstant(MakeString("__for_idx_" + d));
         auto elem_var = AddConstant(MakeString(var_name));
 
         auto list_reg = CompileExpr(stmt->iterable);
@@ -888,6 +929,8 @@ void Compiler::CompileForList(const ForStmt* stmt) {
 
         CompileChunk(stmt->body);
 
+        size_t continue_target = proto_->instructions.size();
+
         Emit(OpCode::GETGLOBAL, idx_get, idx_var);
         Emit(OpCode::LOADK, add_reg, one_c);
         Emit(OpCode::ADD, add_reg, idx_get, add_reg);
@@ -913,7 +956,7 @@ void Compiler::CompileForList(const ForStmt* stmt) {
         pending_breaks_.clear();
 
         for (auto& patch : pending_continues_) {
-            PatchContinueJump(patch.instr_idx, loop_start);
+            PatchContinueJump(patch.instr_idx, continue_target);
         }
         pending_continues_.clear();
 
@@ -960,6 +1003,8 @@ void Compiler::CompileForList(const ForStmt* stmt) {
 
     CompileChunk(stmt->body);
 
+    size_t continue_target = proto_->instructions.size();
+
     regs_before = next_reg_;
     auto add_reg = AllocReg();
     Emit(OpCode::LOADK, add_reg, one_c);
@@ -988,7 +1033,7 @@ void Compiler::CompileForList(const ForStmt* stmt) {
     pending_breaks_.clear();
 
     for (auto& patch : pending_continues_) {
-        PatchContinueJump(patch.instr_idx, loop_start);
+        PatchContinueJump(patch.instr_idx, continue_target);
     }
     pending_continues_.clear();
 
@@ -996,7 +1041,7 @@ void Compiler::CompileForList(const ForStmt* stmt) {
     pending_continues_ = std::move(saved_continues);
 }
 
-void Compiler::CompileForCoroutine(const ForStmt* stmt) {
+void Compiler::CompileForCoroutine(const ForStmt* stmt, uint32_t depth) {
     auto saved_breaks = std::move(pending_breaks_);
     auto saved_continues = std::move(pending_continues_);
     pending_breaks_.clear();
@@ -1006,9 +1051,10 @@ void Compiler::CompileForCoroutine(const ForStmt* stmt) {
     bool use_locals = !is_top_level_;
 
     if (!use_locals) {
-        auto iter_var = AddConstant(MakeString("__iter"));
-        auto resume_var = AddConstant(MakeString("__resume"));
-        auto val_var = AddConstant(MakeString("__val"));
+        std::string d = std::to_string(depth);
+        auto iter_var = AddConstant(MakeString("__iter_" + d));
+        auto resume_var = AddConstant(MakeString("__resume_" + d));
+        auto val_var = AddConstant(MakeString("__val_" + d));
         auto elem_var = AddConstant(MakeString(var_name));
 
         auto iter_reg = CompileExpr(stmt->iterable);
@@ -1148,34 +1194,370 @@ void Compiler::CompileForCoroutine(const ForStmt* stmt) {
     pending_continues_ = std::move(saved_continues);
 }
 
-void Compiler::CompileForDynamic(const ForStmt* stmt) {
+void Compiler::CompileForDynamic(const ForStmt* stmt, uint32_t depth) {
+    auto saved_breaks = std::move(pending_breaks_);
+    auto saved_continues = std::move(pending_continues_);
+    pending_breaks_.clear();
+    pending_continues_.clear();
+
+    const auto& var_name = stmt->var_name;
+
+    std::string d = std::to_string(depth);
+    auto iter_var   = AddConstant(MakeString("__for_iter_" + d));
+    auto len_var    = AddConstant(MakeString("__for_len_" + d));
+    auto idx_var    = AddConstant(MakeString("__for_idx_" + d));
+    auto elem_var   = AddConstant(MakeString(var_name));
+    auto resume_var = AddConstant(MakeString("__for_resume_" + d));
+    auto val_var    = AddConstant(MakeString("__for_val_" + d));
+
+    {
+        uint16_t regs_before = next_reg_;
+        auto iter_reg = CompileExpr(stmt->iterable);
+        Emit(OpCode::SETGLOBAL, iter_reg, iter_var);
+        FreeRegs(next_reg_ - regs_before);
+    }
+
+    uint16_t is_coro_reg = AllocReg();
+    {
+        uint16_t regs_before = next_reg_;
+        auto type_func = AllocReg();
+        Emit(OpCode::GETGLOBAL, type_func, AddConstant(MakeString("type")));
+        Emit(OpCode::GETGLOBAL, static_cast<uint16_t>(type_func + 1), iter_var);
+        Emit(OpCode::CALL, type_func, 1, 1);
+        auto coro_str_reg = AllocReg();
+        Emit(OpCode::LOADK, coro_str_reg, AddConstant(MakeString("coroutine")));
+        Emit(OpCode::EQ, is_coro_reg, type_func, coro_str_reg);
+        FreeRegs(next_reg_ - (is_coro_reg + 1));
+    }
+
+    Emit(OpCode::TEST, is_coro_reg, 0, 1);
+    size_t jmp_to_coro_init = proto_->instructions.size();
+    Emit(OpCode::JMP, 0);
+    {
+        uint16_t regs_before = next_reg_;
+        auto lf = AllocReg();
+        Emit(OpCode::GETGLOBAL, lf, AddConstant(MakeString("len")));
+        Emit(OpCode::GETGLOBAL, static_cast<uint16_t>(lf + 1), iter_var);
+        Emit(OpCode::CALL, lf, 1, 1);
+        Emit(OpCode::SETGLOBAL, lf, len_var);
+        FreeRegs(next_reg_ - regs_before);
+
+        auto zr = AllocReg();
+        Emit(OpCode::LOADK, zr, AddConstant(Value::Number(0)));
+        Emit(OpCode::SETGLOBAL, zr, idx_var);
+        FreeRegs(1);
+    }
+    size_t jmp_after_init = proto_->instructions.size();
+    Emit(OpCode::JMP, 0);
+    PatchJump(jmp_to_coro_init);
+    {
+        uint16_t regs_before = next_reg_;
+        auto rf = AllocReg();
+        Emit(OpCode::GETGLOBAL, rf, AddConstant(MakeString("resume")));
+        Emit(OpCode::SETGLOBAL, rf, resume_var);
+        FreeRegs(next_reg_ - regs_before);
+    }
+    PatchJump(jmp_after_init);
+
+    size_t loop_start = proto_->instructions.size();
+
+    Emit(OpCode::TEST, is_coro_reg, 0);
+    size_t jmp_to_list_loop = proto_->instructions.size();
+    Emit(OpCode::JMP, 0);
+
+    size_t continue_target = proto_->instructions.size();
+
+    std::vector<size_t> coro_exit_jmps;
+
+    {
+        uint16_t regs_before = next_reg_;
+        auto rg = AllocReg();
+        Emit(OpCode::GETGLOBAL, rg, resume_var);
+        Emit(OpCode::GETGLOBAL, static_cast<uint16_t>(rg + 1), iter_var);
+        Emit(OpCode::CALL, rg, 1, 1);
+        Emit(OpCode::SETGLOBAL, rg, val_var);
+        auto nil_reg = AllocReg();
+        Emit(OpCode::LOADK, nil_reg, AddConstant(Value::Nil()));
+        auto val_get = AllocReg();
+        Emit(OpCode::GETGLOBAL, val_get, val_var);
+        auto cr = AllocReg();
+        Emit(OpCode::NE, cr, val_get, nil_reg);
+        Emit(OpCode::TEST, cr, 0);
+        FreeRegs(next_reg_ - regs_before);
+
+        size_t jmp_coro_exit = proto_->instructions.size();
+        Emit(OpCode::JMP, 0);
+        coro_exit_jmps.push_back(jmp_coro_exit);
+
+        {
+            uint16_t rb2 = next_reg_;
+            auto eg = AllocReg();
+            Emit(OpCode::GETGLOBAL, eg, val_var);
+            auto ir = AllocReg();
+            Emit(OpCode::LOADK, ir, AddConstant(Value::Number(0)));
+            auto fe = AllocReg();
+            Emit(OpCode::GETINDEX, fe, eg, ir);
+            Emit(OpCode::SETGLOBAL, fe, elem_var);
+            FreeRegs(next_reg_ - rb2);
+        }
+    }
+
+    size_t jmp_to_body_from_coro = proto_->instructions.size();
+    Emit(OpCode::JMP, 0);
+
+    PatchJump(jmp_to_list_loop);
+
+    {
+        uint16_t regs_before = next_reg_;
+        auto lg = AllocReg();
+        Emit(OpCode::GETGLOBAL, lg, iter_var);
+        auto ig = AllocReg();
+        Emit(OpCode::GETGLOBAL, ig, idx_var);
+        auto fe = AllocReg();
+        Emit(OpCode::GETINDEX, fe, lg, ig);
+        Emit(OpCode::SETGLOBAL, fe, elem_var);
+        FreeRegs(next_reg_ - regs_before);
+    }
+
+    PatchJump(jmp_to_body_from_coro);
+
+    CompileChunk(stmt->body);
+
+    Emit(OpCode::TEST, is_coro_reg, 0);
+    size_t jmp_to_list_inc = proto_->instructions.size();
+    Emit(OpCode::JMP, 0);
+
+    {
+        int32_t back_offset = static_cast<int32_t>(loop_start) -
+                              static_cast<int32_t>(proto_->instructions.size()) - 1;
+        Emit(OpCode::JMP);
+        proto_->instructions.back().bx32 = back_offset;
+    }
+
+    PatchJump(jmp_to_list_inc);
+
+    {
+        uint16_t regs_before = next_reg_;
+        auto ag = AllocReg();
+        Emit(OpCode::GETGLOBAL, ag, idx_var);
+        auto ar = AllocReg();
+        Emit(OpCode::LOADK, ar, AddConstant(Value::Number(1)));
+        Emit(OpCode::ADD, ar, ag, ar);
+        Emit(OpCode::SETGLOBAL, ar, idx_var);
+        FreeRegs(next_reg_ - regs_before);
+
+        auto cr = AllocReg();
+        auto lg2 = AllocReg();
+        Emit(OpCode::GETGLOBAL, cr, idx_var);
+        Emit(OpCode::GETGLOBAL, lg2, len_var);
+        Emit(OpCode::LT, cr, cr, lg2);
+        Emit(OpCode::TEST, cr, 0);
+        FreeRegs(2);
+
+        size_t jmp_list_exit = proto_->instructions.size();
+        Emit(OpCode::JMP, 0);
+
+        int32_t back_offset = static_cast<int32_t>(loop_start) -
+                              static_cast<int32_t>(proto_->instructions.size()) - 1;
+        Emit(OpCode::JMP);
+        proto_->instructions.back().bx32 = back_offset;
+
+        PatchJump(jmp_list_exit);
+    }
+
+    for (size_t idx : coro_exit_jmps) {
+        PatchJump(idx);
+    }
+
+    for (auto& patch : pending_breaks_) {
+        PatchJump(patch.instr_idx);
+    }
+    pending_breaks_.clear();
+
+    for (auto& patch : pending_continues_) {
+        PatchContinueJump(patch.instr_idx, continue_target);
+    }
+    pending_continues_.clear();
+
+    pending_breaks_ = std::move(saved_breaks);
+    pending_continues_ = std::move(saved_continues);
+}
+
+void Compiler::CompileForDict(const ForStmt* stmt, uint32_t depth) {
+    auto saved_breaks = std::move(pending_breaks_);
+    auto saved_continues = std::move(pending_continues_);
+    pending_breaks_.clear();
+    pending_continues_.clear();
+
+    const auto& var_name = stmt->var_name;
+    bool use_locals = !is_top_level_;
+
+    if (!use_locals) {
+        std::string d = std::to_string(depth);
+        auto dict_var = AddConstant(MakeString("__for_dict_" + d));
+        auto keys_var = AddConstant(MakeString("__for_keys_" + d));
+        auto len_var = AddConstant(MakeString("__for_len_" + d));
+        auto idx_var = AddConstant(MakeString("__for_idx_" + d));
+        auto elem_var = AddConstant(MakeString(var_name));
+
+        auto dict_reg = CompileExpr(stmt->iterable);
+        Emit(OpCode::SETGLOBAL, dict_reg, dict_var);
+        FreeRegs(1);
+
+        auto keys_reg = AllocReg();
+        Emit(OpCode::GETGLOBAL, keys_reg, dict_var);
+        Emit(OpCode::GETATTR, keys_reg, keys_reg, AddConstant(MakeString("keys")));
+        Emit(OpCode::CALL, keys_reg, 0, 1);
+        Emit(OpCode::SETGLOBAL, keys_reg, keys_var);
+        FreeRegs(1);
+
+        auto len_func = AllocReg();
+        Emit(OpCode::GETGLOBAL, len_func, AddConstant(MakeString("len")));
+        auto len_arg = AllocReg();
+        Emit(OpCode::GETGLOBAL, len_arg, keys_var);
+        Emit(OpCode::MOVE, len_func + 1, len_arg);
+        Emit(OpCode::CALL, len_func, 1, 1);
+        Emit(OpCode::SETGLOBAL, len_func, len_var);
+        FreeRegs(2);
+
+        auto zero_c = AddConstant(Value::Number(0));
+        auto zero_reg = AllocReg();
+        Emit(OpCode::LOADK, zero_reg, zero_c);
+        Emit(OpCode::SETGLOBAL, zero_reg, idx_var);
+        FreeRegs(1);
+
+        size_t loop_start = proto_->instructions.size();
+
+        auto elem_reg = AllocReg();
+        auto idx_get = AllocReg();
+        auto keys_get = AllocReg();
+        auto len_get = AllocReg();
+        auto cond_reg = AllocReg();
+        auto one_c = AddConstant(Value::Number(1));
+        auto add_reg = AllocReg();
+
+        Emit(OpCode::GETGLOBAL, keys_get, keys_var);
+        Emit(OpCode::GETGLOBAL, idx_get, idx_var);
+        Emit(OpCode::GETINDEX, elem_reg, keys_get, idx_get);
+        Emit(OpCode::SETGLOBAL, elem_reg, elem_var);
+
+        CompileChunk(stmt->body);
+
+        size_t continue_target = proto_->instructions.size();
+
+        Emit(OpCode::GETGLOBAL, idx_get, idx_var);
+        Emit(OpCode::LOADK, add_reg, one_c);
+        Emit(OpCode::ADD, add_reg, idx_get, add_reg);
+        Emit(OpCode::SETGLOBAL, add_reg, idx_var);
+
+        Emit(OpCode::GETGLOBAL, cond_reg, idx_var);
+        Emit(OpCode::GETGLOBAL, len_get, len_var);
+        Emit(OpCode::LT, cond_reg, cond_reg, len_get);
+        Emit(OpCode::TEST, cond_reg, 0);
+
+        size_t jmp_out = proto_->instructions.size();
+        Emit(OpCode::JMP, 0);
+
+        int32_t back_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(proto_->instructions.size()) - 1;
+        Emit(OpCode::JMP);
+        proto_->instructions.back().bx32 = back_offset;
+
+        PatchJump(jmp_out);
+
+        for (auto& patch : pending_breaks_) {
+            PatchJump(patch.instr_idx);
+        }
+        pending_breaks_.clear();
+
+        for (auto& patch : pending_continues_) {
+            PatchContinueJump(patch.instr_idx, continue_target);
+        }
+        pending_continues_.clear();
+
+        pending_breaks_ = std::move(saved_breaks);
+        pending_continues_ = std::move(saved_continues);
+        return;
+    }
+
+    uint16_t dict_reg_local = AllocReg();
     auto iter_reg = CompileExpr(stmt->iterable);
+    Emit(OpCode::MOVE, dict_reg_local, iter_reg);
+    FreeRegs(next_reg_ - (dict_reg_local + 1));
 
-    auto type_func = AllocReg();
-    Emit(OpCode::GETGLOBAL, type_func, AddConstant(MakeString("type")));
-    auto type_arg = AllocReg();
-    Emit(OpCode::MOVE, type_arg, iter_reg);
-    Emit(OpCode::CALL, type_func, 1, 1);
+    uint16_t keys_reg_local = AllocReg();
+    Emit(OpCode::GETATTR, keys_reg_local, dict_reg_local, AddConstant(MakeString("keys")));
+    Emit(OpCode::CALL, keys_reg_local, 0, 1);
+    FreeRegs(next_reg_ - (keys_reg_local + 1));
 
-    auto coro_str_k = AddConstant(MakeString("coroutine"));
-    auto coro_str_reg = AllocReg();
-    Emit(OpCode::LOADK, coro_str_reg, coro_str_k);
-    auto cmp_reg = AllocReg();
-    Emit(OpCode::EQ, cmp_reg, type_func, coro_str_reg);
-    Emit(OpCode::TEST, cmp_reg, 1);
+    uint16_t len_reg_local = AllocReg();
+    auto len_func = AllocReg();
+    Emit(OpCode::GETGLOBAL, len_func, AddConstant(MakeString("len")));
+    auto len_arg = AllocReg();
+    Emit(OpCode::MOVE, len_arg, keys_reg_local);
+    Emit(OpCode::CALL, len_func, 1, 1);
+    Emit(OpCode::MOVE, len_reg_local, len_func);
+    FreeRegs(next_reg_ - (len_reg_local + 1));
 
-    size_t jmp_to_list = proto_->instructions.size();
+    uint16_t idx_reg_local = AllocReg();
+    auto zero_c = AddConstant(Value::Number(0));
+    auto zero_reg = AllocReg();
+    Emit(OpCode::LOADK, zero_reg, zero_c);
+    Emit(OpCode::MOVE, idx_reg_local, zero_reg);
+    FreeRegs(next_reg_ - (idx_reg_local + 1));
+
+    bool has_local_elem = locals_.find(var_name) != locals_.end();
+    uint16_t elem_reg_local = has_local_elem ? locals_.at(var_name) : AllocReg();
+    if (!has_local_elem) {
+        locals_[var_name] = elem_reg_local;
+    }
+
+    auto one_c = AddConstant(Value::Number(1));
+    size_t loop_start = proto_->instructions.size();
+
+    uint16_t regs_before = next_reg_;
+    auto elem_get = AllocReg();
+    Emit(OpCode::GETINDEX, elem_get, keys_reg_local, idx_reg_local);
+    Emit(OpCode::MOVE, elem_reg_local, elem_get);
+    FreeRegs(next_reg_ - regs_before);
+
+    CompileChunk(stmt->body);
+
+    size_t continue_target = proto_->instructions.size();
+
+    regs_before = next_reg_;
+    auto add_reg = AllocReg();
+    Emit(OpCode::LOADK, add_reg, one_c);
+    Emit(OpCode::ADD, add_reg, idx_reg_local, add_reg);
+    Emit(OpCode::MOVE, idx_reg_local, add_reg);
+    FreeRegs(next_reg_ - regs_before);
+
+    regs_before = next_reg_;
+    auto cond_reg = AllocReg();
+    Emit(OpCode::LT, cond_reg, idx_reg_local, len_reg_local);
+    Emit(OpCode::TEST, cond_reg, 0);
+    FreeRegs(next_reg_ - regs_before);
+
+    size_t jmp_out = proto_->instructions.size();
     Emit(OpCode::JMP, 0);
 
-    CompileForCoroutine(stmt);
+    int32_t back_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(proto_->instructions.size()) - 1;
+    Emit(OpCode::JMP);
+    proto_->instructions.back().bx32 = back_offset;
 
-    size_t jmp_end = proto_->instructions.size();
-    Emit(OpCode::JMP, 0);
+    PatchJump(jmp_out);
 
-    PatchJump(jmp_to_list);
-    CompileForList(stmt);
+    for (auto& patch : pending_breaks_) {
+        PatchJump(patch.instr_idx);
+    }
+    pending_breaks_.clear();
 
-    PatchJump(jmp_end);
+    for (auto& patch : pending_continues_) {
+        PatchContinueJump(patch.instr_idx, continue_target);
+    }
+    pending_continues_.clear();
+
+    pending_breaks_ = std::move(saved_breaks);
+    pending_continues_ = std::move(saved_continues);
 }
 
 void Compiler::EmitDefaultsPrologue(const std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>>& params,
@@ -1290,7 +1672,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
             bool is_known_attr = instance_attrs_.find(n->name) != instance_attrs_.end();
             uint16_t regs_before = next_reg_;
 
-            if (in_method && n->name != "this" && !has_local && is_known_attr) {
+            if (in_method && (n->name != "this" && n->name != "self") && !has_local && is_known_attr) {
                 auto val_reg = CompileExpr(a->value);
                 auto attr_idx = AddConstant(MakeString(n->name));
                 auto this_reg = locals_.at("this");
@@ -1299,7 +1681,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
                 return 0;
             }
 
-            if (!is_top_level_ && n->name != "this") {
+            if (!is_top_level_ && (n->name != "this" && n->name != "self")) {
                 if (has_local) {
                     uint16_t local_reg = locals_.at(n->name);
                     auto val_reg = CompileExpr(a->value);
@@ -1307,6 +1689,15 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
                     FreeRegs(next_reg_ - regs_before);
                     return 0;
                 }
+
+                int16_t upval_idx = FindUpvalue(n->name);
+                if (upval_idx >= 0) {
+                    auto val_reg = CompileExpr(a->value);
+                    Emit(OpCode::SETUPVAL, val_reg, static_cast<uint16_t>(upval_idx));
+                    FreeRegs(next_reg_ - regs_before);
+                    return 0;
+                }
+
                 uint16_t local_reg = AllocReg();
                 auto val_reg = CompileExpr(a->value);
                 Emit(OpCode::MOVE, local_reg, val_reg);
@@ -1336,7 +1727,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
         if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
             bool is_this = false;
             if (auto* name = dynamic_cast<NameExpr*>(a_expr->obj.get())) {
-                if (name->name == "this") {
+                if ((name->name == "this" || name->name == "self")) {
                     is_this = true;
                 }
             }
@@ -1370,7 +1761,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
         Emit(BinOpToOpcode(a->op), result_reg, target_reg, val_reg);
         if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
 
-            if (!is_top_level_ && n->name != "this" && locals_.find(n->name) != locals_.end()) {
+            if (!is_top_level_ && (n->name != "this" && n->name != "self") && locals_.find(n->name) != locals_.end()) {
                 Emit(OpCode::MOVE, locals_.at(n->name), result_reg);
                 FreeRegs(next_reg_ - regs_before);
                 return 0;
@@ -1390,7 +1781,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
         if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
             bool is_this = false;
             if (auto* name = dynamic_cast<NameExpr*>(a_expr->obj.get())) {
-                if (name->name == "this") {
+                if ((name->name == "this" || name->name == "self")) {
                     is_this = true;
                 }
             }
@@ -1476,6 +1867,27 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
     return 0;
 }
 
+void Compiler::CompileMultiAssign(const MultiAssignStmt* stmt) {
+    size_t n = std::min(stmt->targets.size(), stmt->values.size());
+    if (n == 0) return;
+
+    std::vector<std::string> tmp_vars;
+    for (size_t i = 0; i < n; ++i) {
+        std::string var = "__ma_tmp_" + std::to_string(i);
+        tmp_vars.push_back(var);
+        uint16_t regs_before = next_reg_;
+        auto vr = CompileExpr(stmt->values[i]);
+        Emit(OpCode::SETGLOBAL, vr, AddConstant(MakeString(var)));
+        FreeRegs(next_reg_ - regs_before);
+    }
+    for (size_t i = 0; i < n; ++i) {
+        auto tmp_name = std::make_shared<NameExpr>("__ma_tmp_" + std::to_string(i));
+        auto assign = std::make_shared<AssignStmt>(stmt->targets[i], tmp_name);
+        assign->line = stmt->line;
+        CompileStmt(assign);
+    }
+}
+
 void Compiler::CompileClass(const ClassDef* cls) {
     auto* class_obj = new ClassObj();
     class_obj->name = cls->name;
@@ -1547,6 +1959,7 @@ void Compiler::CompileClass(const ClassDef* cls) {
 
             if (!f->is_static) {
                 sub.locals_["this"] = 0;
+                sub.locals_["self"] = 0;
             }
 
             for (auto& [attr_name, attr_val] : class_obj->instance_defaults) {

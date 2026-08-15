@@ -14,6 +14,8 @@ struct Object;
 
 std::string GetFileDir(const std::string& path);
 std::string NumberToString(double n);
+std::string ValueToString(const Value& v);
+bool ValueEquals(const Value& a, const Value& b);
 size_t ValidateIntegerIndex(double n, const char* context);
 std::string JoinPath(const std::string& a, const std::string& b);
 bool FileExists(const std::string& path);

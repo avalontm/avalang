@@ -1,0 +1,19 @@
+d = {name: "Ada", age: 36, lang: "AvaLang"}
+print("=== test d.keys() ===")
+k = d.keys()
+print("keys result: " + str(k))
+print("keys type: " + type(k))
+print("keys len: " + str(len(k)))
+print("keys[0]: " + str(k[0]))
+print("keys[1]: " + str(k[1]))
+print("keys[2]: " + str(k[2]))
+print("=== test for over keys list ===")
+ks = d.keys()
+for key in ks then
+    print("key: " + key)
+end
+print("=== test for over dict directly ===")
+for k2 in d then
+    print("k2: " + str(k2))
+end
+print("=== done ===")

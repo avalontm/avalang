@@ -40,7 +40,8 @@ void OpGetIndex(CallFrame& frame, const Instr& in, const std::vector<Value>& K, 
         if (idx.type == ValueType::Number) {
             size_t pos = ValidateIntegerIndex(idx.n, "dict index");
             if (pos < dict->entries.size()) {
-                frame.registers[in.a] = dict->entries[pos].second;
+                auto sv = Value(); sv.type = ValueType::String; sv.obj = new StringObj(dict->entries[pos].first);
+                frame.registers[in.a] = sv;
             } else {
                 frame.registers[in.a] = Value::Nil();
             }
@@ -49,6 +50,19 @@ void OpGetIndex(CallFrame& frame, const Instr& in, const std::vector<Value>& K, 
             auto it = dict->index.find(key->data);
             if (it != dict->index.end()) {
                 frame.registers[in.a] = dict->entries[it->second].second;
+            } else {
+                frame.registers[in.a] = Value::Nil();
+            }
+        } else {
+            frame.registers[in.a] = Value::Nil();
+        }
+    } else if (obj.type == ValueType::String) {
+        if (idx.type == ValueType::Number) {
+            auto* str = static_cast<StringObj*>(obj.obj);
+            size_t pos = ValidateIntegerIndex(idx.n, "string index");
+            if (pos < str->data.size()) {
+                Value sv; sv.type = ValueType::String; sv.obj = new StringObj(std::string(1, str->data[pos]));
+                frame.registers[in.a] = sv;
             } else {
                 frame.registers[in.a] = Value::Nil();
             }

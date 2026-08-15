@@ -1,0 +1,23 @@
+print("test str eq:")
+r = ("abc" == "abc")
+print("  r = " + str(r))
+print("  type(r) = " + str(type(r)))
+print("  r == true: " + str(r == true))
+
+print("test str lt:")
+r2 = ("abc" < "abd")
+print("  r2 = " + str(r2))
+print("  type(r2) = " + str(type(r2)))
+print("  r2 == true: " + str(r2 == true))
+
+print("test bool == bool:")
+r3 = (true == true)
+print("  r3 = " + str(r3))
+print("  r3 == true: " + str(r3 == true))
+
+print("test str split:")
+parts = "a,b,c".split(",")
+print("  parts = " + str(parts))
+print("  parts == [a,b,c]: " + str(parts == ["a","b","c"]))
+print("  parts[0] = " + str(parts[0]))
+print("  parts[0] == 'a': " + str(parts[0] == "a"))

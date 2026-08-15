@@ -1,0 +1,6 @@
+l = [1, 2, 3]
+print("iter type: " + type(l))
+for x in l then
+    print("x=" + str(x))
+end
+print("done")

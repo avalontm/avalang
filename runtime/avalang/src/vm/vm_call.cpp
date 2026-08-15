@@ -19,15 +19,10 @@ Value VM::ResumeFromTop() {
         size_t top = frames_.size() - 1;
         result = ExecuteFrame(top);
         if (is_coroutine_suspended_) {
-            // Suspendido en algun punto de `top` (o mas profundo, ya
-            // propagado hacia arriba por CALL/OpBaseCall) -- frames_
-            // queda intacto tal cual, listo para el proximo resume().
+
             return result;
         }
-        // `top` termino normalmente (RETURN o fin de funcion). Sacarlo
-        // y, si hay un frame padre, escribir el resultado en el
-        // registro que el CALL original pidio (ret_slot) antes de
-        // seguir ejecutando ese padre desde donde se habia quedado.
+
         int ret_slot = frames_[top].ret_slot;
         frames_.pop_back();
         if (frames_.empty()) {
@@ -36,8 +31,7 @@ Value VM::ResumeFromTop() {
         if (ret_slot >= 0 && static_cast<size_t>(ret_slot) < frames_.back().registers.size()) {
             frames_.back().registers[static_cast<size_t>(ret_slot)] = result;
         }
-        // Loop: sigue con el nuevo top (el padre), continuando su pc
-        // justo despues del CALL que lo suspendio.
+
     }
     return result;
 }
@@ -75,16 +69,7 @@ Value VM::Call(const Value& callable, const std::vector<Value>& args) {
         frame.argc = static_cast<uint32_t>(args.size());
         frames_.push_back(frame);
         Value result = ExecuteFrame(frames_.size() - 1);
-        // FASE 1 (async/await): si algo dentro de este call se suspendió
-        // (yield/await anidado alcanzado desde código nativo, ej. un
-        // callback pasado a un builtin), no hacer pop_back -- el frame
-        // debe seguir vivo en frames_ para que resume() lo retome. El
-        // llamador nativo de VM::Call() que reciba `result` en este caso
-        // está recibiendo el valor "yielded", no un valor de retorno
-        // normal; falta que cada builtin que invoque callbacks vía
-        // VM::Call() revise vm->is_coroutine_suspended_ y propague --
-        // eso queda fuera de este fix puntual, pero al menos ya no se
-        // corrompe el frame suspendido aquí.
+		
         if (is_coroutine_suspended_) {
             return result;
         }
@@ -107,7 +92,6 @@ Value VM::Call(const Value& callable, const std::vector<Value>& args) {
         frame.argc = static_cast<uint32_t>(args.size());
         frames_.push_back(frame);
         Value result = ExecuteFrame(frames_.size() - 1);
-        // Ver nota FASE 1 arriba (misma razón, misma solución).
         if (is_coroutine_suspended_) {
             return result;
         }
@@ -154,6 +138,8 @@ Value VM::Call(const Value& callable, const std::vector<Value>& args) {
         co->frames = frames_;
         co->status = is_coroutine_suspended_ ? CoStatus::Suspended : CoStatus::Dead;
         frames_ = saved_frames_;
+
+        is_coroutine_suspended_ = false;
 
         return result;
     }

@@ -1,4 +1,5 @@
 #include "ast_builder.h"
+#include "../common/ava_error.h"
 #include <stdexcept>
 
 namespace ava {
@@ -39,6 +40,7 @@ static BinOp augOpToBinOp(const std::string& op) {
     if (op == "*=")  return BinOp::Mul;
     if (op == "/=")  return BinOp::Div;
     if (op == "%=")  return BinOp::Mod;
+    if (op == "//=") return BinOp::IDiv;
     throw std::runtime_error("unknown augop: " + op);
 }
 
@@ -141,6 +143,10 @@ std::shared_ptr<StmtNode> AstBuilder::stmtFromAny(const std::any& a) {
         return aug_assign;
     } catch (...) {}
     try {
+        auto multi_assign = std::any_cast<std::shared_ptr<MultiAssignStmt>>(a);
+        return multi_assign;
+    } catch (...) {}
+    try {
         auto ret_stmt = std::any_cast<std::shared_ptr<ReturnStmt>>(a);
         return ret_stmt;
     } catch (...) {}
@@ -236,21 +242,41 @@ std::shared_ptr<ExprNode> AstBuilder::exprFromTarget(AvaLangParser::TargetContex
 }
 
 std::any AstBuilder::visitAssignStatement(AvaLangParser::AssignStatementContext* ctx) {
-    auto target = exprFromTarget(ctx->targetList()->target(0));
-    auto value = exprFromAny(ctx->exprList()->expr(0)->accept(this));
+    auto targets = ctx->targetList()->target();
+    auto exprs = ctx->exprList()->expr();
+    if (targets.size() > 1 || exprs.size() > 1) {
+        throw AvaError(
+            "asignacion multiple requiere 'x = v, y = w' (cada asignacion con su propio '='); "
+            "la forma 'x, y = v, w' no esta soportada",
+            static_cast<int>(ctx->getStart()->getLine()),
+            static_cast<int>(ctx->getStart()->getCharPositionInLine()) + 1
+        );
+    }
+    auto target = exprFromTarget(targets[0]);
+    auto value = exprFromAny(exprs[0]->accept(this));
     return std::make_shared<AssignStmt>(target, value);
 }
 
 std::any AstBuilder::visitMultiAssignStatement(AvaLangParser::MultiAssignStatementContext* ctx) {
-    std::vector<std::shared_ptr<StmtNode>> stmts;
+    std::vector<std::shared_ptr<ExprNode>> targets;
+    std::vector<std::shared_ptr<ExprNode>> values;
     for (auto* assign : ctx->assignStatement()) {
-        auto result = visitAssignStatement(assign);
-        auto stmt = stmtFromAny(result);
-        if (stmt) {
-            stmts.push_back(stmt);
+        auto assign_targets = assign->targetList()->target();
+        auto assign_exprs = assign->exprList()->expr();
+        if (assign_targets.size() > 1 || assign_exprs.size() > 1) {
+            throw AvaError(
+                "asignacion multiple requiere 'x = v, y = w' (cada asignacion con su propio '='); "
+                "la forma 'x, y = v, w' no esta soportada",
+                static_cast<int>(assign->getStart()->getLine()),
+                static_cast<int>(assign->getStart()->getCharPositionInLine()) + 1
+            );
         }
+        auto target = exprFromTarget(assign_targets[0]);
+        auto value = exprFromAny(assign_exprs[0]->accept(this));
+        targets.push_back(target);
+        values.push_back(value);
     }
-    return stmts;
+    return std::make_shared<MultiAssignStmt>(targets, values);
 }
 
 std::any AstBuilder::visitChunk(AvaLangParser::ChunkContext* ctx) {

@@ -1,0 +1,6 @@
+l = [1, 2, 3]
+print("before for")
+for x in l then
+    print("x=" + str(x))
+end
+print("after for")

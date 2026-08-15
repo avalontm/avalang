@@ -47,6 +47,18 @@ std::vector<std::string> CandidateFileNames(const std::string& logical) {
 #else
     out.push_back("lib" + logical + ".so");
     out.push_back(logical + ".so");
+    // En muchas distros Linux, libfoo.so es un linker script (texto),
+    // no un ELF -- dlopen no lo carga. El ELF real tiene versión
+    // (libfoo.so.6). Añadimos los sufijos versionados comunes como
+    // último recurso. Si la lib está en ldconfig, dlopen la encuentra
+    // por nombre versionado.
+    out.push_back("lib" + logical + ".so.6");
+    out.push_back("lib" + logical + ".so.5");
+    out.push_back("lib" + logical + ".so.5d");
+    out.push_back("lib" + logical + ".so.4");
+    out.push_back("lib" + logical + ".so.3");
+    out.push_back("lib" + logical + ".so.2");
+    out.push_back("lib" + logical + ".so.1");
 #endif
     return out;
 }

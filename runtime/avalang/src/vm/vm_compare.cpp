@@ -1,5 +1,6 @@
 #include "vm.h"
 #include "vm_internal.h"
+#include "vm_helpers.h"
 
 namespace ava {
 
@@ -17,6 +18,10 @@ void OpEq(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm
         Ra = Value::Bool(Rb.b == Rc.b);
     } else if (Rb.type == ValueType::Nil && Rc.type == ValueType::Nil) {
         Ra = Value::Bool(true);
+    } else if (Rb.type == ValueType::List && Rc.type == ValueType::List) {
+        Ra = Value::Bool(ValueEquals(Rb, Rc));
+    } else if (Rb.type == ValueType::Dict && Rc.type == ValueType::Dict) {
+        Ra = Value::Bool(ValueEquals(Rb, Rc));
     } else {
         Ra = Value::Bool(Rb.type == Rc.type && Rb.n == Rc.n);
     }
@@ -26,7 +31,9 @@ void OpEqK(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& v
     auto& Ra = frame.registers[in.a];
     auto& Rb = frame.registers[in.b];
     const Value& Kc = K[in.c];
-    if (Rb.type == ValueType::String && Kc.type == ValueType::String) {
+    if (Rb.type == ValueType::Bool && Kc.type == ValueType::Number && Kc.n == 0) {
+        Ra = Value::Bool(!Rb.b);
+    } else if (Rb.type == ValueType::String && Kc.type == ValueType::String) {
         auto* s1 = static_cast<StringObj*>(Rb.obj);
         auto* s2 = static_cast<StringObj*>(Kc.obj);
         Ra = Value::Bool(s1->data == s2->data);
@@ -35,6 +42,8 @@ void OpEqK(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& v
     } else if (Rb.type == ValueType::Bool && Kc.type == ValueType::Bool) {
         Ra = Value::Bool(Rb.b == Kc.b);
     } else if (Rb.type == ValueType::Nil && Kc.type == ValueType::Nil) {
+        Ra = Value::Bool(true);
+    } else if (Rb.type == ValueType::Nil && Kc.type == ValueType::Number && Kc.n == 0) {
         Ra = Value::Bool(true);
     } else {
         Ra = Value::Bool(Rb.type == Kc.type && Rb.n == Kc.n);
@@ -46,7 +55,7 @@ void OpNeK(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& v
     auto& Rb = frame.registers[in.b];
     const Value& Kc = K[in.c];
     if (Rb.type == ValueType::Bool && Kc.type == ValueType::Number && Kc.n == 0) {
-        Ra = Value::Bool(!Rb.b);
+        Ra = Value::Bool(Rb.b);
     } else if (Rb.type == ValueType::Number && Kc.type == ValueType::Number) {
         Ra = Value::Bool(Rb.n != Kc.n);
     } else if (Rb.type == ValueType::Bool && Kc.type == ValueType::Bool) {
@@ -54,7 +63,7 @@ void OpNeK(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& v
     } else if (Rb.type == ValueType::Nil && Kc.type == ValueType::Nil) {
         Ra = Value::Bool(false);
     } else if (Rb.type == ValueType::Nil && Kc.type == ValueType::Number && Kc.n == 0) {
-        Ra = Value::Bool(true);
+        Ra = Value::Bool(false);
     } else {
         Ra = Value::Bool(!(Rb.type == Kc.type && Rb.n == Kc.n));
     }
@@ -74,6 +83,10 @@ void OpNe(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm
         Ra = Value::Bool(Rb.b != Rc.b);
     } else if (Rb.type == ValueType::Nil && Rc.type == ValueType::Nil) {
         Ra = Value::Bool(false);
+    } else if (Rb.type == ValueType::List && Rc.type == ValueType::List) {
+        Ra = Value::Bool(!ValueEquals(Rb, Rc));
+    } else if (Rb.type == ValueType::Dict && Rc.type == ValueType::Dict) {
+        Ra = Value::Bool(!ValueEquals(Rb, Rc));
     } else {
         Ra = Value::Bool(!(Rb.type == Rc.type && Rb.n == Rc.n));
     }

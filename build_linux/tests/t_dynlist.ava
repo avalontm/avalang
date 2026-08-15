@@ -1,0 +1,4 @@
+mylist = [10, 20, 30]
+for x in mylist then
+    print("x=" + str(x))
+end

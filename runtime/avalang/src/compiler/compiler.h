@@ -58,6 +58,8 @@ private:
     std::vector<JmpPatch> pending_breaks_;
     std::vector<JmpPatch> pending_continues_;
 
+    uint32_t for_depth_ = 0;
+
     void Reset();
 
     uint16_t AllocReg();
@@ -87,19 +89,23 @@ private:
     void CompileTry(const TryStmt* stmt);
     void CompileRaise(const RaiseStmt* stmt);
     void CompileYield(const YieldStmt* stmt);
+    void CompileMultiAssign(const MultiAssignStmt* stmt);
     uint16_t CompileFStringExpression(const std::string& expr_str);
 
-    enum class IteratorKind { List, Coroutine };
+    enum class IteratorKind { List, Coroutine, Dict };
     IteratorKind DetectIteratorKind(const std::shared_ptr<ExprNode>& iterable);
     void CompileForIterator(const ForStmt* stmt);
-    void CompileForList(const ForStmt* stmt);
-    void CompileForCoroutine(const ForStmt* stmt);
-    void CompileForDynamic(const ForStmt* stmt);
+    void CompileForList(const ForStmt* stmt, uint32_t depth);
+    void CompileForCoroutine(const ForStmt* stmt, uint32_t depth);
+    void CompileForDict(const ForStmt* stmt, uint32_t depth);
+    void CompileForDynamic(const ForStmt* stmt, uint32_t depth);
 
     std::shared_ptr<ExprNode> ParseFStringExpr(const std::string& expr_str);
 
     static OpCode BinOpToOpcode(BinOp op);
     static bool IsShortCircuit(BinOp op);
+
+    int16_t FindUpvalue(const std::string& name);
 
 private:
     std::shared_ptr<ExprNode> ParseExpr(const std::string& s, size_t& pos);

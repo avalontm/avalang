@@ -1,5 +1,6 @@
 #include "vm.h"
 #include "vm_internal.h"
+#include "vm_platform_accessor.h"
 #include "module.h"
 #include "coroutine.h"
 #include "../frontend/frontend.h"
@@ -48,6 +49,24 @@ void VM::Print(const std::string& text) const {
     } else {
         std::fputs(text.c_str(), stdout);
     }
+}
+
+void VM::SetInputSink(InputSink sink) {
+    input_sink_ = std::move(sink);
+}
+
+std::string VM::ReadLine(const std::string& prompt) const {
+    if (input_sink_) {
+        return input_sink_(prompt);
+    }
+    if (!prompt.empty()) {
+        std::fputs(prompt.c_str(), stdout);
+        std::fflush(stdout);
+    }
+    std::string line;
+    bool ok = VmPlatformAccessor::Get().Console().ReadLine(line);
+    if (!ok) return std::string();
+    return line;
 }
 
 void VM::SetAlertSink(AlertSink sink) {

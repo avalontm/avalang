@@ -1,0 +1,25 @@
+print("=== clases ===")
+class Animal
+    func __init__(self, name)
+        self.name = name
+    end
+    func speak(self)
+        return "..."
+    end
+end
+
+class Dog : Animal
+    func speak(self)
+        return "Woof!"
+    end
+end
+
+a = Animal("Generic")
+print("a.name = " + a.name)
+print("a.speak() = " + a.speak())
+
+d = Dog("Rex")
+print("d.name = " + d.name)
+print("d.speak() = " + d.speak())
+
+print("=== DONE ===")

@@ -6,6 +6,7 @@
 #include "builtin.h"
 #include "../vm/vm.h"
 #include "../vm/vm_platform_accessor.h"
+#include <cstdio>
 
 ava_value_t builtin_set_timeout(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data) {
     (void)user_data;

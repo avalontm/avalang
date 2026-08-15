@@ -241,6 +241,21 @@ AVA_API void ava_vm_set_print_callback(AvaVM* vm, AvaPrintFn fn, void* user_data
     }
 }
 
+AVA_API void ava_vm_set_input_callback(AvaVM* vm, AvaInputFn fn, void* user_data) {
+    auto* raw_vm = reinterpret_cast<VM*>(vm);
+    if (fn) {
+        raw_vm->SetInputSink([fn, user_data](const std::string& prompt) -> std::string {
+            char* result = fn(prompt.data(), prompt.size(), user_data);
+            if (!result) return std::string();
+            std::string s(result);
+            std::free(result);
+            return s;
+        });
+    } else {
+        raw_vm->SetInputSink(nullptr);
+    }
+}
+
 AVA_API void ava_vm_set_alert_callback(AvaVM* vm, AvaAlertFn fn, void* user_data) {
     auto* raw_vm = reinterpret_cast<VM*>(vm);
     if (fn) {

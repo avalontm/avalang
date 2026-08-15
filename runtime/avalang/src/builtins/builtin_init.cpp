@@ -20,6 +20,7 @@ BUILTIN_API void RegisterBuiltinGlobals(AvaVM* vm) {
     raw_vm->RegisterNative("int", builtin_int, nullptr);
     raw_vm->RegisterNative("float", builtin_float, nullptr);
     raw_vm->RegisterNative("print", builtin_print, nullptr);
+    raw_vm->RegisterNative("input", builtin_input, nullptr);
 
     raw_vm->RegisterNative("abs", builtin_abs, nullptr);
     raw_vm->RegisterNative("round", builtin_round, nullptr);
@@ -36,6 +37,7 @@ BUILTIN_API void RegisterBuiltinGlobals(AvaVM* vm) {
     raw_vm->RegisterNative("all", builtin_all, nullptr);
     raw_vm->RegisterNative("len", builtin_len, nullptr);
     raw_vm->RegisterNative("range", builtin_range, nullptr);
+    raw_vm->RegisterNative("slice", builtin_slice, nullptr);
 
     // Required by every `import` statement -- see builtin_import's doc
     // comment in builtin_natives.h for why this must be registered here.

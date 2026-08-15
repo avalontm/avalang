@@ -1,0 +1,7 @@
+func gen()
+    yield 1
+    yield 2
+end
+for v in coroutine(gen) then
+    print("v=" + str(v))
+end

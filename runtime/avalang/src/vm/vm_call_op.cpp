@@ -22,12 +22,7 @@ void OpCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& 
             callee_frame.registers[i] = all_args[i];
         }
         callee_frame.argc = static_cast<uint32_t>(args.size());
-        // FASE 1: guardar en que registro del frame llamador hay que
-        // escribir el resultado cuando ResumeFromTop() desenrolle este
-        // frame en un resume() posterior (yield anidado).
         callee_frame.ret_slot = static_cast<int>(save_a);
-        // Ver nota en OpBaseCall más abajo: `frame` puede quedar colgante
-        // si push_back reasigna vm.frames_. Guardamos el índice antes.
         size_t frame_idx_bound = static_cast<size_t>(&frame - vm.frames_.data());
         vm.frames_.push_back(callee_frame);
         Value result = vm.ExecuteFrame(vm.frames_.size() - 1);
@@ -71,14 +66,7 @@ void OpCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& 
                 init_frame.registers[i] = init_args[i];
             }
             init_frame.argc = static_cast<uint32_t>(args.size());
-            // El resultado de __init__ se descarta (-1), tanto en el
-            // camino recursivo normal como en el desenrollado por
-            // ResumeFromTop() tras un yield anidado dentro de __init__.
             init_frame.ret_slot = -1;
-            // No necesitamos escribir en `frame` después de esto (el
-            // resultado del __init__ se descarta), pero el push_back
-            // igual puede invalidar `frame`; no se vuelve a usar tras
-            // este bloque en esta rama, así que no hace falta el índice.
             vm.frames_.push_back(init_frame);
             vm.ExecuteFrame(vm.frames_.size() - 1);
             
@@ -101,13 +89,14 @@ void OpCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& 
             for (auto& a : args) c_args.push_back(ToC(a));
         }
         
+        size_t frame_idx_native = static_cast<size_t>(&frame - vm.frames_.data());
         ava_value_t c_result = native->fn(
             reinterpret_cast<AvaVM*>(&vm),
             c_args.empty() ? nullptr : c_args.data(),
             c_args.size(),
             native->user_data
         );
-        frame.registers[save_a] = FromC(c_result);
+        vm.frames_[frame_idx_native].registers[save_a] = FromC(c_result);
     } else if (callee.type == ValueType::Function) {
         auto* closure = static_cast<Closure*>(callee.obj);
         CallFrame callee_frame;
@@ -201,26 +190,11 @@ Value OpBaseCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K,
                 callee_frame.argc = static_cast<uint32_t>(in.c);
                 callee_frame.ret_slot = static_cast<int>(in.a);
 
-                // `frame` es una referencia a un elemento de vm.frames_.
-                // El push_back de abajo puede reasignar el buffer interno
-                // del vector (si excede su capacidad), lo que invalida
-                // cualquier referencia/puntero previo a sus elementos --
-                // incluida `frame`. Guardamos el índice ANTES de tocar el
-                // vector y lo usamos para escribir el resultado, igual
-                // que hace el resto del dispatcher (frames_[frame_idx])
-                // en vez de reusar `frame` después del push/pop.
                 size_t frame_idx = static_cast<size_t>(&frame - vm.frames_.data());
 
                 vm.frames_.push_back(callee_frame);
                 Value result = vm.ExecuteFrame(vm.frames_.size() - 1);
 
-                // FASE 1 (async/await): si la ejecución del método base se
-                // suspendió (yield/await anidado), NO hacer pop_back ni
-                // escribir el resultado -- el callee_frame debe quedar
-                // vivo en vm.frames_ para que resume() lo retome más
-                // tarde exactamente donde quedó. Propagamos `result` (el
-                // valor "yielded") hacia arriba sin tocarlo, igual que
-                // hace CALL en vm.cpp.
                 if (vm.is_coroutine_suspended_) {
                     return result;
                 }

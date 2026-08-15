@@ -11,6 +11,7 @@ namespace linux_ {
 class LinLibraryHandle : public ILibraryHandle {
 public:
     explicit LinLibraryHandle(void* handle);
+    ~LinLibraryHandle() override;
 
     void* ResolveSymbol(const std::string& symbol_name) override;
 

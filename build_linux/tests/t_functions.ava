@@ -1,0 +1,35 @@
+print("=== funciones basicas ===")
+func add(a, b)
+    return a + b
+end
+print("add(3, 4) = " + str(add(3, 4)))
+
+func greet(name = "mundo")
+    return "Hola " + name
+end
+print("greet() = " + greet())
+print("greet('Ada') = " + greet("Ada"))
+
+func factorial(n)
+    if n <= 1 then
+        return 1
+    end
+    return n * factorial(n - 1)
+end
+print("factorial(5) = " + str(factorial(5)))
+
+print("=== closures ===")
+func counter()
+    count = 0
+    func increment()
+        count = count + 1
+        return count
+    end
+    return increment
+end
+c = counter()
+print("c() = " + str(c()))
+print("c() = " + str(c()))
+print("c() = " + str(c()))
+
+print("=== DONE ===")

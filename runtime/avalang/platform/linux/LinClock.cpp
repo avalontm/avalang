@@ -1,23 +1,29 @@
 #include "LinClock.h"
 
-// STUB implementation -- returns zero/no-op instead of real OS time.
-// TODO(Phase 5): clock_gettime + nanosleep,
-// mirroring core/platform/windows/LinClock.cpp.
+#include <time.h>
+#include <cstdint>
 
 namespace ava {
 namespace platform {
 namespace linux_ {
 
 int64_t LinClock::NowMs() const {
-    return 0;
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return static_cast<int64_t>(ts.tv_sec) * 1000 + ts.tv_nsec / 1000000;
 }
 
 int64_t LinClock::HighResNowNs() const {
-    return 0;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
 }
 
-void LinClock::SleepMs(uint32_t /*milliseconds*/) {
-    // Not implemented.
+void LinClock::SleepMs(uint32_t milliseconds) {
+    struct timespec ts;
+    ts.tv_sec = milliseconds / 1000;
+    ts.tv_nsec = (milliseconds % 1000) * 1000000;
+    nanosleep(&ts, nullptr);
 }
 
 } // namespace linux_

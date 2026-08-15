@@ -1,0 +1,36 @@
+errors = 0
+ok = 0
+round2 = 0
+while (round2 < 3)
+    for idx in range(5) then
+        try
+            if idx == round2 then
+                raise "skip"
+            end
+            ok = ok + 1
+        catch (e)
+            errors = errors + 1
+        end
+    end
+    round2 = round2 + 1
+end
+print("try-in-for-in-while ok=" + str(ok))
+print("try-in-for-in-while errors=" + str(errors))
+
+func mixed()
+    yield 1
+    yield 2
+    yield 3
+    yield 4
+    yield 5
+end
+cg = coroutine(mixed)
+odd_sum = 0
+for num in cg then
+    if num % 2 == 0 then
+        continue
+    end
+    odd_sum = odd_sum + num
+end
+print("coro variable continue odd_sum=" + str(odd_sum))
+print("=== DONE ===")

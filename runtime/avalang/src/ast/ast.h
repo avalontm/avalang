@@ -150,6 +150,13 @@ struct AugAssignStmt : StmtNode {
         : target(std::move(t)), op(o), value(std::move(v)) {}
 };
 
+struct MultiAssignStmt : StmtNode {
+    std::vector<std::shared_ptr<ExprNode>> targets;
+    std::vector<std::shared_ptr<ExprNode>> values;
+    MultiAssignStmt(std::vector<std::shared_ptr<ExprNode>> t, std::vector<std::shared_ptr<ExprNode>> v)
+        : targets(std::move(t)), values(std::move(v)) {}
+};
+
 struct ReturnStmt : StmtNode {
     std::shared_ptr<ExprNode> value;
     explicit ReturnStmt(std::shared_ptr<ExprNode> v = nullptr) : value(std::move(v)) {}

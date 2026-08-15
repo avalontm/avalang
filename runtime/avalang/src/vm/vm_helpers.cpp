@@ -1,4 +1,5 @@
 #include "vm.h"
+#include "vm_internal.h"
 #include <sstream>
 #include <iomanip>
 #include <cmath>
@@ -37,6 +38,81 @@ std::string NumberToString(double n) {
             s.erase(last_not_zero + 1);
     }
     return s;
+}
+
+std::string ValueToString(const Value& v) {
+    switch (v.type) {
+        case ValueType::Nil:    return "nil";
+        case ValueType::Bool:   return v.b ? "true" : "false";
+        case ValueType::Number: return NumberToString(v.n);
+        case ValueType::String: return static_cast<StringObj*>(v.obj)->data;
+        case ValueType::List: {
+            auto* list = static_cast<ListObj*>(v.obj);
+            std::string out = "[";
+            for (size_t i = 0; i < list->items.size(); ++i) {
+                if (i > 0) out += ", ";
+                if (list->items[i].type == ValueType::String) {
+                    out += "\"" + static_cast<StringObj*>(list->items[i].obj)->data + "\"";
+                } else {
+                    out += ValueToString(list->items[i]);
+                }
+            }
+            out += "]";
+            return out;
+        }
+        case ValueType::Dict: {
+            auto* dict = static_cast<DictObj*>(v.obj);
+            std::string out = "{";
+            for (size_t i = 0; i < dict->entries.size(); ++i) {
+                if (i > 0) out += ", ";
+                out += "\"" + dict->entries[i].first + "\": ";
+                const Value& ev = dict->entries[i].second;
+                if (ev.type == ValueType::String) {
+                    out += "\"" + static_cast<StringObj*>(ev.obj)->data + "\"";
+                } else {
+                    out += ValueToString(ev);
+                }
+            }
+            out += "}";
+            return out;
+        }
+        default: return "<" + std::string("value") + ">";
+    }
+}
+
+bool ValueEquals(const Value& a, const Value& b) {
+    if (a.type != b.type) return false;
+    switch (a.type) {
+        case ValueType::Nil:    return true;
+        case ValueType::Bool:   return a.b == b.b;
+        case ValueType::Number: return a.n == b.n;
+        case ValueType::String: {
+            auto* sa = static_cast<StringObj*>(a.obj);
+            auto* sb = static_cast<StringObj*>(b.obj);
+            return sa->data == sb->data;
+        }
+        case ValueType::List: {
+            auto* la = static_cast<ListObj*>(a.obj);
+            auto* lb = static_cast<ListObj*>(b.obj);
+            if (la->items.size() != lb->items.size()) return false;
+            for (size_t i = 0; i < la->items.size(); ++i) {
+                if (!ValueEquals(la->items[i], lb->items[i])) return false;
+            }
+            return true;
+        }
+        case ValueType::Dict: {
+            auto* da = static_cast<DictObj*>(a.obj);
+            auto* db = static_cast<DictObj*>(b.obj);
+            if (da->entries.size() != db->entries.size()) return false;
+            for (size_t i = 0; i < da->entries.size(); ++i) {
+                auto it = db->index.find(da->entries[i].first);
+                if (it == db->index.end()) return false;
+                if (!ValueEquals(da->entries[i].second, db->entries[it->second].second)) return false;
+            }
+            return true;
+        }
+        default: return a.obj == b.obj;
+    }
 }
 
 size_t ValidateIntegerIndex(double n, const char* context) {

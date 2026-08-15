@@ -192,6 +192,30 @@ ava_value_t builtin_print(AvaVM* vm, const ava_value_t* args, size_t count, void
     return ToC(MakeNilV());
 }
 
+ava_value_t builtin_input(AvaVM* vm, const ava_value_t* args, size_t count, void*) {
+    std::string prompt;
+    if (count >= 1) {
+        prompt = ToDisplayString(FromC(args[0]));
+    }
+    ava::VM* raw_vm = reinterpret_cast<ava::VM*>(vm);
+    std::string line;
+    if (raw_vm) {
+        line = raw_vm->ReadLine(prompt);
+    } else {
+        if (!prompt.empty()) {
+            std::fputs(prompt.c_str(), stdout);
+            std::fflush(stdout);
+        }
+        char buf[4096];
+        if (std::fgets(buf, sizeof(buf), stdin)) {
+            line = buf;
+            if (!line.empty() && line.back() == '\n') line.pop_back();
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+        }
+    }
+    return ToC(Value::String(line));
+}
+
 ava_value_t builtin_abs(AvaVM*, const ava_value_t* args, size_t count, void*) {
     if (count < 1) return ToC(Value::Number(0));
     return ToC(Value::Number(std::fabs(AsNumber(FromC(args[0])))));
@@ -326,6 +350,81 @@ ava_value_t builtin_import(AvaVM* vm, const ava_value_t* args, size_t count, voi
     auto* raw_vm = reinterpret_cast<VM*>(vm);
     Value result = raw_vm->DoImport(module_path, alias);
     return ToC(result);
+}
+
+ava_value_t builtin_slice(AvaVM*, const ava_value_t* args, size_t count, void*) {
+    if (count < 1) return ToC(Value::Nil());
+    Value obj = FromC(args[0]);
+    if (obj.type != ValueType::List && obj.type != ValueType::String) return ToC(Value::Nil());
+
+    auto get_num = [&](size_t i, double def) -> double {
+        if (i >= count) return def;
+        Value v = FromC(args[i]);
+        if (v.type == ValueType::Nil) return def;
+        if (v.type == ValueType::Number) return v.n;
+        if (v.type == ValueType::Bool) return v.b ? 1.0 : 0.0;
+        return def;
+    };
+
+    if (obj.type == ValueType::List) {
+        auto* list = static_cast<ListObj*>(obj.obj);
+        size_t len = list->items.size();
+        double start_d = get_num(1, 0);
+        double end_d = get_num(2, static_cast<double>(len));
+        double step_d = get_num(3, 1);
+        if (step_d == 0) step_d = 1;
+        long long start = static_cast<long long>(start_d);
+        long long end = static_cast<long long>(end_d);
+        long long step = static_cast<long long>(step_d);
+        if (start < 0) start += len;
+        if (end < 0) end += len;
+        if (start < 0) start = 0;
+        if (end > static_cast<long long>(len)) end = len;
+        if (end < start && step > 0) end = start;
+
+        auto* result = new ListObj();
+        if (step > 0) {
+            for (long long i = start; i < end; i += step) {
+                if (i >= 0 && i < static_cast<long long>(len)) {
+                    result->items.push_back(list->items[i]);
+                }
+            }
+        } else if (step < 0) {
+            for (long long i = start; i > end; i += step) {
+                if (i >= 0 && i < static_cast<long long>(len)) {
+                    result->items.push_back(list->items[i]);
+                }
+            }
+        }
+        Value out; out.type = ValueType::List; out.obj = result;
+        return ToC(out);
+    }
+
+    auto* str = static_cast<StringObj*>(obj.obj);
+    size_t len = str->data.size();
+    double start_d = get_num(1, 0);
+    double end_d = get_num(2, static_cast<double>(len));
+    double step_d = get_num(3, 1);
+    if (step_d == 0) step_d = 1;
+    long long start = static_cast<long long>(start_d);
+    long long end = static_cast<long long>(end_d);
+    long long step = static_cast<long long>(step_d);
+    if (start < 0) start += len;
+    if (end < 0) end += len;
+    if (start < 0) start = 0;
+    if (end > static_cast<long long>(len)) end = len;
+
+    std::string result;
+    if (step > 0) {
+        for (long long i = start; i < end; i += step) {
+            if (i >= 0 && i < static_cast<long long>(len)) result += str->data[i];
+        }
+    } else if (step < 0) {
+        for (long long i = start; i > end; i += step) {
+            if (i >= 0 && i < static_cast<long long>(len)) result += str->data[i];
+        }
+    }
+    return ToC(Value::String(result));
 }
 
 } // extern "C"

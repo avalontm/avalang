@@ -2,6 +2,7 @@
 #define AVA_PLATFORM_LIN_THREAD_H
 
 #include "../interfaces/IThread.h"
+#include <thread>
 
 namespace ava {
 namespace platform {
@@ -20,6 +21,7 @@ public:
 
 private:
     ThreadFunc func_;
+    std::thread* thread_ = nullptr;
 };
 
 class LinThreadFactory : public IThreadFactory {

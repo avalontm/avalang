@@ -1,0 +1,42 @@
+print("=== aritmetica ===")
+a = 1 + 2
+print(a)
+b = 10 - 3
+print(b)
+c = 4 * 5
+print(c)
+d = 20 / 4
+print(d)
+e = 17 % 3
+print(e)
+f = 2 ** 10
+print(f)
+g = -5 + 8
+print(g)
+
+print("=== float ===")
+pi = 3.14
+r = 2.0
+area = pi * r * r
+print(area)
+print(pi + 1)
+
+print("=== string concat ===")
+s = "Hola" + " " + "Mundo"
+print(s)
+print("len: " + str(len(s)))
+
+print("=== bool ===")
+print(true)
+print(false)
+print(not true)
+print(true and false)
+print(true or false)
+print(1 < 2)
+print(2 <= 2)
+print(3 > 2)
+print(3 >= 3)
+print(1 == 1)
+print(1 != 2)
+
+print("=== DONE ===")

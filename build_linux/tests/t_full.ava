@@ -1,0 +1,158 @@
+func check(name, got, expected)
+    if got == expected then
+        print("[OK] " + name)
+    else
+        print("[FAIL] " + name + " -> esperado=" + str(expected) + " actual=" + str(got))
+    end
+end
+
+print("=== 1. CLASES ===")
+
+class Animal
+    func __init__(name, sound)
+        self.name = name
+        self.sound = sound
+    end
+    func speak()
+        return self.name + " says " + self.sound
+    end
+end
+
+dog = Animal("Rex", "Woof")
+check("class init name", dog.name, "Rex")
+check("class init sound", dog.sound, "Woof")
+check("class method", dog.speak(), "Rex says Woof")
+
+class Dog : Animal
+    func __init__(name)
+        self.name = name
+        self.sound = "Woof"
+    end
+    func fetch()
+        return self.name + " fetches the ball"
+    end
+end
+
+puppy = Dog("Buddy")
+check("inherit method", puppy.speak(), "Buddy says Woof")
+check("subclass method", puppy.fetch(), "Buddy fetches the ball")
+
+class Counter
+    static count = 0
+    func __init__()
+        Counter.count = Counter.count + 1
+    end
+    static func total()
+        return Counter.count
+    end
+end
+
+Counter()
+Counter()
+Counter()
+check("static attr", Counter.total(), 3)
+
+class Secret
+    private secret = 42
+    func get()
+        return self.secret
+    end
+end
+
+s = Secret()
+check("private via method", s.get(), 42)
+
+print("=== 2. F-STRINGS ===")
+name = "World"
+check("fstring basic", $"Hello, {name}!", "Hello, World!")
+n3 = 42
+check("fstring expr", $"n={n3}", "n=42")
+check("fstring complex", $"1+1={1+1}", "1+1=2")
+
+print("=== 3. EXCEPCIONES ===")
+func tryCatch()
+    try
+        raise "mi error"
+    catch (e)
+        return "caught: " + str(e)
+    end
+end
+check("raise/catch", tryCatch(), "caught: mi error")
+
+func tryFinally()
+    result = ""
+    try
+        result = result + "try "
+    finally
+        result = result + "finally"
+    end
+    return result
+end
+check("try/finally", tryFinally(), "try finally")
+
+print("=== 4. LAMBDAS & CLOSURES ===")
+square = func(x)
+    return x * x
+end
+check("lambda block", square(7), 49)
+
+adder = (a) => a + 10
+check("short lambda", adder(5), 15)
+
+double = (x) => x * 2
+check("short lambda 2", double(21), 42)
+
+func makeCounter()
+    count = 0
+    return func()
+        count = count + 1
+        return count
+    end
+end
+
+c1 = makeCounter()
+c1()
+c1()
+check("closure", c1(), 3)
+
+print("=== 5. STRINGS ===")
+check("len str", len("hello"), 5)
+check("str upper", "hello".upper(), "HELLO")
+check("str lower", "HELLO".lower(), "hello")
+check("str trim", "  hi  ".trim(), "hi")
+check("str contains", "hello".contains("ell"), true)
+check("str starts", "hello".startsWith("he"), true)
+check("str ends", "hello".endsWith("lo"), true)
+check("str index", "hello".indexOf("l"), 2)
+check("str substr", "hello".substring(1, 3), "el")
+check("str split", "a,b,c".split(","), ["a", "b", "c"])
+check("str replace", "hello".replace("l", "L"), "heLLo")
+
+print("=== 6. FOR SOBRE STRING ===")
+acc4 = ""
+for ch in "abc" then
+    acc4 = acc4 + ch
+end
+check("for string", acc4, "abc")
+
+print("=== 7. CONTINUE ===")
+ct = 0
+for k in range(10) then
+    if k % 2 == 0 then
+        continue
+    end
+    ct = ct + 1
+end
+check("continue", ct, 5)
+
+print("=== 8. BREAK ===")
+br = 0
+for k in range(100) then
+    if k == 5 then
+        break
+    end
+    br = br + k
+end
+check("break", br, 10)
+
+print("=== DONE ===")

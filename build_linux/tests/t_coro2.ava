@@ -1,0 +1,8 @@
+func gen()
+    yield 1
+    yield 2
+    yield 3
+end
+g = coroutine(gen)
+print(str(resume(g)))
+print(str(resume(g)))

@@ -1,9 +1,5 @@
 #include "LinLibrary.h"
-
-// STUB implementation -- never actually loads a shared library.
-// TODO(Phase 5): dlopen/dlsym/dlclose,
-// mirroring core/platform/windows/LinLibrary.cpp. Needed by the
-// Extern/FFI system (core/src/vm/vm_extern.cpp).
+#include <dlfcn.h>
 
 namespace ava {
 namespace platform {
@@ -12,12 +8,21 @@ namespace linux_ {
 LinLibraryHandle::LinLibraryHandle(void* handle) : handle_(handle) {
 }
 
-void* LinLibraryHandle::ResolveSymbol(const std::string& /*symbol_name*/) {
-    return nullptr;
+LinLibraryHandle::~LinLibraryHandle() {
+    if (handle_) {
+        dlclose(handle_);
+    }
 }
 
-ILibraryHandle* LinLibraryLoader::Load(const std::string& /*library_name*/) {
-    return nullptr;
+void* LinLibraryHandle::ResolveSymbol(const std::string& symbol_name) {
+    if (!handle_) return nullptr;
+    return dlsym(handle_, symbol_name.c_str());
+}
+
+ILibraryHandle* LinLibraryLoader::Load(const std::string& library_name) {
+    void* handle = dlopen(library_name.c_str(), RTLD_NOW | RTLD_GLOBAL);
+    if (!handle) return nullptr;
+    return new LinLibraryHandle(handle);
 }
 
 void LinLibraryLoader::Unload(ILibraryHandle* handle) {

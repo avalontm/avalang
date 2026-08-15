@@ -1,0 +1,90 @@
+func check(name, got, expected)
+    if got == expected then
+        print("[OK] " + name)
+    else
+        print("[FAIL] " + name + " -> esperado=" + str(expected) + " actual=" + str(got))
+    end
+end
+
+print("=== COROUTINES ===")
+func gen()
+    yield 1
+    yield 2
+    yield 3
+end
+
+g = coroutine(gen)
+r1 = resume(g)
+r2 = resume(g)
+r3 = resume(g)
+r4 = resume(g)
+check("coroutine 1", r1, [1])
+check("coroutine 2", r2, [2])
+check("coroutine 3", r3, [3])
+check("coroutine done", r4, nil)
+
+print("=== NESTED FUNCTIONS ===")
+func outer(x)
+    func inner(y)
+        return y * 2
+    end
+    return inner(x)
+end
+check("nested func", outer(21), 42)
+
+print("=== RECURSION ===")
+func fib(n)
+    if n <= 1 then
+        return n
+    end
+    return fib(n-1) + fib(n-2)
+end
+check("fib(10)", fib(10), 55)
+
+print("=== WHILE LOOP ===")
+i = 0
+acc = 0
+while (i < 5)
+    acc = acc + i
+    i = i + 1
+end
+check("while loop", acc, 10)
+check("while counter", i, 5)
+
+print("=== AUG ASSIGN ===")
+n = 5
+n += 3
+check("aug +=", n, 8)
+n -= 2
+check("aug -=", n, 6)
+n *= 4
+check("aug *=", n, 24)
+n //= 5
+check("aug //=", n, 4)
+n %= 3
+check("aug %=", n, 1)
+
+print("=== SLICES ===")
+l = [10, 20, 30, 40, 50]
+check("slice [1:3]", l[1:3], [20, 30])
+check("slice [:2]", l[:2], [10, 20])
+check("slice [3:]", l[3:], [40, 50])
+
+print("=== LIST METHODS ===")
+check("list append", [1,2].append(3), [1,2,3])
+check("list contains", [1,2,3].contains(2), true)
+check("sum builtin", sum([1,2,3,4,5]), 15)
+check("max builtin", max([3,1,4,1,5]), 5)
+check("min builtin", min([3,1,4,1,5]), 1)
+check("sorted", sorted([3,1,2]), [1,2,3])
+
+print("=== DICT METHODS ===")
+d = {"a": 1, "b": 2, "c": 3}
+check("dict get", d["a"], 1)
+check("dict keys len", len(d.keys()), 3)
+check("dict containsKey", d.containsKey("b"), true)
+d["d"] = 4
+check("dict set", d["d"], 4)
+check("dict items len", len(d.items()), 4)
+
+print("=== DONE ===")

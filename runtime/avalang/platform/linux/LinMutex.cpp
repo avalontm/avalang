@@ -1,26 +1,30 @@
 #include "LinMutex.h"
 
-// STUB implementation -- not thread-safe yet.
-// TODO(Phase 5): pthread_mutex_init/lock/unlock/trylock,
-// mirroring core/platform/windows/LinMutex.cpp.
+#include <mutex>
 
 namespace ava {
 namespace platform {
 namespace linux_ {
 
-LinMutex::LinMutex() = default;
-LinMutex::~LinMutex() = default;
+LinMutex::LinMutex() : mutex_(new std::mutex()) {
+}
+
+LinMutex::~LinMutex() {
+    delete mutex_;
+    mutex_ = nullptr;
+}
 
 void LinMutex::Lock() {
-    // Not implemented.
+    if (mutex_) mutex_->lock();
 }
 
 void LinMutex::Unlock() {
-    // Not implemented.
+    if (mutex_) mutex_->unlock();
 }
 
 bool LinMutex::TryLock() {
-    return false;
+    if (!mutex_) return false;
+    return mutex_->try_lock();
 }
 
 } // namespace linux_

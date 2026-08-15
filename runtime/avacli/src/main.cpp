@@ -13,6 +13,8 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 #define AVA_CLI_VERSION "0.1.0"
@@ -41,6 +43,17 @@ std::string ModulesDirNextToExecutable() {
         size_t sep = path.find_last_of("/\\");
         if (sep != std::string::npos) {
             return path.substr(0, sep) + "\\modules";
+        }
+    }
+#else
+    char exe_path[4096];
+    ssize_t n = ::readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (n > 0) {
+        exe_path[n] = '\0';
+        std::string path(exe_path);
+        size_t sep = path.find_last_of('/');
+        if (sep != std::string::npos) {
+            return path.substr(0, sep) + "/modules";
         }
     }
 #endif
@@ -238,7 +251,44 @@ int main(int argc, char** argv) {
     char* error = nullptr;
     AvaModule* module = ava_compile(vm, buffer.str().c_str(), argv[1], &error);
     if (!module) {
-        std::fprintf(stderr, "compile error: %s\n", error ? error : "unknown error");
+        std::string err_msg = error ? error : "unknown error";
+        if (err_msg.substr(0, 9) == "error at ") {
+            std::fprintf(stderr, "%s\n", err_msg.c_str());
+        } else {
+            int err_line = ava_last_error_line(vm);
+            int err_col = ava_last_error_column(vm);
+            char* err_src = ava_last_error_source(vm);
+            if (err_line > 0 && err_col > 0) {
+                std::fprintf(stderr, "error at %s:%d:%d: %s\n",
+                             err_src ? err_src : argv[1], err_line, err_col,
+                             err_msg.c_str());
+                std::ifstream src_file(argv[1]);
+                if (src_file) {
+                    std::string src_line;
+                    int cur = 1;
+                    while (std::getline(src_file, src_line)) {
+                        if (cur == err_line) {
+                            if (!src_line.empty() && src_line.back() == '\r') src_line.pop_back();
+                            std::fprintf(stderr, "    %d | %s\n", err_line, src_line.c_str());
+                            size_t indent = 5 + std::to_string(err_line).size();
+                            std::fprintf(stderr, "%*s", static_cast<int>(indent), "");
+                            for (int i = 1; i < err_col; ++i) {
+                                if (i - 1 < static_cast<int>(src_line.size()) && (src_line[i-1] == '\t' || (unsigned char)src_line[i-1] < 32))
+                                    std::fputc(src_line[i-1], stderr);
+                                else
+                                    std::fputc(' ', stderr);
+                            }
+                            std::fprintf(stderr, "^\n");
+                            break;
+                        }
+                        ++cur;
+                    }
+                }
+            } else {
+                std::fprintf(stderr, "compile error: %s\n", err_msg.c_str());
+            }
+            if (err_src) ava_string_free(err_src);
+        }
         if (error) ava_string_free(error);
         ava_vm_destroy(vm);
         return 1;

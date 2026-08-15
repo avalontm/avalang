@@ -1,0 +1,13 @@
+l = [10, 20, 30]
+print("start while")
+i = 0
+while i < 3 end
+    print("l[" + str(i) + "] = " + str(l[i]))
+    i = i + 1
+end
+print("end while")
+print("start for")
+for x in l then
+    print("x = " + str(x))
+end
+print("end for")

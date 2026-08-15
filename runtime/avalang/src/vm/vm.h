@@ -90,6 +90,10 @@ public:
     void SetPrintSink(PrintSink sink);
     void Print(const std::string& text) const;
 
+    using InputSink = std::function<std::string(const std::string& prompt)>;
+    void SetInputSink(InputSink sink);
+    std::string ReadLine(const std::string& prompt) const;
+
     // Fase 6 completion (08_DESIGNER_VIEW_PLAN.md Anexo 9.17's pendientes
     // 1-2, "ui.alert"/"ui.navigate" -- necesitan definir el mecanismo de
     // callback host<->VM, no solo la firma). Mismo patrón EXACTO que
@@ -219,6 +223,7 @@ private:
     Value ResumeFromTop();
 
     PrintSink print_sink_;
+    InputSink input_sink_;
     AlertSink alert_sink_;
     NavigateSink navigate_sink_;
     ModuleFileHook before_module_read_hook_;

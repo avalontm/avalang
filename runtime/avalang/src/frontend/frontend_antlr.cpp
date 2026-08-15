@@ -164,10 +164,10 @@ std::shared_ptr<Proto> CompileSource(const std::string& source, const std::strin
         // collapsing to 0,0 like the generic std::exception catch below
         // does, or AvaStudio's HighlightError (editor_panel.cpp) has
         // nothing to highlight with.
-        throw CompileError("Compilation error: " + std::string(e.what()), e.line, e.column,
+        throw CompileError(std::string(e.what()), e.line, e.column,
                             e.source.empty() ? source_name : e.source);
     } catch (const std::exception& e) {
-        throw CompileError("Compilation error: " + std::string(e.what()), 0, 0, source_name);
+        throw CompileError(std::string(e.what()), 0, 0, source_name);
     }
 }
 
