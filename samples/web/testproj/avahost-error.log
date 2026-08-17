@@ -76,3 +76,278 @@
 ----- AvaHost log opened 2026-08-15 14:59:03 -----
 ----- AvaHost log opened 2026-08-15 15:22:19 -----
 [2026-08-15 15:22:35] [ERR] unhandled non-std exception while handling GET /.well-known/appspecific/com.chrome.devtools.json
+----- AvaHost log opened 2026-08-15 16:14:00 -----
+----- AvaHost log opened 2026-08-15 16:23:19 -----
+----- AvaHost log opened 2026-08-15 16:25:21 -----
+----- AvaHost log opened 2026-08-15 16:26:21 -----
+----- AvaHost log opened 2026-08-15 16:26:47 -----
+----- AvaHost log opened 2026-08-15 16:27:38 -----
+----- AvaHost log opened 2026-08-15 16:28:35 -----
+----- AvaHost log opened 2026-08-15 17:02:24 -----
+----- AvaHost log opened 2026-08-15 17:32:35 -----
+----- AvaHost log opened 2026-08-15 17:35:36 -----
+----- AvaHost log opened 2026-08-15 17:36:42 -----
+----- AvaHost log opened 2026-08-15 17:38:08 -----
+----- AvaHost log opened 2026-08-15 17:47:09 -----
+----- AvaHost log opened 2026-08-15 18:13:57 -----
+----- AvaHost log opened 2026-08-15 18:16:00 -----
+----- AvaHost log opened 2026-08-15 18:16:42 -----
+----- AvaHost log opened 2026-08-15 18:19:58 -----
+----- AvaHost log opened 2026-08-15 19:05:15 -----
+----- AvaHost log opened 2026-08-15 19:07:13 -----
+----- AvaHost log opened 2026-08-15 19:09:00 -----
+----- AvaHost log opened 2026-08-15 19:09:27 -----
+----- AvaHost log opened 2026-08-15 19:09:40 -----
+----- AvaHost log opened 2026-08-15 19:10:59 -----
+----- AvaHost log opened 2026-08-15 19:13:16 -----
+----- AvaHost log opened 2026-08-15 19:14:13 -----
+----- AvaHost log opened 2026-08-15 19:16:53 -----
+----- AvaHost log opened 2026-08-15 19:17:21 -----
+----- AvaHost log opened 2026-08-15 19:36:14 -----
+----- AvaHost log opened 2026-08-15 19:42:17 -----
+----- AvaHost log opened 2026-08-15 19:43:33 -----
+----- AvaHost log opened 2026-08-15 19:43:57 -----
+----- AvaHost log opened 2026-08-15 19:44:43 -----
+----- AvaHost log opened 2026-08-15 19:45:24 -----
+----- AvaHost log opened 2026-08-15 19:45:42 -----
+----- AvaHost log opened 2026-08-15 19:54:00 -----
+----- AvaHost log opened 2026-08-15 20:01:31 -----
+----- AvaHost log opened 2026-08-15 20:03:39 -----
+----- AvaHost log opened 2026-08-15 20:28:25 -----
+----- AvaHost log opened 2026-08-15 20:55:09 -----
+----- AvaHost log opened 2026-08-15 21:02:02 -----
+----- AvaHost log opened 2026-08-15 21:42:33 -----
+----- AvaHost log opened 2026-08-15 21:50:27 -----
+----- AvaHost log opened 2026-08-15 22:15:07 -----
+----- AvaHost log opened 2026-08-15 22:15:16 -----
+----- AvaHost log opened 2026-08-15 22:20:54 -----
+----- AvaHost log opened 2026-08-15 22:41:09 -----
+----- AvaHost log opened 2026-08-16 11:12:10 -----
+----- AvaHost log opened 2026-08-16 11:25:30 -----
+----- AvaHost log opened 2026-08-16 11:38:54 -----
+----- AvaHost log opened 2026-08-16 12:09:13 -----
+----- AvaHost log opened 2026-08-16 19:24:04 -----
+----- AvaHost log opened 2026-08-16 19:24:20 -----
+----- AvaHost log opened 2026-08-16 19:26:43 -----
+----- AvaHost log opened 2026-08-16 12:32:22 -----
+----- AvaHost log opened 2026-08-16 12:55:06 -----
+----- AvaHost log opened 2026-08-16 13:26:07 -----
+----- AvaHost log opened 2026-08-16 13:42:20 -----
+----- AvaHost log opened 2026-08-16 15:35:58 -----
+[2026-08-16 15:36:05] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 16) (line 87)
+[2026-08-16 15:36:06] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 16) (line 87)
+[2026-08-16 15:36:06] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 16) (line 87)
+[2026-08-16 15:36:07] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 16) (line 87)
+[2026-08-16 15:36:07] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 16) (line 87)
+----- AvaHost log opened 2026-08-16 15:38:58 -----
+----- AvaHost log opened 2026-08-16 15:53:29 -----
+----- AvaHost log opened 2026-08-16 16:01:38 -----
+[2026-08-16 16:01:58] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unexpected property directly inside 'template' (properties belong to the container, above 'template') (line 85)
+----- AvaHost log opened 2026-08-16 16:02:01 -----
+[2026-08-16 16:02:03] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unexpected property directly inside 'template' (properties belong to the container, above 'template') (line 85)
+[2026-08-16 16:02:03] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unexpected property directly inside 'template' (properties belong to the container, above 'template') (line 85)
+[2026-08-16 16:02:03] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unexpected property directly inside 'template' (properties belong to the container, above 'template') (line 85)
+[2026-08-16 16:02:03] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unexpected property directly inside 'template' (properties belong to the container, above 'template') (line 85)
+[2026-08-16 16:02:03] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unexpected property directly inside 'template' (properties belong to the container, above 'template') (line 85)
+[2026-08-16 16:02:04] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unexpected property directly inside 'template' (properties belong to the container, above 'template') (line 85)
+[2026-08-16 16:02:04] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unexpected property directly inside 'template' (properties belong to the container, above 'template') (line 85)
+[2026-08-16 16:02:04] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unexpected property directly inside 'template' (properties belong to the container, above 'template') (line 85)
+[2026-08-16 16:02:04] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unexpected property directly inside 'template' (properties belong to the container, above 'template') (line 85)
+[2026-08-16 16:02:04] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unexpected property directly inside 'template' (properties belong to the container, above 'template') (line 85)
+[2026-08-16 17:56:31] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 17:56:42] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 17:56:42] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 17:56:42] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+----- AvaHost log opened 2026-08-16 18:01:01 -----
+[2026-08-16 18:01:05] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+----- AvaHost log opened 2026-08-16 18:13:40 -----
+[2026-08-16 18:13:42] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:13:43] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:13:43] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:13:43] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:15:30] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+----- AvaHost log opened 2026-08-16 18:19:20 -----
+[2026-08-16 18:19:22] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:19:23] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:21:58] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+----- AvaHost log opened 2026-08-16 18:26:32 -----
+[2026-08-16 18:26:33] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:26:34] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:26:39] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:26:39] [ERR] avaui render failed for .\samples\web\testproj\layouts\500.avaui: [parse page] unknown top-level block: meta (.\samples\web\testproj\layouts\500.avaui:1:1)
+error at .\samples\web\testproj\layouts\500.avaui:1:1: unknown top-level block: meta
+    1 | meta
+      ^~~~
+
+[2026-08-16 18:26:39] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:26:39] [ERR] avaui render failed for .\samples\web\testproj\layouts\500.avaui: [parse page] unknown top-level block: meta (.\samples\web\testproj\layouts\500.avaui:1:1)
+error at .\samples\web\testproj\layouts\500.avaui:1:1: unknown top-level block: meta
+    1 | meta
+      ^~~~
+
+[2026-08-16 18:26:45] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+----- AvaHost log opened 2026-08-16 18:29:11 -----
+[2026-08-16 18:29:13] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:29:13] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:29:14] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:33:15] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+----- AvaHost log opened 2026-08-16 18:33:45 -----
+[2026-08-16 18:33:45] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:33:47] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:36:24] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:36:26] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:36:26] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:36:26] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:36:26] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:36:26] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+----- AvaHost log opened 2026-08-16 18:41:31 -----
+[2026-08-16 18:41:32] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:41:32] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:41:33] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:41:34] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:41:34] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+
+[2026-08-16 18:41:34] [ERR] avaui render failed for .\samples\web\testproj\routes\pos.avaui: [parse page] unterminated component block (expected 'end' at column 24) (.\samples\web\testproj\routes\pos.avaui:86:21)
+error at .\samples\web\testproj\routes\pos.avaui:86:21: unterminated component block (expected 'end' at column 24)
+    86 | 					end	
+       					   	^
+

@@ -176,7 +176,7 @@ std::shared_ptr<IRenderNode> RenderTree::BuildComponent(IComponent* component,
         DecomposeIcon(component, std::static_pointer_cast<RenderNode>(renderNode), layoutEngine);
     } else if (typeName == "Dialog") {
         DecomposeDialog(component, std::static_pointer_cast<RenderNode>(renderNode), layoutEngine);
-    } else if (typeName == "ScrollView") {
+    } else if (typeName == "ScrollView" || typeName == "ListView") {
         DecomposeScrollView(component, std::static_pointer_cast<RenderNode>(renderNode), layoutEngine);
     } else {
         DecomposeContainer(component, std::static_pointer_cast<RenderNode>(renderNode), layoutEngine);

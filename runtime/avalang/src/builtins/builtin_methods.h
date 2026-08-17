@@ -24,6 +24,7 @@ ava_value_t builtin_list_pop(AvaVM* vm, const ava_value_t* args, size_t count, v
 ava_value_t builtin_list_push(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_list_insert(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_list_remove(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_list_removeAt(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_list_length(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_list_contains(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 

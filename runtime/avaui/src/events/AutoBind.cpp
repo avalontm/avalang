@@ -5,6 +5,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "components/IComponent.h"
 #include "components/PropertyValue.h"
@@ -82,11 +83,15 @@ std::set<std::string> CollectFunctionNames(const std::string& code) {
         };
         std::string t = trim(line);
         if (t.empty()) continue;
-        const std::string prefix = "function ";
-        if (t.size() > prefix.size() && t.compare(0, prefix.size(), prefix) == 0) {
+
+        static const std::vector<std::string> declPrefixes = {"func "};
+        for (const std::string& prefix : declPrefixes) {
+            if (t.size() <= prefix.size()) continue;
+            if (t.compare(0, prefix.size(), prefix) != 0) continue;
+
             std::string rest = t.substr(prefix.size());
             size_t paren = rest.find('(');
-            if (paren == std::string::npos) continue;
+            if (paren == std::string::npos) break;
             std::string fname = rest.substr(0, paren);
             auto trimName = [](std::string s) {
                 size_t a = s.find_first_not_of(" \t");
@@ -96,6 +101,7 @@ std::set<std::string> CollectFunctionNames(const std::string& code) {
             };
             fname = trimName(fname);
             if (!fname.empty()) names.insert(fname);
+            break;
         }
     }
     return names;

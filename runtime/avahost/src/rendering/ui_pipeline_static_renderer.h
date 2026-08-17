@@ -67,6 +67,17 @@ struct UiPipelineRenderOptions {
     // Gap C / Fase B: project root for dotted-path resolution.
     // Empty == import resolution falls back to componentsDir only.
     std::string projectRoot;
+
+    // wwwroot/ (StaticFileServer's root, see app.cpp's staticFiles_)
+    // -- threaded through so HTMLRenderer can write each referenced
+    // font's bytes out to `<wwwrootDir>/fonts/` and link to it with a
+    // plain `url("/fonts/...")` instead of embedding it as a base64
+    // data: URI (see HTMLRenderer::EmitFontFaceRules). Empty falls
+    // back to the previous inline-base64 behavior -- callers that
+    // don't have a static file server to serve from (CLI
+    // render-static, tests) still get a fully self-contained HTML
+    // string.
+    std::string wwwrootDir;
 };
 
 bool RenderAvauiStatic(const std::string& avauiSource, const UiPipelineRenderOptions& options,

@@ -57,7 +57,8 @@ void BaseRenderer::ProcessCommands(const std::vector<RenderCommand>& commands) {
                     cmd.drawText.color,
                     cmd.drawText.clickHandler,
                     cmd.drawText.className,
-                    cmd.drawText.maxWidth
+                    cmd.drawText.maxWidth,
+                    cmd.drawText.wrap
                 );
                 break;
 
@@ -150,9 +151,10 @@ void BaseRenderer::DrawText(
     const Color& color,
     const std::string& clickHandler,
     const std::string& className,
-    float maxWidth
+    float maxWidth,
+    bool wrap
 ) {
-    OnDrawText(x, y, text, fontSize, fontName, color, clickHandler, className, maxWidth);
+    OnDrawText(x, y, text, fontSize, fontName, color, clickHandler, className, maxWidth, wrap);
 }
 
 void BaseRenderer::DrawImage(

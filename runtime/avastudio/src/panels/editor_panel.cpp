@@ -982,15 +982,18 @@ void ToggleTabViewMode(EditorTab& tab) {
 
     design::DesignDocument parsed_doc;
     std::string parse_error;
-    if (design::ParseAvauiText(tab.GetText(), parsed_doc, parse_error)) {
+    avalang::ui::parser::ParseErrorInfo parse_error_info;
+    if (design::ParseAvauiText(tab.GetText(), parsed_doc, parse_error, tab.file_path, &parse_error_info)) {
         tab.design = std::move(parsed_doc);
         tab.design.selected_node_id.clear();
         tab.avaui_load_error.clear();
         tab.view_mode = TabViewMode::Design;
     } else {
-
-
-
+        // Fase 4: same machinery already used for .ava errors -- jump to
+        // the offending line/column and mark it, instead of only showing
+        // the flattened message in the Code-mode banner below.
+        HighlightError(state, tab.file_path, parse_error_info.line, parse_error_info.column,
+                        parse_error_info.line > 0 ? parse_error_info.message : parse_error);
         tab.avaui_load_error = parse_error;
     }
 }

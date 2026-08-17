@@ -1,0 +1,66 @@
+extends layouts.main
+
+import components.cartitem
+
+properties
+    title = "Cart Design Preview"
+end
+
+state
+    cart = [{name: "Espresso", qty: 2, subtotal: 90}, {name: "Latte", qty: 1, subtotal: 55}, {name: "Croissant", qty: 3, subtotal: 114}]
+end
+
+view
+    column
+        gap = 16
+
+        text
+            text = "Cart preview (design-time For expansion)"
+            style = "text.heading"
+            fontSize = 20
+        end
+
+        container
+            padding = 16
+            gap = 12
+
+            text
+                text = "Items resolved from a static state List, no VM involved"
+                textColor = "6B7280"
+                fontSize = 14
+                wrap = true
+            end
+
+            scrollview
+                direction = "vertical"
+                gap = 8
+                padding = 8
+                backgroundColor = "FFFFFF"
+
+                for item in cart
+                    CartItem(name = item.name, qty = item.qty, subtotal = item.subtotal, index = index)
+                end
+            end
+        end
+
+        text
+            text = "Same cart, via ListView (no explicit for)"
+            style = "text.heading"
+            fontSize = 20
+        end
+
+        container
+            padding = 16
+            gap = 12
+
+            ListView source = cart
+                direction = "vertical"
+                gap = 8
+                padding = 8
+                backgroundColor = "FFFFFF"
+
+                CartItem(name = item.name, qty = item.qty, subtotal = item.subtotal, index = index)
+            end
+        end
+    end
+end

@@ -45,6 +45,8 @@ ava_value_t builtin_len(AvaVM* vm, const ava_value_t* args, size_t count, void* 
 ava_value_t builtin_range(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_slice(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 
+ava_value_t builtin_setglobal(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+
 // __import__(module_path, alias) -- backs the `import` statement. The
 // compiler (core/src/compiler/compiler.cpp CompileImport) emits a
 // GETGLOBAL "__import__" + CALL for every `import x` / `import x as y`,

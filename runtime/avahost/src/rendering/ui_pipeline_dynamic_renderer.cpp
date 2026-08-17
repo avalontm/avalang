@@ -1,5 +1,6 @@
 #include "ui_pipeline_dynamic_renderer.h"
 
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -9,6 +10,7 @@
 
 #include "components/ComponentTree.h"
 #include "composition/ComposePageWithLayout.h"
+#include "events/AutoBind.h"
 #include "parser/AvauiParser.h"
 #include "parser/AvauiPropertyCoercion.h"
 #include "theme/ITheme.h"
@@ -39,6 +41,22 @@ namespace avahost {
 class VmStateBridge;
 
 namespace {
+
+std::string ResolvePageTitle(const avalang::ui::parser::ParsedAvaui& pageParsed,
+                              const avalang::ui::parser::ParsedAvaui* layoutParsed,
+                              const std::string& fallbackTitle) {
+    auto it = pageParsed.properties.find("title");
+    if (it != pageParsed.properties.end() && !it->second.empty()) {
+        return it->second;
+    }
+    if (layoutParsed) {
+        auto layoutIt = layoutParsed->properties.find("title");
+        if (layoutIt != layoutParsed->properties.end() && !layoutIt->second.empty()) {
+            return layoutIt->second;
+        }
+    }
+    return fallbackTitle;
+}
 
 bool ReadFile(const fs::path& path, std::string& out, std::string& outError) {
     std::ifstream in(path, std::ios::binary);
@@ -75,39 +93,26 @@ bool RenderTreeFragment(avalang::ui::ComponentTree* tree,
             return false;
         }
         substage = "RenderTreeFragment: apply theme";
-        // See ui_pipeline_static_renderer.cpp -- same app.ava
-        // `font "role" "name" "path"` overlay, same passthrough-when-empty
-        // ProjectTheme wrapper.
+
         avalang::ui::theme::ProjectTheme projectTheme(
             themeProvider->Current(),
             avalang::ui::theme::LoadProjectFontOverrides(options.projectRoot));
-        // See ui_pipeline_static_renderer.cpp / ProjectTheme::
-        // RegisterProjectFonts -- must run before RenderTheme::Apply,
-        // and must run on every RenderTreeFragment call (page AND
-        // layout), since each one builds its own throwaway
-        // ProjectTheme/HTMLRenderer and a component that sets
-        // `fontName` explicitly (e.g. "heading1") never triggers
-        // RenderTheme's own lazy registration.
         projectTheme.RegisterProjectFonts();
-        // See ui_pipeline_static_renderer.cpp -- same declared-style-
-        // file overlay (`style *` / `style <type>` blocks), same
-        // passthrough-when-empty stance.
         avalang::ui::theme::ProjectStyleSheet projectStyles =
             avalang::ui::theme::LoadProjectStyleOverrides(options.projectRoot);
         avalang::ui::RenderTheme::Apply(tree, &projectTheme, &projectStyles);
 
-        // See ui_pipeline_static_renderer.cpp -- same declared-
-        // animation-file overlay (`animation dialog:open`/`animation
-        // dialog:close` blocks), same passthrough-when-empty stance.
-        // This is the pipeline that actually renders testproj's
-        // dialog/modal on every open/close request, so this is where
-        // the override needs to reach HTMLRenderer for it to have any
-        // visible effect.
         avalang::ui::theme::ProjectAnimationSheet projectAnimations =
             avalang::ui::theme::LoadProjectAnimationOverrides(options.projectRoot);
 
         substage = "RenderTreeFragment: layout engine compute";
         auto layoutEngine = avalang::ui::LayoutEngine::Create();
+        if (stateBridge) {
+
+            layoutEngine->SetTextEvaluator([stateBridge](const std::string& raw) {
+                return stateBridge->EvalIdentifier(raw);
+            });
+        }
         avalang::ui::LayoutRect viewport{
             0.0, 0.0,
             static_cast<double>(options.viewportWidth),
@@ -157,22 +162,9 @@ bool RenderTreeFragment(avalang::ui::ComponentTree* tree,
             htmlRenderer->SetExtraHead(options.extraHead);
             htmlRenderer->SetExtraBodyEnd(options.extraBodyEnd);
             htmlRenderer->SetFragmentOnly(fragmentOnly);
-            // See ui_pipeline_static_renderer.cpp -- same state-CSS
-            // wiring. A no-op here whenever fragmentOnly is true,
-            // since EmitHTMLHeader (and its <style> block) isn't
-            // emitted for a fragment -- the initial full-page render
-            // already carries these rules.
             htmlRenderer->SetProjectStyles(&projectStyles);
-            // See ui_pipeline_static_renderer.cpp -- same animation-
-            // CSS wiring. A no-op here whenever fragmentOnly is true,
-            // since EmitHTMLHeader (and its <style>/@keyframes block)
-            // isn't emitted for a fragment -- the initial full-page
-            // render already carries these rules, and a
-            // dialog-open/dialog-close swap only ever changes the
-            // .ava-overlay-fragment markup itself (see
-            // EventScriptTag's applyHtml() in app.cpp), not the
-            // <style> block that defines how it animates.
             htmlRenderer->SetProjectAnimations(&projectAnimations);
+            htmlRenderer->SetWwwRootDir(options.wwwrootDir);
         }
         substage = "RenderTreeFragment: walk scene commands";
         avalang::ui::RenderCommandSink sink;
@@ -201,17 +193,6 @@ bool RenderTreeFragment(avalang::ui::ComponentTree* tree,
     return nullptr;
 }
 
-// Writes a TextBox/ComboBox's new client-side value into the VM state
-// key it's bound to, before the pending handler runs -- otherwise the
-// handler (and the re-render after it) still see the old value, since
-// the client only ever POSTs {handler}, never the control's own value.
-// `pendingCompId` is the id SceneCommandWalker now stamps onto the
-// rendered <input>/<select> as data-comp-id; `text` (TextBox) /
-// `selectedValue` (ComboBox) hold the raw bound identifier (e.g.
-// `text = username`), same string VmStateBridge::EvalIdentifier reads
-// on the way out. Only a bare identifier is supported -- anything else
-// (a literal, an expression) isn't safely rewritable here and is left
-// alone, same as if this function had never run.
 void ApplyPendingControlValue(VmStateBridge& stateBridge, avalang::ui::IComponent* root,
                                const std::string& pendingCompId, const std::string& pendingValue) {
     if (pendingCompId.empty()) return;
@@ -250,7 +231,7 @@ void ResolveImportsAndMergeState(UiComponentResolver& resolver,
     if (!parsed.tree) return;
 
     mergedState = parsed.state;
-    resolver.ResolveImports(parsed.tree.get(), parsed.imports, mergedState);
+    resolver.ResolveImports(parsed.tree.get(), parsed.imports, mergedState, /*expandLoops=*/false);
 }
 
 avalang::ui::IComponent* CloneComponentSubtree(const avalang::ui::IComponent* src,
@@ -292,6 +273,113 @@ void BakeCallSiteExpressions(RuntimeHost& host, avalang::ui::IComponent* node) {
 
     for (avalang::ui::IComponent* child : node->Children()) {
         BakeCallSiteExpressions(host, child);
+    }
+}
+
+std::vector<std::string> SplitHandlerArgs(const std::string& argsText) {
+    std::vector<std::string> out;
+    std::string current;
+    int depth = 0;
+    bool inString = false;
+    bool inSingleString = false;
+    for (size_t i = 0; i < argsText.size(); ++i) {
+        char c = argsText[i];
+        if (inString) {
+            current += c;
+            if (c == '\\' && i + 1 < argsText.size()) {
+                current += argsText[++i];
+            } else if (c == '"') {
+                inString = false;
+            }
+            continue;
+        }
+        if (inSingleString) {
+            current += c;
+            if (c == '\\' && i + 1 < argsText.size()) {
+                current += argsText[++i];
+            } else if (c == '\'') {
+                inSingleString = false;
+            }
+            continue;
+        }
+        if (c == '"') { inString = true; current += c; continue; }
+        if (c == '\'') { inSingleString = true; current += c; continue; }
+        if (c == '(') { ++depth; current += c; continue; }
+        if (c == ')') { --depth; current += c; continue; }
+        if (c == ',' && depth == 0) {
+            out.push_back(current);
+            current.clear();
+            continue;
+        }
+        current += c;
+    }
+    if (depth != 0 || inString || inSingleString) return {};
+    out.push_back(current);
+    return out;
+}
+
+bool IsAlreadyALiteral(const std::string& arg) {
+    if (arg.empty()) return true;
+    char first = arg.front();
+    if (first == '"' || first == '\'' ) return true;
+    if (first == '[' || first == '{') return true;
+    if (std::isdigit(static_cast<unsigned char>(first))) return true;
+    if (first == '-' && arg.size() > 1 && std::isdigit(static_cast<unsigned char>(arg[1]))) return true;
+    if (arg == "true" || arg == "false" || arg == "nil") return true;
+    return false;
+}
+
+void BakeEventHandlerExpressions(RuntimeHost& host, avalang::ui::IComponent* node) {
+    if (!node) return;
+
+    for (const auto& propName : node->PropertyNames()) {
+        if (!avalang::ui::IsEventPropertyName(propName)) continue;
+
+        const auto* prop = node->GetProperty(propName);
+        if (!prop || prop->Type() != avalang::ui::PropertyType::String) continue;
+
+        const std::string& handler = prop->AsString();
+        if (!avalang::ui::parser::LooksLikeCall(handler)) continue;
+
+        size_t open = handler.find('(');
+        size_t close = handler.rfind(')');
+        if (open == std::string::npos || close == std::string::npos || close <= open) continue;
+
+        const std::string callee = handler.substr(0, open);
+        const std::string argsText = handler.substr(open + 1, close - open - 1);
+
+        std::vector<std::string> args = SplitHandlerArgs(argsText);
+        if (args.empty() && !argsText.empty()) continue;
+
+        std::ostringstream rebuilt;
+        rebuilt << callee << "(";
+        bool anyChanged = false;
+        for (size_t i = 0; i < args.size(); ++i) {
+            if (i) rebuilt << ", ";
+            std::string arg;
+            {
+                size_t a = args[i].find_first_not_of(" \t\r\n");
+                size_t b = args[i].find_last_not_of(" \t\r\n");
+                arg = (a == std::string::npos) ? std::string() : args[i].substr(a, b - a + 1);
+            }
+            if (arg.empty() || IsAlreadyALiteral(arg)) { rebuilt << arg; continue; }
+
+            bool ok = false;
+            std::string literal = host.EvalExprToLiteral(arg, ok);
+            if (!ok) { rebuilt << arg; continue; }
+
+            rebuilt << literal;
+            anyChanged = true;
+        }
+        rebuilt << ")";
+
+        if (anyChanged) {
+            node->SetProperty(propName, avalang::ui::PropertyValue(rebuilt.str()));
+        }
+    }
+
+    for (avalang::ui::IComponent* child : node->Children()) {
+        BakeEventHandlerExpressions(host, child);
     }
 }
 
@@ -366,33 +454,53 @@ void ExpandControlFlow(RuntimeHost& host, UiComponentResolver& resolver,
                 }
             }
             ExpandControlFlow(host, resolver, tree, imports, mergedState, child);
+        } else if (child->TypeName() == "ListView") {
+            const auto* sourceProp = child->GetProperty("source");
+            if (!sourceProp || sourceProp->Type() != avalang::ui::PropertyType::String) {
+                ExpandControlFlow(host, resolver, tree, imports, mergedState, child);
+                continue;
+            }
+            std::string iterExpr = sourceProp->AsString();
+
+            std::string loopVar = "item";
+            if (const auto* asProp = child->GetProperty("as")) {
+                if (asProp->Type() == avalang::ui::PropertyType::String && !asProp->AsString().empty()) {
+                    loopVar = asProp->AsString();
+                }
+            }
+
+            std::vector<avalang::ui::IComponent*> templateChildren = child->Children();
+            for (avalang::ui::IComponent* templateChild : templateChildren) {
+                child->RemoveChild(templateChild);
+            }
+
+            int count = EvalListLength(host, iterExpr);
+            for (int i = 0; i < count; ++i) {
+                host.EvalAssignGlobal(loopVar, iterExpr + "[" + std::to_string(i) + "]");
+                host.EvalAssignGlobal("index", std::to_string(i));
+
+                for (avalang::ui::IComponent* templateChild : templateChildren) {
+                    avalang::ui::IComponent* clone = CloneComponentSubtree(templateChild, child, tree);
+                    if (!clone) continue;
+                    BakeCallSiteExpressions(host, clone);
+
+                    if (UiComponentResolver::IsComponentCall(clone)) {
+                        std::vector<avalang::ui::IComponent*> resolved =
+                            resolver.ResolveCallSite(clone, tree, imports, mergedState);
+                        child->RemoveChild(clone);
+                        for (avalang::ui::IComponent* r : resolved) {
+                            child->AddChild(r);
+                        }
+                    }
+                }
+            }
+            ExpandControlFlow(host, resolver, tree, imports, mergedState, child);
         } else {
             ExpandControlFlow(host, resolver, tree, imports, mergedState, child);
         }
     }
 }
 
-// Splits a rendered page fragment into `mainHtml` (everything else)
-// and `overlayHtml` (every top-level `<div class="ava-overlay-fragment"
-// style="...">` block SceneCommandWalker's pass 2 emitted, one per open
-// overlay root -- e.g. a Dialog's backdrop plus its own box). Depth-aware
-// rather than a plain substring search: an open Dialog's own children are
-// themselves rendered as nested `<div>`s inside that marker, so the
-// matching close has to be found by tracking nesting depth, not just
-// the next literal "</div>".
-//
-// kMarkerPrefix/kMarkerSuffix must stay byte-for-byte identical to the
-// opening tag SceneCommandWalker.cpp's Pass 2 emits -- this is a plain
-// substring search, not an HTML attribute parse, so any drift between
-// the two silently stops this extraction from firing at all.
-//
-// The tag also carries a `data-dialog-id="<N>"` attribute (the source
-// component's numeric ComponentId, see SceneCommandWalker.cpp's Pass 2
-// comment on why: so app.cpp's applyHtml() can diff an overlay's id
-// between renders). That id is dynamic, so it can't be part of a fixed
-// literal -- match the prefix up to the attribute, then resume after
-// its value at the fixed `style="position:relative; ...">` suffix,
-// instead of a single literal that never matches any real id.
 void ExtractOverlayFragments(const std::string& html, std::string& mainHtml, std::string& overlayHtml) {
     mainHtml.clear();
     overlayHtml.clear();
@@ -410,8 +518,6 @@ void ExtractOverlayFragments(const std::string& html, std::string& mainHtml, std
         }
         size_t suffixPos = html.find(kMarkerSuffix, start + kMarkerPrefix.size());
         if (suffixPos == std::string::npos) {
-            // Malformed / no matching suffix -- keep the rest as main
-            // content rather than silently drop it.
             mainHtml += html.substr(pos);
             break;
         }
@@ -437,9 +543,6 @@ void ExtractOverlayFragments(const std::string& html, std::string& mainHtml, std
             }
         }
         if (closeAt == std::string::npos) {
-            // Unbalanced -- shouldn't happen given the marker always
-            // self-closes, but keep the rest as main content rather
-            // than silently drop it.
             mainHtml += html.substr(start);
             pos = html.size();
             break;
@@ -452,11 +555,14 @@ void ExtractOverlayFragments(const std::string& html, std::string& mainHtml, std
 } // namespace
 
 bool RenderAvauiDynamic(RuntimeHost& host, const std::string& avauiSource,
-                        const UiPipelineRenderOptions& options, std::string& outHtml, std::string& outError) {
+                        const UiPipelineRenderOptions& options, std::string& outHtml, std::string& outError,
+                        const std::string& avauiPath,
+                        avalang::ui::parser::ParseErrorInfo* outParseError) {
     std::string unusedStateJson;
     return RenderAvauiDynamicWithState(host, avauiSource, options, std::string(),
                                         std::string(), std::string(), std::string(),
-                                        unusedStateJson, outHtml, outError);
+                                        unusedStateJson, outHtml, outError, avauiPath,
+                                        outParseError);
 }
 
 bool RenderAvauiDynamicWithState(RuntimeHost& host, const std::string& avauiSource,
@@ -466,13 +572,16 @@ bool RenderAvauiDynamicWithState(RuntimeHost& host, const std::string& avauiSour
                                   const std::string& pendingCompId,
                                   const std::string& pendingValue,
                                   std::string& outStateJson,
-                                  std::string& outHtml, std::string& outError) {
+                                  std::string& outHtml, std::string& outError,
+                                  const std::string& avauiPath,
+                                  avalang::ui::parser::ParseErrorInfo* outParseError) {
     outHtml.clear();
     outError.clear();
     outStateJson.clear();
 
     try {
-        avalang::ui::parser::ParsedAvaui parsed = avalang::ui::parser::AvauiParser::Parse(avauiSource);
+        avalang::ui::parser::ParsedAvaui parsed =
+            avalang::ui::parser::AvauiParser::Parse(avauiSource, avauiPath);
         if (!parsed.tree || !parsed.tree->Root()) {
             outError = "parsed .avaui produced an empty component tree "
                        "(no top-level component inside 'view')";
@@ -519,8 +628,12 @@ bool RenderAvauiDynamicWithState(RuntimeHost& host, const std::string& avauiSour
         }
 
         ExpandControlFlow(host, resolver, parsed.tree.get(), parsed.imports, mergedState, root);
+        BakeEventHandlerExpressions(host, root);
 
-        if (!RenderTreeFragment(parsed.tree.get(), options, /*fragmentOnly=*/false,
+        UiPipelineRenderOptions pageOptions = options;
+        pageOptions.title = ResolvePageTitle(parsed, /*layoutParsed=*/nullptr, options.title);
+
+        if (!RenderTreeFragment(parsed.tree.get(), pageOptions, /*fragmentOnly=*/false,
                                 /*slotContent=*/std::string(), outHtml, outError,
                                 &stateBridge)) {
             return false;
@@ -529,6 +642,15 @@ bool RenderAvauiDynamicWithState(RuntimeHost& host, const std::string& avauiSour
         outStateJson = stateBridge.ExportJson();
         return true;
 
+    } catch (const avalang::ui::parser::ParseError& e) {
+        outError = e.what();
+        if (outParseError) {
+            outParseError->message = e.RawMessage();
+            outParseError->line = e.Line();
+            outParseError->column = e.Column();
+            outParseError->source = e.Source();
+        }
+        return false;
     } catch (const std::exception& e) {
         outError = e.what();
         return false;
@@ -538,12 +660,14 @@ bool RenderAvauiDynamicWithState(RuntimeHost& host, const std::string& avauiSour
 bool RenderAvauiDynamicWithLayout(const std::string& projectRoot, RuntimeHost& host,
                                    const std::string& avauiSource,
                                    const UiPipelineRenderOptions& options,
-                                   std::string& outHtml, std::string& outError) {
+                                   std::string& outHtml, std::string& outError,
+                                   const std::string& avauiPath,
+                                   avalang::ui::parser::ParseErrorInfo* outParseError) {
     std::string unusedStateJson;
     return RenderAvauiDynamicWithLayoutAndState(projectRoot, host, avauiSource, options,
                                                  std::string(), std::string(), std::string(),
                                                  std::string(), unusedStateJson,
-                                                 outHtml, outError);
+                                                 outHtml, outError, avauiPath, outParseError);
 }
 
 bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, RuntimeHost& host,
@@ -554,37 +678,25 @@ bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, Runtim
                                            const std::string& pendingCompId,
                                            const std::string& pendingValue,
                                            std::string& outStateJson,
-                                           std::string& outHtml, std::string& outError) {
+                                           std::string& outHtml, std::string& outError,
+                                           const std::string& avauiPath,
+                                           avalang::ui::parser::ParseErrorInfo* outParseError) {
     outHtml.clear();
     outError.clear();
     outStateJson.clear();
 
-    // Tags whatever stage is currently running so that any exception
-    // escaping it (including a bare std::bad_alloc, whose what() is
-    // just "bad allocation" with zero context) gets prefixed with
-    // *where* in the pipeline it happened -- previously the outer
-    // catch alone left no way to tell "bind state" apart from "render
-    // layout" from the client-facing 500 or the server log.
     std::string stage = "start";
 
     try {
         stage = "parse page";
-        avalang::ui::parser::ParsedAvaui parsed = avalang::ui::parser::AvauiParser::Parse(avauiSource);
+        avalang::ui::parser::ParsedAvaui parsed =
+            avalang::ui::parser::AvauiParser::Parse(avauiSource, avauiPath);
         if (!parsed.tree || !parsed.tree->Root()) {
             outError = "parsed .avaui produced an empty component tree "
                        "(no top-level component inside 'view')";
             return false;
         }
 
-        // The layout (`extends "..."`) is read and parsed here, before
-        // state is bound, so its own `import components.X` + `X()`
-        // calls (e.g. a Navbar()/Footer() declared in layouts/main.avaui
-        // itself, not in the page) go through the same import resolver
-        // as the page. Previously only `parsed` (the page) was resolved
-        // here -- the layout's tree was parsed and rendered further
-        // below without ever calling ResolveImportsAndMergeState on it,
-        // so any component imported *by the layout* rendered as an
-        // empty <div></div> no matter how correct the page itself was.
         avalang::ui::parser::ParsedAvaui layoutParsed;
         bool haveLayout = false;
         if (!parsed.extends.empty()) {
@@ -594,9 +706,16 @@ bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, Runtim
             std::string readError;
             if (ReadFile(layoutPath, layoutSource, readError)) {
                 try {
-                    layoutParsed = avalang::ui::parser::AvauiParser::Parse(layoutSource);
+                    layoutParsed =
+                        avalang::ui::parser::AvauiParser::Parse(layoutSource, layoutPath.string());
                 } catch (const avalang::ui::parser::ParseError& e) {
                     outError = std::string("layout parse error in ") + layoutPath.string() + ": " + e.what();
+                    if (outParseError) {
+                        outParseError->message = e.RawMessage();
+                        outParseError->line = e.Line();
+                        outParseError->column = e.Column();
+                        outParseError->source = e.Source();
+                    }
                     return false;
                 }
                 if (!layoutParsed.tree || !layoutParsed.tree->Root()) {
@@ -605,8 +724,6 @@ bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, Runtim
                 }
                 haveLayout = true;
             }
-            // A missing/unreadable layout file falls back to rendering
-            // just the page, same as before -- handled after render below.
         }
 
         stage = "resolve imports/state (page)";
@@ -617,10 +734,7 @@ bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, Runtim
             stage = "resolve imports/state (layout)";
             std::unordered_map<std::string, std::string> layoutState;
             ResolveImportsAndMergeState(resolver, layoutParsed, layoutState);
-            // Page state wins on key collisions -- same "first writer
-            // wins" rule UiComponentResolver::MergeStateMap already
-            // applies when a page and an imported component both
-            // declare the same state key.
+
             for (const auto& [key, value] : layoutState) {
                 mergedState.emplace(key, value);
             }
@@ -644,9 +758,6 @@ bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, Runtim
             avalang::ui::events::IEventDispatcher::Create());
         WireVmEventHandlers(root, *dispatcher, host, stateBridge);
         if (haveLayout) {
-            // A layout can have its own interactive elements (e.g. a
-            // Navbar with a click handler) independent of the page's --
-            // wire those too, onto the same dispatcher/VM/state bridge.
             stage = "wire event handlers (layout)";
             WireVmEventHandlers(layoutParsed.tree->Root(), *dispatcher, host, stateBridge);
         }
@@ -707,10 +818,13 @@ bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, Runtim
                                mergedState, layoutParsed.tree->Root());
         }
 
-        // Find where the layout's `slot()` placeholder actually lands
-        // before rendering the page: without this, the page has no way
-        // to know it should render into a Navbar-to-Footer strip
-        // instead of the full canvas.
+        stage = "bake event handler expressions (page)";
+        BakeEventHandlerExpressions(host, root);
+        if (haveLayout) {
+            stage = "bake event handler expressions (layout)";
+            BakeEventHandlerExpressions(host, layoutParsed.tree->Root());
+        }
+
         avalang::ui::LayoutRect slotRect{0.0, 0.0,
                                          static_cast<double>(options.viewportWidth),
                                          static_cast<double>(options.viewportHeight)};
@@ -728,16 +842,17 @@ bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, Runtim
 
         stage = "render page fragment";
         std::string pageHtml;
+        const std::string resolvedTitle =
+            ResolvePageTitle(parsed, haveLayout ? &layoutParsed : nullptr, options.title);
+
         UiPipelineRenderOptions pageOptions = options;
+        pageOptions.title = resolvedTitle;
         if (haveSlotRect) {
-            // Render the page against the space the layout actually
-            // gives it, not the full canvas -- otherwise its own
-            // background/content always start at (0,0) and cover
-            // whatever the layout placed above it (e.g. a Navbar).
             pageOptions.viewportWidth = static_cast<int>(slotRect.width);
             pageOptions.viewportHeight = static_cast<int>(slotRect.height);
         }
-        if (!RenderTreeFragment(parsed.tree.get(), pageOptions, /*fragmentOnly=*/true,
+
+        if (!RenderTreeFragment(parsed.tree.get(), pageOptions, /*fragmentOnly=*/haveLayout,
                                 /*slotContent=*/std::string(), pageHtml, outError,
                                 &stateBridge)) {
             return false;
@@ -752,23 +867,6 @@ bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, Runtim
         }
 
         if (haveSlotRect) {
-            // Position the already-rendered page fragment at the
-            // slot's actual coordinates within the layout instead of
-            // splicing it in raw at (0,0). `overflow: hidden` matches
-            // what every other sized container in this renderer does
-            // (see HTMLRenderer's `.ava-viewport`) so oversized page
-            // content clips instead of spilling past the Footer.
-            //
-            // An open Dialog's overlay (backdrop + its own box, see
-            // SceneCommandWalker's "ava-overlay-fragment" marker) is
-            // pulled out first and kept OUTSIDE this box: it needs to
-            // reach the full #ava-viewport -- Navbar and Footer
-            // included -- not just the Navbar-to-Footer strip the
-            // slot clips ordinary page content to. Still offset by
-            // the slot's own origin (same left/top as the box below)
-            // so the Dialog's own position:absolute coordinates,
-            // computed in the page's local coordinate space, land
-            // where the page fragment expects them on screen.
             std::string pageMainHtml, pageOverlayHtml;
             ExtractOverlayFragments(pageHtml, pageMainHtml, pageOverlayHtml);
 
@@ -785,19 +883,23 @@ bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, Runtim
             pageHtml = wrapped.str();
         }
 
-        // Layout text/click bindings now resolve against the same
-        // stateBridge as the page (previously `nullptr` here, so e.g.
-        // `{siteName}` inside layouts/main.avaui always rendered as
-        // literal text instead of evaluating against VM state).
         stage = "render layout";
-        return RenderTreeFragment(layoutParsed.tree.get(), options, /*fragmentOnly=*/false,
+        UiPipelineRenderOptions layoutOptions = options;
+        layoutOptions.title = resolvedTitle;
+        return RenderTreeFragment(layoutParsed.tree.get(), layoutOptions, /*fragmentOnly=*/false,
                                    pageHtml, outHtml, outError, &stateBridge);
 
     } catch (const std::bad_alloc&) {
-        // what() alone is just "bad allocation" -- always tag it with
-        // the stage so this doesn't come back as an unactionable dead
-        // end a second time.
         outError = std::string("bad allocation during stage [") + stage + "]";
+        return false;
+    } catch (const avalang::ui::parser::ParseError& e) {
+        outError = std::string("[") + stage + "] " + e.what();
+        if (outParseError) {
+            outParseError->message = e.RawMessage();
+            outParseError->line = e.Line();
+            outParseError->column = e.Column();
+            outParseError->source = e.Source();
+        }
         return false;
     } catch (const std::exception& e) {
         outError = std::string("[") + stage + "] " + e.what();

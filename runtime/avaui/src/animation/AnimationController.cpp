@@ -16,17 +16,11 @@ AnimationHandle AnimationControllerImpl::Play(ComponentId target, AnimatableProp
                                               AnimatableValue from, AnimatableValue to,
                                               float durationSeconds, EasingFunction easing,
                                               PlaybackMode mode) {
-    // Soft-gap validation (see AnimationController.h class comment):
-    // a bad call schedules nothing rather than crashing or silently
-    // animating the wrong kind of value.
     if (durationSeconds <= 0.0f) return kInvalidAnimationHandle;
     AnimatableKind expected = KindOf(property);
     if (from.kind != expected || to.kind != expected) return kInvalidAnimationHandle;
 
     Timeline timeline;
-    // Easing on the first keyframe is irrelevant -- SampleAt() applies
-    // a segment's easing to its *ending* keyframe (see Timeline.h),
-    // and there is no segment before t=0.
     timeline.AddKeyframe(Keyframe{0.0f, from, EasingFunction::Linear});
     timeline.AddKeyframe(Keyframe{durationSeconds, to, easing});
 
@@ -41,10 +35,6 @@ AnimationHandle AnimationControllerImpl::Play(ComponentId target, AnimatableProp
     AnimationHandle handle = nextHandle_++;
     active_.emplace(handle, std::move(anim));
 
-    // Apply the starting value immediately, same reasoning
-    // StateBinding documents for its own "push on creation" step: a
-    // freshly-started animation shouldn't wait for the next Update()
-    // to show its `from` value.
     auto it = active_.find(handle);
     if (it != active_.end()) {
         ApplyToScene(it->second, it->second.timeline.SampleAt(0.0f));
@@ -90,10 +80,7 @@ void AnimationControllerImpl::Update(float deltaSeconds) {
             case PlaybackMode::Once:
                 cursor = std::min(anim.elapsed, duration);
                 if (anim.elapsed >= duration) {
-                    // Reached the end: apply the final value once
-                    // more (harmless if identical to the last frame)
-                    // then stop advancing -- IsPlaying() reflects that
-                    // from here on, matching "Once" semantics.
+
                     anim.playing = false;
                 }
                 break;
@@ -120,10 +107,7 @@ void AnimationControllerImpl::ApplyToScene(const ActiveAnimation& anim,
                                             const AnimatableValue& sampled) {
     if (!sceneGraph_) return;
     auto node = sceneGraph_->FindNode(anim.target);
-    // Soft gap: the target ComponentId doesn't (yet) resolve to a
-    // SceneNode -- the animation's cursor still advanced in Update(),
-    // it just has nothing to write into this frame. See
-    // AnimationController.h class comment.
+
     if (!node) return;
 
     switch (anim.property) {
@@ -150,12 +134,6 @@ void AnimationControllerImpl::ApplyToScene(const ActiveAnimation& anim,
         }
     }
 
-    // Unconditional: SetLocalTransform() already marks dirty
-    // internally (see ui/src/scene/SceneNode.cpp), SetOpacity() does
-    // not (see ui/src/scene/SceneNode.h) -- calling this every time
-    // means the two code paths above never need to remember to do it
-    // themselves. Reuses Fase 7's existing dirty tracking, invents
-    // nothing new (per AVAUI_FASE19_PLAN.md, 19.3).
     node->MarkDirty();
 }
 

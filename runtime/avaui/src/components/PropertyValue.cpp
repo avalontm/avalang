@@ -17,6 +17,10 @@ PropertyValue::PropertyValue(std::string value)
 PropertyValue::PropertyValue(const char* value)
     : type_(PropertyType::String), string_(value ? value : "") {}
 
+PropertyValue::PropertyValue(PropertyList value)
+    : type_(PropertyType::List),
+      list_(std::make_shared<PropertyList>(std::move(value))) {}
+
 PropertyType PropertyValue::Type() const {
     return type_;
 }
@@ -31,6 +35,11 @@ double PropertyValue::AsNumber() const {
 
 const std::string& PropertyValue::AsString() const {
     return string_;
+}
+
+const PropertyList& PropertyValue::AsList() const {
+    static const PropertyList kEmpty;
+    return list_ ? *list_ : kEmpty;
 }
 
 } // namespace ui

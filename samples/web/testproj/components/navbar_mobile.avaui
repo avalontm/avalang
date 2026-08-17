@@ -4,15 +4,22 @@ view
         gap = 12
         borderWidth = 1
         borderColor = "E5E7EB"
+        backgroundColor = "FFFFFF"
+        margin = 0
 
         text
             text = "AvaHost"
             fontSize = 18
             align = "center"
+            # See desktop Navbar.avaui for why wrap+width, not just
+            # align, is what actually prevents the ellipsis clip.
+            wrap = true
+            width = 320
         end
 
         row
             gap = 16
+            align = "center"
 
             link
                 text = "Home"

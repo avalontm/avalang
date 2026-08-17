@@ -127,8 +127,25 @@ double FontRegistry::MeasureTextWidth(const std::string& text, double fontSize,
         return 0.0;
     }
 
-    const float scale = stbtt_ScaleForPixelHeight(const_cast<stbtt_fontinfo*>(&font->info),
-                                                    static_cast<float>(fontSize));
+    // Must scale by the font's em-square (unitsPerEm), NOT by
+    // stbtt_ScaleForPixelHeight's (ascent-descent) span. CSS/HTML
+    // `font-size: Npx` -- which is what every renderer this measurement
+    // has to agree with (HTMLRenderer's inline style, GdiRenderer's
+    // point size) actually means -- maps 1 em to N px, i.e.
+    // stbtt_ScaleForMappingEmToPixels. Using ScaleForPixelHeight instead
+    // silently divides every glyph's advance by (ascent-descent)/unitsPerEm
+    // instead of by 1: for a font like Poppins (ascent 1050, descent
+    // -350, unitsPerEm 1000) that's a scale of 48/1400 instead of
+    // 48/1000, i.e. every measured width comes out ~28.6% too narrow.
+    // That understates intrinsic width for EVERY piece of text (not
+    // just long/bound ones), so LayoutEngine boxes elements too small
+    // and the renderer's unconditional `white-space: nowrap; overflow:
+    // hidden; text-overflow: ellipsis` (see HTMLRenderer::OnDrawText)
+    // then clips text that would otherwise have fit fine -- this is
+    // why even short static labels like "500"/"Linea"/"Columna" were
+    // getting cut off, not just long dynamic values.
+    const float scale = stbtt_ScaleForMappingEmToPixels(const_cast<stbtt_fontinfo*>(&font->info),
+                                                          static_cast<float>(fontSize));
     double width = 0.0;
     for (std::size_t i = 0; i < text.size();) {
         // ASCII fast path; the embedded default (JetBrains Mono) and
@@ -205,8 +222,15 @@ double FontRegistry::LineHeight(double fontSize, const std::string& fontName) co
     if (font == nullptr) {
         return 0.0;
     }
-    const float scale = stbtt_ScaleForPixelHeight(const_cast<stbtt_fontinfo*>(&font->info),
-                                                    static_cast<float>(fontSize));
+    // Same em-square scale as MeasureTextWidth above, for the same
+    // reason: WrapTextLines/LayoutEngineImpl reserve vertical space
+    // using this value alongside horizontal widths from
+    // MeasureTextWidth, and HTMLRenderer positions each wrapped line's
+    // y-offset by it too -- all three have to agree with the browser's
+    // own (em-based) `font-size: Npx` line-height, not a
+    // ScaleForPixelHeight-flavored one.
+    const float scale = stbtt_ScaleForMappingEmToPixels(const_cast<stbtt_fontinfo*>(&font->info),
+                                                          static_cast<float>(fontSize));
     return (font->ascent - font->descent + font->lineGap) * scale;
 }
 

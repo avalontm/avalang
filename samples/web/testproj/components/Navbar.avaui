@@ -4,6 +4,13 @@ view
         gap = 16
         borderWidth = 1
         borderColor = "E5E7EB"
+        backgroundColor = "FFFFFF"
+        # `style *` in styles.ava sets margin = 4 for every component
+        # that doesn't declare its own -- fine for cards, wrong for a
+        # full-bleed navbar/footer bar. Without this, that global
+        # default eats 4px on every side, exposing the root's own
+        # theme "surface" gray around and above the bar.
+        margin = 0
         # 48 was too tight for an 18px title with 16px top+bottom
         # padding (only 16px of content height left over vs. the
         # ~22-24px a real line needs) -- the title got silently
@@ -11,15 +18,37 @@ view
         # std::min(intrinsic, available) on a non-Stretch cross axis.
         # 64 leaves enough room without changing the visual padding.
         height = 64
-        
+
         text
             text = "AvaHost"
             fontSize = 18
-            align = "center"
+            align = "start"
+            # `wrap = true` + an explicit `width` moves this node off
+            # the ellipsis path entirely (HTMLRenderer::OnDrawLabel
+            # only sets text-overflow:ellipsis when wrap is false --
+            # see its comment). Without an explicit width here this
+            # node falls back to Stretch (no `align` would have meant
+            # cross-axis Stretch), i.e. its box is whatever width its
+            # row slot happens to compute -- if that ever comes out
+            # narrower than "AvaHost" needs (proportional shrink from
+            # a crowded sibling row elsewhere in the tree, a narrow
+            # viewport, etc.) the label silently loses characters
+            # behind "...". wrap=true+width guarantees the full text
+            # always paints -- worst case it wraps to a 2nd line,
+            # it never loses a character.
+            wrap = true
+            width = 200
         end
 
         row
             grow = true
+            # Any row/column without its own backgroundColor gets the
+            # theme's "surface" gray by default (RenderTheme.cpp's
+            # ApplyTypeDefaults) -- fine for a real container, but this
+            # one exists only to push the links to the right and was
+            # rendering as a solid gray bar. FFFFFF00 = fully
+            # transparent white, opts it out of that default.
+            backgroundColor = "FFFFFF00"
         end
 
         row

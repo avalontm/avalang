@@ -58,7 +58,8 @@ public:
         const Color& color,
         const std::string& clickHandler = std::string(),
         const std::string& className = std::string(),
-        float maxWidth = -1.0f
+        float maxWidth = -1.0f,
+        bool wrap = false
     ) override;
 
     void DrawImage(

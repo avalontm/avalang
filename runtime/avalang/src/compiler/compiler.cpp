@@ -393,12 +393,13 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
         auto reg = AllocReg();
         Emit(OpCode::NEWDICT, reg);
         for (auto& [key, val] : d->entries) {
+            uint16_t regs_before = next_reg_;
             auto val_reg = CompileExpr(val);
             auto key_idx = AddConstant(MakeString(key));
             auto saved_idx = AllocReg();
             Emit(OpCode::LOADK, saved_idx, key_idx);
             Emit(OpCode::SETINDEX, reg, saved_idx, val_reg);
-            FreeRegs(2);
+            FreeRegs(next_reg_ - (reg + 1));
         }
         return reg;
     }

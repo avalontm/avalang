@@ -85,6 +85,23 @@ ava_value_t builtin_list_remove(AvaVM* vm, const ava_value_t* args, size_t count
     return args[0];
 }
 
+ava_value_t builtin_list_removeAt(AvaVM* vm, const ava_value_t* args, size_t count, void*) {
+    if (!args || count < 2) return MakeNil();
+    if (args[0].type != AVA_LIST) return MakeNil();
+    if (args[1].type != AVA_NUMBER) return MakeNil();
+
+    size_t len = ava_list_length(vm, args[0]);
+    long idx = static_cast<long>(args[1].as.n);
+    if (idx < 0 || static_cast<size_t>(idx) >= len) return MakeNil();
+
+    ava_value_t removed = ava_list_get(vm, args[0], static_cast<size_t>(idx));
+    ava_value_t result;
+    result.type = removed.type;
+    result.as = removed.as;
+    ava_list_remove(vm, args[0], static_cast<size_t>(idx));
+    return result;
+}
+
 ava_value_t builtin_list_length(AvaVM* vm, const ava_value_t* args, size_t, void*) {
     if (!args) return MakeNil();
     if (args[0].type != AVA_LIST) return MakeNil();

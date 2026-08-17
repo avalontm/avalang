@@ -112,19 +112,13 @@ void ImGuiRenderer::OnDrawText(float x, float y, const char* text, float fontSiz
                                const char* fontName, const Color& color,
                                const std::string& clickHandler,
                                const std::string& className,
-                               float maxWidth) {
+                               float maxWidth, bool wrap) {
     (void)clickHandler;
     (void)className;
-    // `fontName` is ignored for now -- ImGui has no trivial "load a
-    // font by name at runtime" here, same "desktop stub" gap
-    // GdiRenderer::OnDrawText documents for its own font handling,
-    // just on the opposite axis (GdiRenderer picks the family,
-    // ignores nothing; this picks the loaded ImGui font, ignores the
-    // family). See docs/AVAUI_DESIGNER_REAL_RENDER_PLAN.md Fase 3.
     (void)fontName;
     if (!drawList_ || !text) return;
 
-    const float wrapWidth = (maxWidth > 0.0f) ? maxWidth : 0.0f;
+    const float wrapWidth = (wrap && maxWidth > 0.0f) ? maxWidth : 0.0f;
     drawList_->AddText(ImGui::GetFont(), fontSize, P(x, y), ToImU32(color), text,
                         nullptr, wrapWidth);
 }
@@ -197,7 +191,7 @@ void ImGuiRenderer::OnDrawButton(float x, float y, float width, float height,
     if (offsetY < 0.0f) offsetY = 0.0f;
 
     OnDrawText(x + offsetX, y + offsetY, text, fontSize, fontName, textColor, std::string(),
-               std::string(), -1.0f);
+               std::string(), -1.0f, false);
 }
 
 } // namespace avalang::ui

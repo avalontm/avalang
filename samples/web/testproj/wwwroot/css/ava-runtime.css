@@ -1,0 +1,5 @@
+html, body { margin: 0; padding: 0; width: 100%; height: 100%; font-family: "AvaDefaultFont", sans-serif; overflow: hidden; background-color: #E5E5E5; }
+#ava-scaler { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; overflow: hidden; }
+.ava-viewport { width: 100%; height: 100%; position: fixed; left: 0; top: 0; overflow: hidden; }
+.ava-element { position: absolute; box-sizing: border-box; overflow: hidden; }
+.ava-button { margin: 0; padding: 0; display: flex; align-items: center; justify-content: center; cursor: pointer; -webkit-appearance: none; -moz-appearance: none; appearance: none; }

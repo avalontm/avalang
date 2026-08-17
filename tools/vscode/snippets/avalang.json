@@ -1,0 +1,127 @@
+{
+  "if": {
+    "prefix": "if",
+    "body": [
+      "if ${1:condition} then",
+      "\t$0",
+      "end"
+    ],
+    "description": "if ... then ... end"
+  },
+  "if-else": {
+    "prefix": "ifelse",
+    "body": [
+      "if ${1:condition} then",
+      "\t$2",
+      "else",
+      "\t$0",
+      "end"
+    ],
+    "description": "if ... then ... else ... end"
+  },
+  "if-elif-else": {
+    "prefix": "ifelif",
+    "body": [
+      "if ${1:condition} then",
+      "\t$2",
+      "elif ${3:condition} then",
+      "\t$4",
+      "else",
+      "\t$0",
+      "end"
+    ],
+    "description": "if ... then ... elif ... then ... else ... end"
+  },
+  "while": {
+    "prefix": "while",
+    "body": [
+      "while ${1:condition}",
+      "\t$0",
+      "end"
+    ],
+    "description": "while ... end"
+  },
+  "for-in": {
+    "prefix": "for",
+    "body": [
+      "for ${1:item} in ${2:iterable} then",
+      "\t$0",
+      "end"
+    ],
+    "description": "for ... in ... then ... end"
+  },
+  "func": {
+    "prefix": "func",
+    "body": [
+      "func ${1:name}(${2:params})",
+      "\t$0",
+      "end"
+    ],
+    "description": "func ... end"
+  },
+  "class": {
+    "prefix": "class",
+    "body": [
+      "class ${1:Name}",
+      "\t$0",
+      "end"
+    ],
+    "description": "class ... end"
+  },
+  "class-heritage": {
+    "prefix": "classext",
+    "body": [
+      "class ${1:Name}: ${2:Parent}",
+      "\t$0",
+      "end"
+    ],
+    "description": "class Name: Parent ... end"
+  },
+  "try-catch": {
+    "prefix": "try",
+    "body": [
+      "try",
+      "\t$1",
+      "catch (${2:err})",
+      "\t$0",
+      "end"
+    ],
+    "description": "try ... catch (err) ... end"
+  },
+  "try-catch-finally": {
+    "prefix": "tryf",
+    "body": [
+      "try",
+      "\t$1",
+      "catch (${2:err})",
+      "\t$3",
+      "finally",
+      "\t$0",
+      "end"
+    ],
+    "description": "try ... catch (err) ... finally ... end"
+  },
+  "extern": {
+    "prefix": "extern",
+    "body": [
+      "extern \"${1:libname}\" as ${2:Alias}",
+      "\tfunc ${0:name}(${3:params})",
+      "end"
+    ],
+    "description": "extern \"lib\" as Alias ... end"
+  },
+  "lambda": {
+    "prefix": "lambda",
+    "body": [
+      "(${1:params}) => $0"
+    ],
+    "description": "short lambda expression"
+  },
+  "fstring": {
+    "prefix": "fstring",
+    "body": [
+      "$\"${1:text}{${0:expr}}\""
+    ],
+    "description": "f-string with interpolation"
+  }
+}

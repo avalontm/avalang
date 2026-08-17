@@ -62,12 +62,14 @@ DesignDocument NewBlankAvauiDocument() {
     return doc;
 }
 
-bool ParseAvauiText(const std::string& text, DesignDocument& out_doc, std::string& out_error) {
+bool ParseAvauiText(const std::string& text, DesignDocument& out_doc, std::string& out_error,
+                     const std::string& sourcePath,
+                     avalang::ui::parser::ParseErrorInfo* out_info) {
     out_doc = DesignDocument{};
     out_doc.tree = avalang::ui::ComponentTree::Create();
 
     try {
-        auto parsed = avalang::ui::parser::AvauiParser::Parse(text);
+        auto parsed = avalang::ui::parser::AvauiParser::Parse(text, sourcePath);
         out_doc.code_behind = parsed.code;
         for (const auto& [k, v] : parsed.state) {
             out_doc.initial_state.push_back(PropertyRow{k, v});
@@ -78,6 +80,19 @@ bool ParseAvauiText(const std::string& text, DesignDocument& out_doc, std::strin
         if (parsed.tree && parsed.tree->Root()) {
             out_doc.tree = std::move(parsed.tree);
         }
+    } catch (const avalang::ui::parser::ParseError& e) {
+        // Caught separately from std::exception below (ParseError IS-A
+        // std::exception, so order matters) so callers that want the
+        // structured position -- editor_panel.cpp's HighlightError, via
+        // out_info -- can get it instead of only the flattened what().
+        out_error = e.what();
+        if (out_info) {
+            out_info->message = e.RawMessage();
+            out_info->line = e.Line();
+            out_info->column = e.Column();
+            out_info->source = e.Source();
+        }
+        return false;
     } catch (const std::exception& e) {
         out_error = e.what();
         return false;
@@ -86,7 +101,8 @@ bool ParseAvauiText(const std::string& text, DesignDocument& out_doc, std::strin
     return true;
 }
 
-bool LoadAvauiFile(const std::string& path, DesignDocument& out_doc, std::string& out_error) {
+bool LoadAvauiFile(const std::string& path, DesignDocument& out_doc, std::string& out_error,
+                    avalang::ui::parser::ParseErrorInfo* out_info) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
         out_error = "could not open " + path;
@@ -94,7 +110,7 @@ bool LoadAvauiFile(const std::string& path, DesignDocument& out_doc, std::string
     }
     std::ostringstream buf;
     buf << in.rdbuf();
-    return ParseAvauiText(buf.str(), out_doc, out_error);
+    return ParseAvauiText(buf.str(), out_doc, out_error, path, out_info);
 }
 
 bool SaveAvauiFile(const DesignDocument& doc, const std::string& path) {

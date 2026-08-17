@@ -229,7 +229,8 @@ void GdiRenderer::OnDrawText(
     const Color& color,
     const std::string& clickHandler,
     const std::string& className,
-    float maxWidth
+    float maxWidth,
+    bool wrap
 ) {
     (void)clickHandler;
     (void)className;
@@ -240,7 +241,7 @@ void GdiRenderer::OnDrawText(
     HFONT oldFont = static_cast<HFONT>(SelectObject(memDC_, font));
     SetTextColor(memDC_, ToColorRef(color));
 
-    if (maxWidth > 0.0f) {
+    if (wrap && maxWidth > 0.0f) {
         std::vector<std::string> lines = layout::WrapTextLines(
             std::string(text), fontSize, fontName ? fontName : std::string(), maxWidth);
         double lineHeight = layout::WrappedLineHeight(fontSize, fontName ? fontName : std::string());
@@ -249,6 +250,35 @@ void GdiRenderer::OnDrawText(
             TextOutA(memDC_, static_cast<int>(x), static_cast<int>(y + i * lineHeight),
                      line.c_str(), static_cast<int>(line.size()));
         }
+    } else if (maxWidth > 0.0f) {
+        RECT clip;
+        clip.left = static_cast<LONG>(x);
+        clip.top = static_cast<LONG>(y);
+        clip.right = static_cast<LONG>(x + maxWidth);
+        clip.bottom = static_cast<LONG>(y + fontSize * 1.5f);
+        SIZE extent{0, 0};
+        GetTextExtentPoint32A(memDC_, text, static_cast<int>(lstrlenA(text)), &extent);
+        std::string out = text;
+        if (extent.cx > static_cast<int>(maxWidth) && out.size() > 1) {
+            const std::string ellipsis = "...";
+            SIZE eExtent{0, 0};
+            GetTextExtentPoint32A(memDC_, ellipsis.c_str(), 3, &eExtent);
+            int target = static_cast<int>(maxWidth) - eExtent.cx;
+            if (target <= 0) {
+                out = ellipsis;
+            } else {
+                int lo = 0, hi = static_cast<int>(out.size());
+                while (lo < hi) {
+                    int mid = (lo + hi + 1) / 2;
+                    SIZE sExtent{0, 0};
+                    GetTextExtentPoint32A(memDC_, out.c_str(), mid, &sExtent);
+                    if (sExtent.cx <= target) lo = mid; else hi = mid - 1;
+                }
+                out = out.substr(0, lo) + ellipsis;
+            }
+        }
+        DrawTextA(memDC_, out.c_str(), static_cast<int>(out.size()), &clip,
+                  DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
     } else {
         TextOutA(memDC_, static_cast<int>(x), static_cast<int>(y), text, static_cast<int>(lstrlenA(text)));
     }
@@ -318,7 +348,7 @@ void GdiRenderer::OnDrawButton(
     if (offsetX < 0.0f) offsetX = 0.0f;
     if (offsetY < 0.0f) offsetY = 0.0f;
 
-    OnDrawText(x + offsetX, y + offsetY, text, fontSize, fontName, textColor, std::string(), std::string(), -1.0f);
+    OnDrawText(x + offsetX, y + offsetY, text, fontSize, fontName, textColor, std::string(), std::string(), -1.0f, false);
 }
 
 void GdiRenderer::OnDrawLink(

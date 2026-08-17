@@ -16,16 +16,6 @@
 namespace avalang {
 namespace ui {
 
-// Thrown by ComponentResolver when a call site fails validation
-// against the callee's declared `params` block (a required param is
-// missing, or an argument is passed that was never declared) -- see
-// ParamDeclaration's doc comment in AvauiParser.h. Only components
-// that declare a `params` block are validated at all; components
-// without one keep the old permissive behavior. Derives from
-// std::runtime_error so it's caught by the same generic
-// `catch (const std::exception&)` handlers that already catch
-// parser::ParseError around every render/resolve call site (see
-// ui_pipeline_dynamic_renderer.cpp).
 class AVA_UI_API ComponentResolveError : public std::runtime_error {
 public:
     explicit ComponentResolveError(const std::string& message)
@@ -40,9 +30,16 @@ public:
     ComponentResolver(ComponentResolver&&) = default;
     ComponentResolver& operator=(ComponentResolver&&) = default;
 
+    // expandLoops=true (default) statically expands "For"/"ListView" nodes
+    // using the literal initial state value — this is what AvaStudio's
+    // design canvas wants (no VM involved). Live runtime pipelines (avahost)
+    // must pass expandLoops=false so For/ListView templates are left intact
+    // for their own VM-driven, per-render expansion instead of being
+    // consumed here against the file's static initial state.
     void ResolveImports(ComponentTree* tree,
                         const std::vector<std::string>& imports,
-                        std::unordered_map<std::string, std::string>& mergedState);
+                        std::unordered_map<std::string, std::string>& mergedState,
+                        bool expandLoops = true);
 
     std::vector<IComponent*> ResolveCallSite(IComponent* callSite,
                                              ComponentTree* tree,
@@ -60,21 +57,6 @@ private:
     struct ImportMapEntry {
         std::string dottedPath;
         std::string resolvedFilePath;
-        // Empty for a plain `import components.confirmdialog`. Set to
-        // "dialog" for `import components.confirmdialog as dialog`: this
-        // both becomes the callable tag used to invoke the component in
-        // the view (`dialog()` instead of `ConfirmDialog()`) and the
-        // namespace prefix its own state variables merge into
-        // (`dialog.confirmDialogOpen` instead of a bare, page-global
-        // `confirmDialogOpen`) -- see MergeStateMap/BuildRenameMap in
-        // ComponentResolver.cpp for how each side of that is kept in
-        // sync, and ui_vm_state_bridge.cpp/runtime_host.cpp for how a
-        // dotted state key like "dialog.confirmDialogOpen" gets bound to
-        // a real dict global "dialog" at the AvaLang VM level, so a
-        // page's own `code` block can read/write it as
-        // `dialog.confirmDialogOpen` (ordinary AvaLang attribute syntax,
-        // resolved by the VM's existing generic Dict GETATTR/SETATTR --
-        // see OpGetAttr/OpSetAttr in vm_classes.cpp).
         std::string alias;
     };
     using ImportMap = std::unordered_map<std::string, ImportMapEntry>;
@@ -88,9 +70,20 @@ private:
     void ResolveChildrenOf(IComponent* parent,
                            ComponentTree* tree,
                            std::unordered_map<std::string, std::string>& mergedState,
-                           const ImportMap& importMap, int depth);
+                           const ImportMap& importMap, int depth,
+                           bool expandLoops = true);
 
     std::vector<IComponent*> ResolveOneCallSite(IComponent* callSite,
+                                                ComponentTree* tree,
+                                                std::unordered_map<std::string, std::string>& mergedState,
+                                                const ImportMap& importMap);
+
+    std::vector<IComponent*> ExpandForNode(IComponent* forNode,
+                                           ComponentTree* tree,
+                                           std::unordered_map<std::string, std::string>& mergedState,
+                                           const ImportMap& importMap);
+
+    std::vector<IComponent*> ExpandListViewNode(IComponent* listViewNode,
                                                 ComponentTree* tree,
                                                 std::unordered_map<std::string, std::string>& mergedState,
                                                 const ImportMap& importMap);
@@ -102,10 +95,6 @@ private:
     static void ApplyCallSiteOverrides(const IComponent* callSite,
                                         IComponent* clonedRoot);
 
-    // `alias` empty => unchanged behavior (bare keys, first-declared-wins).
-    // `alias` non-empty => every key from `addition` is merged in as
-    // "alias.key" instead, namespacing this component instance's state
-    // so two aliased imports of the same component never collide.
     static void MergeStateMap(std::unordered_map<std::string, std::string>& merged,
                               const std::unordered_map<std::string, std::string>& addition,
                               const std::string& alias = {});

@@ -13,7 +13,7 @@ const char* const* KnownComponentPropertyNames(std::size_t& count) {
         "group", "href", "data", "align", "justify", "padding",
         "margin", "gap", "width", "height", "radius", "borderRadius",
         "borderWidth", "background", "fill", "spacing", "grow",
-        "direction",
+        "direction", "as",
         "click", "onmouseenter", "onmouseleave", "onfocus", "onblur",
         "onkeydown", "onkeyup"
     };

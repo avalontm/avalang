@@ -39,14 +39,12 @@ view
                 fontSize = 18
             end
 
-            scrollview
+            ListView source = cart
                 direction = "vertical"
                 gap = 8
                 padding = 8
 
-                for item in cart
-                    CartItem(name = item.name, qty = item.qty, subtotal = item.price * item.qty, index = index)
-                end
+                CartItem(name = item.name, qty = item.qty, subtotal = item.price * item.qty, index = index)
             end
 
             row
@@ -66,6 +64,8 @@ view
                     text = "$" + total
                     style = "text.price"
                     fontSize = 22
+                    wrap = true
+                    width = 140
                 end
             end
         end

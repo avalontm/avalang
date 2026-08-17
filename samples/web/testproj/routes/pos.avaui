@@ -9,8 +9,8 @@ properties
 end
 
 state
-    cart = []
-    total = 0
+    cart = [{id: 7, name: "Cheesecake", price: 4.50, qty: 1}, {id: 6, name: "Medialuna", price: 1.80, qty: 3}]
+    total = 8.1
 end
 
 view
@@ -43,17 +43,15 @@ view
                     fontSize = 18
                 end
 
-                row
-                    gap = 12
+                grid
+                    columns = 5
+                    spacing = 12
+
                     ProductCard(name = "Cafe Americano", price = "2.50", productId = 1)
                     ProductCard(name = "Capuccino", price = "3.50", productId = 2)
                     ProductCard(name = "Latte", price = "3.80", productId = 3)
                     ProductCard(name = "Te Verde", price = "2.00", productId = 4)
                     ProductCard(name = "Croissant", price = "2.20", productId = 5)
-                end
-
-                row
-                    gap = 12
                     ProductCard(name = "Medialuna", price = "1.80", productId = 6)
                     ProductCard(name = "Cheesecake", price = "4.50", productId = 7)
                     ProductCard(name = "Brownie", price = "3.20", productId = 8)
@@ -77,14 +75,15 @@ view
                     fontSize = 18
                 end
 
-                scrollview
+                ListView source = cart
                     direction = "vertical"
                     grow = true
                     gap = 8
-
-                    for item in cart
-                        CartItem(name = item.name, qty = item.qty, subtotal = item.price * item.qty, index = index)
-                    end
+                    backgroundColor = "FFFFFF"
+					
+					template
+						CartItem(name = item.name, qty = item.qty, subtotal = item.price * item.qty, index = index)
+					end	
                 end
 
                 row
@@ -104,6 +103,8 @@ view
                         text = "$" + total
                         style = "text.price"
                         fontSize = 22
+                        wrap = true
+                        width = 140
                     end
                 end
 
@@ -160,22 +161,16 @@ code
 
     func OnRemoveFromCart(idx)
         if idx >= 0 and idx < len(cart) then
-            local newCart = []
-            local i = 0
-            while i < len(cart)
-                if i != idx then
-                    newCart.append(cart[i])
-                end
-                i = i + 1
-            end
-            cart = newCart
+            cart.removeAt(idx)
         end
         RecalcTotal()
     end
 
     func OnClearCart()
-        cart = []
-        total = 0
+        while len(cart) > 0
+            cart.pop()
+        end
+        total -= total
     end
 
     func OnCheckout()
@@ -183,19 +178,21 @@ code
             return
         end
 
-        confirmDialogTitle = "Confirmar venta"
-        confirmDialogMessage = "Deseas cobrar $" + total + "?"
-        confirmDialogOpen = true
+        setglobal("confirmDialogTitle", "Confirmar venta")
+        setglobal("confirmDialogMessage", "Deseas cobrar $" + total + "?")
+        setglobal("confirmDialogOpen", true)
     end
 
     func ConfirmDialogAccept()
-        confirmDialogOpen = false
-        cart = []
-        total = 0
+        setglobal("confirmDialogOpen", false)
+        while len(cart) > 0
+            cart.pop()
+        end
+        total -= total
     end
 
     func ConfirmDialogCancel()
-        confirmDialogOpen = false
+        setglobal("confirmDialogOpen", false)
     end
 
     func FindProduct(id)
@@ -239,6 +236,7 @@ code
             sum = sum + cart[i].price * cart[i].qty
             i = i + 1
         end
-        total = sum
+        total -= total
+        total += sum
     end
 end

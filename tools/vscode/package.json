@@ -1,0 +1,68 @@
+{
+  "name": "avalang",
+  "displayName": "AvaLang",
+  "description": "Syntax highlighting for the AvaLang scripting language (.ava files)",
+  "version": "0.1.2",
+  "publisher": "avalontm",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "avalang",
+    "ava",
+    "syntax",
+    "highlighting"
+  ],
+  "icon": "icons/icon.png",
+  "galleryBanner": {
+    "color": "#1E1E2E",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/avalontm/avalang"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "avalang",
+        "aliases": [
+          "AvaLang",
+          "avalang"
+        ],
+        "extensions": [
+          ".ava"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/file-icon.svg",
+          "dark": "./icons/file-icon.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "avalang",
+        "scopeName": "source.avalang",
+        "path": "./syntaxes/avalang.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "avalang",
+        "path": "./snippets/avalang.json"
+      }
+    ],
+    "configurationDefaults": {
+      "[avalang]": {
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "editor.detectIndentation": false
+      }
+    }
+  }
+}

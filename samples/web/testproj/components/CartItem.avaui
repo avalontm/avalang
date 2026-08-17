@@ -7,35 +7,43 @@ end
 
 view
     row
-        padding = 12
-        gap = 12
+        padding = 5
+        gap = 8
         borderWidth = 1
         borderColor = "E5E7EB"
         borderRadius = 8
         backgroundColor = "FFFFFF"
-
-        text
-            text = name
-            grow = true
-            fontSize = 14
-        end
+        align = "center"
 
         text
             text = "x" + qty
             textColor = "6B7280"
             fontSize = 14
+            wrap = true
+            width = 22
+        end
+
+        text
+            text = name
+            fontSize = 14
+            wrap = true
+            width = 72
         end
 
         text
             text = "$" + subtotal
             fontSize = 14
             textColor = "16A34A"
+            wrap = true
+            width = 42
         end
 
         button
-            id = "CartItemRemoveBtn"
             style = "danger"
             text = "X"
+            width = 28
+            height = 28
+            borderRadius = 14
             click = OnRemoveFromCart(index)
         end
     end

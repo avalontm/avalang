@@ -48,6 +48,19 @@ public:
         projectAnimations_ = animations;
     }
 
+    // Absolute path to the project's wwwroot/ (StaticFileServer's
+    // root -- see app.cpp's staticFiles_). When set (non-empty),
+    // EmitFontFaceRules writes each referenced font's bytes out to
+    // `<dir>/fonts/<family>.ttf` (once; skipped if the file is
+    // already there) and links to it with `url("/fonts/<family>.ttf")`
+    // instead of embedding the bytes as a base64 data: URI -- keeps
+    // the emitted HTML free of the multi-KB inline font blob. Left
+    // empty (the default), EmitFontFaceRules falls back to the
+    // previous inline-base64 behavior, which is still what any caller
+    // without a static file server to serve from (CLI render-static,
+    // tests, RenderTreeFragment's isolated-fragment callers) gets.
+    void SetWwwRootDir(std::string dir) { wwwRootDir_ = std::move(dir); }
+
     const std::string& Title() const { return title_; }
 
     const char* GetOutput() const override;
@@ -82,7 +95,8 @@ protected:
         const Color& color,
         const std::string& clickHandler,
         const std::string& className,
-        float maxWidth
+        float maxWidth,
+        bool wrap
     ) override;
 
     void OnDrawImage(
@@ -150,11 +164,31 @@ private:
     std::string EmitHTMLHeader();
     std::string EmitHTMLFooter();
     std::string EmitFontFaceRules() const;
+    // Writes the static, never-varying base rules (html/body reset,
+    // #ava-scaler, .ava-viewport, .ava-element, .ava-button) out to
+    // `<wwwRootDir_>/css/ava-runtime.css` (once; skipped if already
+    // there, same convention as EmitFontFaceRules' per-font .ttf
+    // files) and returns a `<link rel="stylesheet" ...>` tag pointing
+    // at it. Falls back to an inline `<style>...</style>` block with
+    // the same rules when wwwRootDir_ is empty or the write fails --
+    // see the .cpp.
+    std::string EmitStaticBaseCssLink() const;
     // Builds the `.ava-<type>:hover { ... }` etc. CSS rules from
     // projectStyles_ -- see the .cpp for the type->class map and why
     // every declaration is `!important`. Returns "" when
     // projectStyles_ is null or declares no state blocks.
     std::string EmitProjectStateCSS() const;
+    // Writes `dynamicCss` (the @font-face + dialog keyframes +
+    // EmitProjectStateCSS rules EmitHTMLHeader builds -- everything
+    // that varies with this project's fonts/animations/styles, unlike
+    // EmitStaticBaseCssLink's fixed rules) out to
+    // `<wwwRootDir_>/css/ava-project.css`, overwriting it every call
+    // since that content can change between requests (hot-reload).
+    // Returns a cache-busted `<link rel="stylesheet" ...>` tag: falls
+    // back to an inline `<style>...</style>` block with the same
+    // content when wwwRootDir_ is empty or the write fails -- see the
+    // .cpp.
+    std::string EmitProjectCssLink(const std::string& dynamicCss) const;
     void EmitCSSFromState();
 
     std::string ColorToHex(const Color& c) const;
@@ -163,6 +197,7 @@ private:
 
     const theme::ProjectStyleSheet* projectStyles_ = nullptr;
     const theme::ProjectAnimationSheet* projectAnimations_ = nullptr;
+    std::string wwwRootDir_;
 };
 
 } // namespace ui

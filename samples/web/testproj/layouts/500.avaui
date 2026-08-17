@@ -2,21 +2,135 @@ properties
     title = "Error en servidor"
 end
 
+state
+    errorMessage = ""
+    errorRoute = ""
+    errorFile = ""
+    errorLine = ""
+    errorColumn = ""
+    errorDetail = ""
+end
+
 view
     column
         fill = "true"
-        padding = 20
-        gap = 12
+        backgroundColor = "F3F4F6"
+        padding = 40
 
-        text
-            text = "500"
-            fontSize = 48
+        column
+            width = 640
+            align = "center"
+            backgroundColor = "FFFFFF"
+            borderRadius = 12
+            borderWidth = 1
+            borderColor = "FCA5A5"
+            padding = 32
+            gap = 20
+
+            row
+                gap = 16
+
+                text
+                    text = "500"
+                    style = "text.heading"
+                    fontSize = 48
+                    textColor = "DC2626"
+                end
+
+                text
+                    text = "Error en servidor"
+                    style = "text.heading"
+                    fontSize = 20
+                end
+            end
+
+            column
+                backgroundColor = "FEF2F2"
+                borderRadius = 8
+                padding = 12
+                gap = 4
+
+                text
+                    text = "Ruta"
+                    style = "text.muted"
+                end
+
+                text
+                    text = errorRoute
+                    style = "text.heading"
+                    fontSize = 14
+                    textColor = "991B1B"
+                end
+            end
+
+            text
+                text = errorMessage
+                fontSize = 15
+                textColor = "B91C1C"
+                width = 576
+                wrap = true
+            end
+
+            row
+                gap = 24
+
+                column
+                    gap = 2
+
+                    text
+                        text = "Archivo"
+                        style = "text.muted"
+                    end
+
+                    text
+                        text = errorFile
+                        fontSize = 13
+                    end
+                end
+
+                column
+                    gap = 2
+
+                    text
+                        text = "Linea"
+                        style = "text.muted"
+                    end
+
+                    text
+                        text = errorLine
+                        fontSize = 13
+                    end
+                end
+
+                column
+                    gap = 2
+
+                    text
+                        text = "Columna"
+                        style = "text.muted"
+                    end
+
+                    text
+                        text = errorColumn
+                        fontSize = 13
+                    end
+                end
+            end
+
+            scrollview
+                backgroundColor = "1F2937"
+                borderRadius = 8
+                padding = 16
+                maxHeight = 200
+
+                text
+                    text = errorDetail
+                    fontSize = 13
+                    textColor = "F9FAFB"
+                    width = 544
+                    wrap = true
+                end
+            end
         end
-
-        text
-            text = "Error en servidor"
-            fontSize = 18
-        end
-
     end
 end

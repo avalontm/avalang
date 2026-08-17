@@ -33,6 +33,25 @@ std::string ValueToDisplayString(const PropertyValue& pv) {
             return std::to_string(n);
         }
         case PropertyType::String: return pv.AsString();
+        case PropertyType::List: {
+            std::ostringstream out;
+            out << "[";
+            bool firstItem = true;
+            for (const auto& record : pv.AsList()) {
+                if (!firstItem) out << ", ";
+                firstItem = false;
+                out << "{";
+                bool firstField = true;
+                for (const auto& [key, value] : record) {
+                    if (!firstField) out << ", ";
+                    firstField = false;
+                    out << key << ": " << WritePropertyValue(ValueToDisplayString(value));
+                }
+                out << "}";
+            }
+            out << "]";
+            return out.str();
+        }
         default: return "";
     }
 }

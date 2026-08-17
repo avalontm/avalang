@@ -4,6 +4,9 @@
 #include <iomanip>
 #include <sstream>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <functional>
 
 namespace avalang {
 namespace ui {
@@ -94,6 +97,27 @@ std::string EscapeForCssString(const std::string& s) {
         out += c;
     }
     return out;
+}
+
+// Turns a font family name (a free-form string -- a plain family like
+// "AvaDefaultFont", a project asset path like
+// "assets/fonts/Poppins-Regular.ttf" used verbatim as its own family
+// name, or a synthetic "ProjectStyle:text" key, see RenderTheme.cpp's
+// ResolveStyleFontFamily) into a flat, filesystem- and URL-safe file
+// name for wwwroot/fonts/<name>.ttf. Keeps [A-Za-z0-9-_], maps
+// everything else (path separators, ':', spaces, ...) to '_' so the
+// result can never contain ".." or a leading '/' that could escape
+// the fonts/ directory.
+std::string SanitizeFontFileName(const std::string& family) {
+    std::string out;
+    out.reserve(family.size());
+    for (char c : family) {
+        const bool safe = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                           (c >= '0' && c <= '9') || c == '-' || c == '_';
+        out += safe ? c : '_';
+    }
+    if (out.empty()) out = "font";
+    return out + ".ttf";
 }
 
 // Resolved opacity/duration/easing values for one dialog open or
@@ -291,13 +315,138 @@ std::string HTMLRenderer::EmitFontFaceRules() const {
             data == nullptr || size == 0) {
             continue;
         }
-        const std::string b64 = Base64Encode(data, size);
         const std::string safeFamily = EscapeForCssString(family);
-        ss << "@font-face { font-family: \"" << safeFamily << "\"; "
-           << "src: url(data:font/ttf;base64," << b64 << ") format(\"truetype\"); "
-           << "font-weight: normal; font-style: normal; }\n";
+
+        // Prefer a real file under wwwroot/fonts/, served by
+        // StaticFileServer at "/fonts/<name>.ttf" -- keeps the emitted
+        // HTML free of a multi-KB inline base64 blob per font. Only
+        // falls back to the old data: URI when this renderer wasn't
+        // given a wwwroot dir (SetWwwRootDir never called) or the
+        // write fails for some reason (read-only filesystem, disk
+        // full, ...) -- either way the page must still render
+        // correctly, just back to the previous embedded behavior.
+        std::string fontUrl;
+        if (!wwwRootDir_.empty()) {
+            const std::string fileName = SanitizeFontFileName(family);
+            std::filesystem::path fontsDir = std::filesystem::path(wwwRootDir_) / "fonts";
+            std::filesystem::path fontFile = fontsDir / fileName;
+            std::error_code ec;
+            // Bytes for a given family are pinned for this registry's
+            // lifetime (RegisterFontFile replaces, never mutates in
+            // place -- see FontRegistry.h), so an existing file with
+            // the right name is already the right content; skip
+            // rewriting it every request.
+            if (!std::filesystem::exists(fontFile, ec)) {
+                std::filesystem::create_directories(fontsDir, ec);
+                std::ofstream out(fontFile, std::ios::binary | std::ios::trunc);
+                if (out) {
+                    out.write(reinterpret_cast<const char*>(data),
+                              static_cast<std::streamsize>(size));
+                }
+            }
+            if (!ec && std::filesystem::exists(fontFile, ec)) {
+                fontUrl = "/fonts/" + fileName;
+            }
+        }
+
+        if (!fontUrl.empty()) {
+            ss << "@font-face { font-family: \"" << safeFamily << "\"; "
+               << "src: url(\"" << fontUrl << "\") format(\"truetype\"); "
+               << "font-weight: normal; font-style: normal; }\n";
+        } else {
+            const std::string b64 = Base64Encode(data, size);
+            ss << "@font-face { font-family: \"" << safeFamily << "\"; "
+               << "src: url(data:font/ttf;base64," << b64 << ") format(\"truetype\"); "
+               << "font-weight: normal; font-style: normal; }\n";
+        }
     }
     return ss.str();
+}
+
+std::string HTMLRenderer::EmitStaticBaseCssLink() const {
+    // The handful of rules that never vary by request or by project
+    // (unlike @font-face -- per font family, see EmitFontFaceRules --
+    // or the dialog keyframes/EmitProjectStateCSS below, both of which
+    // depend on this project's animation/style overrides). Same
+    // externalize-once-then-link approach as the runtime JS files
+    // (ava-viewport.js/ava-hotreload.js/ava-runtime.js, see app.cpp's
+    // WriteStaticAssetIfMissing) and as fonts (wwwroot/fonts/*.ttf,
+    // see EmitFontFaceRules above) -- keeps this out of every response
+    // body instead of re-sending the same bytes on every page load.
+    static const std::string kBaseCss =
+        "html, body { margin: 0; padding: 0; width: 100%; height: 100%; "
+        "font-family: \"" + std::string(kDefaultCssFontFamily) + "\", sans-serif; "
+        "overflow: hidden; background-color: #E5E5E5; }\n"
+        "#ava-scaler { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; overflow: hidden; }\n"
+        ".ava-viewport { width: 100%; height: 100%; position: fixed; left: 0; top: 0; "
+        "overflow: hidden; }\n"
+        ".ava-element { position: absolute; box-sizing: border-box; overflow: hidden; }\n"
+        ".ava-button { margin: 0; padding: 0; display: flex; align-items: center; "
+        "justify-content: center; cursor: pointer; "
+        "-webkit-appearance: none; -moz-appearance: none; appearance: none; }\n";
+
+    if (!wwwRootDir_.empty()) {
+        std::filesystem::path cssDir = std::filesystem::path(wwwRootDir_) / "css";
+        std::filesystem::path cssFile = cssDir / "ava-runtime.css";
+        std::error_code ec;
+        // Content is a compile-time constant (kBaseCss never changes
+        // between calls), so -- same as the font files -- an existing
+        // file with this name is already the right content; skip
+        // rewriting it every request.
+        if (!std::filesystem::exists(cssFile, ec)) {
+            std::filesystem::create_directories(cssDir, ec);
+            std::ofstream out(cssFile, std::ios::binary | std::ios::trunc);
+            if (out) {
+                out.write(kBaseCss.data(), static_cast<std::streamsize>(kBaseCss.size()));
+            }
+        }
+        if (!ec && std::filesystem::exists(cssFile, ec)) {
+            return "<link rel=\"stylesheet\" href=\"/css/ava-runtime.css\">\n";
+        }
+    }
+    // No wwwroot dir set (CLI render-static, tests, RenderTreeFragment's
+    // isolated-fragment callers) or the write failed -- fall back to
+    // the previous inline behavior so the page still renders correctly.
+    return "<style>\n" + kBaseCss + "</style>\n";
+}
+
+std::string HTMLRenderer::EmitProjectCssLink(const std::string& dynamicCss) const {
+    // Unlike EmitStaticBaseCssLink's kBaseCss, this content is NOT a
+    // compile-time constant -- it's built fresh per frame from
+    // whatever @font-face/keyframes/state rules this project/page
+    // currently resolves to (fonts registered, projectAnimations_,
+    // projectStyles_), any of which can change between requests via
+    // hot-reload (see ava-hotreload.js). So, unlike the base file,
+    // this one is overwritten unconditionally every call rather than
+    // written-once-if-missing -- an existing file here is NOT
+    // necessarily still the right content.
+    if (!wwwRootDir_.empty()) {
+        std::filesystem::path cssDir = std::filesystem::path(wwwRootDir_) / "css";
+        std::filesystem::path cssFile = cssDir / "ava-project.css";
+        std::error_code ec;
+        std::filesystem::create_directories(cssDir, ec);
+        bool wrote = false;
+        if (!ec) {
+            std::ofstream out(cssFile, std::ios::binary | std::ios::trunc);
+            if (out) {
+                out.write(dynamicCss.data(), static_cast<std::streamsize>(dynamicCss.size()));
+                wrote = static_cast<bool>(out);
+            }
+        }
+        if (wrote) {
+            // Cache-bust: a stale browser-cached copy of ava-project.css
+            // would otherwise keep an old font/animation/state set after
+            // a hot-reload swaps this file's content out from under the
+            // same URL. Content hash keeps it deterministic (same
+            // content -> same URL, so normal repeat requests still hit
+            // cache) without needing a version counter anywhere.
+            const std::string tag = std::to_string(std::hash<std::string>{}(dynamicCss));
+            return "<link rel=\"stylesheet\" href=\"/css/ava-project.css?v=" + tag + "\">\n";
+        }
+    }
+    // No wwwroot dir set, or the write failed -- fall back to the
+    // previous inline behavior so the page still renders correctly.
+    return "<style>\n" + dynamicCss + "</style>\n";
 }
 
 std::string HTMLRenderer::EmitProjectStateCSS() const {
@@ -335,14 +484,34 @@ std::string HTMLRenderer::EmitHTMLHeader() {
     html_ << "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
     html_ << "<title>" << title_ << "</title>\n";
     if (!extraHead_.empty()) html_ << extraHead_;
-    html_ << "<style>\n";
+    // The static base rules (html/body reset, #ava-scaler, .ava-viewport,
+    // .ava-element, .ava-button) live in wwwroot/css/ava-runtime.css when
+    // a wwwroot dir is available -- same externalize-once-and-link
+    // approach as the runtime JS files and per-font @font-face files
+    // below -- falling back to an inline <style> block otherwise.
+    // Emitted before the project CSS link below so cascade order
+    // matches the previous single-block behavior: nothing in this file
+    // shares a selector's specificity with @font-face, the dialog
+    // keyframes, or EmitProjectStateCSS's `:hover`/`:focus`/`:active`/
+    // `:disabled` rules (those all win on specificity regardless of
+    // source order), so splitting it out here changes nothing visually.
+    html_ << EmitStaticBaseCssLink();
+    // Everything else in the old single <style> block -- @font-face,
+    // dialog keyframes, and project state (:hover/:focus/:active/
+    // :disabled) rules -- varies with this project's fonts/animations/
+    // styles rather than being fixed across every AvaHost project, so
+    // it's built into its own buffer and handed to EmitProjectCssLink
+    // instead of streamed straight into an inline <style> tag; see
+    // that method for why it's written fresh every call rather than
+    // written-once like EmitStaticBaseCssLink's file.
+    std::stringstream dynamicCss;
     // @font-face rules first: every family name any element below
     // referenced (see ResolveCssFontFamily), each backed by the actual
     // TTF bytes FontRegistry resolved it to -- must precede the rules
     // below so `html, body { font-family: ... }`'s default resolves to
     // an already-declared face rather than a same-named system font
     // the browser found first.
-    html_ << EmitFontFaceRules();
+    dynamicCss << EmitFontFaceRules();
     // Fase C, opcion 2 (AVAUI_NATIVE_RENDERING_FIX_PLAN.md): the
     // viewport fills 100% of the browser window natively -- no CSS
     // transform: scale() anymore. LayoutEngine::Compute already ran
@@ -360,16 +529,6 @@ std::string HTMLRenderer::EmitHTMLHeader() {
     // listener in EmitHTMLFooter below -- so LayoutEngine actually
     // reflows at the new size server-side rather than a CSS transform
     // faking it client-side.
-    html_ << "html, body { margin: 0; padding: 0; width: 100%; height: 100%; "
-          << "font-family: \"" << kDefaultCssFontFamily << "\", sans-serif; "
-          << "overflow: hidden; background-color: #E5E5E5; }\n";
-    html_ << "#ava-scaler { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; overflow: hidden; }\n";
-    html_ << ".ava-viewport { width: 100%; height: 100%; position: fixed; left: 0; top: 0; "
-          << "overflow: hidden; }\n";
-    html_ << ".ava-element { position: absolute; box-sizing: border-box; }\n";
-    html_ << ".ava-button { margin: 0; padding: 0; display: flex; align-items: center; "
-          << "justify-content: center; cursor: pointer; "
-          << "-webkit-appearance: none; -moz-appearance: none; appearance: none; }\n";
     // Dialog open/close animation. `.ava-overlay-fragment` (see
     // SceneCommandWalker.cpp) already wraps the backdrop AND every
     // element the open dialog draws -- all of them siblings in a flat,
@@ -398,20 +557,20 @@ std::string HTMLRenderer::EmitHTMLHeader() {
     const DialogAnimationValues closeAnim = ResolveDialogAnimation(
         projectAnimations_, "close", /*defaultFrom=*/1.0, /*defaultTo=*/0.0,
         /*defaultDuration=*/"160ms", /*defaultEasing=*/"ease-in");
-    html_ << "@keyframes ava-overlay-fade-in { from { opacity: " << openAnim.from
-          << "; } to { opacity: " << openAnim.to << "; } }\n";
-    html_ << "@keyframes ava-overlay-fade-out { from { opacity: " << closeAnim.from
-          << "; } to { opacity: " << closeAnim.to << "; } }\n";
-    html_ << ".ava-overlay-fragment { animation: ava-overlay-fade-in " << openAnim.duration
-          << " " << openAnim.easing << "; }\n";
-    html_ << ".ava-overlay-fragment.ava-dialog-closing { "
-          << "animation: ava-overlay-fade-out " << closeAnim.duration << " " << closeAnim.easing
-          << " forwards; pointer-events: none; }\n";
+    dynamicCss << "@keyframes ava-overlay-fade-in { from { opacity: " << openAnim.from
+               << "; } to { opacity: " << openAnim.to << "; } }\n";
+    dynamicCss << "@keyframes ava-overlay-fade-out { from { opacity: " << closeAnim.from
+               << "; } to { opacity: " << closeAnim.to << "; } }\n";
+    dynamicCss << ".ava-overlay-fragment { animation: ava-overlay-fade-in " << openAnim.duration
+               << " " << openAnim.easing << "; }\n";
+    dynamicCss << ".ava-overlay-fragment.ava-dialog-closing { "
+               << "animation: ava-overlay-fade-out " << closeAnim.duration << " " << closeAnim.easing
+               << " forwards; pointer-events: none; }\n";
     // Project-declared `style <type>:hover` / `:focus` / `:active` /
     // `:disabled` blocks (app.ava's `style "..."` files) -- "" when
     // none were declared, see EmitProjectStateCSS.
-    html_ << EmitProjectStateCSS();
-    html_ << "</style>\n";
+    dynamicCss << EmitProjectStateCSS();
+    html_ << EmitProjectCssLink(dynamicCss.str());
     html_ << "</head>\n";
     html_ << "<body>\n";
     html_ << "<div id=\"ava-scaler\">\n";
@@ -564,21 +723,19 @@ void HTMLRenderer::OnDrawText(
     const Color& color,
     const std::string& clickHandler,
     const std::string& className,
-    float maxWidth
+    float maxWidth,
+    bool wrap
 ) {
     const bool hasClass = !className.empty();
-    const bool wrap = maxWidth > 0.0f;
     if (hasClass) {
         bodyHtml_ << "<div class=\"" << className << "\" style=\"";
     } else {
-        // "ava-text" (alongside the generic "ava-element" every
-        // no-custom-class element gets) is the selector project state
-        // styles hang off of for `style text:hover` etc. -- see
-        // EmitProjectStateCSS.
         bodyHtml_ << "<div class=\"ava-element ava-text\" style=\"";
         bodyHtml_ << "left: " << x << "px; top: " << y << "px; ";
-        if (wrap) {
+        if (wrap && maxWidth > 0.0f) {
             bodyHtml_ << "width: " << maxWidth << "px; white-space: normal; overflow-wrap: break-word; ";
+        } else if (maxWidth > 0.0f) {
+            bodyHtml_ << "width: " << maxWidth << "px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; ";
         } else {
             bodyHtml_ << "white-space: nowrap; ";
         }

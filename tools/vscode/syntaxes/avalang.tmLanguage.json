@@ -1,0 +1,325 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "AvaLang",
+  "scopeName": "source.avalang",
+  "fileTypes": ["ava"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#line-continuation" },
+    { "include": "#extern-block" },
+    { "include": "#class-declaration" },
+    { "include": "#func-declaration" },
+    { "include": "#import-statement" },
+    { "include": "#member-modifiers" },
+    { "include": "#keywords-control" },
+    { "include": "#keywords-other" },
+    { "include": "#operators-logical" },
+    { "include": "#language-constants" },
+    { "include": "#self-reference" },
+    { "include": "#property-access" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#dict-literal" },
+    { "include": "#named-argument" },
+    { "include": "#function-call" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.avalang",
+          "begin": "#",
+          "end": "$",
+          "patterns": [
+            {
+              "match": "\\b(TODO|FIXME|NOTE|HACK|XXX)\\b",
+              "name": "keyword.other.comment-tag.avalang"
+            }
+          ]
+        }
+      ]
+    },
+
+    "line-continuation": {
+      "match": "\\\\\\s*$",
+      "name": "constant.character.escape.line-continuation.avalang"
+    },
+
+    "import-statement": {
+      "match": "\\b(import)\\b\\s*((?:[a-zA-Z_][a-zA-Z_0-9]*(?:\\.[a-zA-Z_][a-zA-Z_0-9]*)*))?\\s*(?:\\b(as)\\b\\s*([a-zA-Z_][a-zA-Z_0-9]*))?",
+      "captures": {
+        "1": { "name": "keyword.control.import.avalang" },
+        "2": { "name": "entity.name.namespace.avalang" },
+        "3": { "name": "keyword.control.import.avalang" },
+        "4": { "name": "entity.name.namespace.alias.avalang" }
+      }
+    },
+
+    "extern-block": {
+      "begin": "\\b(extern)\\b\\s*",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.extern.avalang" }
+      },
+      "end": "\\b(end)\\b",
+      "endCaptures": {
+        "1": { "name": "keyword.control.extern.avalang" }
+      },
+      "patterns": [
+        { "include": "#comments" },
+        {
+          "match": "\\b(as)\\b\\s*([a-zA-Z_][a-zA-Z_0-9]*)",
+          "captures": {
+            "1": { "name": "keyword.control.extern.avalang" },
+            "2": { "name": "entity.name.namespace.alias.avalang" }
+          }
+        },
+        {
+          "match": "\\b(func)\\b\\s*([a-zA-Z_][a-zA-Z_0-9]*)",
+          "captures": {
+            "1": { "name": "storage.type.function.avalang" },
+            "2": { "name": "entity.name.function.avalang" }
+          }
+        },
+        { "include": "#strings" },
+        { "include": "#punctuation" },
+        {
+          "match": "\\*",
+          "name": "keyword.operator.splat.avalang"
+        },
+        {
+          "match": "[a-zA-Z_][a-zA-Z_0-9]*",
+          "name": "variable.parameter.avalang"
+        }
+      ]
+    },
+
+    "class-declaration": {
+      "match": "\\b(class)\\b\\s+([a-zA-Z_][a-zA-Z_0-9]*)(?:\\s*(:)\\s*([a-zA-Z_][a-zA-Z_0-9]*))?",
+      "captures": {
+        "1": { "name": "storage.type.class.avalang" },
+        "2": { "name": "entity.name.type.class.avalang" },
+        "3": { "name": "keyword.operator.heritage.avalang" },
+        "4": { "name": "entity.other.inherited-class.avalang" }
+      }
+    },
+
+    "func-declaration": {
+      "match": "\\b(func)\\b\\s*([a-zA-Z_][a-zA-Z_0-9]*)?\\s*(?=\\()",
+      "captures": {
+        "1": { "name": "storage.type.function.avalang" },
+        "2": { "name": "entity.name.function.avalang" }
+      }
+    },
+
+    "member-modifiers": {
+      "match": "\\b(static|private)\\b",
+      "name": "storage.modifier.avalang"
+    },
+
+    "keywords-control": {
+      "match": "\\b(if|then|elif|else|end|while|for|in|try|catch|finally|return|break|continue|pass|raise)\\b",
+      "name": "keyword.control.avalang"
+    },
+
+    "keywords-other": {
+      "match": "\\b(local|base|yield)\\b",
+      "name": "keyword.other.avalang"
+    },
+
+    "operators-logical": {
+      "match": "\\b(and|or|not)\\b",
+      "name": "keyword.operator.logical.avalang"
+    },
+
+    "language-constants": {
+      "match": "\\b(true|false|nil)\\b",
+      "name": "constant.language.avalang"
+    },
+
+    "self-reference": {
+      "match": "\\bthis\\b",
+      "name": "variable.language.this.avalang"
+    },
+
+    "property-access": {
+      "match": "(?<=\\.)\\s*\\b([a-zA-Z_][a-zA-Z_0-9]*)\\b(?!\\s*\\()",
+      "captures": {
+        "1": { "name": "variable.other.property.avalang" }
+      }
+    },
+
+    "numbers": {
+      "match": "\\b[0-9]+(\\.[0-9]+)?\\b",
+      "name": "constant.numeric.avalang"
+    },
+
+    "dict-literal": {
+      "name": "meta.structure.dictionary.avalang",
+      "begin": "\\{",
+      "beginCaptures": {
+        "0": { "name": "punctuation.curlybrace.open.avalang" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.curlybrace.close.avalang" }
+      },
+      "patterns": [
+        { "include": "#comments" },
+        {
+          "match": "\\b([a-zA-Z_][a-zA-Z_0-9]*)\\b\\s*(:)(?!:)",
+          "captures": {
+            "1": { "name": "support.type.property-name.avalang" },
+            "2": { "name": "punctuation.separator.key-value.avalang" }
+          }
+        },
+        {
+          "match": "(\"(?:[^\"\\\\\\r\\n]|\\\\[btnr\"'\\\\])*\"|'(?:[^'\\\\\\r\\n]|\\\\[btnr\"'\\\\])*')\\s*(:)(?!:)",
+          "captures": {
+            "1": { "name": "string.quoted.avalang support.type.property-name.avalang" },
+            "2": { "name": "punctuation.separator.key-value.avalang" }
+          }
+        },
+        { "include": "$self" }
+      ]
+    },
+
+    "named-argument": {
+      "match": "(?<=[(,])\\s*\\b([a-zA-Z_][a-zA-Z_0-9]*)\\b(?=\\s*=(?!=))",
+      "captures": {
+        "1": { "name": "variable.parameter.avalang" }
+      }
+    },
+
+    "function-call": {
+      "match": "\\b([a-zA-Z_][a-zA-Z_0-9]*)\\b(?=\\s*\\()",
+      "captures": {
+        "1": { "name": "entity.name.function.avalang" }
+      }
+    },
+
+    "escapes": {
+      "match": "\\\\[btnr\"'\\\\]",
+      "name": "constant.character.escape.avalang"
+    },
+
+    "strings": {
+      "patterns": [
+        { "include": "#fstring" },
+        {
+          "name": "string.quoted.double.avalang",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [{ "include": "#escapes" }]
+        },
+        {
+          "name": "string.quoted.single.avalang",
+          "begin": "'",
+          "end": "'",
+          "patterns": [{ "include": "#escapes" }]
+        }
+      ]
+    },
+
+    "fstring": {
+      "name": "string.interpolated.avalang",
+      "begin": "\\$\"",
+      "end": "\"",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.string.begin.avalang" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.avalang" }
+      },
+      "patterns": [
+        { "include": "#escapes" },
+        {
+          "match": "\\{\\{|\\}\\}",
+          "name": "constant.character.escape.avalang"
+        },
+        {
+          "name": "meta.embedded.expression.avalang",
+          "begin": "\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "0": { "name": "punctuation.section.embedded.begin.avalang" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.section.embedded.end.avalang" }
+          },
+          "patterns": [
+            { "include": "#comments" },
+            { "include": "#keywords-control" },
+            { "include": "#keywords-other" },
+            { "include": "#operators-logical" },
+            { "include": "#language-constants" },
+            { "include": "#self-reference" },
+            { "include": "#property-access" },
+            { "include": "#strings" },
+            { "include": "#numbers" },
+            { "include": "#dict-literal" },
+            { "include": "#named-argument" },
+            { "include": "#function-call" },
+            { "include": "#operators" },
+            { "include": "#punctuation" }
+          ]
+        }
+      ]
+    },
+
+    "operators": {
+      "patterns": [
+        {
+          "match": "\\+=|-=|\\*=|/=|%=|//=",
+          "name": "keyword.operator.assignment.compound.avalang"
+        },
+        {
+          "match": "==|!=|<=|>=|<|>",
+          "name": "keyword.operator.comparison.avalang"
+        },
+        {
+          "match": "\\+\\+|--",
+          "name": "keyword.operator.increment-decrement.avalang"
+        },
+        {
+          "match": "=>",
+          "name": "storage.type.function.arrow.avalang"
+        },
+        {
+          "match": "\\*\\*",
+          "name": "keyword.operator.arithmetic.avalang"
+        },
+        {
+          "match": "//",
+          "name": "keyword.operator.arithmetic.avalang"
+        },
+        {
+          "match": "[+\\-*/%]",
+          "name": "keyword.operator.arithmetic.avalang"
+        },
+        {
+          "match": "=",
+          "name": "keyword.operator.assignment.avalang"
+        },
+        {
+          "match": "\\.",
+          "name": "punctuation.accessor.avalang"
+        }
+      ]
+    },
+
+    "punctuation": {
+      "patterns": [
+        { "match": ",", "name": "punctuation.separator.comma.avalang" },
+        { "match": ";", "name": "punctuation.terminator.statement.avalang" },
+        { "match": ":", "name": "punctuation.separator.colon.avalang" },
+        { "match": "[()]", "name": "punctuation.parenthesis.avalang" },
+        { "match": "[\\[\\]]", "name": "punctuation.squarebracket.avalang" },
+        { "match": "[{}]", "name": "punctuation.curlybrace.avalang" }
+      ]
+    }
+
+  }
+}

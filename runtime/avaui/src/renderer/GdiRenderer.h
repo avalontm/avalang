@@ -42,7 +42,8 @@ protected:
         const Color& color,
         const std::string& clickHandler,
         const std::string& className,
-        float maxWidth
+        float maxWidth,
+        bool wrap
     ) override;
 
     void OnDrawImage(

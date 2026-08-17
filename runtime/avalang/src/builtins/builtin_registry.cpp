@@ -23,6 +23,7 @@ void RegisterBuiltinMethods(AvaVM* vm) {
     raw_vm->RegisterBuiltinMethod("list_push", builtin_list_push, nullptr);
     raw_vm->RegisterBuiltinMethod("list_insert", builtin_list_insert, nullptr);
     raw_vm->RegisterBuiltinMethod("list_remove", builtin_list_remove, nullptr);
+    raw_vm->RegisterBuiltinMethod("list_removeAt", builtin_list_removeAt, nullptr);
     raw_vm->RegisterBuiltinMethod("list_length", builtin_list_length, nullptr);
     raw_vm->RegisterBuiltinMethod("list_contains", builtin_list_contains, nullptr);
     

@@ -26,9 +26,6 @@ namespace avahost {
 
 namespace {
 
-// Loads appsettings.json from the current directory (or --project if
-// given) into a HostOptions, applying any --port/--host overrides.
-// Shared by run/watch/build/doctor so they all see the same project.
 HostOptions LoadProjectOptions(const std::vector<std::string>& args) {
     HostOptions options;
     options.projectRoot = ".";
@@ -51,12 +48,9 @@ HostOptions LoadProjectOptions(const std::vector<std::string>& args) {
         GlobalLogger().Warn("appsettings.json: " + configError);
     }
 
-    // CLI flags win over appsettings.json, applied after the config
-    // load so they can't be silently overwritten by it.
     if (!portOverride.empty()) options.port = std::atoi(portOverride.c_str());
     if (!hostOverride.empty()) options.host = hostOverride;
 
-    // Directory options in HostOptions are relative to projectRoot.
     auto resolve = [&](std::string& dir) {
         fs::path p = fs::path(options.projectRoot) / dir;
         dir = p.string();
@@ -117,11 +111,6 @@ int CmdNew(const std::vector<std::string>& args) {
         "    \"pluginsDir\": \"plugins\"\n"
         "}\n");
 
-    // app.ava -- recursos globales que se cargan en TODAS las páginas
-    // (ver config/app_manifest.h). Se lee como texto plano, nunca se
-    // compila. AvaUI renderiza todo de forma nativa (sin CSS/Tailwind,
-    // ver docs/AVAUI_NATIVE_RENDERING_FIX_PLAN.md), así que un
-    // proyecto nuevo no declara ningún recurso por defecto.
     WriteFile(root / "app.ava",
         "# Recursos globales de la app -- se cargan en <head> de todas\n"
         "# las páginas .avaui. Vacío por defecto: AvaUI no depende de\n"
@@ -162,15 +151,6 @@ int CmdNew(const std::vector<std::string>& args) {
         "    # Handlers y funciones\n"
         "end\n");
 
-    // layouts/main.avaui -- the shell every `extends "main"` page
-    // renders into (docs/architecture/17_AVAUI_FILE_FORMAT.md,
-    // "extends"). `slot` marks where the page's own view is inserted;
-    // navbar/footer here render on every page without each page
-    // repeating them. Uses the native layout primitives every
-    // component supports (padding, gap, align, borderWidth/
-    // borderColor, fontSize, textColor) instead of Tailwind's
-    // `class`, which HTMLRenderer honors but GdiRenderer ignores --
-    // see docs/AVAUI_NATIVE_RENDERING_FIX_PLAN.md.
     WriteFile(root / "layouts" / "main.avaui",
         "view\n"
         "    column\n"
@@ -229,25 +209,7 @@ int CmdNew(const std::vector<std::string>& args) {
 }
 
 namespace {
-// Shared by CmdRun/CmdWatch (the two commands that keep a server alive
-// and receive real HTTP traffic, i.e. the ones where "the site closes
-// with no log line" can happen). Does two things previously missing
-// entirely:
-//   1. Mirrors Error-level logs into <projectRoot>/avahost-error.log, so
-//      a crash that closes the console window still leaves a record on
-//      disk (see core/logger.h EnableErrorFileLogging).
-//   2. Installs process-wide crash handlers (core/crash_handler.h) so
-//      an exception that somehow still escapes every try/catch (e.g. on
-//      the hot-reload watcher thread, not just the request-handling one
-//      that web/server/http_server.cpp's SEH translator covers) logs
-//      *why* before the process goes down, instead of just vanishing.
-// Returns the logger the rest of the command must use -- callers should
-// take their `Logger&` from this return value, not from a GlobalLogger()
-// call made before this ran. EnableErrorFileLogging() replaces the
-// global logger with a new TeeLogger; a reference taken earlier would
-// still point at the old console-only one, and every Error() logged
-// through it afterwards (including all the ones added throughout
-// AvaHostApp) would silently skip the file.
+
 Logger& SetupErrorLoggingAndCrashHandlers(const HostOptions& options) {
     std::string logPath = (fs::path(options.projectRoot) / "avahost-error.log").string();
     EnableErrorFileLogging(logPath);
@@ -334,11 +296,7 @@ int CmdBuild(const std::vector<std::string>& args) {
 }
 
 int CmdPublish(const std::vector<std::string>& /*args*/) {
-    // Explicit stub: publish depends on the bytecode cache (plan
-    // section 14 / roadmap v0.4 "Publish"), which doesn't exist yet --
-    // `ava_compile` output (AvaModule*) isn't serializable today. This
-    // command intentionally fails loudly instead of silently doing a
-    // partial/incorrect publish.
+
     std::cerr << "avahost publish: not implemented yet.\n"
                  "  Publish requires the bytecode cache described in\n"
                  "  docs/architecture/AVAHOST_IMPLEMENTATION_PLAN.md section 14,\n"
@@ -381,10 +339,6 @@ int CmdDoctor(const std::vector<std::string>& args) {
     return 0;
 }
 
-// Fase 20.1 -- see rendering/ui_pipeline_static_renderer.h for why
-// this is a separate, additive command instead of a flag on `run`/
-// `build`: no `state`/`code`/event-handler binding, so it is only
-// correct for documents that don't need any of that.
 int CmdRenderStatic(const std::vector<std::string>& args) {
 #ifdef AVAHOST_HAS_UI_PIPELINE
     if (args.empty()) {
@@ -433,14 +387,6 @@ int CmdRenderStatic(const std::vector<std::string>& args) {
 #endif
 }
 
-// Fase 20.0 -- like render-static, but through RenderAvauiDynamic:
-// binds `state`/`code`/click handlers onto a real RuntimeHost VM first
-// (see rendering/ui_pipeline_dynamic_renderer.h), so `OnLoad` and any
-// state referenced by the source actually run/exist. Still not the
-// production `run`/`watch` path -- see that header's comment for what
-// remains for 20.2+. `--project <dir>` sets the search path/current
-// dir the same way `run`/`build` already do, since a `code` block may
-// `import` a services/*.ava module.
 int CmdRenderDynamic(const std::vector<std::string>& args) {
 #ifdef AVAHOST_HAS_UI_PIPELINE
     std::vector<std::string> positional;
@@ -474,7 +420,7 @@ int CmdRenderDynamic(const std::vector<std::string>& args) {
 
     UiPipelineRenderOptions renderOptions;
     std::string html, error;
-    if (!RenderAvauiDynamic(host, sourceBuf.str(), renderOptions, html, error)) {
+    if (!RenderAvauiDynamic(host, sourceBuf.str(), renderOptions, html, error, inputPath.string())) {
         std::cerr << "avahost render-dynamic: " << error << "\n";
         return 1;
     }

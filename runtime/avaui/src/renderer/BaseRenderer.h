@@ -48,7 +48,8 @@ public:
         const Color& color,
         const std::string& clickHandler = std::string(),
         const std::string& className = std::string(),
-        float maxWidth = -1.0f
+        float maxWidth = -1.0f,
+        bool wrap = false
     ) override;
 
     void DrawImage(
@@ -135,7 +136,8 @@ protected:
         const Color& color,
         const std::string& clickHandler,
         const std::string& className,
-        float maxWidth
+        float maxWidth,
+        bool wrap
     ) = 0;
 
     virtual void OnDrawImage(

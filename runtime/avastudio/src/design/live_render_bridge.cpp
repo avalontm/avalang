@@ -49,7 +49,11 @@ LiveRenderResult BuildLiveRender(avalang::ui::ComponentTree* tree, int viewportW
         std::string layoutSource = ReadFileToString(layoutPath.string());
         if (!layoutSource.empty()) {
             try {
-                auto layoutParsed = avalang::ui::parser::AvauiParser::Parse(layoutSource);
+                // Fase 2: pass the layout's own resolved path so a syntax
+                // error inside it (found via this project's `extends`)
+                // reports that file instead of an unlabeled line number.
+                auto layoutParsed =
+                    avalang::ui::parser::AvauiParser::Parse(layoutSource, layoutPath.string());
                 if (layoutParsed.tree && layoutParsed.tree->Root()) {
                     auto slotInfo = avalang::ui::LocateLayoutSlot(layoutParsed.tree.get(),
                                                                   viewportWidth, viewportHeight);

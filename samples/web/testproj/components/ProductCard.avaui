@@ -6,7 +6,7 @@ end
 
 view
     container
-        padding = 16
+        padding = 5
         gap = 8
 
         column
@@ -15,15 +15,16 @@ view
             text
                 text = name
                 fontSize = 16
+                wrap = true
             end
 
             text
                 text = "$" + price
                 style = "text.price"
+                wrap = true
             end
 
             button
-                id = "ProductCardAddBtn"
                 text = "Agregar"
                 click = OnAddToCart(productId)
             end

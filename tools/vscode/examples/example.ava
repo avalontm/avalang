@@ -1,0 +1,80 @@
+# AvaLang syntax showcase.
+# Open this file with the extension running (F5) to check highlighting.
+
+import mysql as db
+
+extern "libmysql" as MySQLNative
+    func mysql_init(mysql)
+    func mysql_query(mysql, query, *args)
+end
+
+class Animal
+    static count = 0
+    private _name = "unknown"
+
+    func Animal(name)
+        this._name = name
+        Animal.count++
+    end
+
+    func speak()
+        return $"{this._name} makes a sound"
+    end
+end
+
+class Dog: Animal
+    func speak()
+        return base.speak() + "... but louder"
+    end
+end
+
+func greet(name, greeting = "hello")
+    local message = $"{greeting}, {name}!"
+    return message
+end
+
+func fibonacci(n)
+    if n <= 1 then
+        return n
+    end
+    return fibonacci(n - 1) + fibonacci(n - 2)
+end
+
+square = (x) => x ** 2
+
+pets = ["Rex", "Milo", "Luna"]
+scores = {"Rex": 10, "Milo": 8}
+config = {timeout: 30, retries: 3, label: "prod"}
+
+func connect(host, port = 5432, timeout = 10)
+    return $"{host}:{port} (timeout={timeout}s)"
+end
+
+print(connect(host = "db.local", timeout = 5))
+
+i = 0
+while i < len(pets)
+    name = pets[i]
+    if name == "Rex" and scores[name] >= 10 then
+        print(greet(name, "hey"))
+    elif not scores[name] then
+        continue
+    else
+        print($"{name}: {scores[name]}")
+    end
+    i++
+end
+
+try
+    d = Dog("Fido")
+    print(d.speak())
+    raise "something went wrong"
+catch (err)
+    print("caught: " + err)
+finally
+    print("done")
+end
+
+for pet in pets then
+    print(pet)
+end

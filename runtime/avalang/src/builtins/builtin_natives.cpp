@@ -430,4 +430,20 @@ ava_value_t builtin_slice(AvaVM*, const ava_value_t* args, size_t count, void*) 
     return ToC(Value::String(result));
 }
 
+ava_value_t builtin_setglobal(AvaVM* vm, const ava_value_t* args, size_t count, void*) {
+    if (count < 2 || !args) return ToC(MakeNilV());
+
+    Value nameVal = FromC(args[0]);
+    if (nameVal.type != ValueType::String) return ToC(MakeNilV());
+
+    std::string name = static_cast<StringObj*>(nameVal.obj)->data;
+    Value value = FromC(args[1]);
+
+    auto* raw_vm = reinterpret_cast<ava::VM*>(vm);
+    if (raw_vm) {
+        raw_vm->SetGlobal(name, value);
+    }
+    return ToC(value);
+}
+
 } // extern "C"

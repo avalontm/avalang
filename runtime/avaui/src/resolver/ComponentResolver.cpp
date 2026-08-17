@@ -9,6 +9,7 @@
 #include <sstream>
 
 #include "components/PropertyValue.h"
+#include "parser/AvauiPropertyCoercion.h"
 #include "resolver/DottedPath.h"
 #include "resolver/KnownComponentProperties.h"
 
@@ -32,15 +33,6 @@ bool IsIdentChar(char c) {
     return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
 }
 
-// Splits a raw `.avaui` import spec ("components.confirmdialog" or
-// "components.confirmdialog as dialog") into its dotted module path and
-// optional alias. AvauiParser::Parse intentionally stores whatever
-// follows `import ` verbatim (see AvauiParser.cpp -- it never looks for
-// `as` itself), so this is the one place that actually interprets the
-// suffix. Keeping the split here -- rather than in the parser or in
-// ParsedAvaui::imports's type -- means every other reader of that vector
-// (AvauiWriter's round-trip, Ava Studio's DesignDocument, the public C
-// API's JSON export) keeps treating these as opaque strings, unchanged.
 void SplitImportAlias(const std::string& raw, std::string& outPath, std::string& outAlias) {
     outPath = raw;
     outAlias.clear();
@@ -50,10 +42,6 @@ void SplitImportAlias(const std::string& raw, std::string& outPath, std::string&
     std::string tok;
     while (iss >> tok) tokens.push_back(tok);
 
-    // A standalone `as` token, second-to-last, with something after it:
-    // `components.confirmdialog as dialog`. Anything else (no `as`, or
-    // `as` not in that position) is treated as a plain, alias-less path,
-    // so a module segment that merely contains "as" never misfires.
     if (tokens.size() >= 3 && tokens[tokens.size() - 2] == "as") {
         outAlias = tokens.back();
         std::ostringstream pathStream;
@@ -65,10 +53,6 @@ void SplitImportAlias(const std::string& raw, std::string& outPath, std::string&
     }
 }
 
-// Builds a bare-state-name -> "alias.name" rename table for one imported
-// component instance. Empty alias => empty map, i.e. "nothing to
-// rewrite" (the plain, unnamespaced import stays exactly as it works
-// today).
 std::unordered_map<std::string, std::string> BuildRenameMap(
         const std::unordered_map<std::string, std::string>& ownState,
         const std::string& alias) {
@@ -81,22 +65,6 @@ std::unordered_map<std::string, std::string> BuildRenameMap(
     return renameMap;
 }
 
-// Rewrites bare references to an imported component's own state (e.g.
-// `confirmDialogTitle`) into their namespaced form (`dialog.
-// confirmDialogTitle`) across every String-typed property of `node` and
-// its whole subtree -- this is what makes the component's own view
-// bindings (`title = confirmDialogTitle`, `isOpen = confirmDialogOpen`)
-// keep working once its state has been merged into the page under a
-// prefix instead of as bare globals. Only whole-identifier matches are
-// replaced (checked via IsIdentChar on both sides of every match), so
-// this can never clobber an unrelated identifier that happens to contain
-// one of these names as a substring. Non-String properties (numbers,
-// bools) are left alone, and any property whose text doesn't reference
-// one of THIS component's own state names is untouched byte-for-byte --
-// in particular `click = ConfirmDialogAccept()` handler bindings, since
-// handler names are never part of `ownState` (they stay page-level,
-// unprefixed, exactly per ConfirmDialog.avaui's own documented
-// convention).
 void RenameStateReferences(IComponent* node,
                             const std::unordered_map<std::string, std::string>& renameMap) {
     if (!node || renameMap.empty()) return;
@@ -153,17 +121,6 @@ void RenameStateReferences(IComponent* node,
     }
 }
 
-// AvaLang's NUMBER token (grammar: `DIGIT+ ('.' DIGIT+)?`, see
-// AvaLang.g4) has no exponent notation and no sign of its own --
-// negatives are a unary '-' applied to a NUMBER atom, a separate
-// grammar rule. std::ostringstream's default operator<<(double) uses
-// %g-style formatting, which switches to scientific notation
-// ("1.23457e+06") past ~6 significant digits and would hand back a
-// literal AvaLang's lexer can't parse at all -- silently breaking any
-// call-site argument once an id/price/quantity crosses that threshold,
-// or once a price needs more than 6 significant digits of precision
-// (already possible with ordinary currency amounts). Format explicitly
-// as fixed-point instead, then trim the padding.
 std::string FormatNumberLiteral(double n) {
     bool negative = std::signbit(n) && n != 0.0;
     double magnitude = std::fabs(n);
@@ -181,13 +138,6 @@ std::string FormatNumberLiteral(double n) {
     return negative ? "-" + text : text;
 }
 
-// Formats a call-site argument's PropertyValue as literal AvaLang
-// source text, so SubstituteCallArgs can inline it wherever the
-// component references that argument by (bare) name -- e.g.
-// price = "3.80" becomes the literal `"3.80"`, productId = 3 becomes
-// the literal `3`. String values are re-quoted/escaped since
-// AsString() holds the already-unquoted text (InferValue stripped the
-// quotes when the call-site argument was first parsed).
 std::string FormatArgLiteral(const PropertyValue& value) {
     switch (value.Type()) {
         case PropertyType::String: {
@@ -208,21 +158,76 @@ std::string FormatArgLiteral(const PropertyValue& value) {
     }
 }
 
-// Validates a call site (`ProductCard(name = "Latte", productId = 3)`,
-// i.e. `callSite`) against the callee's own declared `params` block
-// (`declaredParams`, from ProductCard.avaui). Only runs at all when
-// the callee declares at least one param -- an empty `declaredParams`
-// means "no params block in this file", which keeps every existing
-// component that predates this feature working exactly as before,
-// unvalidated. `typeName` is only used to make the thrown message
-// identify which component/call site is at fault.
-//
-// Two failure modes, both reported as ComponentResolveError so they
-// surface at resolve time (page render), not silently at click time
-// as an "undefined variable" deep in a handler:
-//   - a required (no-default) param the call site never passed
-//   - an argument the call site passed that isn't declared at all
-//     (almost always a typo -- e.g. `ProductCrad(prodctId = 3)`)
+PropertyValue ResolveIterableStatic(
+        const std::string& iterExpr,
+        const std::unordered_map<std::string, std::string>& mergedState) {
+    auto it = mergedState.find(iterExpr);
+    if (it == mergedState.end()) return PropertyValue();
+    return parser::InferValue(it->second);
+}
+
+std::unordered_map<std::string, std::string> BuildForItemValueMap(
+        const std::string& loopVar, const PropertyRecord& item, int index) {
+    std::unordered_map<std::string, std::string> valueMap;
+    for (const auto& [fieldName, fieldValue] : item) {
+        valueMap[loopVar + "." + fieldName] = FormatArgLiteral(fieldValue);
+    }
+    valueMap["index"] = FormatNumberLiteral(static_cast<double>(index));
+    return valueMap;
+}
+
+std::string TrimWs(const std::string& s) {
+    size_t start = s.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) return "";
+    size_t end = s.find_last_not_of(" \t\r\n");
+    return s.substr(start, end - start + 1);
+}
+
+bool TryDecodeExactFieldRef(const std::string& text, const std::string& loopVar,
+                             const PropertyRecord& item, int index, PropertyValue* out) {
+    std::string trimmed = TrimWs(text);
+    if (trimmed == "index") {
+        *out = PropertyValue(static_cast<double>(index));
+        return true;
+    }
+    std::string prefix = loopVar + ".";
+    if (trimmed.size() > prefix.size() && trimmed.compare(0, prefix.size(), prefix) == 0) {
+        std::string field = trimmed.substr(prefix.size());
+        auto it = item.find(field);
+        if (it != item.end()) {
+            *out = it->second;
+            return true;
+        }
+    }
+    return false;
+}
+
+void SubstitutePropertiesInPlace(IComponent* node,
+                                  const std::unordered_map<std::string, std::string>& valueMap);
+
+void SubstituteForItemInSubtree(IComponent* node, const std::string& loopVar,
+                                 const PropertyRecord& item, int index,
+                                 const std::unordered_map<std::string, std::string>& itemValueMap) {
+    if (!node) return;
+
+    if (ComponentResolver::IsComponentCall(node)) {
+        for (const auto& propName : node->PropertyNames()) {
+            const PropertyValue* prop = node->GetProperty(propName);
+            if (!prop || prop->Type() != PropertyType::String) continue;
+            PropertyValue decoded;
+            if (TryDecodeExactFieldRef(prop->AsString(), loopVar, item, index, &decoded)) {
+                node->SetProperty(propName, decoded);
+            }
+        }
+        return;
+    }
+
+    SubstitutePropertiesInPlace(node, itemValueMap);
+    for (IComponent* child : node->Children()) {
+        SubstituteForItemInSubtree(child, loopVar, item, index, itemValueMap);
+    }
+}
+
 void ValidateCallSiteArgs(const std::string& typeName,
                            const IComponent* callSite,
                            const std::vector<parser::ParamDeclaration>& declaredParams) {
@@ -252,24 +257,6 @@ void ValidateCallSiteArgs(const std::string& typeName,
     }
 }
 
-// Builds a bare-name -> literal-source-text map from a call site's own
-// properties (e.g. `ProductCard(name = "Latte", productId = 3)`),
-// falling back to `declaredParams`' own defaults for any optional
-// param the call site omitted. Skips "id" (that's the *cloned* node's
-// own id, not an argument), the internal "__unresolvedImportCall"
-// marker, and -- critically -- any name that is also one of the
-// component's OWN declared `state` keys (`ownState`). A call-site
-// argument becomes a frozen literal; state must stay a live VM-global
-// reference so RefreshAll()/reactivity and RenameStateReferences keep
-// working for it. Without this exclusion, a call site like
-// `Counter(count = 0)` on a component that also declares
-// `state count = 0` would silently bake `count` into the literal "0"
-// everywhere, including inside the component's own click handlers
-// that are supposed to increment it -- turning a reactive variable
-// into dead text. When a collision happens the state declaration wins
-// and the argument is dropped from the map; callers should treat
-// call-site argument names and a component's own state names as one
-// shared namespace and avoid reusing them.
 std::unordered_map<std::string, std::string> BuildArgValueMap(
         const IComponent* callSite,
         const std::unordered_map<std::string, std::string>& ownState,
@@ -292,18 +279,8 @@ std::unordered_map<std::string, std::string> BuildArgValueMap(
     return map;
 }
 
-// Same whole-identifier text substitution as RenameStateReferences,
-// but replaces each match with a literal value instead of a renamed
-// identifier, and walks starting at `node` itself (not just its
-// children) so the clonedRoot's own properties get the same treatment
-// as its descendants'. This is what lets a call-site argument be used
-// anywhere in the component's own view/handlers -- including inside a
-// handler call like `click = OnAddToCart(productId)`, which needs a
-// real per-instance literal (`OnAddToCart(3)`) since every call site
-// clones its own independent subtree and there is no per-instance VM
-// scope to hold a shared `productId` global in.
-void SubstituteCallArgs(IComponent* node,
-                         const std::unordered_map<std::string, std::string>& valueMap) {
+void SubstitutePropertiesInPlace(IComponent* node,
+                                  const std::unordered_map<std::string, std::string>& valueMap) {
     if (!node || valueMap.empty()) return;
 
     for (const auto& propName : node->PropertyNames()) {
@@ -352,9 +329,38 @@ void SubstituteCallArgs(IComponent* node,
             node->SetProperty(propName, PropertyValue(rewritten));
         }
     }
+}
 
+void SubstituteCallArgs(IComponent* node,
+                         const std::unordered_map<std::string, std::string>& valueMap) {
+    if (!node || valueMap.empty()) return;
+    SubstitutePropertiesInPlace(node, valueMap);
     for (IComponent* child : node->Children()) {
         SubstituteCallArgs(child, valueMap);
+    }
+}
+
+void CheckNoHardcodedIdOnReusableComponent(const std::string& typeName,
+                                            const std::vector<parser::ParamDeclaration>& declaredParams,
+                                            const IComponent* node) {
+    if (declaredParams.empty() || !node) return;
+
+    if (const auto* idProp = node->GetProperty("id")) {
+        if (idProp->Type() == PropertyType::String && !idProp->AsString().empty()) {
+            throw ComponentResolveError(
+                typeName + " declares params -- so it's meant to be instantiated more than "
+                "once -- but hardcodes id = \"" + idProp->AsString() + "\" on one of its own "
+                "elements (" + node->TypeName() + "). Every instance of " + typeName +
+                " would share that exact id, which breaks component refs the moment " +
+                typeName + " is used more than once on the same page. Remove the id -- most "
+                "elements don't need one -- or, if you genuinely need a per-instance ref, "
+                "give the id a value derived from one of " + typeName + "'s own params instead "
+                "of a fixed literal.");
+        }
+    }
+
+    for (const IComponent* child : node->Children()) {
+        CheckNoHardcodedIdOnReusableComponent(typeName, declaredParams, child);
     }
 }
 
@@ -365,17 +371,6 @@ ComponentResolver::ComponentResolver(std::string projectRoot, std::string compon
 
 bool ComponentResolver::IsComponentCall(const IComponent* comp) {
     if (!comp) return false;
-    // `slot()` is parsed with call syntax (see AvauiParser::ParseComponent),
-    // so it also gets the generic "__unresolvedImportCall" marker like any
-    // other Component(...) call site -- but it is a built-in layout
-    // placeholder (RenderTree.cpp's `typeName == "Slot"` -> RenderNodeType::
-    // Slot), not something with a components/Slot.avaui file to load. Left
-    // unguarded, LoadComponent() below fails to find that file, the call
-    // site resolves to zero children, and ResolveChildrenOf still deletes
-    // the original node because `changed` was set -- silently dropping the
-    // page's entire content wherever the layout put `slot()`. Treat it as
-    // an ordinary node instead of a call site so it survives resolution
-    // intact for SceneCommandWalker to splice the page fragment into.
     if (comp->TypeName() == "Slot") return false;
     if (const auto* prop = comp->GetProperty("__unresolvedImportCall")) {
         if (prop->Type() == PropertyType::Bool && prop->AsBool()) {
@@ -403,10 +398,6 @@ ComponentResolver::ImportMap ComponentResolver::BuildImportMap(const std::vector
         std::string alias;
         SplitImportAlias(raw, dotted, alias);
 
-        // With an alias, that alias IS the callable tag (the view calls
-        // it as `dialog()`, not `ConfirmDialog()`) -- it fully replaces
-        // the default PascalCase tag CallableTagFromDotted would derive,
-        // matching ordinary `import ... as` shadowing semantics.
         std::string tag = alias.empty() ? CallableTagFromDotted(dotted) : alias;
         if (tag.empty()) continue;
         fs::path resolved = ResolveDottedAvauiPath(projectRoot_, dotted);
@@ -440,12 +431,6 @@ const ComponentResolver::CacheEntry* ComponentResolver::LoadComponent(
     std::string key = filePath.string();
     auto cacheIt = cache_.find(key);
     if (cacheIt != cache_.end() && cacheIt->second->mtime == mtime) {
-        // The cached parse always keeps this component's OWN, bare state
-        // names (it's shared across every call site, aliased or not --
-        // see the cache_ key, which is the file path, not the tag/alias);
-        // namespacing only ever happens here, at merge time, per call
-        // site, which is what lets two differently-aliased imports of
-        // the very same file merge in two independently-prefixed copies.
         MergeStateMap(mergedState, cacheIt->second->parsed.state, alias);
         return cacheIt->second.get();
     }
@@ -453,12 +438,7 @@ const ComponentResolver::CacheEntry* ComponentResolver::LoadComponent(
     std::string source;
     if (!ReadFile(key, source)) return nullptr;
 
-    parser::ParsedAvaui parsed;
-    try {
-        parsed = parser::AvauiParser::Parse(source);
-    } catch (const parser::ParseError&) {
-        return nullptr;
-    }
+    parser::ParsedAvaui parsed = parser::AvauiParser::Parse(source, key);
     if (!parsed.tree) return nullptr;
 
     auto entry = std::make_unique<CacheEntry>();
@@ -468,6 +448,7 @@ const ComponentResolver::CacheEntry* ComponentResolver::LoadComponent(
     ImportMap ownImportMap = BuildImportMap(entry->parsed.imports);
     IComponent* root = entry->parsed.tree->Root();
     if (root) {
+        CheckNoHardcodedIdOnReusableComponent(typeName, entry->parsed.params, root);
         ResolveChildrenOf(root, entry->parsed.tree.get(), mergedState, ownImportMap, 0);
     }
     MergeStateMap(mergedState, entry->parsed.state, alias);
@@ -480,9 +461,34 @@ const ComponentResolver::CacheEntry* ComponentResolver::LoadComponent(
 void ComponentResolver::ResolveChildrenOf(IComponent* parent,
                                            ComponentTree* tree,
                                            std::unordered_map<std::string, std::string>& mergedState,
-                                           const ImportMap& importMap, int depth) {
+                                           const ImportMap& importMap, int depth,
+                                           bool expandLoops) {
     if (!parent || !tree || depth > kMaxDepth) return;
-    if (parent->TypeName() == "For") return;
+    if (parent->TypeName() == "For") {
+        if (!expandLoops) {
+            // Runtime pipelines own For's per-render expansion (VM-driven).
+            // Leave the template untouched here so it isn't consumed
+            // against the file's static initial state.
+            return;
+        }
+        std::vector<IComponent*> produced = ExpandForNode(parent, tree, mergedState, importMap);
+        for (IComponent* c : produced) {
+            ResolveChildrenOf(c, tree, mergedState, importMap, depth + 1, expandLoops);
+        }
+        return;
+    }
+    if (parent->TypeName() == "ListView") {
+        if (!expandLoops) {
+            // Same reasoning as "For": the live runtime pipeline expands
+            // ListView itself using the current VM state per render.
+            return;
+        }
+        std::vector<IComponent*> produced = ExpandListViewNode(parent, tree, mergedState, importMap);
+        for (IComponent* c : produced) {
+            ResolveChildrenOf(c, tree, mergedState, importMap, depth + 1, expandLoops);
+        }
+        return;
+    }
 
     auto slotNames = parent->SlotNames();
     for (const auto& slot : slotNames) {
@@ -508,9 +514,91 @@ void ComponentResolver::ResolveChildrenOf(IComponent* parent,
         }
 
         for (IComponent* c : news) {
-            ResolveChildrenOf(c, tree, mergedState, importMap, depth + 1);
+            ResolveChildrenOf(c, tree, mergedState, importMap, depth + 1, expandLoops);
         }
     }
+}
+
+std::vector<IComponent*> ComponentResolver::ExpandForNode(
+        IComponent* forNode, ComponentTree* tree,
+        std::unordered_map<std::string, std::string>& mergedState,
+        const ImportMap& importMap) {
+    std::vector<IComponent*> produced;
+    if (!forNode || !tree) return produced;
+
+    const auto* loopVarProp = forNode->GetProperty("loopVar");
+    const auto* iterProp = forNode->GetProperty("iterable");
+    if (!loopVarProp || !iterProp) return produced;
+    if (loopVarProp->Type() != PropertyType::String || iterProp->Type() != PropertyType::String) {
+        return produced;
+    }
+
+    std::string loopVar = loopVarProp->AsString();
+    std::string iterExpr = iterProp->AsString();
+
+    PropertyValue iterable = ResolveIterableStatic(iterExpr, mergedState);
+    if (iterable.Type() != PropertyType::List) return produced;
+
+    std::vector<IComponent*> templateChildren = forNode->Children();
+    if (templateChildren.empty()) return produced;
+
+    for (IComponent* templateChild : templateChildren) {
+        forNode->RemoveChild(templateChild);
+    }
+
+    const PropertyList& items = iterable.AsList();
+    int index = 0;
+    for (const PropertyRecord& item : items) {
+        std::unordered_map<std::string, std::string> itemValueMap =
+            BuildForItemValueMap(loopVar, item, index);
+
+        for (IComponent* templateChild : templateChildren) {
+            IComponent* clone = CloneInto(templateChild, forNode, tree);
+            if (!clone) continue;
+            SubstituteForItemInSubtree(clone, loopVar, item, index, itemValueMap);
+
+            if (IsComponentCall(clone)) {
+                std::vector<IComponent*> resolved =
+                    ResolveOneCallSite(clone, tree, mergedState, importMap);
+                forNode->RemoveChild(clone);
+                for (IComponent* r : resolved) {
+                    forNode->AddChild(r);
+                    produced.push_back(r);
+                }
+            } else {
+                produced.push_back(clone);
+            }
+        }
+        ++index;
+    }
+
+    return produced;
+}
+
+std::vector<IComponent*> ComponentResolver::ExpandListViewNode(
+        IComponent* listViewNode, ComponentTree* tree,
+        std::unordered_map<std::string, std::string>& mergedState,
+        const ImportMap& importMap) {
+    std::vector<IComponent*> produced;
+    if (!listViewNode || !tree) return produced;
+
+    const auto* sourceProp = listViewNode->GetProperty("source");
+    if (!sourceProp || sourceProp->Type() != PropertyType::String) return produced;
+
+    std::string loopVar = "item";
+    if (const auto* asProp = listViewNode->GetProperty("as")) {
+        if (asProp->Type() == PropertyType::String && !asProp->AsString().empty()) {
+            loopVar = asProp->AsString();
+        }
+    }
+
+    // ListView doesn't need an explicit `for` child: its own children ARE
+    // the item template. Relabel to the properties ExpandForNode already
+    // knows how to consume and delegate, so both engines share one
+    // battle-tested expansion path instead of duplicating loop logic.
+    listViewNode->SetProperty("loopVar", PropertyValue(loopVar));
+    listViewNode->SetProperty("iterable", PropertyValue(sourceProp->AsString()));
+    return ExpandForNode(listViewNode, tree, mergedState, importMap);
 }
 
 std::vector<IComponent*> ComponentResolver::ResolveOneCallSite(
@@ -593,13 +681,14 @@ void ComponentResolver::ApplyCallSiteOverrides(const IComponent* callSite,
 
 void ComponentResolver::ResolveImports(ComponentTree* tree,
                                           const std::vector<std::string>& imports,
-                                          std::unordered_map<std::string, std::string>& mergedState) {
+                                          std::unordered_map<std::string, std::string>& mergedState,
+                                          bool expandLoops) {
     if (!tree) return;
     IComponent* root = tree->Root();
     if (!root) return;
 
     ImportMap importMap = BuildImportMap(imports);
-    ResolveChildrenOf(root, tree, mergedState, importMap, 0);
+    ResolveChildrenOf(root, tree, mergedState, importMap, 0, expandLoops);
 }
 
 } // namespace ui

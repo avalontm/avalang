@@ -40,10 +40,11 @@ void NullRenderer::OnDrawText(
     const Color& color,
     const std::string& clickHandler,
     const std::string& className,
-    float maxWidth
+    float maxWidth,
+    bool wrap
 ) {
     (void)x; (void)y; (void)text; (void)fontSize;
-    (void)fontName; (void)color; (void)clickHandler; (void)className; (void)maxWidth;
+    (void)fontName; (void)color; (void)clickHandler; (void)className; (void)maxWidth; (void)wrap;
 }
 
 void NullRenderer::OnDrawImage(

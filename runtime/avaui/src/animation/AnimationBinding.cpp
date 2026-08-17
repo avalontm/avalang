@@ -12,9 +12,6 @@ namespace animation {
 
 namespace {
 
-// property = "opacity" | "position" | "scale" | "rotation" -- unknown
-// text falls back to Opacity (soft gap, same policy as
-// AvauiParser::CanonicalTypeName's fallback for an unknown TypeName).
 AnimatableProperty ParseAnimatableProperty(const std::string& text) {
     if (text == "position") return AnimatableProperty::Position;
     if (text == "scale") return AnimatableProperty::Scale;
@@ -22,19 +19,12 @@ AnimatableProperty ParseAnimatableProperty(const std::string& text) {
     return AnimatableProperty::Opacity;
 }
 
-// mode = "once" | "loop" | "pingpong" -- unknown/empty falls back to
-// Once, matching AnimationController's own default parameter.
 PlaybackMode ParsePlaybackMode(const std::string& text) {
     if (text == "loop") return PlaybackMode::Loop;
     if (text == "pingpong" || text == "ping-pong") return PlaybackMode::PingPong;
     return PlaybackMode::Once;
 }
 
-// "1.0" -> Float, or "x,y" -> Vec2, chosen by `property`'s expected
-// kind (KindOf()) rather than by sniffing the text for a comma -- an
-// author who writes `from = "10,20"` for an opacity animation gets a
-// soft-gap zero rather than an accidental Vec2/Float mismatch that
-// AnimationController::Play() would then reject outright.
 AnimatableValue ParseAnimatableValueText(const std::string& raw, AnimatableProperty property) {
     if (KindOf(property) == AnimatableKind::Vec2) {
         float x = 0.0f, y = 0.0f;
@@ -43,9 +33,6 @@ AnimatableValue ParseAnimatableValueText(const std::string& raw, AnimatablePrope
             x = std::strtof(raw.substr(0, comma).c_str(), nullptr);
             y = std::strtof(raw.substr(comma + 1).c_str(), nullptr);
         } else if (!raw.empty()) {
-            // A single number for a Vec2 property (position/scale)
-            // applies to both axes -- convenience for the common
-            // uniform-scale case ("to = 1.2" meaning "1.2, 1.2").
             x = y = std::strtof(raw.c_str(), nullptr);
         }
         return AnimatableValue::FromVec2({x, y});
@@ -53,12 +40,6 @@ AnimatableValue ParseAnimatableValueText(const std::string& raw, AnimatablePrope
     return AnimatableValue::FromFloat(raw.empty() ? 0.0f : std::strtof(raw.c_str(), nullptr));
 }
 
-// Registry of click-trigger handlers, kept alive for the process --
-// same pattern as controls::Button's g_buttonCallbacks (Fase 17).
-// WireAnimations has no matching Unwire() in this phase, so nothing
-// ever erases from this vector; the handler's lambda only captures
-// value types and non-owning pointers, so leaking it for the
-// process's lifetime is harmless.
 std::vector<std::unique_ptr<events::IEventHandler>> g_clickHandlers;
 std::mutex g_clickHandlersMutex;
 

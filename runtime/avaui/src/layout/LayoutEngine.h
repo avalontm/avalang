@@ -1,7 +1,9 @@
 #ifndef AVA_UI_LAYOUT_LAYOUTENGINE_H
 #define AVA_UI_LAYOUT_LAYOUTENGINE_H
 
+#include <functional>
 #include <memory>
+#include <string>
 
 #include "Export.h"
 #include "Fwd.h"
@@ -45,6 +47,28 @@ public:
     // this phase has no incremental/partial relayout. Returns nullptr
     // if `componentRoot` is null.
     virtual ILayoutNode* Compute(IComponent* componentRoot, const LayoutRect& available) = 0;
+
+    // Optional. A bare state-bound identifier/expression in .avaui
+    // source (e.g. `text = errorFile`) parses as opaque
+    // PropertyType::String holding its own raw source text ("errorFile")
+    // -- the same representation a literal string would use -- and only
+    // gets resolved to its actual runtime value later, at render-tree
+    // build time (see RenderTree::Eval). Compute()'s intrinsic-size pass
+    // runs *before* that, so without an evaluator, a Text/Button/Label/
+    // Link/TextBox/ComboBox/CheckBox/RadioButton whose content is
+    // state-bound gets measured using its own unresolved source
+    // expression rather than what will actually be displayed -- which
+    // for anything but a trivially short bound value produces a
+    // too-narrow intrinsic size (and everything downstream that sizes
+    // off it: auto-sized columns/rows, ellipsis clipping, ...).
+    //
+    // Set this (mirroring IRenderTree::SetEvalText, same callback shape)
+    // before calling Compute() to have text-ish properties resolved
+    // through it first. Leaving it unset (the default) preserves the
+    // previous behavior of measuring the raw property text as-is, which
+    // is still correct for literal (non-bound) content and for callers
+    // (e.g. design-time preview) with no state evaluator available.
+    virtual void SetTextEvaluator(std::function<std::string(const std::string&)> eval) = 0;
 
     // Lookup into the most recent Compute() result by ComponentId.
     // Returns nullptr if Compute() has not been called, or if `id`

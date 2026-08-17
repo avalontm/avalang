@@ -3,11 +3,26 @@ view
         padding = 16
         borderWidth = 1
         borderColor = "E5E7EB"
+        backgroundColor = "FFFFFF"
+        # See Navbar.avaui: styles.ava's `style *` sets margin = 4 on
+        # every component by default, which isn't wanted on a
+        # full-bleed footer bar.
+        margin = 0
+        # Same fixed-height safety margin as Navbar (see its comment):
+        # 13px text + 16px top/bottom padding needs a touch more than
+        # the text's own line height to avoid a silent vertical clamp.
         height = 48
+
         text
             text = "AvaHost 0.1"
             fontSize = 13
             textColor = "6B7280"
+            align = "start"
+            # Same reasoning as Navbar's title: wrap=true+width takes
+            # this node off the ellipsis path for good instead of
+            # trusting whatever width this row's flow hands it.
+            wrap = true
+            width = 200
         end
     end
 end

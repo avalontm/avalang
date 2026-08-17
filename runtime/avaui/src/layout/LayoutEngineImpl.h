@@ -27,10 +27,23 @@ struct IntrinsicSize {
 class LayoutEngineImpl final : public LayoutEngine, private common::NonCopyable {
 public:
     ILayoutNode* Compute(IComponent* componentRoot, const LayoutRect& available) override;
+    void SetTextEvaluator(std::function<std::string(const std::string&)> eval) override {
+        textEvaluator_ = std::move(eval);
+    }
     ILayoutNode* FindNode(ComponentId id) const override;
     ILayoutNode* Root() const override;
 
 private:
+    // See LayoutEngine::SetTextEvaluator. Applied in ComputeIntrinsicSize
+    // to every text-ish property it measures, before EstimateTextWidth
+    // ever sees it; unset means "use the raw property text as-is",
+    // matching pre-evaluator behavior.
+    std::string EvalText(const std::string& raw) const {
+        return textEvaluator_ ? textEvaluator_(raw) : raw;
+    }
+
+    std::function<std::string(const std::string&)> textEvaluator_;
+
     // Mirrors `component` and its subtree into LayoutNode instances
     // (no geometry yet), registering every node in `nodes_`. Order of
     // LayoutNode::Children() matches IComponent::Children() exactly.
