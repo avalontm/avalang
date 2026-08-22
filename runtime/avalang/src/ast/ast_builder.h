@@ -27,6 +27,7 @@ public:
     std::any visitLocalStatement(AvaLangParser::LocalStatementContext* ctx) override;
 
     std::any visitIfStatement(AvaLangParser::IfStatementContext* ctx) override;
+    std::any visitSelectStatement(AvaLangParser::SelectStatementContext* ctx) override;
     std::any visitWhileStatement(AvaLangParser::WhileStatementContext* ctx) override;
     std::any visitForStatement(AvaLangParser::ForStatementContext* ctx) override;
     std::any visitFuncDeclaration(AvaLangParser::FuncDeclarationContext* ctx) override;
@@ -37,6 +38,8 @@ public:
     std::any visitTryStatement(AvaLangParser::TryStatementContext* ctx) override;
     std::any visitIncDecStatement(AvaLangParser::IncDecStatementContext* ctx) override;
     std::any visitModifiedFuncDeclaration(AvaLangParser::ModifiedFuncDeclarationContext* ctx) override;
+    std::any visitAsyncFuncDeclaration(AvaLangParser::AsyncFuncDeclarationContext* ctx) override;
+    std::any visitAwaitAtom(AvaLangParser::AwaitAtomContext* ctx) override;
     std::any visitModifiedAssignStatement(AvaLangParser::ModifiedAssignStatementContext* ctx) override;
     std::any visitExternStatement(AvaLangParser::ExternStatementContext* ctx) override;
     std::any visitExternFuncDeclaration(AvaLangParser::ExternFuncDeclarationContext* ctx) override;
@@ -73,6 +76,13 @@ private:
 
     std::shared_ptr<ExprNode> makeString(const std::string& s);
     std::shared_ptr<ExprNode> exprFromTarget(AvaLangParser::TargetContext* t);
+
+    // Nombre unico para la variable temporal que guarda el valor del
+    // `select` (ver visitSelectStatement). Un contador simple alcanza:
+    // el builder recorre el AST de forma secuencial y de un solo hilo,
+    // asi que no hace falta nada mas elaborado para evitar colisiones
+    // entre `select`s hermanos o anidados.
+    int select_counter_ = 0;
 };
 
 } // namespace ava

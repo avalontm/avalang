@@ -2,7 +2,7 @@
 #define AVA_VM_PLATFORM_ACCESSOR_H
 
 #include "../platform/interfaces/IPlatform.h"
-#include <memory>
+#include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 
 #ifdef _WIN32
   #define AVA_VM_PLATFORM_ACCESSOR_API __declspec(dllexport)
@@ -31,7 +31,7 @@ public:
     // desde fuera de avalang.dll, mismo patron que Platform::Create()
     // (AVA_PLATFORM_API, ver Fase 2). ava_cli/avahost normales nunca
     // llaman esto y siguen usando el IPlatform real sin cambios.
-    static void SetOverride(std::unique_ptr<platform::IPlatform> platform);
+    static void SetOverride(avastd::unique_ptr<platform::IPlatform> platform);
     static void ClearOverride();
 
 private:

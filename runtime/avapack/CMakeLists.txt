@@ -170,6 +170,13 @@ set_target_properties(${AVAPACK_OUT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runtime/avalang"
 )
 
+# Fase 8 -- Optimizacion: LTO + dead-code elimination + symbol stripping en
+# Release (ver cmake/OptimizationOptions.cmake). Se aplica a avapack_gen
+# (la herramienta) y sobre todo a ${AVAPACK_OUT_NAME}, el .exe empacado que
+# de verdad se distribuye -- es el binario donde el tamano importa.
+ava_apply_optimization_options(avapack_gen)
+ava_apply_optimization_options(${AVAPACK_OUT_NAME})
+
 # Cuando avalang/avalang_ui son IMPORTED (AVA_PACK_USE_PREBUILT_AVALANG=ON,
 # ver CMakeLists.txt raiz), no hay ningun paso de compilacion que las deje
 # en RUNTIME_OUTPUT_DIRECTORY -- hay que copiarlas a mano junto a avapack_gen

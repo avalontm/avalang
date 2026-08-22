@@ -5,8 +5,7 @@
 // freeze/deprecation policy before changing any signature in IEnvironment.
 #include "PAL_ABI.h"
 
-#include <string>
-#include <vector>
+#include "../barekernel/stdcompat/ava_stdcompat.h"
 
 namespace ava {
 namespace platform {
@@ -15,13 +14,13 @@ class IEnvironment {
 public:
     virtual ~IEnvironment() = default;
 
-    virtual bool GetEnvVar(const std::string& name, std::string& out_value) = 0;
-    virtual bool SetEnvVar(const std::string& name, const std::string& value) = 0;
+    virtual bool GetEnvVar(const avastd::string& name, avastd::string& out_value) = 0;
+    virtual bool SetEnvVar(const avastd::string& name, const avastd::string& value) = 0;
 
-    virtual std::string GetCurrentDirectory() = 0;
-    virtual bool SetCurrentDirectory(const std::string& path) = 0;
+    virtual avastd::string GetCurrentDirectory() = 0;
+    virtual bool SetCurrentDirectory(const avastd::string& path) = 0;
 
-    virtual std::vector<std::string> GetCommandLineArgs() = 0;
+    virtual avastd::vector<avastd::string> GetCommandLineArgs() = 0;
 };
 
 } // namespace platform

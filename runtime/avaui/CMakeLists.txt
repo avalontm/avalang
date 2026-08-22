@@ -223,6 +223,10 @@ if(WIN32)
     target_compile_definitions(avalang_ui PRIVATE UNICODE _UNICODE)
 endif()
 
+# Fase 8 -- Optimizacion: LTO + dead-code elimination + symbol stripping
+# en Release (ver cmake/OptimizationOptions.cmake).
+ava_apply_optimization_options(avalang_ui)
+
 install(TARGETS avalang_ui
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib

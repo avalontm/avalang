@@ -78,3 +78,19 @@ end
 for pet in pets then
     print(pet)
 end
+
+func calificacion(nota)
+    select nota
+        case 90 to 100 then
+            return "A"
+        case 80, 85, 89 then
+            return "B"
+        case is >= 60 then
+            return "C"
+        else
+            return "F"
+    end
+end
+
+print(calificacion(95))
+

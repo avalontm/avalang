@@ -1,11 +1,11 @@
 #ifndef AVA_VM_OPCODES_H
 #define AVA_VM_OPCODES_H
 
-#include <cstdint>
+#include "../../platform/barekernel/stdcompat/ava_types.h"
 
 namespace ava {
 
-enum class OpCode : uint8_t {
+enum class OpCode : avastd::uint8_t {
     LOADK,       // A, Bx    R[A] = K[Bx]
     LOADNIL,     // A        R[A] = nil
     LOADBOOL,    // A, B     R[A] = (bool)B
@@ -51,6 +51,7 @@ enum class OpCode : uint8_t {
     BASECALL,    // A, B, C  call base class method: R[A].method(K[B]) with args R[A+1..A+C]
     YIELD,       // A, B     suspend coroutine, yielding R[A..A+B-1]
     RESUME,      // A, B, C  resume coroutine R[B] with args, C results
+    AWAIT,       // A        await Task in R[A]; suspends until settled, R[A] = result
     TRY,         // sBx(32)  push handler, jump target (32-bit)
     TRY_END,     //           mark end of try block
     CATCH,       // sBx(32)  if exception active, jump (32-bit)
@@ -62,13 +63,13 @@ enum class OpCode : uint8_t {
 // Bx / sBx reuse the B+C fields as one wider operand where noted above.
 struct Instr {
     OpCode  op;
-    uint8_t a;
+    avastd::uint8_t a;
     union {
         struct {
-            uint16_t b; // low 16 bits
-            uint16_t c; // high 16 bits (extends b for 32-bit signed offsets)
+            avastd::uint16_t b; // low 16 bits
+            avastd::uint16_t c; // high 16 bits (extends b for 32-bit signed offsets)
         };
-        int32_t bx32; // 32-bit signed offset (used by JMP, TRY, CATCH)
+        avastd::int32_t bx32; // 32-bit signed offset (used by JMP, TRY, CATCH)
     };
 };
 

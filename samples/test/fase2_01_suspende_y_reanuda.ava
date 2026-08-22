@@ -1,0 +1,13 @@
+async func worker()
+    print("worker: antes")
+    r = await delay(200)
+    print("worker: despues")
+    return "ok"
+end
+
+async func main()
+    r = await worker()
+    print(r)
+end
+
+main()

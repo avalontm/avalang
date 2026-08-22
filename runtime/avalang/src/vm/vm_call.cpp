@@ -3,13 +3,7 @@
 #include "module.h"
 #include "coroutine.h"
 #include "../frontend/frontend.h"
-#include <cstdio>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <algorithm>
-#include <iomanip>
-#include <cmath>
+#include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 
 namespace ava {
 
@@ -36,10 +30,10 @@ Value VM::ResumeFromTop() {
     return result;
 }
 
-Value VM::Call(const Value& callable, const std::vector<Value>& args) {
+Value VM::Call(const Value& callable, const avastd::vector<Value>& args) {
     if (callable.type == ValueType::Native) {
         auto* native = static_cast<NativeObj*>(callable.obj);
-        std::vector<ava_value_t> c_args;
+        avastd::vector<ava_value_t> c_args;
         c_args.reserve(args.size());
         for (auto& a : args) c_args.push_back(ToC(a));
         ava_value_t c_result = native->fn(
@@ -53,7 +47,10 @@ Value VM::Call(const Value& callable, const std::vector<Value>& args) {
 
     if (callable.type == ValueType::Bound) {
         auto* bound = static_cast<BoundMethod*>(callable.obj);
-        std::vector<Value> all_args;
+        if (bound->proto->is_async) {
+            return StartAsyncBoundCall(callable, args);
+        }
+        avastd::vector<Value> all_args;
         all_args.push_back(bound->instance);
         all_args.insert(all_args.end(), args.begin(), args.end());
         
@@ -79,9 +76,12 @@ Value VM::Call(const Value& callable, const std::vector<Value>& args) {
 
     if (callable.type == ValueType::Function) {
         auto* closure = static_cast<Closure*>(callable.obj);
+        if (closure->proto->is_async) {
+            return StartAsyncCall(callable, args);
+        }
         CallFrame frame;
         frame.proto = closure->proto;
-        frame.closure = std::shared_ptr<Closure>(closure, [](Closure*) {});
+        frame.closure = avastd::shared_ptr<Closure>(closure, [](Closure*) {});
         frame.registers.resize(closure->proto->num_registers);
         for (auto& reg : frame.registers) {
             reg = Value::Nil();
@@ -102,13 +102,15 @@ Value VM::Call(const Value& callable, const std::vector<Value>& args) {
     if (callable.type == ValueType::Coroutine) {
         auto* co = reinterpret_cast<Coroutine*>(callable.obj);
         if (co->status == CoStatus::Running) {
-            throw std::runtime_error("attempt to call a running coroutine");
+            AVA_THROW(avastd::runtime_error("attempt to call a running coroutine"));
         }
 
         co->status = CoStatus::Running;
         coroutine_resumers_.push_back(current_coroutine_);
 
-        saved_frames_ = frames_;
+        saved_frames_.push_back(frames_);
+        saved_exception_handlers_.push_back(avastd::move(exception_handlers_));
+        exception_handlers_.clear();
         frames_ = co->frames;
         current_coroutine_ = co;
 
@@ -116,7 +118,7 @@ Value VM::Call(const Value& callable, const std::vector<Value>& args) {
             auto* closure = static_cast<Closure*>(co->entry.obj);
             CallFrame resume_frame;
             resume_frame.proto = closure->proto;
-            resume_frame.closure = std::shared_ptr<Closure>(closure, [](Closure*) {});
+            resume_frame.closure = avastd::shared_ptr<Closure>(closure, [](Closure*) {});
             resume_frame.registers.resize(closure->proto->num_registers);
             for (size_t i = 0; i < args.size() && i < resume_frame.registers.size(); ++i) {
                 resume_frame.registers[i] = args[i];
@@ -172,15 +174,19 @@ Value VM::Call(const Value& callable, const std::vector<Value>& args) {
 
         co->frames = frames_;
         co->status = is_coroutine_suspended_ ? CoStatus::Suspended : CoStatus::Dead;
-        frames_ = saved_frames_;
+        if (co->status == CoStatus::Dead) ReleaseDeadCoroutineState(*co);
+        frames_ = avastd::move(saved_frames_.back());
+        saved_frames_.pop_back();
+        exception_handlers_ = avastd::move(saved_exception_handlers_.back());
+        saved_exception_handlers_.pop_back();
 
         is_coroutine_suspended_ = false;
 
         return result;
     }
 
-    throw std::runtime_error("attempt to call a non-callable value (type=" +
-                              std::to_string(static_cast<int>(callable.type)) + ")");
+    AVA_THROW(avastd::runtime_error("attempt to call a non-callable value (type=" +
+                              avastd::to_string(static_cast<int>(callable.type)) + ")"));
 }
 
 } // namespace ava

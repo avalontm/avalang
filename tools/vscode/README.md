@@ -10,7 +10,7 @@ gramática ANTLR en `runtime/avalang/grammar/AvaLang.g4`.
   - Declaraciones: `class`, `func`, `extern ... as ... end`, `import ... as ...`, `local`
   - Modificadores de miembro: `static`, `private`
   - Operadores lógicos como palabra: `and`, `or`, `not`
-  - Constantes de lenguaje: `true`, `false`, `nil`, y `this` (self) resaltado como variable especial
+  - Constantes de lenguaje: `true`, `false`, `nil`, y `this` resaltado como variable especial
   - Strings simples (`"..."`, `'...'`) con escapes, y f-strings (`$"...{expr}..."`) con la
     interpolación `{ }` resaltada como código embebido (recursivo, admite anidamiento)
   - Números, comentarios `#`, operadores (`==`, `!=`, `+=`, `**`, `//`, `++`, `--`, `=>`, etc.)

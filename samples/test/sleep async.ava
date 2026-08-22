@@ -1,0 +1,11 @@
+async func suma(a, b)
+    return a + b
+end
+
+func main()
+    t = suma(2, 3)
+    r = await t
+    print(r)
+end
+
+main()

@@ -72,6 +72,9 @@ set(CORE_SOURCES
     src/vm/vm_async.cpp
     src/vm/module.cpp
     src/vm/coroutine.cpp
+    src/vm/vm_task.cpp
+    src/vm/gc_trace.cpp
+    src/vm/gc_sweep.cpp
     platform/memory/MemoryFileSystem.cpp
     src/compiler/proto_io.cpp
     src/compiler/obfuscate.cpp
@@ -90,12 +93,24 @@ set(CORE_SOURCES
 
 # ---------------------------------------------------------------------
 # Platform Abstraction Layer backend (compile-time selection, no runtime
-# OS detection -- see docs/PAL_PROGRESS.md, "Alcance actual: solo Windows").
-#   Windows -> platform/windows (functional, only backend in active development)
-#   Linux   -> platform/linux   (STUB, en estudio / pausado a propósito)
-#   macOS   -> platform/macos   (STUB, en estudio / pausado a propósito)
+# OS detection).
 # ---------------------------------------------------------------------
-if(WIN32)
+if(AVA_TARGET_BAREKERNEL)
+    set(PLATFORM_SOURCES
+        platform/barekernel/BareKernelClock.cpp
+        platform/barekernel/BareKernelConsole.cpp
+        platform/barekernel/BareKernelEnvironment.cpp
+        platform/barekernel/BareKernelFileSystem.cpp
+        platform/barekernel/BareKernelLibrary.cpp
+        platform/barekernel/BareKernelMemory.cpp
+        platform/barekernel/BareKernelMutex.cpp
+        platform/barekernel/BareKernelPlatform.cpp
+        platform/barekernel/BareKernelProcess.cpp
+        platform/barekernel/BareKernelThread.cpp
+        platform/barekernel/BareKernelTimer.cpp
+    )
+    message(STATUS "avalang: BareKernel backend selected")
+elseif(WIN32)
     set(PLATFORM_SOURCES
         platform/windows/WinFileSystem.cpp
         platform/windows/WinThread.cpp
@@ -106,6 +121,7 @@ if(WIN32)
         platform/windows/WinEnvironment.cpp
         platform/windows/WinProcess.cpp
         platform/windows/WinTimer.cpp
+        platform/windows/WinMemory.cpp
         platform/windows/WinPlatform.cpp
     )
 elseif(APPLE)
@@ -119,6 +135,7 @@ elseif(APPLE)
         platform/macos/MacEnvironment.cpp
         platform/macos/MacProcess.cpp
         platform/macos/MacTimer.cpp
+        platform/macos/MacMemory.cpp
         platform/macos/MacPlatform.cpp
     )
     message(STATUS "avalang: macOS PAL backend is a STUB (Phase 6 not implemented yet)")
@@ -133,6 +150,7 @@ elseif(UNIX)
         platform/linux/LinEnvironment.cpp
         platform/linux/LinProcess.cpp
         platform/linux/LinTimer.cpp
+        platform/linux/LinMemory.cpp
         platform/linux/LinPlatform.cpp
     )
     message(STATUS "avalang: Linux PAL backend functional (POSIX + pthread + dl)")
@@ -150,10 +168,19 @@ set(PUBLIC_SOURCES
     api/src/c_api.cpp
 )
 
+if(AVA_BUILD_UI)
+    list(APPEND PUBLIC_SOURCES api/src/c_api_ui.cpp)
+endif()
+
 if(AVA_BUILD_SHARED)
     add_library(avalang SHARED ${PUBLIC_SOURCES})
 else()
     add_library(avalang STATIC ${PUBLIC_SOURCES})
+endif()
+
+if(AVA_TARGET_BAREKERNEL)
+    target_compile_definitions(avalang PRIVATE AVA_BAREKERNEL_TARGET_BINDING)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/platform/barekernel/bindings/target/binding.cmake")
 endif()
 
 target_include_directories(avalang
@@ -167,7 +194,9 @@ target_include_directories(avalang
         ${CMAKE_SOURCE_DIR}/runtime/avaui/src
 )
 
-target_link_libraries(avalang PRIVATE avalang_ui)
+if(AVA_BUILD_UI)
+    target_link_libraries(avalang PRIVATE avalang_ui)
+endif()
 
 if(AVA_HAVE_ANTLR)
     # El paquete de vcpkg "antlr4-runtime" NO expone un target llamado
@@ -240,6 +269,23 @@ endif()
 # tests/ and from ava_cli, which both use VM internals directly rather
 # than going through the C API. External bindings should still only rely
 # on public/include/avalang.h -- the internal headers are not a stable contract.
+# (Fase 8 del plan de optimizacion respeta esto -- ver
+# cmake/OptimizationOptions.cmake, que reduce simbolos via stripping del
+# binario final en Release, no via -fvisibility=hidden.)
+
+# Fase 8 -- Optimizacion: LTO + dead-code elimination + symbol stripping
+# en Release (ver cmake/OptimizationOptions.cmake).
+# Fase 8 -- Optimizacion: LTO + dead-code elimination + symbol stripping
+# en Release (ver cmake/OptimizationOptions.cmake). Con AVA_TARGET_BAREKERNEL
+# se omite LTO -- mismo motivo que en runtime/avabare/CMakeLists.txt: el
+# cross-compiler i686-elf-g++ freestanding es un toolchain especial (ver
+# docs/kernel/binding-status.md), no vale la pena arriesgar esa build ya
+# de por si fragil con IPO sin poder probarlo en este entorno.
+if(AVA_TARGET_BAREKERNEL)
+    ava_apply_optimization_options(avalang NO_LTO)
+else()
+    ava_apply_optimization_options(avalang)
+endif()
 
 # No tests - use scripts to test
 #

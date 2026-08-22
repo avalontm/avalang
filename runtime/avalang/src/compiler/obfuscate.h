@@ -1,9 +1,7 @@
 #ifndef AVA_COMPILER_OBFUSCATE_H
 #define AVA_COMPILER_OBFUSCATE_H
 
-#include <cstdint>
-#include <string>
-#include <vector>
+#include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 #include "../vm/proto.h"
 
 namespace ava {
@@ -88,13 +86,13 @@ struct ObfuscateOptions {
     // dispatcher, mas seguro no tocarlas por ahora) o que tenga menos de
     // dos bloques basicos (nada que aplanar).
     bool flatten_control_flow = false;
-    std::vector<std::string> flatten_functions;
+    avastd::vector<avastd::string> flatten_functions;
 };
 
 struct SymbolMapEntry {
-    std::string kind;         // "function" | "source_file"
-    std::string original;     // debug_name / source_name original
-    std::string obfuscated;   // valor que quedó en el Proto tras el pase
+    avastd::string kind;         // "function" | "source_file"
+    avastd::string original;     // debug_name / source_name original
+    avastd::string obfuscated;   // valor que quedó en el Proto tras el pase
 };
 
 // Ofusca `root` y todo su árbol de child_protos in-place.
@@ -110,7 +108,7 @@ struct SymbolMapEntry {
 // esta transformación -- no hace falta guardar nada más aparte del seed.
 void ObfuscateProto(Proto& root,
                      const ObfuscateOptions& options,
-                     std::vector<SymbolMapEntry>* out_symbol_map = nullptr);
+                     avastd::vector<SymbolMapEntry>* out_symbol_map = nullptr);
 
 // Revierte la ofuscación de strings aplicada por ObfuscateProto con
 // options.obfuscate_strings=true y el mismo module_seed. Se llama UNA vez,
@@ -134,13 +132,13 @@ void DeobfuscateStrings(Proto& root, uint64_t module_seed);
 // junto con seed para derivar las constantes de estado y el orden
 // (shuffle) de las comparaciones del dispatcher; no hace falta que sea
 // estable entre builds.
-bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const std::string& tag);
+bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& tag);
 
 // Serializa un SymbolMap a un formato de texto simple (una entrada por
 // línea: "kind\toriginal\tobfuscated"), pensado para guardarse junto al
 // proyecto fuente del lado del desarrollador. Nunca debe embeberse en el
 // binario/bytecode distribuido -- eso anularía el propósito del pase.
-std::string FormatSymbolMap(const std::vector<SymbolMapEntry>& map);
+avastd::string FormatSymbolMap(const avastd::vector<SymbolMapEntry>& map);
 
 } // namespace ava
 

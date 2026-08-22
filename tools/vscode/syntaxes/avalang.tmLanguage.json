@@ -15,7 +15,7 @@
     { "include": "#keywords-other" },
     { "include": "#operators-logical" },
     { "include": "#language-constants" },
-    { "include": "#self-reference" },
+    { "include": "#this-reference" },
     { "include": "#property-access" },
     { "include": "#strings" },
     { "include": "#numbers" },
@@ -120,7 +120,7 @@
     },
 
     "keywords-control": {
-      "match": "\\b(if|then|elif|else|end|while|for|in|try|catch|finally|return|break|continue|pass|raise)\\b",
+      "match": "\\b(if|then|elif|else|end|while|for|in|try|catch|finally|return|break|continue|pass|raise|select|case|to|is)\\b",
       "name": "keyword.control.avalang"
     },
 
@@ -139,7 +139,7 @@
       "name": "constant.language.avalang"
     },
 
-    "self-reference": {
+    "this-reference": {
       "match": "\\bthis\\b",
       "name": "variable.language.this.avalang"
     },
@@ -255,7 +255,7 @@
             { "include": "#keywords-other" },
             { "include": "#operators-logical" },
             { "include": "#language-constants" },
-            { "include": "#self-reference" },
+            { "include": "#this-reference" },
             { "include": "#property-access" },
             { "include": "#strings" },
             { "include": "#numbers" },

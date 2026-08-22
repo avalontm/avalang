@@ -15,24 +15,24 @@ static double NormalizeIndex(double n, size_t len) {
     return n;
 }
 
-void OpNewList(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpNewList(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto* list = new ListObj();
     Value v; v.type = ValueType::List; v.obj = list;
     frame.registers[in.a] = v;
 }
 
-void OpListAppend(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpListAppend(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     static_cast<ListObj*>(frame.registers[in.a].obj)->items.push_back(
         frame.registers[in.b]);
 }
 
-void OpNewDict(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpNewDict(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto* dict = new DictObj();
     Value v; v.type = ValueType::Dict; v.obj = dict;
     frame.registers[in.a] = v;
 }
 
-void OpGetIndex(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpGetIndex(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto& obj = frame.registers[in.b];
     auto& idx = frame.registers[in.c];
     if (obj.type == ValueType::List) {
@@ -73,7 +73,7 @@ void OpGetIndex(CallFrame& frame, const Instr& in, const std::vector<Value>& K, 
             auto* str = static_cast<StringObj*>(obj.obj);
             size_t pos = ValidateIntegerIndex(NormalizeIndex(idx.n, str->data.size()), "string index");
             if (pos < str->data.size()) {
-                Value sv; sv.type = ValueType::String; sv.obj = new StringObj(std::string(1, str->data[pos]));
+                Value sv; sv.type = ValueType::String; sv.obj = new StringObj(avastd::string(1, str->data[pos]));
                 frame.registers[in.a] = sv;
             } else {
                 frame.registers[in.a] = Value::Nil();
@@ -86,7 +86,7 @@ void OpGetIndex(CallFrame& frame, const Instr& in, const std::vector<Value>& K, 
     }
 }
 
-void OpSetIndex(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpSetIndex(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto& obj = frame.registers[in.a];
     auto& idx = frame.registers[in.b];
     auto& val = frame.registers[in.c];

@@ -21,11 +21,12 @@ enum class UnOp {
 struct AstNode {
     virtual ~AstNode() = default;
 
-    // 1-based source line this node came from; 0 = unknown/not stamped.
-    // Only statements get this stamped today (see AstBuilder::visitStatement),
+    // 1-based source line/col this node came from; 0 = unknown/not stamped.
+    // Only statements get these stamped today (see AstBuilder::visitStatement),
     // since that's the granularity Compiler::CompileStmt needs to keep
     // Proto::debug_lines in sync with emitted instructions.
     int line = 0;
+    int col = 0;
 };
 
 struct ExprNode : AstNode {};
@@ -222,6 +223,12 @@ struct FuncDef : StmtNode {
     // el compilador debe rechazarlo (Fase C).
     bool is_static = false;
     bool is_private = false;
+    // `async func x() ... end` (ver grammar/AvaLang.g4, asyncFuncDeclaration).
+    // Habilita `await` en el cuerpo léxico directo de esta función -- ver
+    // Compiler::in_async_func_. No anidado: un `func` normal declarado
+    // dentro de una `async func` no hereda esto (mismo criterio que
+    // JS/Python/C#).
+    bool is_async = false;
     FuncDef(std::string n, std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> p,
             bool v, std::vector<std::shared_ptr<StmtNode>> b)
         : name(std::move(n)), params(std::move(p)), is_vararg(v), body(std::move(b)) {}
@@ -284,6 +291,17 @@ struct ExternStmt : StmtNode {
 struct YieldExpr : ExprNode {
     std::vector<std::shared_ptr<ExprNode>> values;
     explicit YieldExpr(std::vector<std::shared_ptr<ExprNode>> v = {}) : values(std::move(v)) {}
+};
+
+// `await expr` -- solo valido (ver Compiler::in_async_func_) dentro del
+// cuerpo lexico directo de un `async func`. Por ahora, mientras no exista
+// el scheduler real de Task (auto-resume de "esperadores"), compila igual
+// que YieldExpr: pausa la coroutine y devuelve lo que sea que la resuma.
+// Es la fase intermedia usable/testeable antes de la semantica completa
+// de Task (.wait(), .result(), auto-resume).
+struct AwaitExpr : ExprNode {
+    std::shared_ptr<ExprNode> value;
+    explicit AwaitExpr(std::shared_ptr<ExprNode> v) : value(std::move(v)) {}
 };
 
 struct Chunk {

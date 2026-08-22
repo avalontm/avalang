@@ -36,7 +36,7 @@ ava_value_t builtin_resume(AvaVM* vm, const ava_value_t* args, size_t count, voi
     auto* raw_vm = reinterpret_cast<ava::VM*>(vm);
     auto co_val = ava::FromC(args[0]);
     
-    std::vector<ava::Value> vargs;
+    avastd::vector<ava::Value> vargs;
     for (size_t i = 1; i < count; ++i) {
         vargs.push_back(ava::FromC(args[i]));
     }

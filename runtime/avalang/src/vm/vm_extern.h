@@ -1,7 +1,7 @@
 #ifndef AVA_VM_VM_EXTERN_H
 #define AVA_VM_VM_EXTERN_H
 
-#include <string>
+#include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 
 #include "../../api/include/avalang.h"
 
@@ -10,9 +10,9 @@ namespace ava {
 // Metadata de una función declarada dentro de un bloque `extern`.
 // Ver EXTERN_FFI_DESIGN.md / EXTERN_FFI_TODO.md (Fase 3).
 struct ExternFuncMeta {
-    std::string library;     // nombre lógico, p.ej. "kernel32"
-    std::string alias;       // p.ej. "Kernel"
-    std::string func_name;   // p.ej. "Sleep"
+    avastd::string library;     // nombre lógico, p.ej. "kernel32"
+    avastd::string alias;       // p.ej. "Kernel"
+    avastd::string func_name;   // p.ej. "Sleep"
     size_t arity = 0;
     bool is_vararg = false;
 };

@@ -1,21 +1,15 @@
 #ifndef AVA_VM_VM_H
 #define AVA_VM_VM_H
 
-#include <functional>
-#include <string>
-#include <unordered_map>
-#include <vector>
-#include <memory>
-#include <stdexcept>
-#include <cstdint>
-#include <mutex>
-#include <atomic>
+#include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 
 #include "value.h"
 #include "proto.h"
 #include "closure.h"
 #include "module.h"
 #include "coroutine.h"
+#include "task.h"
+#include "gc_sweep.h"
 #include "vm_helpers.h"
 #include "../../api/include/avalang.h"
 
@@ -32,28 +26,28 @@ public:
     VM();
     ~VM();
 
-    void RegisterNative(const std::string& name, AvaNativeFn fn, void* user_data);
-    void RegisterBuiltinMethod(const std::string& name, AvaNativeFn fn, void* user_data);
+    void RegisterNative(const avastd::string& name, AvaNativeFn fn, void* user_data);
+    void RegisterBuiltinMethod(const avastd::string& name, AvaNativeFn fn, void* user_data);
 
-    Value GetGlobal(const std::string& name) const;
-    void  SetGlobal(const std::string& name, Value value);
+    Value GetGlobal(const avastd::string& name) const;
+    void  SetGlobal(const avastd::string& name, Value value);
 
-    Value Run(const std::shared_ptr<Proto>& main);
-    Value RunFile(const std::string& file_path);
+    Value Run(const avastd::shared_ptr<Proto>& main);
+    Value RunFile(const avastd::string& file_path);
 
-    Value Call(const Value& callable, const std::vector<Value>& args);
+    Value Call(const Value& callable, const avastd::vector<Value>& args);
     
-    bool HasBuiltinMethod(const std::string& name) const;
-    Value GetBuiltinMethod(const std::string& name) const;
+    bool HasBuiltinMethod(const avastd::string& name) const;
+    Value GetBuiltinMethod(const avastd::string& name) const;
 
-    std::unordered_map<std::string, Value>& Globals() { return globals_; }
+    avastd::unordered_map<avastd::string, Value>& Globals() { return globals_; }
 
     ModuleResolver& GetModuleResolver() { return module_resolver_; }
     ModuleCache& GetModuleCache() { return module_cache_; }
 
-    std::string GetCurrentDir() const;
-    void SetCurrentDir(const std::string& dir);
-    Value DoImport(const std::string& module_path, const std::string& alias);
+    avastd::string GetCurrentDir() const;
+    void SetCurrentDir(const avastd::string& dir);
+    Value DoImport(const avastd::string& module_path, const avastd::string& alias);
 
     void RaiseException(const Value& exc);
     Value GetAndClearException();
@@ -61,6 +55,48 @@ public:
     size_t GetCurrentFrameIndex() const { return frames_.size() - 1; }
 
     Coroutine* CreateCoroutine(const Value& func);
+
+    // Diagnostics para Fase 5 (GC) del plan de runtime independiente de
+    // STL: bajo el modelo actual, Coroutine/TaskObj no participan del
+    // refcounting de Object (ver value.h) -- viven mientras vive la VM,
+    // registrados en created_coroutines_/created_tasks_, que hacen de
+    // root set de facto para estos dos tipos. Estos accessors dejan
+    // observar ese conteo desde fuera (host/BareKernel) sin exponer los
+    // vectores internos; útiles para detectar crecimiento sin límite en
+    // procesos de larga duración mientras no exista un colector real.
+    // Ver docs/architecture/RUNTIME_CORE_AUDIT.md §9.
+    size_t LiveCoroutineCount() const { return created_coroutines_.size(); }
+    size_t LiveTaskCount() const { return created_tasks_.size(); }
+
+    // Sub-fase 5 de Fase 5 (GC), "Crear roots" -- ver
+    // docs/architecture/GC_FASE5_OWNERSHIP_DESIGN.md §6. Junta un puntero
+    // a cada Value que es raíz para el futuro tracing/cycle collector:
+    // globals_, cada registro de cada CallFrame en frames_/saved_frames_
+    // (stack actual y stacks de corrutinas/tasks anidados suspendidos a
+    // mitad de un await), pending_exception_, yielded_values_, y las
+    // frames/yielded_values/result/error de cada Coroutine/TaskObj vivo
+    // (created_coroutines_/created_tasks_ -- éstos no participan del
+    // refcounting de Object, ver el comentario en LiveCoroutineCount()
+    // arriba, así que sus Value son raíces igual que un global). No
+    // recorre containers (ListObj::items, etc.) -- eso es tracing
+    // (próxima sub-fase), no roots. Los punteros son válidos solo hasta
+    // el próximo cambio de tamaño de cualquiera de esos vectores/mapas;
+    // pensado para usarse y descartarse dentro de un mismo ciclo de GC.
+    void CollectGcRoots(avastd::vector<Value*>& out);
+
+    // Sub-fase 7 de Fase 5 (GC), "Manejar ciclos" -- ver
+    // docs/architecture/GC_FASE5_OWNERSHIP_DESIGN.md y gc_sweep.h. Corre
+    // un ciclo completo de mark-sweep (CollectGcRoots + GcTraceMark +
+    // GcForEachObject) y libera lo que quede sin marcar. NO se dispara
+    // automatico en ningun punto todavia: durante la ejecucion de un
+    // opcode puede haber Value temporarios solo en la pila nativa de C++
+    // (no en frames_, no en roots) que un sweep a mitad de ejecucion
+    // veria como basura y liberaria de mas -- es una decision real, no un
+    // olvido, dejarla manual en vez de cablear un auto-trigger no
+    // auditado. Pensado para invocarse entre ejecuciones completas (o via
+    // ava_vm_collect_garbage() desde el host) donde no hay temporarios de
+    // pila nativa vivos.
+    GcSweepStats CollectGarbage();
 
     // Fase 5 (Async Runtime). Dispatcher simple sobre ITimer (ver
     // core/platform/interfaces/ITimer.h): set_timeout() agenda `callback`
@@ -72,13 +108,20 @@ public:
     // Call() reales desde el hilo que corre la VM (ver RunFile /
     // public/src/main.cpp, que hace el loop de "event loop" tras el
     // script principal).
-    void PostAsyncTask(std::function<void()> task);
+    void PostAsyncTask(avastd::function<void()> task);
     void PumpAsyncEvents();
     bool HasPendingAsyncWork() const;
     // Usado por el builtin set_timeout para llevar la cuenta de timers
     // agendados-pero-no-disparados-ni-drenados todavia.
     void OnAsyncTimerScheduled();
     void OnAsyncTimerConsumed();
+
+    // Fase 1 (async/await real). Task que resuelve solo (Nil) cuando el
+    // PAL dispara su timer, via el mismo PostAsyncTask/SettleTask que usa
+    // StartAsyncCall. Usado por el builtin delay(ms) (builtin_async.cpp)
+    // para que `await delay(ms)` suspenda de verdad en vez de resolver en
+    // el mismo tick.
+    Value CreateTimerTask(avastd::uint32_t delay_ms);
 
     // Print sink used by the `print` builtin (builtin_natives.cpp). When
     // set, Print() forwards to the sink instead of writing straight to
@@ -87,13 +130,13 @@ public:
     // capture script output instead of it going to a stdout a GUI app
     // typically has no visible console for. Pass nullptr to restore the
     // stdout default. See ava_vm_set_print_callback in avalang.h.
-    using PrintSink = std::function<void(const std::string&)>;
+    using PrintSink = avastd::function<void(const avastd::string&)>;
     void SetPrintSink(PrintSink sink);
-    void Print(const std::string& text) const;
+    void Print(const avastd::string& text) const;
 
-    using InputSink = std::function<std::string(const std::string& prompt)>;
+    using InputSink = avastd::function<avastd::string(const avastd::string& prompt)>;
     void SetInputSink(InputSink sink);
-    std::string ReadLine(const std::string& prompt) const;
+    avastd::string ReadLine(const avastd::string& prompt) const;
 
     // Fase 6 completion (08_DESIGNER_VIEW_PLAN.md Anexo 9.17's pendientes
     // 1-2, "ui.alert"/"ui.navigate" -- necesitan definir el mecanismo de
@@ -105,13 +148,13 @@ public:
     // ava_vm_set_alert_callback / ava_vm_set_navigate_callback en avalang.h,
     // y core/src/ui/builtins.cpp (ui.alert/ui.navigate) para el lado que
     // los dispara desde un script.
-    using AlertSink = std::function<void(const std::string&)>;
+    using AlertSink = avastd::function<void(const avastd::string&)>;
     void SetAlertSink(AlertSink sink);
-    void Alert(const std::string& message) const;
+    void Alert(const avastd::string& message) const;
 
-    using NavigateSink = std::function<void(const std::string&)>;
+    using NavigateSink = avastd::function<void(const avastd::string&)>;
     void SetNavigateSink(NavigateSink sink);
-    void Navigate(const std::string& route) const;
+    void Navigate(const avastd::string& route) const;
 
     // Fase 4 (avapack, ver plan_ava_pack.md): hooks opcionales alrededor de
     // la lectura de disco que hace DoImport (vm_import.cpp) para un modulo
@@ -129,7 +172,7 @@ public:
     // tiempo del que tarda ese std::ifstream en leerlo. Ver
     // ModuleFileHook resolved_path: la ruta ya resuelta (dentro del temp
     // dir) que DoImport esta por abrir/acaba de cerrar.
-    using ModuleFileHook = std::function<void(const std::string& resolved_path)>;
+    using ModuleFileHook = avastd::function<void(const avastd::string& resolved_path)>;
     void SetBeforeModuleReadHook(ModuleFileHook hook);
     void SetAfterModuleReadHook(ModuleFileHook hook);
     const ModuleFileHook& GetBeforeModuleReadHook() const { return before_module_read_hook_; }
@@ -152,65 +195,64 @@ public:
     // raised inside an imported module -- rather than only a line
     // number in whichever file happens to be showing. Read via
     // ava_last_error_source.
-    std::string last_error_source;
+    avastd::string last_error_source;
 
-    struct ExceptionHandler {
-        size_t catch_pc;
-        size_t frame_idx;
-    };
+    // ExceptionHandler is defined in coroutine.h (needs to be usable from
+    // Coroutine::exception_handlers before this class exists).
 
 // Internal implementation friends - allow access to private members from vm_internal implementations
-    friend void OpAdd(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpSub(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpMul(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpDiv(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpIdiv(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpMod(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpPow(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpNeg(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpNot(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpInc(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpDec(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpAdd(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpSub(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpMul(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpDiv(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpIdiv(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpMod(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpPow(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpNeg(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpNot(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpInc(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpDec(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 
-    friend void OpEq(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpEqK(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpNeK(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpNe(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpLt(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpLe(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpGt(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpGe(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpEq(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpEqK(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpNeK(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpNe(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpLt(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpLe(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpGt(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpGe(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 
-    friend void OpNewList(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpListAppend(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpNewDict(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpGetIndex(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpSetIndex(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpNewList(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpListAppend(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpNewDict(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpGetIndex(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpSetIndex(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 
-    friend void OpNewClass(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpNewInstance(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpGetAttr(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpSetAttr(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpNewClass(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpNewInstance(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpGetAttr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpSetAttr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 
-    friend void OpCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpReturn(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpClosure(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpGetUpval(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpSetUpval(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend Value OpBaseCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpCall(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpReturn(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpClosure(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpGetUpval(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpSetUpval(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend Value OpBaseCall(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 
-    friend void OpSlice(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpSlice(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 
-    friend void OpTry(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpTryEnd(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpCatch(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpRaise(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpArgc(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpTry(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpTryEnd(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpCatch(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpRaise(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpArgc(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 
-    friend void OpYield(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
-    friend void OpResume(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm);
+    friend void OpYield(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpResume(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+    friend void OpAwait(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 
-    friend void HandleFrameError(VM& vm, size_t frame_idx, const std::exception& e);
+    friend void HandleFrameError(VM& vm, size_t frame_idx, const avastd::exception& e);
 
 private:
     Value ExecuteFrame(size_t frame_idx);
@@ -224,35 +266,74 @@ private:
     // corrutinas con yields anidados en funciones auxiliares.
     Value ResumeFromTop();
 
+    // Fase 2 (async/await Task runtime). Calling an `async func` never runs
+    // it inline like a normal call -- it starts a dedicated Coroutine for
+    // the call (same suspension machinery as coroutine()/resume()) and
+    // drives it up to its first `await` or its `return`, then hands back a
+    // Task immediately either way. See vm_task.cpp.
+    Value StartAsyncCall(const Value& closure_val, const avastd::vector<Value>& args);
+    // Fase 3 (await en metodos de clase). Mismo mecanismo que
+    // StartAsyncCall pero para un BoundMethod (obj.metodo_async(...)):
+    // arma el entry_frame con bound->proto y bound->instance en el
+    // registro 0 (this), en vez de asumir un Closure con proto propio.
+    // Ver vm_call_op.cpp::OpCall, rama ValueType::Bound.
+    Value StartAsyncBoundCall(const Value& bound_val, const avastd::vector<Value>& args);
+    // Resumes a coroutine that's suspended on an `await`, either with the
+    // awaited Task's result (is_error=false) or its error (is_error=true),
+    // and settles this coroutine's own owner_task if it finishes as a
+    // result (whether by returning normally or by an uncaught exception).
+    void ResumeAwaitingCoroutine(Coroutine* co, Value value, bool is_error);
+    // Marks `task` done with `value` (a result, or an error if is_error),
+    // and schedules every coroutine that was awaiting it to resume via
+    // PostAsyncTask, so settling never re-enters the VM synchronously from
+    // inside another frame's execution.
+    void SettleTask(TaskObj* task, Value value, bool is_error);
+
     PrintSink print_sink_;
     InputSink input_sink_;
     AlertSink alert_sink_;
     NavigateSink navigate_sink_;
     ModuleFileHook before_module_read_hook_;
     ModuleFileHook after_module_read_hook_;
-    std::string current_dir_;
-    std::unordered_map<std::string, Value> globals_;
-    std::vector<CallFrame> frames_;
+    avastd::string current_dir_;
+    avastd::unordered_map<avastd::string, Value> globals_;
+    avastd::vector<CallFrame> frames_;
     ModuleResolver module_resolver_;
     ModuleCache module_cache_;
-    std::string current_module_;
-    std::unordered_map<std::string, std::pair<AvaNativeFn, void*>> builtin_methods_;
+    avastd::string current_module_;
+    avastd::unordered_map<avastd::string, avastd::pair<AvaNativeFn, void*>> builtin_methods_;
 
     Value pending_exception_;
     bool try_had_exception_ = false;
-    std::vector<ExceptionHandler> exception_handlers_;
+    avastd::vector<ExceptionHandler> exception_handlers_;
+    // Stack of saved outer exception-handler stacks, pushed/popped in
+    // lockstep with saved_frames_ below. exception_handlers_ entries store
+    // a frame_idx that's only meaningful relative to the frames_ vector
+    // that was active when OpTry registered them. Nested async/coroutine
+    // runs clear+reuse frames_ from index 0, so without this an outer
+    // try/catch's handler can collide with an unrelated inner call's
+    // frame_idx and wrongly swallow/misroute its exception (see OpTry).
+    avastd::vector<avastd::vector<ExceptionHandler>> saved_exception_handlers_;
 
-    std::vector<Coroutine*> coroutine_resumers_;
-    std::vector<Coroutine*> created_coroutines_;
+    avastd::vector<Coroutine*> coroutine_resumers_;
+    avastd::vector<Coroutine*> created_coroutines_;
+    avastd::vector<TaskObj*> created_tasks_;
     Value yielded_values_;
-    std::vector<CallFrame> saved_frames_;
+    // Stack of saved outer frame stacks, one entry per nested
+    // coroutine/task run currently in progress (StartAsyncCall,
+    // ResumeAwaitingCoroutine, OpResume, VM::Call's Coroutine branch all
+    // push/pop here). Must be a stack, not a single slot: an async func
+    // calling another async func synchronously (no suspension in between)
+    // re-enters one of these while the outer one hasn't restored yet, and
+    // a single slot would get clobbered by the inner call.
+    avastd::vector<avastd::vector<CallFrame>> saved_frames_;
     bool is_coroutine_suspended_ = false;
     Coroutine* current_coroutine_ = nullptr;
 
     // Fase 5 (Async Runtime): ver comentarios de PostAsyncTask/PumpAsyncEvents.
-    std::mutex async_mutex_;
-    std::vector<std::function<void()>> async_ready_queue_;
-    std::atomic<int> async_pending_timers_{0};
+    avastd::mutex async_mutex_;
+    avastd::vector<avastd::function<void()>> async_ready_queue_;
+    avastd::atomic<int> async_pending_timers_{0};
 };
 
 } // namespace ava

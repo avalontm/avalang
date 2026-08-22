@@ -156,6 +156,9 @@ std::shared_ptr<ExprNode> AstBuilder::exprFromAny(const std::any& a) {
     if (a.type() == typeid(std::shared_ptr<YieldExpr>)) {
         return std::any_cast<std::shared_ptr<YieldExpr>>(a);
     }
+    if (a.type() == typeid(std::shared_ptr<AwaitExpr>)) {
+        return std::any_cast<std::shared_ptr<AwaitExpr>>(a);
+    }
     return nullptr;
 }
 
@@ -356,6 +359,7 @@ std::any AstBuilder::visitStatement(AvaLangParser::StatementContext* ctx) {
     auto stmt = stmtFromAny(result);
     if (stmt) {
         stmt->line = static_cast<int>(ctx->getStart()->getLine());
+        stmt->col = static_cast<int>(ctx->getStart()->getCharPositionInLine()) + 1;
         return std::any(stmt);
     }
     return result;
@@ -408,7 +412,9 @@ std::any AstBuilder::visitCompoundStatement(AvaLangParser::CompoundStatementCont
     if (ctx->classDeclaration()) return visitClassDeclaration(ctx->classDeclaration());
     if (ctx->tryStatement())   return visitTryStatement(ctx->tryStatement());
     if (ctx->modifiedFuncDeclaration()) return visitModifiedFuncDeclaration(ctx->modifiedFuncDeclaration());
+    if (ctx->asyncFuncDeclaration()) return visitAsyncFuncDeclaration(ctx->asyncFuncDeclaration());
     if (ctx->externStatement()) return visitExternStatement(ctx->externStatement());
+    if (ctx->selectStatement()) return visitSelectStatement(ctx->selectStatement());
     throw std::runtime_error("unsupported compound statement");
 }
 
@@ -477,6 +483,98 @@ std::any AstBuilder::visitIfStatement(AvaLangParser::IfStatementContext* ctx) {
     return std::make_shared<IfStmt>(condition, then_body, elif_clauses, else_body);
 }
 
+// Desazucara `select` a un IfStmt equivalente en vez de agregar un nodo
+// de AST y soporte de compilador/VM nuevos:
+//
+//   select expr
+//       case a, b then BODY1
+//       case c to d then BODY2
+//       case is >= e then BODY3
+//       else BODY4
+//   end
+//
+// se vuelve
+//
+//   __select$N = expr
+//   if __select$N == a or __select$N == b then BODY1
+//   elif __select$N >= c and __select$N <= d then BODY2
+//   elif __select$N >= e then BODY3
+//   else BODY4
+//   end
+//
+// El discriminante se evalua una sola vez (en __select$N) para no
+// duplicar side effects si `expr` es, por ejemplo, una llamada a
+// funcion. Como el resultado es un IfStmt de verdad, se apoya en
+// CompileIf tal cual existe hoy -- cero cambios en compiler.cpp/vm.
+//
+// visitChunk/visitBlock ya saben expandir un compound statement que
+// devuelve varios StmtNode (ver stmtsFromAny arriba), asi que basta con
+// devolver el vector {asignacion, if} desde aca.
+std::any AstBuilder::visitSelectStatement(AvaLangParser::SelectStatementContext* ctx) {
+    int line = static_cast<int>(ctx->getStart()->getLine());
+
+    auto discriminant = exprFromAny(ctx->expr()->accept(this));
+
+    std::string tmp_name = "__select$" + std::to_string(select_counter_++);
+    auto tmp_ref = [&]() { return std::make_shared<NameExpr>(tmp_name); };
+
+    auto assign_tmp = std::make_shared<AssignStmt>(tmp_ref(), discriminant);
+    assign_tmp->line = line;
+
+    // Construye la condicion booleana de un caseItem contra __select$N.
+    auto conditionForItem = [&](AvaLangParser::CaseItemContext* item) -> std::shared_ptr<ExprNode> {
+        if (auto* range = dynamic_cast<AvaLangParser::CaseItemRangeContext*>(item)) {
+            auto lo = exprFromAny(range->expr(0)->accept(this));
+            auto hi = exprFromAny(range->expr(1)->accept(this));
+            auto ge = std::make_shared<BinOpExpr>(BinOp::Ge, tmp_ref(), lo);
+            auto le = std::make_shared<BinOpExpr>(BinOp::Le, tmp_ref(), hi);
+            return std::make_shared<BinOpExpr>(BinOp::And, ge, le);
+        }
+        if (auto* rel = dynamic_cast<AvaLangParser::CaseItemRelationalContext*>(item)) {
+            auto rhs = exprFromAny(rel->expr()->accept(this));
+            BinOp op = compOpToBinOp(rel->compOp()->getText());
+            return std::make_shared<BinOpExpr>(op, tmp_ref(), rhs);
+        }
+        auto* eq = dynamic_cast<AvaLangParser::CaseItemEqualsContext*>(item);
+        auto rhs = exprFromAny(eq->expr()->accept(this));
+        return std::make_shared<BinOpExpr>(BinOp::Eq, tmp_ref(), rhs);
+    };
+
+    // Cada caseClause tiene una lista de caseItem separados por coma
+    // (equivalente a "or" entre ellos, como los `Case a, b, c` de VB6).
+    auto conditionForClause = [&](AvaLangParser::CaseClauseContext* clause) -> std::shared_ptr<ExprNode> {
+        std::shared_ptr<ExprNode> cond = conditionForItem(clause->caseItem(0));
+        for (size_t i = 1; i < clause->caseItem().size(); ++i) {
+            cond = std::make_shared<BinOpExpr>(BinOp::Or, cond, conditionForItem(clause->caseItem(i)));
+        }
+        return cond;
+    };
+
+    auto clauses = ctx->caseClause();
+    auto if_condition = conditionForClause(clauses[0]);
+    auto if_body = stmtsFromAny(visitBlock(clauses[0]->block()));
+
+    std::vector<std::pair<std::shared_ptr<ExprNode>, std::vector<std::shared_ptr<StmtNode>>>> elif_clauses;
+    for (size_t i = 1; i < clauses.size(); ++i) {
+        auto cond = conditionForClause(clauses[i]);
+        auto body = stmtsFromAny(visitBlock(clauses[i]->block()));
+        elif_clauses.push_back({cond, body});
+    }
+
+    std::vector<std::shared_ptr<StmtNode>> else_body;
+    if (ctx->elseClause()) {
+        else_body = stmtsFromAny(visitBlock(ctx->elseClause()->block()));
+    }
+
+    auto if_stmt = std::make_shared<IfStmt>(if_condition, if_body, elif_clauses, else_body);
+    if_stmt->line = line;
+
+    std::vector<std::shared_ptr<StmtNode>> result;
+    result.push_back(assign_tmp);
+    result.push_back(if_stmt);
+    return result;
+}
+
 std::any AstBuilder::visitWhileStatement(AvaLangParser::WhileStatementContext* ctx) {
     auto condition = exprFromAny(ctx->expr()->accept(this));
     auto body = stmtsFromAny(visitBlock(ctx->block()));
@@ -533,6 +631,12 @@ std::any AstBuilder::visitModifiedFuncDeclaration(AvaLangParser::ModifiedFuncDec
     auto func = std::any_cast<std::shared_ptr<FuncDef>>(visitFuncDeclaration(ctx->funcDeclaration()));
     func->is_static = is_static;
     func->is_private = is_private;
+    return func;
+}
+
+std::any AstBuilder::visitAsyncFuncDeclaration(AvaLangParser::AsyncFuncDeclarationContext* ctx) {
+    auto func = std::any_cast<std::shared_ptr<FuncDef>>(visitFuncDeclaration(ctx->funcDeclaration()));
+    func->is_async = true;
     return func;
 }
 
@@ -995,6 +1099,11 @@ std::any AstBuilder::visitYieldAtom(AvaLangParser::YieldAtomContext* ctx) {
         }
     }
     return std::make_shared<YieldExpr>(values);
+}
+
+std::any AstBuilder::visitAwaitAtom(AvaLangParser::AwaitAtomContext* ctx) {
+    auto value = exprFromAny(ctx->expr()->accept(this));
+    return std::make_shared<AwaitExpr>(value);
 }
 
 std::any AstBuilder::visitSliceTrailer(AvaLangParser::SliceTrailerContext* ctx) {

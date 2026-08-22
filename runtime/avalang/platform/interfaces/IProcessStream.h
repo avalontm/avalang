@@ -11,9 +11,7 @@
 // Execute() if that comes back null (e.g. on the Linux/Mac stub
 // backends, which don't implement this yet).
 
-#include <functional>
-#include <string>
-#include <vector>
+#include "../barekernel/stdcompat/ava_stdcompat.h"
 
 namespace ava {
 namespace platform {
@@ -36,8 +34,8 @@ class IProcessStream {
 public:
     virtual ~IProcessStream() = default;
 
-    virtual bool ExecuteStreaming(const std::string& command, const std::vector<std::string>& args,
-                                   const std::function<void(const std::string&)>& on_output,
+    virtual bool ExecuteStreaming(const avastd::string& command, const avastd::vector<avastd::string>& args,
+                                   const avastd::function<void(const avastd::string&)>& on_output,
                                    int& out_exit_code) = 0;
 };
 

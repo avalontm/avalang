@@ -47,6 +47,7 @@ ava_value_t builtin_resume(AvaVM* vm, const ava_value_t* args, size_t count, voi
 ava_value_t builtin_set_timeout(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_sleep_async(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_clear_timeout(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_delay(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 
 BUILTIN_API void RegisterBuiltinMethods(AvaVM* vm);
 BUILTIN_API void RegisterBuiltinGlobals(AvaVM* vm);

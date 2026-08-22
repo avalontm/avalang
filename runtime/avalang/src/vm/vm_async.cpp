@@ -13,15 +13,15 @@
 
 namespace ava {
 
-void VM::PostAsyncTask(std::function<void()> task) {
-    std::lock_guard<std::mutex> lock(async_mutex_);
-    async_ready_queue_.push_back(std::move(task));
+void VM::PostAsyncTask(avastd::function<void()> task) {
+    avastd::lock_guard<avastd::mutex> lock(async_mutex_);
+    async_ready_queue_.push_back(avastd::move(task));
 }
 
 void VM::PumpAsyncEvents() {
-    std::vector<std::function<void()>> ready;
+    avastd::vector<avastd::function<void()>> ready;
     {
-        std::lock_guard<std::mutex> lock(async_mutex_);
+        avastd::lock_guard<avastd::mutex> lock(async_mutex_);
         ready.swap(async_ready_queue_);
     }
     for (auto& task : ready) {
@@ -31,7 +31,7 @@ void VM::PumpAsyncEvents() {
 
 bool VM::HasPendingAsyncWork() const {
     if (async_pending_timers_.load() > 0) return true;
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(async_mutex_));
+    avastd::lock_guard<avastd::mutex> lock(const_cast<avastd::mutex&>(async_mutex_));
     return !async_ready_queue_.empty();
 }
 

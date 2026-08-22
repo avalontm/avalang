@@ -1,0 +1,14 @@
+# Fase 8 -- Optimizacion: carga de trabajo de CPU para medir rendimiento
+# del VM (scripts/measure_release.sh / measure_release.bat). Fibonacci
+# recursivo simple: barato de escribir, caro de correr, sin I/O de por
+# medio -- lo que se mide es el interprete/VM, no el disco ni la consola.
+
+func fib(n)
+    if n < 2 then
+        return n
+    end
+    return fib(n - 1) + fib(n - 2)
+end
+
+result = fib(27)
+print(result)

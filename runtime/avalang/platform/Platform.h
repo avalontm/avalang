@@ -2,7 +2,7 @@
 #define AVA_PLATFORM_PLATFORM_H
 
 #include "interfaces/IPlatform.h"
-#include <memory>
+#include "barekernel/stdcompat/ava_stdcompat.h"
 
 #ifdef _WIN32
   #define AVA_PLATFORM_API __declspec(dllexport)
@@ -25,7 +25,7 @@ namespace platform {
 // AVA_VM_API en runtime/avalang/src/vm/.
 class AVA_PLATFORM_API Platform {
 public:
-    static std::unique_ptr<IPlatform> Create();
+    static avastd::unique_ptr<IPlatform> Create();
 };
 
 } // namespace platform

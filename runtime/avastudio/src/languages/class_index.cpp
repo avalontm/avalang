@@ -182,13 +182,13 @@ void ClassIndex::Rebuild(const std::string& text, const std::string& current_fil
 // Parses `body` -- the text strictly between a class's header and its
 // closing `end` (already extracted by ScanText via FindMatchingEnd) --
 // looking for `func NAME(params) ... end` method declarations (same "##"
-// doc-comment convention as FunctionIndex) and `this.NAME = ...` /
-// `self.NAME = ...` attribute assignments. Unlike FindMatchingEnd, this
-// does NOT need to track block nesting itself: it only cares about
-// locating `func` headers and `this`/`self` attribute writes wherever they
-// occur in the body, the same best-effort, non-block-aware philosophy
-// FunctionIndex::ScanText already uses for finding `func` anywhere in a
-// buffer.
+// doc-comment convention as FunctionIndex) and `this.NAME = ...`
+// attribute assignments. Unlike FindMatchingEnd, this does NOT need to
+// track block nesting itself: it only cares about locating `func`
+// headers and `this` attribute writes wherever they occur in the body,
+// the same best-effort, non-block-aware philosophy FunctionIndex::ScanText
+// already uses for finding `func` anywhere in a buffer. AvaLang no tiene
+// `self` (ver el chequeo explícito más abajo).
 namespace {
 
 // Records `attr_name` as an attribute if it isn't already known, or merges

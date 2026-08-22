@@ -6,7 +6,6 @@
 #include "builtin.h"
 #include "../vm/vm.h"
 #include "../vm/vm_platform_accessor.h"
-#include <cstdio>
 
 ava_value_t builtin_set_timeout(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data) {
     (void)user_data;
@@ -94,6 +93,23 @@ ava_value_t builtin_sleep_async(AvaVM* vm, const ava_value_t* args, size_t count
     result.type = AVA_NUMBER;
     result.as.n = static_cast<double>(handle);
     return result;
+}
+
+ava_value_t builtin_delay(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data) {
+    (void)user_data;
+    ava_value_t result;
+    result.type = AVA_NIL;
+
+    uint32_t delay_ms = 0;
+    if (count >= 1) {
+        auto delay_val = ava::FromC(args[0]);
+        if (delay_val.type == ava::ValueType::Number) {
+            delay_ms = static_cast<uint32_t>(delay_val.n < 0 ? 0 : delay_val.n);
+        }
+    }
+
+    auto* raw_vm = reinterpret_cast<ava::VM*>(vm);
+    return ava::ToC(raw_vm->CreateTimerTask(delay_ms));
 }
 
 // Fase 5 (Async Runtime) - sub-fase 5.4. clear_timeout(handle): cancela

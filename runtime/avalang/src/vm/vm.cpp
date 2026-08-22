@@ -1,8 +1,7 @@
 #include "vm.h"
 #include "vm_internal.h"
 #include "value.h"
-#include <stdexcept>
-#include <algorithm>
+#include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 
 namespace ava {
 
@@ -11,9 +10,61 @@ Value VM::ExecuteFrame(size_t frame_idx) {
     auto& K = frames_[frame_idx].proto->constants;
 
     bool need_restart = false;
+    // Logica comun a los dos casos que el try/catch de abajo puede
+    // atrapar: una AvaRaiseException (viene de un `raise` de un script
+    // AvaLang, via RaiseException()) o cualquier otra avastd::exception
+    // (error interno del VM/builtin -- indice fuera de rango, division
+    // por cero, etc.). Factorizado en un lambda para no duplicar esta
+    // logica entre la rama con excepciones C++ reales (host) y la rama
+    // con AVA_TRY/AVA_CATCH + tag manual (barekernel, sin RTTI real -- ver
+    // ava_type_tag() en ava_error.h). Devuelve true si el error fue
+    // consumido por un handler de AvaLang activo en este frame (hay que
+    // reiniciar el loop de instrucciones desde el catch_pc), false si hay
+    // que seguir propagando hacia el llamador.
+    //
+    // OJO: declarado ANTES del AVA_TRY/try a proposito. AVA_CATCH abre un
+    // scope C++ distinto del cuerpo del AVA_TRY (son dos ramas de un
+    // if/else generado por la macro) -- si este lambda se declarara
+    // adentro del try, no seria visible desde el catch.
+    auto handle_vm_exception = [&](bool is_raise, const avastd::exception& e) -> bool {
+        if (!is_raise) {
+            HandleFrameError(*this, frame_idx, e);
+        }
+        if (exception_handlers_.empty()) return false;
+        auto handler = exception_handlers_.back();
+        if (handler.frame_idx != frame_idx) return false;
+
+        if (!is_raise) {
+            Value msg;
+            msg.type = ValueType::String;
+            msg.obj = new StringObj(e.what());
+            RaiseException(msg);
+        }
+        exception_handlers_.pop_back();
+        // Calls that were aborted mid-propagation (OpCall/OpBaseCall/
+        // constructor calls) never reached their normal-path
+        // frames_.pop_back(), so any frames pushed above the frame
+        // that's catching this exception are now stale garbage. Trim
+        // them so frames_.size()-1 (used by OpTry to compute a NEW
+        // handler's frame_idx) reflects reality again -- otherwise a
+        // later try/catch registers a handler with an inflated frame_idx
+        // that never matches, and its exceptions escape uncaught.
+        if (frames_.size() > frame_idx + 1) {
+            frames_.resize(frame_idx + 1);
+        }
+        frames_[frame_idx].pc = handler.catch_pc;
+        need_restart = true;
+        return true;
+    };
     do {
     need_restart = false;
-    try {
+    AVA_TRY {
+    if (frames_[frame_idx].pending_await_error) {
+        frames_[frame_idx].pending_await_error = false;
+        Value exc = frames_[frame_idx].pending_await_error_value;
+        RaiseException(exc);
+        AVA_THROW(AvaRaiseException());
+    }
     while (frames_[frame_idx].pc < code.size()) {
         const Instr& in = code[frames_[frame_idx].pc++];
         switch (in.op) {
@@ -31,12 +82,12 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 break;
 
             case OpCode::GETGLOBAL: {
-                std::string name = std::string(static_cast<StringObj*>(K[in.b].obj)->data);
+                avastd::string name = avastd::string(static_cast<StringObj*>(K[in.b].obj)->data);
                 frames_[frame_idx].registers[in.a] = GetGlobal(name); 
                 break;
             }
             case OpCode::SETGLOBAL: 
-                SetGlobal(std::string(
+                SetGlobal(avastd::string(
                     static_cast<StringObj*>(K[in.b].obj)->data), frames_[frame_idx].registers[in.a]); 
                 break;
 
@@ -139,19 +190,19 @@ Value VM::ExecuteFrame(size_t frame_idx) {
 
             case OpCode::CALL: {
                 uint8_t save_a = in.a;
-                std::vector<Value> args(
+                avastd::vector<Value> args(
                     frames_[frame_idx].registers.begin() + in.a + 1,
                     frames_[frame_idx].registers.begin() + in.a + 1 + in.b);
                 const Value& callee = frames_[frame_idx].registers[in.a];
 
                 if (callee.type == ValueType::Bound) {
                     auto* bound = static_cast<BoundMethod*>(callee.obj);
-                    std::vector<Value> all_args;
+                    avastd::vector<Value> all_args;
                     all_args.push_back(bound->instance);
                     all_args.insert(all_args.end(), args.begin(), args.end());
                     CallFrame callee_frame;
                     callee_frame.proto = bound->proto;
-                    callee_frame.registers.resize(std::max<size_t>(callee_frame.registers.size(), bound->proto->num_registers));
+                    callee_frame.registers.resize(avastd::max<size_t>(callee_frame.registers.size(), bound->proto->num_registers));
                     for (size_t i = 0; i < all_args.size() && i < callee_frame.registers.size(); ++i) {
                         callee_frame.registers[i] = all_args[i];
                     }
@@ -182,13 +233,18 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                         inst->attrs["__base__"] = base_it->second;
                     }
                     
+                    // v recien creado: ref_count=1 propio de v (misma
+                    // convencion que Value::String()); el
+                    // copy-assignment de abajo ya Retiene (RAII) para
+                    // dar a registers[save_a] su propia referencia. El
+                    // Retain(v) manual que estaba aca dejaba una tercera
+                    // referencia que nadie liberaba.
                     Value v; v.type = ValueType::Instance; v.obj = inst;
-                    Retain(v);
                     frames_[frame_idx].registers[save_a] = v;
                     
                     auto init_it = cls->methods.find("__init__");
                     if (init_it != cls->methods.end()) {
-                        std::vector<Value> init_args;
+                        avastd::vector<Value> init_args;
                         init_args.push_back(v);
                         init_args.insert(init_args.end(), args.begin(), args.end());
                         
@@ -211,7 +267,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                     }
                 } else if (callee.type == ValueType::Native) {
                     auto* native = static_cast<NativeObj*>(callee.obj);
-                    std::vector<ava_value_t> c_args;
+                    avastd::vector<ava_value_t> c_args;
                     
                     if (native->is_primitive_method) {
                         c_args.push_back(native->primitive_this);
@@ -231,26 +287,30 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                     frames_[frame_idx].registers[save_a] = FromC(c_result);
                 } else if (callee.type == ValueType::Function) {
                     auto* closure = static_cast<Closure*>(callee.obj);
-                    CallFrame callee_frame;
-                    callee_frame.proto = closure->proto;
-                    callee_frame.closure = std::shared_ptr<Closure>(closure, [](Closure*) {});
-                    callee_frame.registers.resize(closure->proto->num_registers);
-                    for (size_t i = 0; i < args.size() && i + 1 < callee_frame.registers.size(); ++i) {
-                        callee_frame.registers[i + 1] = args[i];
+                    if (closure->proto->is_async) {
+                        frames_[frame_idx].registers[save_a] = StartAsyncCall(callee, args);
+                    } else {
+                        CallFrame callee_frame;
+                        callee_frame.proto = closure->proto;
+                        callee_frame.closure = avastd::shared_ptr<Closure>(closure, [](Closure*) {});
+                        callee_frame.registers.resize(closure->proto->num_registers);
+                        for (size_t i = 0; i < args.size() && i + 1 < callee_frame.registers.size(); ++i) {
+                            callee_frame.registers[i + 1] = args[i];
+                        }
+                        callee_frame.argc = static_cast<uint32_t>(args.size());
+                        callee_frame.ret_slot = static_cast<int>(save_a);
+                        frames_.push_back(callee_frame);
+                        Value result = ExecuteFrame(frames_.size() - 1);
+
+                        if (is_coroutine_suspended_) {
+                            return result;
+                        }
+
+                        frames_.pop_back();
+                        frames_[frame_idx].registers[save_a] = result;
                     }
-                    callee_frame.argc = static_cast<uint32_t>(args.size());
-                    callee_frame.ret_slot = static_cast<int>(save_a);
-                    frames_.push_back(callee_frame);
-                    Value result = ExecuteFrame(frames_.size() - 1);
-                    
-                    if (is_coroutine_suspended_) {
-                        return result;
-                    }
-                    
-                    frames_.pop_back();
-                    frames_[frame_idx].registers[save_a] = result;
                 } else {
-                    throw std::runtime_error("attempt to call a non-callable value");
+                    AVA_THROW(avastd::runtime_error("attempt to call a non-callable value"));
                 }
                 break;
             }
@@ -265,15 +325,22 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 for (size_t i = 0; i < child_proto->upvalue_descs.size(); ++i) {
                     auto& uvd = child_proto->upvalue_descs[i];
                     if (uvd.from_parent_local) {
-                        auto upval = std::make_shared<Upvalue>();
+                        auto upval = avastd::make_shared<Upvalue>();
                         upval->location = &frames_[frame_idx].registers[uvd.index];
+                        // upval->value es Value (closure.h) -- este
+                        // copy-assignment ya Retiene (RAII); el
+                        // Retain() manual que seguia duplicaba esa
+                        // retencion.
                         upval->value = frames_[frame_idx].registers[uvd.index];
-                        Retain(upval->value);
-                        closure->upvalues.push_back(upval);
+                        // `upval` no se reusa despues de esto en esta
+                        // iteracion -- move en vez de copia, mismo
+                        // motivo que module.cpp/vm_import.cpp.
+                        closure->upvalues.push_back(avastd::move(upval));
                     }
                 }
+                // Mismo patron que en Instance mas arriba: la
+                // asignacion de abajo ya Retiene por si sola.
                 Value v; v.type = ValueType::Function; v.obj = closure;
-                Retain(v);
                 frames_[frame_idx].registers[in.a] = v;
                 break;
             }
@@ -291,10 +358,15 @@ Value VM::ExecuteFrame(size_t frame_idx) {
             case OpCode::SETUPVAL: {
                 auto* closure = frames_[frame_idx].closure.get();
                 if (closure && in.b < closure->upvalues.size()) {
-                    Release(closure->upvalues[in.b]->value);
+                    // El copy-assignment de Value (RAII, sub-fase 2) ya
+                    // Retiene el valor nuevo y Libera el viejo por su
+                    // cuenta. El Release() manual de ANTES de esta
+                    // linea liberaba el valor viejo una primera vez, y
+                    // el operator= lo volvia a liberar -- double-release
+                    // real sobre el upvalue viejo. El Retain() manual de
+                    // DESPUES duplicaba la retencion del nuevo.
                     closure->upvalues[in.b]->value = frames_[frame_idx].registers[in.a];
                     closure->upvalues[in.b]->location = &closure->upvalues[in.b]->value;
-                    Retain(closure->upvalues[in.b]->value);
                 }
                 break;
             }
@@ -339,58 +411,29 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 OpResume(frames_[frame_idx], in, K, *this);
                 break;
 
+            case OpCode::AWAIT:
+                OpAwait(frames_[frame_idx], in, K, *this);
+                if (is_coroutine_suspended_) {
+                    return frames_[frame_idx].registers[in.a];
+                }
+                break;
+
             default:
-                throw std::runtime_error("unknown opcode: " + std::to_string(static_cast<int>(in.op)));
+                AVA_THROW(avastd::runtime_error("unknown opcode: " + avastd::to_string(static_cast<int>(in.op))));
         }
     }
+#if AVA_HAVE_EXCEPTIONS
     } catch (const AvaRaiseException& e) {
-        if (!exception_handlers_.empty()) {
-            auto handler = exception_handlers_.back();
-            if (handler.frame_idx == frame_idx) {
-                exception_handlers_.pop_back();
-                // Calls that were aborted mid-propagation (OpCall/OpBaseCall/
-                // constructor calls) never reached their normal-path
-                // frames_.pop_back(), so any frames pushed above the frame
-                // that's catching this exception are now stale garbage.
-                // Trim them so frames_.size()-1 (used by OpTry to compute a
-                // NEW handler's frame_idx) reflects reality again -- otherwise
-                // a later try/catch registers a handler with an inflated
-                // frame_idx that never matches, and its exceptions escape
-                // uncaught.
-                if (frames_.size() > frame_idx + 1) {
-                    frames_.resize(frame_idx + 1);
-                }
-                frames_[frame_idx].pc = handler.catch_pc;
-                need_restart = true;
-            } else {
-                throw;
-            }
-        } else {
-            throw;
-        }
-    } catch (const std::exception& e) {
-        HandleFrameError(*this, frame_idx, e);
-        if (!exception_handlers_.empty()) {
-            auto handler = exception_handlers_.back();
-            if (handler.frame_idx == frame_idx) {
-                Value msg;
-                msg.type = ValueType::String;
-                msg.obj = new StringObj(e.what());
-                RaiseException(msg);
-                exception_handlers_.pop_back();
-                // Same stale-frame cleanup as above (see comment there).
-                if (frames_.size() > frame_idx + 1) {
-                    frames_.resize(frame_idx + 1);
-                }
-                frames_[frame_idx].pc = handler.catch_pc;
-                need_restart = true;
-            } else {
-                throw;
-            }
-        } else {
-            throw;
-        }
+        if (!handle_vm_exception(/*is_raise=*/true, e)) throw;
+    } catch (const avastd::exception& e) {
+        if (!handle_vm_exception(/*is_raise=*/false, e)) throw;
     }
+#else
+    } AVA_CATCH(avastd::exception, e) {
+        bool is_raise = (e.ava_type_tag() == 1);  // ver AvaRaiseException::ava_type_tag()
+        if (!handle_vm_exception(is_raise, e)) AVA_RETHROW();
+    }
+#endif
     } while (need_restart);
 
     return Value::Nil();

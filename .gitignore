@@ -1,10 +1,12 @@
 # Build outputs
 build/
+build_cli/
 build_avaui/
 build_avahost/
 build_studio/
 build_linux/
 build_pack/
+build_barekernel/
 bin/
 dist/
 out/

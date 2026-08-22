@@ -4,7 +4,7 @@
 
 namespace ava {
 
-void OpEq(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpEq(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto& Ra = frame.registers[in.a];
     auto& Rb = frame.registers[in.b];
     auto& Rc = frame.registers[in.c];
@@ -27,7 +27,7 @@ void OpEq(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm
     }
 }
 
-void OpEqK(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpEqK(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto& Ra = frame.registers[in.a];
     auto& Rb = frame.registers[in.b];
     const Value& Kc = K[in.c];
@@ -50,7 +50,7 @@ void OpEqK(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& v
     }
 }
 
-void OpNeK(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpNeK(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto& Ra = frame.registers[in.a];
     auto& Rb = frame.registers[in.b];
     const Value& Kc = K[in.c];
@@ -69,7 +69,7 @@ void OpNeK(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& v
     }
 }
 
-void OpNe(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpNe(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto& Ra = frame.registers[in.a];
     auto& Rb = frame.registers[in.b];
     auto& Rc = frame.registers[in.c];
@@ -92,7 +92,7 @@ void OpNe(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm
     }
 }
 
-void OpLt(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpLt(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto& Rb = frame.registers[in.b];
     auto& Rc = frame.registers[in.c];
     if (Rb.type == ValueType::String && Rc.type == ValueType::String) {
@@ -104,7 +104,7 @@ void OpLt(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm
     }
 }
 
-void OpLe(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpLe(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto& Rb = frame.registers[in.b];
     auto& Rc = frame.registers[in.c];
     if (Rb.type == ValueType::String && Rc.type == ValueType::String) {
@@ -116,7 +116,7 @@ void OpLe(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm
     }
 }
 
-void OpGt(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpGt(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto& Rb = frame.registers[in.b];
     auto& Rc = frame.registers[in.c];
     if (Rb.type == ValueType::String && Rc.type == ValueType::String) {
@@ -128,7 +128,7 @@ void OpGt(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm
     }
 }
 
-void OpGe(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpGe(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto& Rb = frame.registers[in.b];
     auto& Rc = frame.registers[in.c];
     if (Rb.type == ValueType::String && Rc.type == ValueType::String) {

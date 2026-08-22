@@ -1,0 +1,47 @@
+async func level3(x)
+    return x + 1
+end
+
+async func level2(x)
+    r = await level3(x)
+    return r * 2
+end
+
+async func level1(x)
+    r = await level2(x)
+    return r - 3
+end
+
+async func sum_all(items)
+    total = 0
+    for it in items then
+        total = total + await level1(it)
+    end
+    return total
+end
+
+async func failing()
+    raise "boom"
+end
+
+async func safe_caller()
+    try
+        r = await failing()
+        return r
+    catch e
+        return "caught: " + e
+    end
+end
+
+async func main()
+    r1 = await level1(10)
+    print(r1)
+
+    r2 = await sum_all([1, 2, 3])
+    print(r2)
+
+    r3 = await safe_caller()
+    print(r3)
+end
+
+main()

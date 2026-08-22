@@ -1,7 +1,7 @@
-# Plan de Portado: AvaLang → LiteKernel
+# Plan de Portado: AvaLang → selected kernel
 
 Documento de investigación y plan para portar el runtime de AvaLang al kernel de
-LiteKernel (`D:\litekernel`), permitiendo ejecutar scripts `.ava` como
+selected kernel (`D:\selected kernel`), permitiendo ejecutar scripts `.ava` como
 aplicaciones de usuario (Ring 3) en el SO.
 
 ---
@@ -11,9 +11,9 @@ aplicaciones de usuario (Ring 3) en el SO.
 **Veredicto: Compatible, requiere trabajo de portado intermedio.**
 
 AvaLang está diseñado con una capa de abstracción de plataforma (PAL) limpia que
-aisla todo el acceso al SO. LiteKernel ya provee los syscalls POSIX-like
+aisla todo el acceso al SO. selected kernel ya provee los syscalls POSIX-like
 necesarios (incluyendo `dlopen`/`dlsym`/`dlclose`). El trabajo consiste en crear
-un nuevo backend PAL (`platform/litekernel/`) que use los syscalls del kernel en
+un nuevo backend PAL (`platform/barekernel/`) que use los syscalls del kernel en
 vez de las APIs de Linux/Windows.
 
 **El obstáculo principal es `libstdc++`**: AvaLang usa intensivamente
@@ -23,7 +23,7 @@ vez de las APIs de Linux/Windows.
 
 ---
 
-## 2. Arquitectura de LiteKernel (relevante para el port)
+## 2. Arquitectura de selected kernel (relevante para el port)
 
 ### 2.1 Arquitectura objetivo
 
@@ -35,7 +35,7 @@ vez de las APIs de Linux/Windows.
 
 ### 2.2 Formato de ejecutables
 
-LiteKernel usa un formato propio (`AppHeader`) para ejecutables, NO ELF estándar:
+selected kernel usa un formato propio (`AppHeader`) para ejecutables, NO ELF estándar:
 
 ```c
 struct AppHeader {
@@ -219,7 +219,7 @@ AvaLang usa `std::thread` / `std::mutex` para:
 - Coroutines (cooperativas, no requieren hilos reales)
 - `IThreadFactory` / `IMutex` interfaces del PAL
 
-LiteKernel **no tiene pthreads** en userspace. El scheduler es preemptivo a
+selected kernel **no tiene pthreads** en userspace. El scheduler es preemptivo a
 nivel kernel pero no hay hilos POSIX en Ring 3.
 
 ### 3.6 ANTLR4 (solo para compilar, no para ejecutar)
@@ -246,7 +246,7 @@ acceso al SO. El PAL se define en `runtime/avalang/platform/`:
 
 ### 4.1 Interfaces (`platform/interfaces/`)
 
-| Interfaz | Métodos | Syscalls de LiteKernel equivalentes |
+| Interfaz | Métodos | Syscalls de selected kernel equivalentes |
 |---|---|---|
 | `IFileSystem` | ReadFile, WriteFile, DeleteFile, CreateDirectory, DeleteDirectory, EnumerateDirectory, Exists, IsDirectory, FileSize, GetExecutableDirectory | `sys_open`/`sys_read`/`sys_write`/`sys_close`/`sys_stat`/`sys_mkdir`/`sys_rmdir`/`sys_unlink`/`sys_getcwd` |
 | `IThreadFactory` | CreateThread, SleepMs, CurrentThreadId | **No soportado** — necesitar stub |
@@ -287,7 +287,7 @@ Cada backend son ~10 archivos pequeños, uno por interfaz.
 ### Fase 0: Preparar el toolchain
 
 **Prerrequisito**: Instalar el cross-compiler `i686-elf-gcc/g++` en
-`D:\litekernel\tools\x86\bin\`.
+`D:\selected kernel\tools\x86\bin\`.
 
 Opciones:
 1. **Descargar de OSDev** (recomendado): build precompilado de
@@ -343,25 +343,25 @@ Implicaría reescribir gran parte del compiler y frontend.
 Es la opción que menos cambia el código de AvaLang. El cross-compiler
 `i686-elf-g++` con `libstdc++` ya soporta `-fexceptions` en freestanding.
 Los símbolos que falta (`malloc`, `abort`, `__errno_location`) se implementan
-como wrappers de los syscalls de LiteKernel.
+como wrappers de los syscalls de selected kernel.
 
-### Fase 2: Crear backend PAL `platform/litekernel/`
+### Fase 2: Crear backend PAL `platform/barekernel/`
 
-Crear ~10 archivos en `runtime/avalang/platform/litekernel/`:
+Crear ~10 archivos en `runtime/avalang/platform/barekernel/`:
 
 ```
-platform/litekernel/
-├── LiteKernelPlatform.h          ← class LiteKernelPlatform : public IPlatform
-├── LiteKernelPlatform.cpp        ← Platform::Create() returns LiteKernelPlatform
-├── LiteKernelFileSystem.h/.cpp   ← IFileSystem via sys_open/read/write/close/stat
-├── LiteKernelConsole.h/.cpp      ← IConsole via sys_write(stdout)/sys_read(stdin)
-├── LiteKernelClock.h/.cpp        ← IClock via RTC syscall + sys_sleep
-├── LiteKernelLibrary.h/.cpp      ← ILibraryLoader via sys_dlopen/dlsym/dlclose
-├── LiteKernelProcess.h/.cpp      ← IProcess via sys_getpid/fork/exec/waitpid
-├── LiteKernelThread.h/.cpp       ← IThreadFactory (stub single-threaded Fase 2)
-├── LiteKernelMutex.h/.cpp        ← IMutex (spinlock o no-op)
-├── LiteKernelEnvironment.h/.cpp  ← IEnvironment (stub vacío)
-└── LiteKernelTimer.h/.cpp        ← ITimer via sys_sleep + callback
+platform/barekernel/
+├── BareKernelPlatform.h          ← class BareKernelPlatform : public IPlatform
+├── BareKernelPlatform.cpp        ← Platform::Create() returns BareKernelPlatform
+├── BareKernelFileSystem.h/.cpp   ← IFileSystem via ckm_open/read/write/close/stat
+├── BareKernelConsole.h/.cpp      ← IConsole via ckm_write(CKM_STDOUT)/ckm_read(CKM_STDIN)
+├── BareKernelClock.h/.cpp        ← IClock via ckm_now_ms / ckm_highres_now_ns / ckm_sleep_ms
+├── BareKernelLibrary.h/.cpp      ← ILibraryLoader via ckm_dlopen/dlsym/dlclose
+├── BareKernelProcess.h/.cpp      ← IProcess via ckm_getpid/ckm_spawn/ckm_waitpid
+├── BareKernelThread.h/.cpp       ← IThreadFactory (real si CKM_CAP_THREADS, inline si no)
+├── BareKernelMutex.h/.cpp        ← IMutex (futex si CKM_CAP_MUTEX, spinlock/no-op si no)
+├── selected kernelEnvironment.h/.cpp  ← IEnvironment (real si CKM_CAP_ENVVARS, stub si no)
+└── selected kernelTimer.h/.cpp        ← ITimer (real si CKM_CAP_TIMERS, emulado si no)
 ```
 
 #### Syscall stubs
@@ -373,17 +373,20 @@ Crear un archivo ASM (`syscall_stubs.asm`) similar al de `test_dlopen`:
 ; Mismo patrón que userspace/apps/test_dlopen/syscall_stubs.asm
 ```
 
-Y un header C++ (`litekernel_syscalls.h`) con los wrappers:
+Y un header C++ (`ckm_syscall_stubs.h`) con los wrappers:
 
 ```cpp
 extern "C" int syscall0(int num);
 extern "C" int syscall1(int num, int arg1);
 // ...
 
-#define SYS_WRITE   43
+// Números reales -- ver include/syscall/syscall_types.hpp (enum
+// SyscallNumber) del kernel, y el estado actual del binding en
+// binding-status.md
+#define SYS_OPEN    40
+#define SYS_CLOSE   41
 #define SYS_READ    42
-#define SYS_OPEN    44
-#define SYS_CLOSE   45
+#define SYS_WRITE   43
 #define SYS_DLOPEN  230
 // ...
 
@@ -393,44 +396,51 @@ inline int sys_write(int fd, const void* buf, int count) {
 // ...
 ```
 
+> **Nota**: la tabla completa ya está resuelta en
+> `runtime/avalang/platform/barekernel/bindings/target/ckm_syscall_numbers.h`.
+> Ver [`binding-status.md`](./binding-status.md) para el estado actual del
+> binding.
+
 #### Mapeo PAL → syscalls
 
 | Método PAL | Implementación |
 |---|---|
-| `IFileSystem::ReadFile` | `sys_open(O_RDONLY)` → `sys_read` en bucle → `sys_close` |
-| `IFileSystem::WriteFile` | `sys_open(O_WRONLY\|O_CREAT)` → `sys_write` → `sys_close` |
-| `IFileSystem::Exists` | `sys_stat` (retorna 0 si existe) |
-| `IFileSystem::DeleteFile` | `sys_unlink` |
-| `IFileSystem::CreateDirectory` | `sys_mkdir` |
-| `IFileSystem::EnumerateDirectory` | Requiere `sys_getdents` o `opendir`/`readdir` — verificar si existe |
-| `IConsole::Write` | `sys_write(STDOUT_FILENO, ...)` |
-| `IConsole::ReadLine` | `sys_read(STDIN_FILENO, ...)` |
+| `IFileSystem::ReadFile` | `ckm_open(O_RDONLY)` → `ckm_read` en bucle → `ckm_close` |
+| `IFileSystem::WriteFile` | `ckm_open(O_WRONLY\|O_CREAT\|O_TRUNC)` → `ckm_write` → `ckm_close` |
+| `IFileSystem::Exists` | `ckm_stat` (retorna 0 si existe) |
+| `IFileSystem::DeleteFile` | `ckm_unlink` |
+| `IFileSystem::CreateDirectory` | `ckm_mkdir` |
+| `IFileSystem::EnumerateDirectory` | Requiere `ckm_opendir`/`ckm_readdir` — verificar si existe |
+| `IConsole::Write` | `ckm_write(CKM_STDOUT, ...)` |
+| `IConsole::ReadLine` | `ckm_read(CKM_STDIN, ...)` |
 | `IClock::NowMs` | RTC syscall (verificar `time_syscalls.hpp`) |
-| `IClock::SleepMs` | `sys_sleep(ms)` |
-| `ILibraryLoader::Load` | `sys_dlopen(path, RTLD_NOW)` |
-| `ILibraryLoader::ResolveSymbol` | `sys_dlsym(handle, name)` |
-| `IProcess::CurrentProcessId` | `sys_getpid()` |
-| `IProcess::Execute` | `sys_fork` + `sys_exec` + `sys_waitpid` (o `sys_spawn`) |
+| `IClock::SleepMs` | `ckm_sleep_ms(ms)` |
+| `ILibraryLoader::Load` | `ckm_dlopen(path, RTLD_NOW)` |
+| `ILibraryLoader::ResolveSymbol` | `ckm_dlsym(handle, name)` |
+| `IProcess::CurrentProcessId` | `ckm_getpid()` |
+| `IProcess::Execute` | `ckm_spawn` + `ckm_waitpid` (o `ckm_fork`/`ckm_exec`) |
 | `IThreadFactory::CreateThread` | Stub: ejecutar inline (Fase 2) |
 | `IMutex::Lock` | Spinlock con `__asm__("pause")` o no-op |
 
 ### Fase 3: Integración con el build de AvaLang
 
-Modificar `runtime/avalang/CMakeLists.txt` para añadir el target LiteKernel:
+Modificar `runtime/avalang/CMakeLists.txt` para añadir el target BareKernel:
 
 ```cmake
-if(AVA_TARGET_LITEKERNEL)
+if(AVA_TARGET_BAREKERNEL)
     set(PLATFORM_SOURCES
-        platform/litekernel/LiteKernelFileSystem.cpp
-        platform/litekernel/LiteKernelThread.cpp
-        platform/litekernel/LiteKernelMutex.cpp
-        platform/litekernel/LiteKernelClock.cpp
-        platform/litekernel/LiteKernelLibrary.cpp
-        platform/litekernel/LiteKernelConsole.cpp
-        platform/litekernel/LiteKernelEnvironment.cpp
-        platform/litekernel/LiteKernelProcess.cpp
-        platform/litekernel/LiteKernelTimer.cpp
-        platform/litekernel/LiteKernelPlatform.cpp
+        platform/barekernel/BareKernelFileSystem.cpp
+        platform/barekernel/BareKernelThread.cpp
+        platform/barekernel/BareKernelMutex.cpp
+        platform/barekernel/BareKernelClock.cpp
+        platform/barekernel/BareKernelLibrary.cpp
+        platform/barekernel/BareKernelConsole.cpp
+        platform/barekernel/BareKernelEnvironment.cpp
+        platform/barekernel/BareKernelProcess.cpp
+        platform/barekernel/BareKernelTimer.cpp
+        platform/barekernel/BareKernelPlatform.cpp
+        # Binding del kernel concreto:
+        platform/barekernel/bindings/selected kernel/ckm_binding.cpp
     )
     # Compilar con i686-elf-g++, linkar como .so (ELF32 ET_DYN)
 endif()
@@ -529,7 +539,7 @@ syscall `sys_getdents` al kernel (trabajo futuro del kernel).
 
 ## 7. Verificación de compatibilidad por componente
 
-| Componente AvaLang | Depende de | LiteKernel tiene | Estado |
+| Componente AvaLang | Depende de | selected kernel tiene | Estado |
 |---|---|---|---|
 | Compiler (parser→AST→bytecode) | `std::string`, `std::vector`, `std::any`, excepciones, ANTLR4-runtime | No tiene STL ni excepciones | **Requiere libstdc++** |
 | VM (bytecode interpreter) | `std::string`, `std::vector`, `std::shared_ptr`, `std::unordered_map`, `std::function` | No tiene STL | **Requiere libstdc++** |
@@ -553,7 +563,7 @@ syscall `sys_getdents` al kernel (trabajo futuro del kernel).
    `std::string` y `throw`/`catch` para `i686-elf`
 4. **Si `libstdc++` no funciona**: evaluar Opción B (mini-STL) u Opción C
    (refactor sin excepciones)
-5. **Crear backend PAL** `platform/litekernel/` (Fase 2)
+5. **Crear backend PAL** `platform/barekernel/` (Fase 2)
 6. **Pre-generar ANTLR4** en el host (Fase 4)
 7. **Compilar AvaLang como `.so`** para `i686-elf` (Fase 3)
 8. **Crear `ava_runner`** app userspace (Fase 5)
@@ -564,7 +574,7 @@ syscall `sys_getdents` al kernel (trabajo futuro del kernel).
 
 ## 9. Archivos clave de referencia
 
-### LiteKernel
+### selected kernel
 
 | Archivo | Contenido |
 |---|---|
@@ -590,7 +600,7 @@ syscall `sys_getdents` al kernel (trabajo futuro del kernel).
 | `runtime/avalang/platform/interfaces/IFileSystem.h` | Interfaz de filesystem |
 | `runtime/avalang/platform/interfaces/IThread.h` | Interfaz de threads |
 | `runtime/avalang/platform/interfaces/ILibrary.h` | Interfaz de dlopen/dlsym |
-| `runtime/avalang/platform/linux/LinFileSystem.cpp` | Backend Linux (referencia para LiteKernel) |
+| `runtime/avalang/platform/linux/LinFileSystem.cpp` | Backend Linux (referencia para selected kernel) |
 | `runtime/avalang/platform/linux/LinConsole.cpp` | Console backend Linux |
 | `runtime/avalang/CMakeLists.txt` | Build system (selección de backend PAL) |
 | `runtime/avalang/api/include/avalang.h` | API C pública (`ava_run_file`, `ava_run_string`) |
@@ -599,7 +609,7 @@ syscall `sys_getdents` al kernel (trabajo futuro del kernel).
 
 ## 10. Conclusión
 
-AvaLang **es compatible** con LiteKernel a nivel de arquitectura — la PAL
+AvaLang **es compatible** con selected kernel a nivel de arquitectura — la PAL
 limpia y los syscalls POSIX-like del kernel cubren el 90% de las necesidades.
 El trabajo de portado es **intermedio**: crear ~10 archivos de backend PAL
 es directo, pero el obstáculo real es **`libstdc++`** y el soporte de
@@ -611,4 +621,4 @@ días-semanas. Si no, se requiere evaluar alternativas (mini-STL propia o
 refactor sin excepciones), lo que escalaría el trabajo a semanas-meses.
 
 El resultado final sería: scripts `.ava` ejecutándose como aplicaciones de
-usuario en LiteKernel, con el runtime cargado dinámicamente vía `dlopen`.
+usuario en selected kernel, con el runtime cargado dinámicamente vía `dlopen`.

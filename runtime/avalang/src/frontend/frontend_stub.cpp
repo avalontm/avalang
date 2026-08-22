@@ -11,12 +11,12 @@
 
 namespace ava {
 
-std::shared_ptr<Proto> CompileSource(const std::string&, const std::string&) {
-    throw CompileError(
+avastd::shared_ptr<Proto> CompileSource(const avastd::string&, const avastd::string&) {
+    AVA_THROW(CompileError(
         "AvaLang frontend not built: antlr4-runtime was not found by CMake. "
         "Install the ANTLR4 C++ runtime and reconfigure to enable "
         "ava_compile(); see DESIGN.md build order, steps 2-6."
-    );
+    ));
 }
 
 } // namespace ava

@@ -1,0 +1,16 @@
+async func falla()
+    await delay(150)
+    raise "boom"
+end
+
+async func main()
+    try
+        await falla()
+        print("no deberia llegar aca")
+    catch(e)
+        print("capturado: " + str(e))
+    end
+    print("main sigue vivo")
+end
+
+main()

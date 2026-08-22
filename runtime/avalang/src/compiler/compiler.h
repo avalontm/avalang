@@ -30,6 +30,9 @@ private:
     // source for error reporting. 0 = unknown (e.g. instructions emitted
     // outside any CompileStmt call, such as an implicit trailing RETURN).
     int current_line_ = 0;
+    // 1-based source column matching current_line_ above; 0 = unknown.
+    // Only used for AvaError reporting (debug_lines only tracks line).
+    int current_col_ = 0;
     // Path of the file being compiled; stamped onto proto_->source_name
     // (top-level Compile()) and onto every sub-Compiler's proto_ (lambda,
     // free function, class method) so runtime errors can report the
@@ -48,6 +51,14 @@ private:
     // resuelve como variable local a ese scope (registro persistente) o
     // como variable global (SETGLOBAL/GETGLOBAL), ver CompileStmt.
     bool is_top_level_ = true;
+    // true solo dentro del `Compiler sub` que compila el cuerpo de un
+    // `async func` (ver CompileFunc). Igual que is_top_level_, no se
+    // hereda a un `func` normal anidado dentro de uno async -- cada
+    // función/método/lambda compila en su propio `Compiler sub` desde
+    // cero, así que un `func` anidado empieza con esto en false, igual
+    // que en JS/Python/C# (await solo vale en el cuerpo léxico directo
+    // de la función async que lo contiene). Ver CompileExpr(AwaitExpr).
+    bool in_async_func_ = false;
     std::unordered_map<std::string, ClassObj*> compiled_classes_;
     ClassObj* current_base_class_ = nullptr;
     bool is_init_ = false;

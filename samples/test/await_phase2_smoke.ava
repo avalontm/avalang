@@ -1,0 +1,10 @@
+async func compute(x)
+    return x * 2
+end
+
+async func main()
+    r = await compute(21)
+    print(r)
+end
+
+main()

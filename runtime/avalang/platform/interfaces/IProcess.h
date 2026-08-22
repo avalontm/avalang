@@ -5,17 +5,15 @@
 // freeze/deprecation policy before changing any signature in IProcess.
 #include "PAL_ABI.h"
 
-#include <string>
-#include <vector>
-#include <cstdint>
+#include "../barekernel/stdcompat/ava_stdcompat.h"
 
 namespace ava {
 namespace platform {
 
 struct ProcessResult {
     int exit_code = -1;
-    std::string stdout_output;
-    std::string stderr_output;
+    avastd::string stdout_output;
+    avastd::string stderr_output;
 };
 
 class IProcess {
@@ -25,8 +23,8 @@ public:
     virtual uint64_t CurrentProcessId() const = 0;
 
     // Runs `command` with `args`, blocks until it exits.
-    virtual bool Execute(const std::string& command,
-                          const std::vector<std::string>& args,
+    virtual bool Execute(const avastd::string& command,
+                          const avastd::vector<avastd::string>& args,
                           ProcessResult& out_result) = 0;
 };
 

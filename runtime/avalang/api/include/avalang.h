@@ -17,8 +17,43 @@
  *     by value across the ABI boundary.
  */
 
+#if defined(AVA_BAREKERNEL_TARGET_BINDING) && defined(CKM_CAP_LIBSTDCPP) && !CKM_CAP_LIBSTDCPP
+/*
+ * Este toolchain (i686-elf-*, --without-headers) no tiene libc: su
+ * <stdint.h>/<stddef.h> son wrappers que esperan una libc real (newlib)
+ * mas abajo en el include path via #include_next, y fallan con "No such
+ * file or directory" al no encontrarla. avalang.h es la API publica en C
+ * plano (consumida tambien por bindings externos que SI tienen libc/stdint
+ * normal -- C#, Python, etc.), asi que este fallback SOLO se activa
+ * cuando CMake define AVA_BAREKERNEL_TARGET_BINDING y CKM_CAP_LIBSTDCPP=0
+ * (ambos -D pasados por el propio build de avalang, ver
+ * runtime/avalang/CMakeLists.txt y platform/barekernel/bindings/target/
+ * binding.cmake) -- nunca por un consumidor externo que solo tiene este
+ * header + la lib, asi que sigue siendo cierto que "avalang.h es el unico
+ * header que hace falta", sin depender de ningun otro archivo del
+ * repositorio.
+ *
+ * Mismos macros builtin del compilador que usa
+ * runtime/avalang/platform/barekernel/stdcompat/ava_types.h (ver ese
+ * archivo para el razonamiento completo) -- deliberadamente NO se
+ * incluye ese header desde aca para no crear una dependencia de ruta
+ * relativa en un header que promete ser autocontenido.
+ */
+typedef __UINT8_TYPE__  uint8_t;
+typedef __UINT64_TYPE__ uint64_t;
+typedef __INT64_TYPE__  int64_t;
+typedef __SIZE_TYPE__   size_t;
+#ifndef NULL
+  #ifdef __cplusplus
+    #define NULL 0
+  #else
+    #define NULL ((void*)0)
+  #endif
+#endif
+#else
 #include <stdint.h>
 #include <stddef.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -119,6 +154,14 @@ AVA_API void ava_vm_set_stdlib_path(AvaVM* vm, const char* path);
 /* Returns the currently configured stdlib path ("" if unset). Caller
  * must free the returned string with ava_string_free. */
 AVA_API char* ava_vm_get_stdlib_path(AvaVM* vm);
+
+/* Corre un ciclo de mark-sweep para liberar ciclos de referencia (ver
+ * src/vm/gc_sweep.h) que el refcounting normal nunca detecta por si solo.
+ * No se dispara automatico en ningun punto: es responsabilidad del host
+ * llamarlo entre ejecuciones completas (nunca a mitad de un ava_run/
+ * ava_vm_register_native callback en curso). `out_collected`, si no es
+ * NULL, recibe cuantos objetos se liberaron en esta pasada. */
+AVA_API void ava_vm_collect_garbage(AvaVM* vm, int64_t* out_collected);
 
 /* Registers a native (host) function under `name`, callable from scripts.
  * `user_data` is passed back unchanged on every call (closure context). */

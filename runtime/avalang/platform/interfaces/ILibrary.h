@@ -5,7 +5,7 @@
 // freeze/deprecation policy before changing any signature in ILibraryHandle / ILibraryLoader.
 #include "PAL_ABI.h"
 
-#include <string>
+#include "../barekernel/stdcompat/ava_stdcompat.h"
 
 namespace ava {
 namespace platform {
@@ -16,7 +16,7 @@ public:
     virtual ~ILibraryHandle() = default;
 
     // Returns nullptr if the symbol does not exist.
-    virtual void* ResolveSymbol(const std::string& symbol_name) = 0;
+    virtual void* ResolveSymbol(const avastd::string& symbol_name) = 0;
 };
 
 // Used by the Extern/FFI system (see core/src/vm/vm_extern.h) to load
@@ -26,7 +26,7 @@ public:
     virtual ~ILibraryLoader() = default;
 
     // Returns nullptr on failure. Caller owns the returned handle.
-    virtual ILibraryHandle* Load(const std::string& library_name) = 0;
+    virtual ILibraryHandle* Load(const avastd::string& library_name) = 0;
     virtual void Unload(ILibraryHandle* handle) = 0;
 };
 

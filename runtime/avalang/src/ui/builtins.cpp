@@ -2,9 +2,9 @@
 
 #include "vm/value.h"
 #include "vm/vm.h"
+#include "vm/vm_platform_accessor.h"
 
-#include <cstdio>
-#include <string>
+#include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 
 namespace ava {
 namespace ui {
@@ -20,7 +20,7 @@ namespace {
 
 
 
-std::string ToLogString(const Value& v) {
+avastd::string ToLogString(const Value& v) {
     switch (v.type) {
         case ValueType::Nil:
             return "nil";
@@ -29,9 +29,9 @@ std::string ToLogString(const Value& v) {
         case ValueType::Number: {
             double n = v.n;
             if (n == static_cast<long long>(n)) {
-                return std::to_string(static_cast<long long>(n));
+                return avastd::to_string(static_cast<long long>(n));
             }
-            return std::to_string(n);
+            return avastd::to_string(n);
         }
         case ValueType::String:
             return static_cast<StringObj*>(v.obj)->data;
@@ -50,7 +50,7 @@ std::string ToLogString(const Value& v) {
 
 
 ava_value_t ui_log(AvaVM* vm, const ava_value_t* args, size_t count, void* ) {
-    std::string line = "[ui] ";
+    avastd::string line = "[ui] ";
     for (size_t i = 0; i < count; ++i) {
         if (i > 0) line += ' ';
         line += ToLogString(FromC(args[i]));
@@ -61,7 +61,10 @@ ava_value_t ui_log(AvaVM* vm, const ava_value_t* args, size_t count, void* ) {
     if (raw_vm) {
         raw_vm->Print(line);
     } else {
-        std::fputs(line.c_str(), stdout);
+        // raw_vm nulo no deberia darse en la ruta real del VM; ver el
+        // mismo comentario en builtin_natives.cpp::builtin_print. Antes:
+        // std::fputs(..., stdout) -- ahora va por IConsole.
+        VmPlatformAccessor::Get().Console().Write(line);
     }
 
     Value nil = Value::Nil();
@@ -74,7 +77,7 @@ ava_value_t ui_log(AvaVM* vm, const ava_value_t* args, size_t count, void* ) {
 
 
 ava_value_t ui_alert(AvaVM* vm, const ava_value_t* args, size_t count, void* ) {
-    std::string message = (count > 0) ? ToLogString(FromC(args[0])) : "";
+    avastd::string message = (count > 0) ? ToLogString(FromC(args[0])) : "";
 
     auto* raw_vm = reinterpret_cast<ava::VM*>(vm);
     if (raw_vm) raw_vm->Alert(message);
@@ -87,7 +90,7 @@ ava_value_t ui_alert(AvaVM* vm, const ava_value_t* args, size_t count, void* ) {
 
 
 ava_value_t ui_navigate(AvaVM* vm, const ava_value_t* args, size_t count, void* ) {
-    std::string route = (count > 0) ? ToLogString(FromC(args[0])) : "";
+    avastd::string route = (count > 0) ? ToLogString(FromC(args[0])) : "";
 
     auto* raw_vm = reinterpret_cast<ava::VM*>(vm);
     if (raw_vm) raw_vm->Navigate(route);

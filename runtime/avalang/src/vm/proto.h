@@ -1,9 +1,7 @@
 #ifndef AVA_VM_PROTO_H
 #define AVA_VM_PROTO_H
 
-#include <string>
-#include <vector>
-#include <memory>
+#include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 #include "opcodes.h"
 #include "value.h"
 
@@ -17,28 +15,29 @@ namespace ava {
 
 struct UpvalDesc {
     bool from_parent_local;
-    uint16_t index;
+    avastd::uint16_t index;
 };
 
 struct AVA_PROTO_API Proto {
-    uint16_t num_registers = 0;
-    uint8_t  num_params = 0;
+    avastd::uint16_t num_registers = 0;
+    avastd::uint8_t  num_params = 0;
     bool     is_vararg = false;
     bool     is_method = false;
+    bool     is_async = false;
 
-    std::vector<Value>      constants;
-    std::vector<UpvalDesc>  upvalue_descs;
-    std::vector<Instr>      instructions;
-    std::vector<std::shared_ptr<Proto>> child_protos;
+    avastd::vector<Value>      constants;
+    avastd::vector<UpvalDesc>  upvalue_descs;
+    avastd::vector<Instr>      instructions;
+    avastd::vector<avastd::shared_ptr<Proto>> child_protos;
 
-    std::vector<uint32_t>   debug_lines;
-    std::string             debug_name;
+    avastd::vector<avastd::uint32_t>   debug_lines;
+    avastd::string             debug_name;
     // Path of the source file this Proto was compiled from (top-level
     // script, or the module a function/method/lambda was defined in).
     // Empty for Protos compiled before this field existed. Used to
     // report the correct file when an error happens inside an imported
     // module, not just a line number (see vm.cpp).
-    std::string             source_name;
+    avastd::string             source_name;
 };
 
 } // namespace ava

@@ -1,0 +1,21 @@
+async func nivel3()
+    await delay(100)
+    return 3
+end
+
+async func nivel2()
+    r = await nivel3()
+    return r + 2
+end
+
+async func nivel1()
+    r = await nivel2()
+    return r + 1
+end
+
+async func main()
+    total = await nivel1()
+    print("total=" + str(total))
+end
+
+main()

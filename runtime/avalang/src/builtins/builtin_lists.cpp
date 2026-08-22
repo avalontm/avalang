@@ -1,5 +1,4 @@
 #include "builtin.h"
-#include <vector>
 
 namespace {
 

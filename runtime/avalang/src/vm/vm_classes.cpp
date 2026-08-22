@@ -1,11 +1,10 @@
 #include "vm.h"
 #include "vm_internal.h"
 
-#include <cstdio>
 
 namespace ava {
 
-void OpNewClass(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpNewClass(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto* cls = new ClassObj();
     auto* class_proto = static_cast<ClassObj*>(K[in.b].obj);
     cls->name = class_proto->name;
@@ -14,12 +13,13 @@ void OpNewClass(CallFrame& frame, const Instr& in, const std::vector<Value>& K, 
     cls->methods = class_proto->methods;
     cls->private_members = class_proto->private_members;
     cls->param_names = class_proto->param_names;
+    // v recien creado: ref_count=1 propio; la asignacion de abajo ya
+    // Retiene (RAII). El Retain(v) manual dejaba una referencia de mas.
     Value v; v.type = ValueType::Class; v.obj = cls;
-    Retain(v);
     frame.registers[in.a] = v;
 }
 
-void OpNewInstance(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpNewInstance(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto& cls_val = frame.registers[in.b];
     auto* cls = static_cast<ClassObj*>(cls_val.obj);
     auto* inst = new InstanceObj();
@@ -36,18 +36,17 @@ void OpNewInstance(CallFrame& frame, const Instr& in, const std::vector<Value>& 
         inst->attrs["__base__"] = base_it->second;
     }
     Value v; v.type = ValueType::Instance; v.obj = inst;
-    Retain(v);
     frame.registers[in.a] = v;
 }
 
-void OpGetAttr(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpGetAttr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto& obj = frame.registers[in.b];
     auto* attr_name = static_cast<StringObj*>(K[in.c].obj);
     
     if (obj.type == ValueType::String || obj.type == ValueType::List || obj.type == ValueType::Dict) {
-        std::string method_name = attr_name->data;
+        avastd::string method_name = attr_name->data;
         
-        std::string prefixed_name;
+        avastd::string prefixed_name;
         if (obj.type == ValueType::String) {
             prefixed_name = "str_" + method_name;
         } else if (obj.type == ValueType::List) {
@@ -62,8 +61,12 @@ void OpGetAttr(CallFrame& frame, const Instr& in, const std::vector<Value>& K, V
             native->user_data = vm.builtin_methods_[prefixed_name].second;
             native->is_primitive_method = true;
             native->primitive_this = ToC(obj);
+            // Retiene lo que ToC() no retiene por su cuenta (ToC es solo
+            // un cast de Value a ava_value_t, ver value.cpp) -- este
+            // NativeObj ahora es dueño real de una referencia a `obj`
+            // mientras viva. ~NativeObj() (value.cpp) suelta esto.
+            Retain(obj);
             Value v; v.type = ValueType::Native; v.obj = native;
-            Retain(v);
             frame.registers[in.a] = v;
             return;
         }
@@ -94,13 +97,36 @@ void OpGetAttr(CallFrame& frame, const Instr& in, const std::vector<Value>& K, V
             if (method_it != lookup_cls->methods.end()) {
                 auto* bound = new BoundMethod();
                 bound->proto = method_it->second;
+                // bound->instance = obj ya Retiene via copy-assignment
+                // (RAII); el Retain(obj) manual (sobre el mismo objeto,
+                // via otra Value que lo referencia) y el Retain(v) de
+                // abajo eran retenciones de mas, no balanceadas por
+                // ningun Release.
                 bound->instance = obj;
-                Retain(obj);
                 Value v; v.type = ValueType::Bound; v.obj = bound;
-                Retain(v);
                 frame.registers[in.a] = v;
             } else {
-                frame.registers[in.a] = Value::Nil();
+                // Fallback a atributos `static` de clase (viven en
+                // cls->attrs, no en cls->instance_defaults, así que nunca
+                // se copian a inst->attrs -- ver value.h). Sin esto,
+                // `this.total` dentro de un método nunca encontraba un
+                // `static total = ...` declarado en la clase y devolvía
+                // Nil incluso cuando `Contador.total` sí funcionaba.
+                // NOTA (sin resolver): esto arregla el acceso directo
+                // (`Contador.total`, `c.total` desde fuera de un método),
+                // pero hay un bug distinto y aún abierto por el cual
+                // `this.total` DENTRO de un método no emite GETATTR en
+                // absoluto (confirmado con fprintf temporal en runtime:
+                // nunca se llega a este código para "total" cuando se
+                // invoca desde dentro de un método). El bug está en la
+                // fase de compilación (compiler.cpp, bloque de métodos en
+                // CompileClass, ~línea 2053), no acá. Ver PLAN_ASYNC_AWAIT.md.
+                auto* owner = FindClassOwningAttr(lookup_cls, attr_name->data);
+                if (owner) {
+                    frame.registers[in.a] = owner->attrs.at(attr_name->data);
+                } else {
+                    frame.registers[in.a] = Value::Nil();
+                }
             }
         }
     } else if (obj.type == ValueType::Class) {
@@ -111,7 +137,6 @@ void OpGetAttr(CallFrame& frame, const Instr& in, const std::vector<Value>& K, V
             bound->proto = method_it->second;
             bound->instance = Value::Nil();
             Value v; v.type = ValueType::Bound; v.obj = bound;
-            Retain(v);
             frame.registers[in.a] = v;
         } else {
             auto* owner = FindClassOwningAttr(cls, attr_name->data);
@@ -136,20 +161,42 @@ void OpGetAttr(CallFrame& frame, const Instr& in, const std::vector<Value>& K, V
     }
 }
 
-void OpSetAttr(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpSetAttr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto& obj = frame.registers[in.a];
     auto* attr_name = static_cast<StringObj*>(K[in.b].obj);
     auto& val = frame.registers[in.c];
+    // `val` es una referencia a un registro existente (ya posee su
+    // propia referencia retenida). El operator= de Value (RAII,
+    // sub-fase 2) ya Retiene val y Libera el valor viejo por su cuenta
+    // en cada asignacion de abajo -- los Release()/Retain() manuales que
+    // rodeaban estas asignaciones duplicaban ambos lados (double-release
+    // real sobre el valor viejo, mas un Retain de mas sobre val).
     if (obj.type == ValueType::Instance) {
         auto* inst = static_cast<InstanceObj*>(obj.obj);
         auto it = inst->attrs.find(attr_name->data);
         if (it != inst->attrs.end()) {
-            Release(it->second);
             it->second = val;
-            Retain(val);
         } else {
-            inst->attrs[attr_name->data] = val;
-            Retain(val);
+            // Antes de crear una copia de instancia, chequear si este
+            // nombre es un `static` declarado en la clase (vive en
+            // cls->attrs, walk por __base__ vía FindClassOwningAttr).
+            // Sin este chequeo, `this.total = ...` sobre un atributo
+            // estático nunca escrito antes en esta instancia creaba un
+            // `total` de instancia nuevo en vez de mutar el compartido de
+            // clase, así que dos instancias (o dos llamadas que leían via
+            // `Contador.total`) dejaban de ver el mismo valor.
+            auto inst_class_it = inst->attrs.find("__class__");
+            ClassObj* lookup_cls = inst->cls;
+            if (inst_class_it != inst->attrs.end() && inst_class_it->second.type == ValueType::Class) {
+                lookup_cls = static_cast<ClassObj*>(inst_class_it->second.obj);
+            }
+            auto* owner = lookup_cls ? FindClassOwningAttr(lookup_cls, attr_name->data) : nullptr;
+            if (owner) {
+                auto owner_it = owner->attrs.find(attr_name->data);
+                owner_it->second = val;
+            } else {
+                inst->attrs[attr_name->data] = val;
+            }
         }
     } else if (obj.type == ValueType::Class) {
         auto* cls = static_cast<ClassObj*>(obj.obj);
@@ -157,24 +204,19 @@ void OpSetAttr(CallFrame& frame, const Instr& in, const std::vector<Value>& K, V
         auto& target_attrs = owner ? owner->attrs : cls->attrs;
         auto it = target_attrs.find(attr_name->data);
         if (it != target_attrs.end()) {
-            Release(it->second);
             it->second = val;
-            Retain(val);
         } else {
             target_attrs[attr_name->data] = val;
-            Retain(val);
         }
     } else if (obj.type == ValueType::Dict) {
         auto* dict = static_cast<DictObj*>(obj.obj);
         auto it = dict->index.find(attr_name->data);
         if (it != dict->index.end()) {
-            Release(dict->entries[it->second].second);
             dict->entries[it->second].second = val;
-            Retain(val);
         } else {
             dict->index[attr_name->data] = dict->entries.size();
+            // emplace_back copy-construye el Value -> ya Retiene (RAII).
             dict->entries.emplace_back(attr_name->data, val);
-            Retain(val);
         }
     }
 }

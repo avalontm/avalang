@@ -3,21 +3,26 @@
 
 namespace ava {
 
-void OpCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpCall(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     uint8_t save_a = in.a;
-    std::vector<Value> args(
+    avastd::vector<Value> args(
         frame.registers.begin() + in.a + 1,
         frame.registers.begin() + in.a + 1 + in.b);
     const Value& callee = frame.registers[in.a];
 
     if (callee.type == ValueType::Bound) {
         auto* bound = static_cast<BoundMethod*>(callee.obj);
-        std::vector<Value> all_args;
+        if (bound->proto->is_async) {
+            size_t frame_idx_bound_async = static_cast<size_t>(&frame - vm.frames_.data());
+            Value task = vm.StartAsyncBoundCall(callee, args);
+            vm.frames_[frame_idx_bound_async].registers[save_a] = task;
+        } else {
+        avastd::vector<Value> all_args;
         all_args.push_back(bound->instance);
         all_args.insert(all_args.end(), args.begin(), args.end());
         CallFrame callee_frame;
         callee_frame.proto = bound->proto;
-        callee_frame.registers.resize(std::max<size_t>(callee_frame.registers.size(), bound->proto->num_registers));
+        callee_frame.registers.resize(avastd::max<size_t>(callee_frame.registers.size(), bound->proto->num_registers));
         for (size_t i = 0; i < all_args.size() && i < callee_frame.registers.size(); ++i) {
             callee_frame.registers[i] = all_args[i];
         }
@@ -33,6 +38,7 @@ void OpCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& 
         
         vm.frames_.pop_back();
         vm.frames_[frame_idx_bound].registers[save_a] = result;
+        }
     } else if (callee.type == ValueType::Class) {
         auto* cls = static_cast<ClassObj*>(callee.obj);
         auto* inst = new InstanceObj();
@@ -49,13 +55,16 @@ void OpCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& 
             inst->attrs["__base__"] = base_it->second;
         }
         
+        // v recien creado: ref_count=1 propio; la asignacion de abajo
+        // ya Retiene (RAII) para dar a frame.registers su propia
+        // referencia. El Retain(v) manual dejaba una tercera referencia
+        // que nadie liberaba.
         Value v; v.type = ValueType::Instance; v.obj = inst;
-        Retain(v);
         frame.registers[save_a] = v;
         
         auto init_it = cls->methods.find("__init__");
         if (init_it != cls->methods.end()) {
-            std::vector<Value> init_args;
+            avastd::vector<Value> init_args;
             init_args.push_back(v);
             init_args.insert(init_args.end(), args.begin(), args.end());
             
@@ -78,7 +87,7 @@ void OpCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& 
         }
     } else if (callee.type == ValueType::Native) {
         auto* native = static_cast<NativeObj*>(callee.obj);
-        std::vector<ava_value_t> c_args;
+        avastd::vector<ava_value_t> c_args;
         
         if (native->is_primitive_method) {
             c_args.push_back(native->primitive_this);
@@ -99,55 +108,63 @@ void OpCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& 
         vm.frames_[frame_idx_native].registers[save_a] = FromC(c_result);
     } else if (callee.type == ValueType::Function) {
         auto* closure = static_cast<Closure*>(callee.obj);
-        CallFrame callee_frame;
-        callee_frame.proto = closure->proto;
-        callee_frame.closure = std::shared_ptr<Closure>(closure, [](Closure*) {});
-        callee_frame.registers.resize(closure->proto->num_registers);
-        for (size_t i = 0; i < args.size() && i + 1 < callee_frame.registers.size(); ++i) {
-            callee_frame.registers[i + 1] = args[i];
+        if (closure->proto->is_async) {
+            size_t frame_idx_async = static_cast<size_t>(&frame - vm.frames_.data());
+            Value task = vm.StartAsyncCall(callee, args);
+            vm.frames_[frame_idx_async].registers[save_a] = task;
+        } else {
+            CallFrame callee_frame;
+            callee_frame.proto = closure->proto;
+            callee_frame.closure = avastd::shared_ptr<Closure>(closure, [](Closure*) {});
+            callee_frame.registers.resize(closure->proto->num_registers);
+            for (size_t i = 0; i < args.size() && i + 1 < callee_frame.registers.size(); ++i) {
+                callee_frame.registers[i + 1] = args[i];
+            }
+            callee_frame.argc = static_cast<uint32_t>(args.size());
+            callee_frame.ret_slot = static_cast<int>(save_a);
+            size_t frame_idx_fn = static_cast<size_t>(&frame - vm.frames_.data());
+            vm.frames_.push_back(callee_frame);
+            Value result = vm.ExecuteFrame(vm.frames_.size() - 1);
+
+            if (vm.is_coroutine_suspended_) {
+                return;
+            }
+
+            vm.frames_.pop_back();
+            vm.frames_[frame_idx_fn].registers[save_a] = result;
         }
-        callee_frame.argc = static_cast<uint32_t>(args.size());
-        callee_frame.ret_slot = static_cast<int>(save_a);
-        size_t frame_idx_fn = static_cast<size_t>(&frame - vm.frames_.data());
-        vm.frames_.push_back(callee_frame);
-        Value result = vm.ExecuteFrame(vm.frames_.size() - 1);
-        
-        if (vm.is_coroutine_suspended_) {
-            return;
-        }
-        
-        vm.frames_.pop_back();
-        vm.frames_[frame_idx_fn].registers[save_a] = result;
     } else {
-        throw std::runtime_error("attempt to call a non-callable value (type=" +
-                                  std::to_string(static_cast<int>(callee.type)) + ")");
+        AVA_THROW(avastd::runtime_error("attempt to call a non-callable value (type=" +
+                                  avastd::to_string(static_cast<int>(callee.type)) + ")"));
     }
 }
 
-void OpReturn(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpReturn(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     // Handled by ExecuteFrame return statement
 }
 
-void OpClosure(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpClosure(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto& child_proto = frame.proto->child_protos[in.b];
     auto* closure = new Closure();
     closure->proto = child_proto;
     for (size_t i = 0; i < child_proto->upvalue_descs.size(); ++i) {
         auto& uvd = child_proto->upvalue_descs[i];
         if (uvd.from_parent_local) {
-            auto upval = std::make_shared<Upvalue>();
+            auto upval = avastd::make_shared<Upvalue>();
             upval->location = &frame.registers[uvd.index];
+            // upval->value es Value -- este copy-assignment ya Retiene
+            // (RAII); el Retain() manual duplicaba esa retencion.
             upval->value = frame.registers[uvd.index];
-            Retain(upval->value);
-            closure->upvalues.push_back(upval);
+            // `upval` no se reusa despues -- move en vez de copia.
+            closure->upvalues.push_back(avastd::move(upval));
         }
     }
+    // Mismo patron que en Instance mas arriba.
     Value v; v.type = ValueType::Function; v.obj = closure;
-    Retain(v);
     frame.registers[in.a] = v;
 }
 
-void OpGetUpval(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpGetUpval(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto* closure = frame.closure.get();
     if (closure && in.b < closure->upvalues.size()) {
         frame.registers[in.a] = closure->upvalues[in.b]->value;
@@ -156,17 +173,18 @@ void OpGetUpval(CallFrame& frame, const Instr& in, const std::vector<Value>& K, 
     }
 }
 
-void OpSetUpval(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+void OpSetUpval(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto* closure = frame.closure.get();
     if (closure && in.b < closure->upvalues.size()) {
-        Release(closure->upvalues[in.b]->value);
+        // El operator= de Value (RAII) ya Retiene el nuevo y Libera el
+        // viejo por su cuenta -- el Release()/Retain() manual de antes
+        // duplicaba ambos (double-release real sobre el valor viejo).
         closure->upvalues[in.b]->value = frame.registers[in.a];
         closure->upvalues[in.b]->location = &closure->upvalues[in.b]->value;
-        Retain(closure->upvalues[in.b]->value);
     }
 }
 
-Value OpBaseCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K, VM& vm) {
+Value OpBaseCall(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto& this_val = frame.registers[0];
     auto* attr_name = static_cast<StringObj*>(K[in.b].obj);
     if (this_val.type == ValueType::Instance) {
@@ -176,14 +194,14 @@ Value OpBaseCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K,
             auto* base_cls = static_cast<ClassObj*>(base_it->second.obj);
             auto method_it = base_cls->methods.find(attr_name->data);
             if (method_it != base_cls->methods.end()) {
-                std::vector<Value> args(in.c + 1);
+                avastd::vector<Value> args(in.c + 1);
                 args[0] = this_val;
                 for (uint16_t i = 0; i < in.c; ++i) {
                     args[i + 1] = frame.registers[1 + i];
                 }
                 CallFrame callee_frame;
                 callee_frame.proto = method_it->second;
-                callee_frame.registers.resize(std::max<size_t>(method_it->second->num_registers, args.size()));
+                callee_frame.registers.resize(avastd::max<size_t>(method_it->second->num_registers, args.size()));
                 for (size_t i = 0; i < args.size() && i < callee_frame.registers.size(); ++i) {
                     callee_frame.registers[i] = args[i];
                 }
@@ -205,7 +223,7 @@ Value OpBaseCall(CallFrame& frame, const Instr& in, const std::vector<Value>& K,
             }
         }
     }
-    throw std::runtime_error("base() call failed - __base__ not found");
+    AVA_THROW(avastd::runtime_error("base() call failed - __base__ not found"));
 }
 
 } // namespace ava

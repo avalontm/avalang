@@ -22,11 +22,7 @@
 
 #include "../interfaces/IFileSystem.h"
 
-#include <cstdint>
-#include <functional>
-#include <mutex>
-#include <string>
-#include <unordered_map>
+#include "../barekernel/stdcompat/ava_stdcompat.h"
 
 namespace ava {
 namespace platform {
@@ -35,7 +31,7 @@ class MemoryFileSystem : public IFileSystem {
 public:
     // Produce el contenido del archivo en out_content y devuelve true, o
     // devuelve false si por alguna razon no pudo (p.ej. clave invalida).
-    using ContentProvider = std::function<bool(std::string& out_content)>;
+    using ContentProvider = avastd::function<bool(avastd::string& out_content)>;
 
     explicit MemoryFileSystem(IFileSystem* fallback = nullptr);
     ~MemoryFileSystem() override = default;
@@ -43,28 +39,28 @@ public:
     // Registra (o reemplaza) un archivo virtual. `size` es el tamano en
     // claro ya conocido de antemano (evita tener que invocar el provider
     // solo para responder FileSize()).
-    void RegisterFile(const std::string& path, int64_t size, ContentProvider provider);
-    void RemoveFile(const std::string& path);
+    void RegisterFile(const avastd::string& path, int64_t size, ContentProvider provider);
+    void RemoveFile(const avastd::string& path);
 
-    bool ReadFile(const std::string& path, std::string& out_content) override;
-    bool WriteFile(const std::string& path, const std::string& content) override;
-    bool DeleteFile(const std::string& path) override;
+    bool ReadFile(const avastd::string& path, avastd::string& out_content) override;
+    bool WriteFile(const avastd::string& path, const avastd::string& content) override;
+    bool DeleteFile(const avastd::string& path) override;
 
-    bool CreateDirectory(const std::string& path) override;
-    bool DeleteDirectory(const std::string& path) override;
-    bool EnumerateDirectory(const std::string& path, std::vector<DirEntry>& out_entries) override;
+    bool CreateDirectory(const avastd::string& path) override;
+    bool DeleteDirectory(const avastd::string& path) override;
+    bool EnumerateDirectory(const avastd::string& path, avastd::vector<DirEntry>& out_entries) override;
 
-    bool Exists(const std::string& path) override;
-    bool IsDirectory(const std::string& path) override;
-    int64_t FileSize(const std::string& path) override;
+    bool Exists(const avastd::string& path) override;
+    bool IsDirectory(const avastd::string& path) override;
+    int64_t FileSize(const avastd::string& path) override;
 
-    std::string GetExecutableDirectory() override;
+    avastd::string GetExecutableDirectory() override;
 
     // Normaliza separadores de ruta ('\\' -> '/') para que las claves
     // registradas (siempre con '/', ver avapack::EmbeddedFile::path)
     // matcheen contra las rutas que arma ModuleResolver con el separador
     // nativo del SO (module.cpp, JoinPath). No toca mayusculas/minusculas.
-    static std::string NormalizeKey(const std::string& path);
+    static avastd::string NormalizeKey(const avastd::string& path);
 
 private:
     struct Entry {
@@ -73,8 +69,8 @@ private:
     };
 
     IFileSystem* fallback_;
-    std::mutex mutex_;
-    std::unordered_map<std::string, Entry> files_;
+    avastd::mutex mutex_;
+    avastd::unordered_map<avastd::string, Entry> files_;
 };
 
 } // namespace platform

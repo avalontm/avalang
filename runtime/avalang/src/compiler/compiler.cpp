@@ -119,28 +119,29 @@ int16_t Compiler::FindUpvalue(const std::string& name) {
 }
 
 static void RejectMemberModifiersOutsideClass(bool is_static, bool is_private, const char* kind,
-                                               int line) {
+                                               int line, int col, const std::string& source_name) {
     if (is_static || is_private) {
-        std::string msg = std::string("'static'/'private' solo son validos dentro del cuerpo de una clase (") +
+        std::string msg = std::string("'static'/'private' are only valid inside a class body (") +
                            kind + ")";
         if (line > 0) {
-            msg += " (linea " + std::to_string(line) + ")";
+            msg += " (line " + std::to_string(line) + ")";
         }
-        throw AvaError(msg, line);
+        throw AvaError(msg, line, col, source_name);
     }
 }
 
-static void RejectDuplicateFuncDefs(const std::vector<std::shared_ptr<StmtNode>>& stmts) {
+static void RejectDuplicateFuncDefs(const std::vector<std::shared_ptr<StmtNode>>& stmts,
+                                     const std::string& source_name) {
     std::unordered_set<std::string> seen;
     for (auto& stmt : stmts) {
         auto* f = dynamic_cast<FuncDef*>(stmt.get());
         if (!f) continue;
         if (!seen.insert(f->name).second) {
-            std::string msg = "la funcion '" + f->name + "' ya esta definida";
+            std::string msg = "function '" + f->name + "' is already defined";
             if (f->line > 0) {
-                msg += " (linea " + std::to_string(f->line) + ")";
+                msg += " (line " + std::to_string(f->line) + ")";
             }
-            throw AvaError(msg, f->line);
+            throw AvaError(msg, f->line, f->col, source_name);
         }
     }
 }
@@ -310,7 +311,7 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
                 auto result = AllocReg();
                 Emit(OpCode::INC, result, reg);
 
-                if (!is_top_level_ && (n->name != "this" && n->name != "self") && locals_.find(n->name) != locals_.end()) {
+                if (!is_top_level_ && (n->name != "this") && locals_.find(n->name) != locals_.end()) {
                     Emit(OpCode::MOVE, locals_.at(n->name), result);
                 } else {
                     auto idx = AddConstant(MakeString(n->name));
@@ -329,7 +330,7 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
                 Emit(OpCode::MOVE, original, reg);
                 auto result = AllocReg();
                 Emit(OpCode::DEC, result, reg);
-                if (!is_top_level_ && (n->name != "this" && n->name != "self") && locals_.find(n->name) != locals_.end()) {
+                if (!is_top_level_ && (n->name != "this") && locals_.find(n->name) != locals_.end()) {
                     Emit(OpCode::MOVE, locals_.at(n->name), result);
                 } else {
                     auto idx = AddConstant(MakeString(n->name));
@@ -463,7 +464,12 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
 
     if (auto* s = dynamic_cast<BaseExpr*>(expr.get())) {
         if (locals_.find("this") == locals_.end()) {
-            throw std::runtime_error("base() can only be used inside a method");
+            throw AvaError("base() can only be used inside a method", current_line_, current_col_, source_name_);
+        }
+        if (!current_base_class_) {
+            throw AvaError("base() can only be used inside a class that extends another class "
+                            "(this class has no ': ParentClass')",
+                            current_line_, current_col_, source_name_);
         }
 
         auto method_idx = AddConstant(MakeString(s->method_name));
@@ -564,11 +570,39 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
         return base_reg;
     }
 
+    if (auto* aw = dynamic_cast<AwaitExpr*>(expr.get())) {
+        if (!in_async_func_) {
+            // AwaitExpr (like most ExprNode kinds) never gets its own ->line
+            // stamped -- only StmtNode gets that in visitStatement -- so we
+            // use current_line_, the line of the statement this expr lives
+            // in (kept up to date in CompileStmt), same source of truth the
+            // other AvaError throws in this file rely on.
+            std::string msg = "'await' can only be used inside an 'async func'";
+            if (current_line_ > 0) {
+                msg += " (line " + std::to_string(current_line_) + ")";
+            }
+            throw AvaError(msg, current_line_, current_col_, source_name_);
+        }
+
+        // Fase 2: `await expr` now emits a real AWAIT, not a YIELD alias.
+        // expr is evaluated into base_reg; OpAwait either resolves it
+        // immediately (expr is a settled/non-Task value) or suspends this
+        // call's coroutine and lets VM::SettleTask overwrite base_reg with
+        // the Task's result once it completes (see vm/vm_task.cpp).
+        auto base_reg = AllocReg();
+        uint16_t regs_before = next_reg_;
+        auto val_reg = CompileExpr(aw->value);
+        Emit(OpCode::MOVE, base_reg, val_reg);
+        FreeRegs(next_reg_ - regs_before);
+        Emit(OpCode::AWAIT, base_reg, 0);
+        return base_reg;
+    }
+
     throw std::runtime_error("unknown expr type in compiler");
 }
 
 void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
-    if (stmt->line > 0) current_line_ = stmt->line;
+    if (stmt->line > 0) { current_line_ = stmt->line; current_col_ = stmt->col; }
 
     if (auto* e = dynamic_cast<ExprStmt*>(stmt.get())) {
 
@@ -579,7 +613,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
     }
 
     if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
-        RejectMemberModifiersOutsideClass(a->is_static, a->is_private, "asignacion", a->line);
+        RejectMemberModifiersOutsideClass(a->is_static, a->is_private, "asignacion", a->line, a->col, source_name_);
         if (!a->target) {
             FreeRegs(1);
             return;
@@ -590,7 +624,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
             bool is_known_attr = instance_attrs_.find(n->name) != instance_attrs_.end();
             uint16_t regs_before = next_reg_;
 
-            if (in_method && (n->name != "this" && n->name != "self") && !has_local && is_known_attr) {
+            if (in_method && (n->name != "this") && !has_local && is_known_attr) {
                 auto val_reg = CompileExpr(a->value);
                 auto attr_idx = AddConstant(MakeString(n->name));
                 auto this_reg = locals_.at("this");
@@ -599,7 +633,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
                 return;
             }
 
-            if (!is_top_level_ && (n->name != "this" && n->name != "self")) {
+            if (!is_top_level_ && (n->name != "this")) {
                 if (has_local) {
                     uint16_t local_reg = locals_.at(n->name);
                     auto val_reg = CompileExpr(a->value);
@@ -646,7 +680,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
         if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
             bool is_this = false;
             if (auto* name = dynamic_cast<NameExpr*>(a_expr->obj.get())) {
-                if ((name->name == "this" || name->name == "self")) {
+                if ((name->name == "this")) {
                     is_this = true;
                 }
             }
@@ -679,7 +713,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
         Emit(BinOpToOpcode(a->op), result_reg, target_reg, val_reg);
         if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
 
-            if (!is_top_level_ && (n->name != "this" && n->name != "self") && locals_.find(n->name) != locals_.end()) {
+            if (!is_top_level_ && (n->name != "this") && locals_.find(n->name) != locals_.end()) {
                 Emit(OpCode::MOVE, locals_.at(n->name), result_reg);
                 FreeRegs(next_reg_ - regs_before);
                 return;
@@ -699,7 +733,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
         if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
             bool is_this = false;
             if (auto* name = dynamic_cast<NameExpr*>(a_expr->obj.get())) {
-                if ((name->name == "this" || name->name == "self")) {
+                if ((name->name == "this")) {
                     is_this = true;
                 }
             }
@@ -1643,10 +1677,12 @@ void Compiler::EmitDefaultsPrologue(const std::vector<std::pair<std::string, std
 
 void Compiler::CompileFunc(const FuncDef* func) {
     RejectMemberModifiersOutsideClass(func->is_static, func->is_private,
-                                       ("func " + func->name).c_str(), func->line);
+                                       ("func " + func->name).c_str(), func->line, func->col, source_name_);
     Compiler sub;
     sub.is_top_level_ = false;
+    sub.in_async_func_ = func->is_async;
     sub.proto_ = std::make_shared<Proto>();
+    sub.proto_->is_async = func->is_async;
     sub.source_name_ = source_name_;
     sub.proto_->source_name = source_name_;
     sub.proto_->debug_name = func->name;
@@ -1698,7 +1734,7 @@ void Compiler::CompileFunc(const FuncDef* func) {
 }
 
 void Compiler::CompileChunk(const std::vector<std::shared_ptr<StmtNode>>& stmts) {
-    RejectDuplicateFuncDefs(stmts);
+    RejectDuplicateFuncDefs(stmts, source_name_);
     for (size_t i = 0; i < stmts.size(); i++) {
         if (i == stmts.size() - 1) {
             result_reg_ = CompileExprToReg(stmts[i]);
@@ -1728,7 +1764,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
         return CompileExpr(e->expr);
     }
     if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
-        RejectMemberModifiersOutsideClass(a->is_static, a->is_private, "asignacion", a->line);
+        RejectMemberModifiersOutsideClass(a->is_static, a->is_private, "asignacion", a->line, a->col, source_name_);
         if (!a->target) {
             FreeRegs(1);
             return 0;
@@ -1739,7 +1775,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
             bool is_known_attr = instance_attrs_.find(n->name) != instance_attrs_.end();
             uint16_t regs_before = next_reg_;
 
-            if (in_method && (n->name != "this" && n->name != "self") && !has_local && is_known_attr) {
+            if (in_method && (n->name != "this") && !has_local && is_known_attr) {
                 auto val_reg = CompileExpr(a->value);
                 auto attr_idx = AddConstant(MakeString(n->name));
                 auto this_reg = locals_.at("this");
@@ -1748,7 +1784,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
                 return 0;
             }
 
-            if (!is_top_level_ && (n->name != "this" && n->name != "self")) {
+            if (!is_top_level_ && (n->name != "this")) {
                 if (has_local) {
                     uint16_t local_reg = locals_.at(n->name);
                     auto val_reg = CompileExpr(a->value);
@@ -1794,7 +1830,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
         if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
             bool is_this = false;
             if (auto* name = dynamic_cast<NameExpr*>(a_expr->obj.get())) {
-                if ((name->name == "this" || name->name == "self")) {
+                if ((name->name == "this")) {
                     is_this = true;
                 }
             }
@@ -1828,7 +1864,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
         Emit(BinOpToOpcode(a->op), result_reg, target_reg, val_reg);
         if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
 
-            if (!is_top_level_ && (n->name != "this" && n->name != "self") && locals_.find(n->name) != locals_.end()) {
+            if (!is_top_level_ && (n->name != "this") && locals_.find(n->name) != locals_.end()) {
                 Emit(OpCode::MOVE, locals_.at(n->name), result_reg);
                 FreeRegs(next_reg_ - regs_before);
                 return 0;
@@ -1848,7 +1884,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
         if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
             bool is_this = false;
             if (auto* name = dynamic_cast<NameExpr*>(a_expr->obj.get())) {
-                if ((name->name == "this" || name->name == "self")) {
+                if ((name->name == "this")) {
                     is_this = true;
                 }
             }
@@ -1969,24 +2005,54 @@ void Compiler::CompileClass(const ClassDef* cls) {
     auto* class_obj = new ClassObj();
     class_obj->name = cls->name;
 
+    ClassObj* base_class = nullptr;
     if (cls->base_class) {
-        if (auto* base_name = dynamic_cast<NameExpr*>(cls->base_class.get())) {
-            auto it = compiled_classes_.find(base_name->name);
-            if (it != compiled_classes_.end()) {
-                auto* base_class = it->second;
-                for (auto& [mname, mproto] : base_class->methods) {
-                    if (mname != "__init__" && mname != "__base__") {
-                        class_obj->methods[mname] = mproto;
-                    }
-                }
+        auto* base_name = dynamic_cast<NameExpr*>(cls->base_class.get());
+        if (!base_name) {
+            throw AvaError("class '" + cls->name + "': base class must be a plain class name",
+                            cls->line, cls->col, source_name_);
+        }
+        if (base_name->name == cls->name) {
+            throw AvaError("class '" + cls->name + "' cannot inherit from itself",
+                            cls->line, cls->col, source_name_);
+        }
+        auto it = compiled_classes_.find(base_name->name);
+        if (it == compiled_classes_.end()) {
+            throw AvaError("class '" + cls->name + "' extends unknown class '" + base_name->name +
+                                "' -- '" + base_name->name +
+                                "' must be defined earlier in the file, and the name must be spelled exactly right",
+                            cls->line, cls->col, source_name_);
+        }
+        base_class = it->second;
 
-                for (auto& [aname, aval] : base_class->instance_defaults) {
-                    class_obj->instance_defaults[aname] = aval;
-                }
+        for (auto& [mname, mproto] : base_class->methods) {
+            if (mname != "__init__" && mname != "__base__") {
+                class_obj->methods[mname] = mproto;
+            }
+        }
 
-                for (auto& pname : base_class->private_members) {
-                    class_obj->private_members.insert(pname);
-                }
+        for (auto& [aname, aval] : base_class->instance_defaults) {
+            class_obj->instance_defaults[aname] = aval;
+        }
+
+        for (auto& pname : base_class->private_members) {
+            class_obj->private_members.insert(pname);
+        }
+    }
+
+    {
+        std::unordered_set<std::string> seen_methods;
+        for (auto& stmt : cls->body) {
+            auto* f = dynamic_cast<FuncDef*>(stmt.get());
+            if (!f) continue;
+            if (!seen_methods.insert(f->name).second) {
+                bool is_ctor = f->name == cls->name;
+                std::string msg = is_ctor
+                    ? "class '" + cls->name + "' defines the constructor '" + f->name +
+                          "' more than once -- AvaLang doesn't support constructor overloading, " +
+                          "use default parameter values instead"
+                    : "class '" + cls->name + "' defines method '" + f->name + "' more than once";
+                throw AvaError(msg, f->line, f->col, source_name_);
             }
         }
     }
@@ -2023,37 +2089,63 @@ void Compiler::CompileClass(const ClassDef* cls) {
         if (auto* f = dynamic_cast<FuncDef*>(stmt.get())) {
             Compiler sub;
             sub.is_top_level_ = false;
+            sub.in_async_func_ = f->is_async;
             sub.proto_ = std::make_shared<Proto>();
+            sub.proto_->is_async = f->is_async;
             sub.source_name_ = source_name_;
             sub.proto_->source_name = source_name_;
             sub.proto_->debug_name = cls->name + "." + f->name;
-            sub.proto_->num_params = static_cast<uint8_t>(f->params.size() + 1);
+            sub.current_base_class_ = base_class;
+
+            // AvaLang's canonical method convention binds `this` a
+            // register 0 IMPLICITLY (ver libraries/mysql/index.ava: `func
+            // connect(host, user, ...)`, sin `this` en la firma, usando
+            // `this.attr` adentro) -- estilo C#, no Python. `self` NO es
+            // un alias de `this`: si el autor lo escribe como parámetro
+            // explícito (`func incrementar(self)`, costumbre de Python),
+            // es un error de compilación a propósito, para no dejar
+            // colar la confusión Python/C# en la firma del método.
+            // Escribir `this` como primer parámetro explícito sigue
+            // aceptado (algunos estilos lo prefieren) y se pisa por el
+            // binding implícito de abajo sin correr el resto de
+            // parámetros de registro.
+            if (!f->params.empty() && f->params[0].first == "self") {
+                throw AvaError(
+                    "'self' does not exist in AvaLang -- the instance reference is implicit: "
+                    "don't declare it as a parameter. If you need to name it explicitly, use 'this'.",
+                    f->line, f->col, source_name_);
+            }
+            bool explicit_self_param = !f->params.empty() && f->params[0].first == "this";
+            size_t real_param_count = f->params.size() - (explicit_self_param ? 1 : 0);
+
+            sub.proto_->num_params = static_cast<uint8_t>(real_param_count + 1);
             sub.proto_->is_vararg = f->is_vararg;
             sub.proto_->is_method = true;
 
-            sub.next_reg_ = static_cast<uint16_t>(f->params.size() + 1);
+            sub.next_reg_ = static_cast<uint16_t>(real_param_count + 1);
             sub.max_reg_ = sub.next_reg_;
 
             if (!f->is_static) {
                 sub.locals_["this"] = 0;
-                sub.locals_["self"] = 0;
             }
 
             for (auto& [attr_name, attr_val] : class_obj->instance_defaults) {
                 sub.instance_attrs_.insert(attr_name);
             }
 
-            for (size_t i = 0; i < f->params.size(); ++i) {
+            std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> real_params;
+            for (size_t i = explicit_self_param ? 1 : 0; i < f->params.size(); ++i) {
                 auto& pname = f->params[i].first;
-                sub.locals_[pname] = static_cast<uint16_t>(i + 1);
+                sub.locals_[pname] = static_cast<uint16_t>(real_params.size() + 1);
+                real_params.push_back(f->params[i]);
             }
 
-            sub.EmitDefaultsPrologue(f->params, 1);
+            sub.EmitDefaultsPrologue(real_params, 1);
 
             sub.CompileChunk(f->body);
             sub.Emit(OpCode::RETURN);
 
-            uint16_t min_registers = static_cast<uint16_t>(f->params.size() + 1);
+            uint16_t min_registers = static_cast<uint16_t>(real_param_count + 1);
             sub.proto_->num_registers = std::max<uint16_t>(sub.max_reg_ + 1, min_registers);
 
             bool is_constructor = f->name == cls->name;
@@ -2066,16 +2158,10 @@ void Compiler::CompileClass(const ClassDef* cls) {
     }
 
     if (cls->base_class) {
-        auto base_name_expr = dynamic_cast<NameExpr*>(cls->base_class.get());
-        if (base_name_expr) {
-            auto it = compiled_classes_.find(base_name_expr->name);
-            if (it != compiled_classes_.end()) {
-                Value base_val;
-                base_val.type = ValueType::Class;
-                base_val.obj = it->second;
-                class_obj->attrs["__base__"] = base_val;
-            }
-        }
+        Value base_val;
+        base_val.type = ValueType::Class;
+        base_val.obj = base_class;
+        class_obj->attrs["__base__"] = base_val;
         compiled_classes_[cls->name + ".__base__"] = class_obj;
     }
     compiled_classes_[cls->name] = class_obj;

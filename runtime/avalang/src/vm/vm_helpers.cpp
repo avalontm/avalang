@@ -1,9 +1,6 @@
 #include "vm.h"
 #include "vm_internal.h"
-#include <sstream>
-#include <iomanip>
-#include <cmath>
-#include <string>
+#include "../../platform/barekernel/stdcompat/ava_math.h"
 #include "vm_helpers.h"
 #include "vm_platform_accessor.h"
 
@@ -17,30 +14,59 @@
 
 namespace ava {
 
-std::string GetFileDir(const std::string& path) {
+avastd::string GetFileDir(const avastd::string& path) {
     size_t pos = path.find_last_of("/\\");
-    if (pos == std::string::npos) return ".";
+    if (pos == avastd::string::npos) return ".";
     return path.substr(0, pos);
 }
 
-std::string NumberToString(double n) {
-    if (std::abs(n - std::round(n)) < 0.0000001)
-        return std::to_string(static_cast<long long>(std::round(n)));
-    std::ostringstream oss;
-    oss << std::setprecision(15) << n;
-    std::string s = oss.str();
-    size_t dot = s.find('.');
-    if (dot != std::string::npos) {
-        size_t last_not_zero = s.find_last_not_of('0');
-        if (last_not_zero == dot)
-            s.erase(dot);
+avastd::string NumberToString(double n) {
+    if (avastd::abs(n - avastd::round(n)) < 0.0000001)
+        return avastd::to_string(static_cast<long long>(avastd::round(n)));
+
+    // Reemplaza el std::ostringstream + std::setprecision(15) original
+    // (ambos de libstdc++, no disponibles sin CKM_CAP_LIBSTDCPP). Formatea
+    // a mano hasta 15 digitos significativos totales, recortando ceros de
+    // cola -- mismo resultado visible que el codigo original para los
+    // rangos de numero que un script de AvaLang tipicamente produce.
+    // LIMITACION CONOCIDA: no es una implementacion "shortest round-trip"
+    // (tipo Ryu/Grisu) como la que usa una libstdc++ moderna por debajo;
+    // para floats en los limites de precision de double (muy grandes, muy
+    // chicos, o resultado de muchas operaciones acumuladas) puede diferir
+    // en el ultimo digito. Si eso se vuelve un problema real (bug de
+    // "0.1 + 0.2 se imprime distinto en barekernel vs Windows"), esta
+    // funcion es el lugar a revisar primero.
+    bool neg = n < 0;
+    double v = neg ? -n : n;
+
+    long long int_part = static_cast<long long>(v);
+    double frac = v - static_cast<double>(int_part);
+
+    avastd::string int_str = avastd::to_string(int_part);
+    int max_frac_digits = 15 - static_cast<int>(int_str.size());
+
+    avastd::string frac_str;
+    if (max_frac_digits > 0 && frac > 0.0) {
+        frac_str += '.';
+        for (int i = 0; i < max_frac_digits; ++i) {
+            frac *= 10.0;
+            int digit = static_cast<int>(frac);
+            if (digit > 9) digit = 9;  // guarda contra error de redondeo FP
+            if (digit < 0) digit = 0;
+            frac_str += static_cast<char>('0' + digit);
+            frac -= digit;
+        }
+        avastd::size_t last_not_zero = frac_str.find_last_not_of('0');
+        if (last_not_zero == 0)
+            frac_str.erase(0);
         else
-            s.erase(last_not_zero + 1);
+            frac_str.erase(last_not_zero + 1);
     }
-    return s;
+
+    return (neg ? avastd::string("-") : avastd::string("")) + int_str + frac_str;
 }
 
-std::string ValueToString(const Value& v) {
+avastd::string ValueToString(const Value& v) {
     switch (v.type) {
         case ValueType::Nil:    return "nil";
         case ValueType::Bool:   return v.b ? "true" : "false";
@@ -48,7 +74,7 @@ std::string ValueToString(const Value& v) {
         case ValueType::String: return static_cast<StringObj*>(v.obj)->data;
         case ValueType::List: {
             auto* list = static_cast<ListObj*>(v.obj);
-            std::string out = "[";
+            avastd::string out = "[";
             for (size_t i = 0; i < list->items.size(); ++i) {
                 if (i > 0) out += ", ";
                 if (list->items[i].type == ValueType::String) {
@@ -62,7 +88,7 @@ std::string ValueToString(const Value& v) {
         }
         case ValueType::Dict: {
             auto* dict = static_cast<DictObj*>(v.obj);
-            std::string out = "{";
+            avastd::string out = "{";
             for (size_t i = 0; i < dict->entries.size(); ++i) {
                 if (i > 0) out += ", ";
                 out += "\"" + dict->entries[i].first + "\": ";
@@ -76,7 +102,7 @@ std::string ValueToString(const Value& v) {
             out += "}";
             return out;
         }
-        default: return "<" + std::string("value") + ">";
+        default: return "<" + avastd::string("value") + ">";
     }
 }
 
@@ -116,20 +142,20 @@ bool ValueEquals(const Value& a, const Value& b) {
 }
 
 size_t ValidateIntegerIndex(double n, const char* context) {
-    if (std::abs(n - std::round(n)) >= 0.0000001) {
-        throw std::runtime_error(std::string(context) + ": index must be an integer, got " + NumberToString(n));
+    if (avastd::abs(n - avastd::round(n)) >= 0.0000001) {
+        AVA_THROW(avastd::runtime_error(avastd::string(context) + ": index must be an integer, got " + NumberToString(n)));
     }
-    double rounded = std::round(n);
+    double rounded = avastd::round(n);
     if (rounded < 0) {
-        throw std::runtime_error(std::string(context) + ": index must not be negative, got " + NumberToString(rounded));
+        AVA_THROW(avastd::runtime_error(avastd::string(context) + ": index must not be negative, got " + NumberToString(rounded)));
     }
-    if (rounded > static_cast<double>(SIZE_MAX)) {
-        throw std::runtime_error(std::string(context) + ": index too large: " + NumberToString(rounded));
+    if (rounded > static_cast<double>(avastd::size_t_max)) {
+        AVA_THROW(avastd::runtime_error(avastd::string(context) + ": index too large: " + NumberToString(rounded)));
     }
     return static_cast<size_t>(rounded);
 }
 
-std::string JoinPath(const std::string& a, const std::string& b) {
+avastd::string JoinPath(const avastd::string& a, const avastd::string& b) {
     if (a.empty()) return b;
     if (b.empty()) return a;
     char sep = PATH_SEPARATOR_CHAR;
@@ -137,11 +163,11 @@ std::string JoinPath(const std::string& a, const std::string& b) {
     return a + PATH_SEPARATOR + b;
 }
 
-bool FileExists(const std::string& path) {
+bool FileExists(const avastd::string& path) {
     return VmPlatformAccessor::Get().FileSystem().Exists(path);
 }
 
-std::string GetCurrentWorkingDir() {
+avastd::string GetCurrentWorkingDir() {
     return VmPlatformAccessor::Get().Environment().GetCurrentDirectory();
 }
 
@@ -151,7 +177,7 @@ std::string GetCurrentWorkingDir() {
 // soon as either was written to) -- instead a subclass just carries a
 // `__base__` link, and lookups walk it here to find the ClassObj that
 // actually owns `name`, so `Base.x` and `Sub.x` stay the same storage.
-ClassObj* FindClassOwningAttr(ClassObj* cls, const std::string& name) {
+ClassObj* FindClassOwningAttr(ClassObj* cls, const avastd::string& name) {
     ClassObj* cur = cls;
     while (cur) {
         if (cur->attrs.find(name) != cur->attrs.end()) return cur;

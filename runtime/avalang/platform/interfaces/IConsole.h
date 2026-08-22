@@ -5,7 +5,7 @@
 // freeze/deprecation policy before changing any signature in IConsole.
 #include "PAL_ABI.h"
 
-#include <string>
+#include "../barekernel/stdcompat/ava_stdcompat.h"
 
 namespace ava {
 namespace platform {
@@ -28,12 +28,12 @@ public:
 
     // Writes UTF-8 text as-is; implementations own any codepage/encoding
     // setup needed on the host OS.
-    virtual void Write(const std::string& utf8_text) = 0;
-    virtual void WriteLine(const std::string& utf8_text) = 0;
-    virtual void WriteError(const std::string& utf8_text) = 0;
+    virtual void Write(const avastd::string& utf8_text) = 0;
+    virtual void WriteLine(const avastd::string& utf8_text) = 0;
+    virtual void WriteError(const avastd::string& utf8_text) = 0;
 
     // Reads a single line from stdin. Returns false on EOF.
-    virtual bool ReadLine(std::string& out_line) = 0;
+    virtual bool ReadLine(avastd::string& out_line) = 0;
 
     virtual void SetForegroundColor(ConsoleColor color) = 0;
     virtual void ResetColor() = 0;

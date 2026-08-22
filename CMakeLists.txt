@@ -42,6 +42,15 @@ option(AVA_PACK_USE_PREBUILT_AVALANG
 set(AVA_PREBUILT_AVALANG_DIR "" CACHE PATH
     "Carpeta con avalang.dll/avalang.lib/avalang_ui.dll/avalang_ui.lib ya compilados (requerido si AVA_PACK_USE_PREBUILT_AVALANG=ON)")
 
+# ---------------------------------------------------------------------
+# Fase 8 -- Optimizacion (ver avalang_runtime_stl_barekernel_plan.md).
+# Define ava_apply_optimization_options(<target>), llamado desde cada
+# subdirectorio; ver cmake/OptimizationOptions.cmake para el detalle
+# (LTO, dead-code elimination, symbol stripping -- todo solo en Release).
+# ---------------------------------------------------------------------
+option(AVA_ENABLE_LTO "Habilitar LTO/IPO para builds Release (Fase 8)" ON)
+include(OptimizationOptions)
+
 # ANTLR4 y libffi son opcionales en tiempo de configure: si no se
 # encuentran, avalang igual compila (frontend stub / extern sin FFI
 # real). Ver cmake/FindAntlr4Jar.cmake y cmake/FindLibFFI.cmake.
@@ -77,6 +86,10 @@ endif()
 
 if(AVA_BUILD_CLI)
     add_subdirectory(runtime/avacli)
+endif()
+
+if(AVA_TARGET_BAREKERNEL)
+    add_subdirectory(runtime/avabare)
 endif()
 
 # ---------------------------------------------------------------------

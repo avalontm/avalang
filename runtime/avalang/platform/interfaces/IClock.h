@@ -5,7 +5,7 @@
 // freeze/deprecation policy before changing any signature in IClock.
 #include "PAL_ABI.h"
 
-#include <cstdint>
+#include "../barekernel/stdcompat/ava_stdcompat.h"
 
 namespace ava {
 namespace platform {

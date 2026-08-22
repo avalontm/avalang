@@ -5,31 +5,31 @@ namespace platform {
 
 MemoryFileSystem::MemoryFileSystem(IFileSystem* fallback) : fallback_(fallback) {}
 
-std::string MemoryFileSystem::NormalizeKey(const std::string& path) {
-    std::string out = path;
+avastd::string MemoryFileSystem::NormalizeKey(const avastd::string& path) {
+    avastd::string out = path;
     for (char& c : out) {
         if (c == '\\') c = '/';
     }
     return out;
 }
 
-void MemoryFileSystem::RegisterFile(const std::string& path, int64_t size, ContentProvider provider) {
-    std::lock_guard<std::mutex> lock(mutex_);
+void MemoryFileSystem::RegisterFile(const avastd::string& path, int64_t size, ContentProvider provider) {
+    avastd::lock_guard<avastd::mutex> lock(mutex_);
     Entry entry;
     entry.size = size;
-    entry.provider = std::move(provider);
-    files_[NormalizeKey(path)] = std::move(entry);
+    entry.provider = avastd::move(provider);
+    files_[NormalizeKey(path)] = avastd::move(entry);
 }
 
-void MemoryFileSystem::RemoveFile(const std::string& path) {
-    std::lock_guard<std::mutex> lock(mutex_);
+void MemoryFileSystem::RemoveFile(const avastd::string& path) {
+    avastd::lock_guard<avastd::mutex> lock(mutex_);
     files_.erase(NormalizeKey(path));
 }
 
-bool MemoryFileSystem::ReadFile(const std::string& path, std::string& out_content) {
+bool MemoryFileSystem::ReadFile(const avastd::string& path, avastd::string& out_content) {
     ContentProvider provider;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        avastd::lock_guard<avastd::mutex> lock(mutex_);
         auto it = files_.find(NormalizeKey(path));
         if (it != files_.end()) {
             provider = it->second.provider;
@@ -42,7 +42,7 @@ bool MemoryFileSystem::ReadFile(const std::string& path, std::string& out_conten
     return false;
 }
 
-bool MemoryFileSystem::WriteFile(const std::string& path, const std::string& content) {
+bool MemoryFileSystem::WriteFile(const avastd::string& path, const avastd::string& content) {
     // El runtime empacado (Fase 7) nunca escribe archivos del proyecto --
     // esto solo importa para lo que no este registrado como virtual, y ahi
     // se delega al filesystem real si existe.
@@ -50,9 +50,9 @@ bool MemoryFileSystem::WriteFile(const std::string& path, const std::string& con
     return false;
 }
 
-bool MemoryFileSystem::DeleteFile(const std::string& path) {
+bool MemoryFileSystem::DeleteFile(const avastd::string& path) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        avastd::lock_guard<avastd::mutex> lock(mutex_);
         auto it = files_.find(NormalizeKey(path));
         if (it != files_.end()) {
             files_.erase(it);
@@ -63,7 +63,7 @@ bool MemoryFileSystem::DeleteFile(const std::string& path) {
     return false;
 }
 
-bool MemoryFileSystem::CreateDirectory(const std::string& path) {
+bool MemoryFileSystem::CreateDirectory(const avastd::string& path) {
     // No hay directorios reales en el mapa en memoria -- las rutas
     // virtuales son planas (path completo como clave). Delegar al
     // fallback es lo unico razonable para rutas fuera del proyecto
@@ -72,12 +72,12 @@ bool MemoryFileSystem::CreateDirectory(const std::string& path) {
     return true;
 }
 
-bool MemoryFileSystem::DeleteDirectory(const std::string& path) {
+bool MemoryFileSystem::DeleteDirectory(const avastd::string& path) {
     if (fallback_) return fallback_->DeleteDirectory(path);
     return true;
 }
 
-bool MemoryFileSystem::EnumerateDirectory(const std::string& path, std::vector<DirEntry>& out_entries) {
+bool MemoryFileSystem::EnumerateDirectory(const avastd::string& path, avastd::vector<DirEntry>& out_entries) {
     // No implementado sobre el mapa virtual (ModuleResolver/ModuleCache
     // nunca lo necesitan -- solo usan ReadFile/Exists, ver module.cpp).
     // Delega al fallback para no romper otros consumidores de IFileSystem
@@ -87,27 +87,27 @@ bool MemoryFileSystem::EnumerateDirectory(const std::string& path, std::vector<D
     return false;
 }
 
-bool MemoryFileSystem::Exists(const std::string& path) {
+bool MemoryFileSystem::Exists(const avastd::string& path) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        avastd::lock_guard<avastd::mutex> lock(mutex_);
         if (files_.find(NormalizeKey(path)) != files_.end()) return true;
     }
     if (fallback_) return fallback_->Exists(path);
     return false;
 }
 
-bool MemoryFileSystem::IsDirectory(const std::string& path) {
+bool MemoryFileSystem::IsDirectory(const avastd::string& path) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        avastd::lock_guard<avastd::mutex> lock(mutex_);
         if (files_.find(NormalizeKey(path)) != files_.end()) return false; // es un archivo, no un directorio
     }
     if (fallback_) return fallback_->IsDirectory(path);
     return false;
 }
 
-int64_t MemoryFileSystem::FileSize(const std::string& path) {
+int64_t MemoryFileSystem::FileSize(const avastd::string& path) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        avastd::lock_guard<avastd::mutex> lock(mutex_);
         auto it = files_.find(NormalizeKey(path));
         if (it != files_.end()) return it->second.size;
     }
@@ -115,7 +115,7 @@ int64_t MemoryFileSystem::FileSize(const std::string& path) {
     return -1;
 }
 
-std::string MemoryFileSystem::GetExecutableDirectory() {
+avastd::string MemoryFileSystem::GetExecutableDirectory() {
     // No tiene sentido en un mapa virtual -- siempre delega, para que
     // Extern/FFI (vm_extern.cpp) siga encontrando modules/ al lado del
     // .exe real aunque el resto del filesystem este overrideado.

@@ -3,14 +3,32 @@
 
 #include "value.h"
 
+#include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
+
+// vm_extern.cpp implementa carga dinamica de librerias nativas +
+// invocacion via libffi para bloques `extern` de AvaLang. Depende de
+// std::filesystem (path resolution multiplataforma) ademas de libffi.
+// Portar std::filesystem a este kernel (que no tiene ni siquiera libc,
+// ver docs/kernel/PLAN_BAREKERNEL_STDCOMPAT.md) es un trabajo separado
+// del alcance de "hacer arrancar el VM" -- path resolution con
+// convenciones POSIX/Windows no tiene demasiado sentido conceptual
+// todavia en un kernel que ademas no tiene multiples dispositivos/
+// unidades ni el mismo modelo de "directorio del ejecutable".
+//
+// Se aplica el MISMO patron de degradacion elegante que ya usa este
+// archivo para libffi ausente ("extern compilara pero no podra invocar
+// funciones nativas reales", ver el mensaje de CMake en la config del
+// build): en barekernel, todo `extern` compila pero ava_extern_call()
+// devuelve un error claro en vez de silenciosamente hacer nada raro. El
+// dia que tenga sentido soportar dynamic loading real en el kernel
+// (CKM_CAP_DYNAMIC_LOADING=1 ya existe via ILibrary/BareKernelLibrary),
+// se puede portar esto puntualmente sin tocar el resto del VM.
+#if AVA_HAVE_STD_LIBRARY
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
-#include <mutex>
-#include <stdexcept>
-#include <unordered_map>
-#include <vector>
 
 #if defined(AVA_HAVE_LIBFFI)
 #include <ffi.h>
@@ -31,13 +49,13 @@ namespace {
 // Cache de librerías ya cargadas, por nombre lógico ("kernel32",
 // "sqlite"). Nunca se descargan -- viven lo que vive el proceso, igual
 // que el resto de los "prototipos" del compilador/VM.
-std::mutex g_lib_mutex;
-std::unordered_map<std::string, platform::ILibraryHandle*> g_loaded_libs;
+avastd::mutex g_lib_mutex;
+avastd::unordered_map<avastd::string, platform::ILibraryHandle*> g_loaded_libs;
 
 // Nombre lógico -> candidatos de nombre de archivo por plataforma. Ver
 // EXTERN_FFI_DESIGN.md, sección "Platform Resolution".
-std::vector<std::string> CandidateFileNames(const std::string& logical) {
-    std::vector<std::string> out;
+avastd::vector<avastd::string> CandidateFileNames(const avastd::string& logical) {
+    avastd::vector<avastd::string> out;
     out.push_back(logical); // por si ya vino con extensión/nombre exacto
 #if defined(_WIN32)
     out.push_back(logical + ".dll");
@@ -70,7 +88,7 @@ std::vector<std::string> CandidateFileNames(const std::string& logical) {
 // razonable de encontrar `modules/` al lado del binario.
 fs::path ExecutableDir() {
     std::error_code ec;
-    std::string exe_dir = VmPlatformAccessor::Get().FileSystem().GetExecutableDirectory();
+    avastd::string exe_dir = VmPlatformAccessor::Get().FileSystem().GetExecutableDirectory();
     if (exe_dir.empty()) {
         return fs::current_path(ec);
     }
@@ -87,8 +105,8 @@ fs::path ModulesRoot() {
     return ExecutableDir() / "modules";
 }
 
-std::string ToLowerAscii(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(),
+avastd::string ToLowerAscii(avastd::string s) {
+    avastd::transform(s.begin(), s.end(), s.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return s;
 }
@@ -99,12 +117,12 @@ std::string ToLowerAscii(std::string s) {
 // subcarpetas a proposito (mantiene esto simple; si el usuario tiene
 // dos "libmysql.dll" distintas en subcarpetas separadas, that's on them).
 // Devuelve un path vacio si no encuentra nada.
-fs::path FindInModulesDir(const fs::path& root, const std::vector<std::string>& filenames) {
+fs::path FindInModulesDir(const fs::path& root, const avastd::vector<avastd::string>& filenames) {
     std::error_code ec;
     if (!fs::exists(root, ec) || !fs::is_directory(root, ec)) return {};
 
 #if defined(_WIN32)
-    std::vector<std::string> wanted;
+    avastd::vector<avastd::string> wanted;
     wanted.reserve(filenames.size());
     for (auto& f : filenames) wanted.push_back(ToLowerAscii(f));
 #else
@@ -117,11 +135,11 @@ fs::path FindInModulesDir(const fs::path& root, const std::vector<std::string>& 
     for (; it != end && !ec; it.increment(ec)) {
         std::error_code entry_ec;
         if (!it->is_regular_file(entry_ec) || entry_ec) continue;
-        std::string name = it->path().filename().string();
+        avastd::string name = it->path().filename().string();
 #if defined(_WIN32)
         name = ToLowerAscii(name);
 #endif
-        if (std::find(wanted.begin(), wanted.end(), name) != wanted.end()) {
+        if (avastd::find(wanted.begin(), wanted.end(), name) != wanted.end()) {
             return it->path();
         }
     }
@@ -135,8 +153,8 @@ platform::ILibraryHandle* LoadFromPath(const fs::path& full_path) {
     return VmPlatformAccessor::Get().Libraries().Load(full_path.string());
 }
 
-platform::ILibraryHandle* LoadNativeLibrary(const std::string& logical_name) {
-    std::lock_guard<std::mutex> lock(g_lib_mutex);
+platform::ILibraryHandle* LoadNativeLibrary(const avastd::string& logical_name) {
+    avastd::lock_guard<avastd::mutex> lock(g_lib_mutex);
     auto it = g_loaded_libs.find(logical_name);
     if (it != g_loaded_libs.end()) return it->second;
 
@@ -167,12 +185,12 @@ platform::ILibraryHandle* LoadNativeLibrary(const std::string& logical_name) {
     return handle;
 }
 
-void* ResolveSymbol(platform::ILibraryHandle* handle, const std::string& name) {
+void* ResolveSymbol(platform::ILibraryHandle* handle, const avastd::string& name) {
     if (!handle) return nullptr;
     return handle->ResolveSymbol(name);
 }
 
-std::string PlatformLoadError() {
+avastd::string PlatformLoadError() {
     // Error details now come from the platform's ILibraryLoader implementation.
     // For better error messages, ILibraryLoader could be extended with error()
     // method in Phase 5+. For now, we provide a generic message with the modules
@@ -214,40 +232,40 @@ bool CallNativeGuarded(ffi_cif* cif, void* fn, void* ret, void** arg_values, DWO
 extern "C" ava_value_t ava_extern_call(AvaVM*, const ava_value_t* c_args, size_t count, void* user_data) {
     auto* meta = static_cast<ExternFuncMeta*>(user_data);
     if (!meta) {
-        throw std::runtime_error("extern: metadata de funcion nativa invalida");
+        throw avastd::runtime_error("extern: metadata de funcion nativa invalida");
     }
-    const std::string where = meta->alias + "." + meta->func_name;
+    const avastd::string where = meta->alias + "." + meta->func_name;
 
 #if !defined(AVA_HAVE_LIBFFI)
     (void)c_args; (void)count;
-    throw std::runtime_error(
+    throw avastd::runtime_error(
         "extern: '" + where + "' no se puede invocar -- este build se compilo sin libffi. "
         "Instala libffi (p.ej. 'vcpkg install libffi') y reconfigura para habilitar llamadas "
         "nativas reales. Ver EXTERN_FFI_TODO.md.");
 #else
     platform::ILibraryHandle* handle = LoadNativeLibrary(meta->library);
     if (!handle) {
-        throw std::runtime_error(
+        throw avastd::runtime_error(
             "extern: no se pudo cargar la libreria \"" + meta->library + "\" (para " + where +
             "). " + PlatformLoadError());
     }
     void* sym = ResolveSymbol(handle, meta->func_name);
     if (!sym) {
-        throw std::runtime_error(
+        throw avastd::runtime_error(
             "extern: simbolo \"" + meta->func_name + "\" no encontrado en la libreria \"" +
             meta->library + "\"");
     }
 
-    std::vector<Value> args;
+    avastd::vector<Value> args;
     args.reserve(count);
     for (size_t i = 0; i < count; ++i) args.push_back(FromC(c_args[i]));
 
-    std::vector<ffi_type*> arg_types(count);
-    std::vector<void*> arg_values(count);
-    std::vector<long long> int_storage(count, 0);
-    std::vector<double> dbl_storage(count, 0.0);
-    std::vector<const char*> str_storage(count, nullptr);
-    std::vector<void*> ptr_storage(count, nullptr);
+    avastd::vector<ffi_type*> arg_types(count);
+    avastd::vector<void*> arg_values(count);
+    avastd::vector<long long> int_storage(count, 0);
+    avastd::vector<double> dbl_storage(count, 0.0);
+    avastd::vector<const char*> str_storage(count, nullptr);
+    avastd::vector<void*> ptr_storage(count, nullptr);
 
     for (size_t i = 0; i < count; ++i) {
         const Value& v = args[i];
@@ -284,7 +302,7 @@ extern "C" ava_value_t ava_extern_call(AvaVM*, const ava_value_t* c_args, size_t
                 break;
             }
             default:
-                throw std::runtime_error(
+                throw avastd::runtime_error(
                     "extern: tipo de argumento no soportado llamando a " + where +
                     " (solo number/string/bool/nil por ahora)");
         }
@@ -304,7 +322,7 @@ extern "C" ava_value_t ava_extern_call(AvaVM*, const ava_value_t* c_args, size_t
     ffi_status status = ffi_prep_cif(
         &cif, FFI_DEFAULT_ABI, static_cast<unsigned int>(count), ret_type, arg_types.data());
     if (status != FFI_OK) {
-        throw std::runtime_error("extern: ffi_prep_cif fallo para " + where);
+        throw avastd::runtime_error("extern: ffi_prep_cif fallo para " + where);
     }
 
     long long result = 0;
@@ -314,8 +332,8 @@ extern "C" ava_value_t ava_extern_call(AvaVM*, const ava_value_t* c_args, size_t
     DWORD exception_code = 0;
     if (!CallNativeGuarded(&cif, sym, &result, ffi_args, &exception_code)) {
         char code_buf[16];
-        std::snprintf(code_buf, sizeof(code_buf), "0x%08lX", static_cast<unsigned long>(exception_code));
-        throw std::runtime_error(
+        avastd::snprintf(code_buf, sizeof(code_buf), "0x%08lX", static_cast<unsigned long>(exception_code));
+        throw avastd::runtime_error(
             "extern: '" + where + "' crashed the native call (exception " + code_buf +
             "). This usually means the extern signature doesn't match the real C "
             "function (argument count/order/type) -- check it against the library's header.");
@@ -329,3 +347,29 @@ extern "C" ava_value_t ava_extern_call(AvaVM*, const ava_value_t* c_args, size_t
 }
 
 } // namespace ava
+
+#else  // !AVA_HAVE_STD_LIBRARY
+
+namespace ava {
+
+// Stub para builds sin STL real (barekernel hoy). Ver nota grande al
+// inicio del archivo. AVA_THROW en vez de silencio: un script que use
+// `extern` en este target falla con un mensaje claro apenas se llama la
+// funcion, no con un comportamiento indefinido.
+extern "C" ava_value_t ava_extern_call(AvaVM*, const ava_value_t*, size_t, void*) {
+    AVA_THROW(avastd::runtime_error(
+        "extern: bloques 'extern' (FFI a librerias nativas) no estan "
+        "soportados en este build (falta std::filesystem/libffi en el "
+        "target barekernel) -- ver nota en vm_extern.cpp"));
+#if !AVA_HAVE_EXCEPTIONS
+    // AVA_THROW no retorna (longjmp), pero el compilador no siempre lo
+    // sabe a traves de la macro -- devolver algo silencia el warning de
+    // "missing return" sin cambiar el comportamiento real.
+    ava_value_t dummy{};
+    return dummy;
+#endif
+}
+
+} // namespace ava
+
+#endif  // AVA_HAVE_STD_LIBRARY

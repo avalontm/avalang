@@ -1,8 +1,5 @@
 #include "obfuscate.h"
-#include <sstream>
-#include <iomanip>
-#include <set>
-#include <algorithm>
+#include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 
 namespace ava {
 
@@ -16,9 +13,9 @@ namespace {
 // identificador opaco cumple su función igual de bien con FNV que con
 // SHA-256, y evita que compiler/ (que no debería saber nada de
 // criptografía) dependa de runtime/avapack/src/checksum.
-uint64_t HashSymbol(uint64_t seed, const std::string& kind, const std::string& value) {
+uint64_t HashSymbol(uint64_t seed, const avastd::string& kind, const avastd::string& value) {
     uint64_t h = 1469598103934665603ull ^ seed;
-    auto mix = [&h](const std::string& s) {
+    auto mix = [&h](const avastd::string& s) {
         for (unsigned char c : s) {
             h ^= c;
             h *= 1099511628211ull;
@@ -33,9 +30,9 @@ uint64_t HashSymbol(uint64_t seed, const std::string& kind, const std::string& v
     return h;
 }
 
-std::string ToOpaqueId(uint64_t hash) {
-    std::ostringstream oss;
-    oss << "sym_" << std::hex << std::setw(16) << std::setfill('0') << hash;
+avastd::string ToOpaqueId(uint64_t hash) {
+    avastd::ostringstream oss;
+    oss << "sym_" << avastd::hex << avastd::setw(16) << avastd::setfill('0') << hash;
     return oss.str();
 }
 
@@ -44,13 +41,13 @@ std::string ToOpaqueId(uint64_t hash) {
 // cubrir la longitud pedida. XOR con este keystream es su propia inversa, así que
 // la misma función sirve para ofuscar y para revertir -- no hace falta una
 // implementación separada de "decode".
-std::string XorKeystreamTransform(uint64_t seed, uint64_t string_index, const std::string& data) {
-    std::string out;
+avastd::string XorKeystreamTransform(uint64_t seed, uint64_t string_index, const avastd::string& data) {
+    avastd::string out;
     out.resize(data.size());
     uint32_t block = 0;
     size_t pos = 0;
     while (pos < data.size()) {
-        std::ostringstream tag;
+        avastd::ostringstream tag;
         tag << string_index << ':' << block;
         uint64_t h = HashSymbol(seed, "string_block", tag.str());
         unsigned char key_bytes[8];
@@ -111,8 +108,8 @@ bool HasUnsupportedControlFlow(const Proto& proto) {
 // cada JMP, y la instruccion siguiente a cada RETURN. TEST nunca es leader
 // por si solo -- siempre va inmediatamente seguido de un JMP (protocolo del
 // VM), asi que el JMP que le sigue ya cubre el corte de bloque necesario.
-std::vector<FlatBlock> ComputeBlocks(const std::vector<Instr>& ins) {
-    std::set<size_t> leaders;
+avastd::vector<FlatBlock> ComputeBlocks(const avastd::vector<Instr>& ins) {
+    avastd::set<size_t> leaders;
     leaders.insert(0);
     for (size_t i = 0; i < ins.size(); ++i) {
         if (ins[i].op == OpCode::JMP) {
@@ -125,8 +122,8 @@ std::vector<FlatBlock> ComputeBlocks(const std::vector<Instr>& ins) {
             if (i + 1 < ins.size()) leaders.insert(i + 1);
         }
     }
-    std::vector<size_t> sorted(leaders.begin(), leaders.end());
-    std::vector<FlatBlock> blocks;
+    avastd::vector<size_t> sorted(leaders.begin(), leaders.end());
+    avastd::vector<FlatBlock> blocks;
     for (size_t k = 0; k < sorted.size(); ++k) {
         size_t start = sorted[k];
         size_t end = (k + 1 < sorted.size()) ? sorted[k + 1] : ins.size();
@@ -138,15 +135,15 @@ std::vector<FlatBlock> ComputeBlocks(const std::vector<Instr>& ins) {
 // blocks.size() (fuera de rango) = sentinel "exit": el target cae en
 // ins.size() exacto (JMP al final de la funcion) o en algo que no es
 // leader de ningun bloque real.
-size_t FindBlockForTarget(const std::vector<FlatBlock>& blocks, size_t target) {
+size_t FindBlockForTarget(const avastd::vector<FlatBlock>& blocks, size_t target) {
     for (size_t i = 0; i < blocks.size(); ++i) {
         if (blocks[i].start == target) return i;
     }
     return blocks.size();
 }
 
-uint64_t NextPrng(uint64_t seed, const std::string& tag, uint64_t& counter) {
-    return HashSymbol(seed, "cf_prng", tag + ":" + std::to_string(counter++));
+uint64_t NextPrng(uint64_t seed, const avastd::string& tag, uint64_t& counter) {
+    return HashSymbol(seed, "cf_prng", tag + ":" + avastd::to_string(counter++));
 }
 
 } // namespace (helpers de flatten cierran aca, el resto del anonymous
@@ -155,9 +152,9 @@ uint64_t NextPrng(uint64_t seed, const std::string& tag, uint64_t& counter) {
 namespace {
 
 void ObfuscateProtoNode(Proto& proto, const ObfuscateOptions& options,
-                         std::vector<SymbolMapEntry>* out_symbol_map) {
+                         avastd::vector<SymbolMapEntry>* out_symbol_map) {
     if (!proto.debug_name.empty()) {
-        std::string obfuscated = ToOpaqueId(HashSymbol(options.module_seed, "function", proto.debug_name));
+        avastd::string obfuscated = ToOpaqueId(HashSymbol(options.module_seed, "function", proto.debug_name));
         if (out_symbol_map) {
             out_symbol_map->push_back(SymbolMapEntry{"function", proto.debug_name, obfuscated});
         }
@@ -165,7 +162,7 @@ void ObfuscateProtoNode(Proto& proto, const ObfuscateOptions& options,
     }
 
     if (!proto.source_name.empty()) {
-        std::string obfuscated = ToOpaqueId(HashSymbol(options.module_seed, "source_file", proto.source_name));
+        avastd::string obfuscated = ToOpaqueId(HashSymbol(options.module_seed, "source_file", proto.source_name));
         if (out_symbol_map) {
             out_symbol_map->push_back(SymbolMapEntry{"source_file", proto.source_name, obfuscated});
         }
@@ -183,19 +180,19 @@ void ObfuscateProtoNode(Proto& proto, const ObfuscateOptions& options,
 
 } // namespace
 
-bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const std::string& tag) {
+bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& tag) {
     if (proto.instructions.size() < 2) return false;
     if (HasUnsupportedControlFlow(proto)) return false;
 
-    std::vector<FlatBlock> blocks = ComputeBlocks(proto.instructions);
+    avastd::vector<FlatBlock> blocks = ComputeBlocks(proto.instructions);
     if (blocks.size() < 2) return false;
 
     const size_t exit_id = blocks.size();
     const size_t total_states = blocks.size() + 1;
 
-    std::vector<uint16_t> state_const_idx(total_states);
+    avastd::vector<uint16_t> state_const_idx(total_states);
     for (size_t s = 0; s < total_states; ++s) {
-        uint64_t state_value = HashSymbol(seed, "cf_state", tag + ":" + std::to_string(s)) & 0xFFFFFFFFFFFFull;
+        uint64_t state_value = HashSymbol(seed, "cf_state", tag + ":" + avastd::to_string(s)) & 0xFFFFFFFFFFFFull;
         state_const_idx[s] = static_cast<uint16_t>(proto.constants.size());
         proto.constants.push_back(Value::Number(static_cast<double>(state_value)));
     }
@@ -207,20 +204,20 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const std::string& tag
     // el slot 0 (bug real, encontrado corriendo flatten_check.cpp contra
     // un if/else de prueba: el LOADK inicial quedaba pisado y la funcion
     // devolvia el resultado del RETURN de "estado desconocido").
-    std::vector<size_t> order(total_states);
+    avastd::vector<size_t> order(total_states);
     for (size_t i = 0; i < order.size(); ++i) order[i] = i;
     uint64_t shuffle_counter = 0;
     for (size_t i = order.size(); i > 1; --i) {
         uint64_t r = NextPrng(seed, tag, shuffle_counter);
         size_t j = static_cast<size_t>(r % i);
-        std::swap(order[i - 1], order[j]);
+        avastd::swap(order[i - 1], order[j]);
     }
 
     const uint16_t state_reg = proto.num_registers;
     const uint16_t tmp_reg = static_cast<uint16_t>(proto.num_registers + 1);
     proto.num_registers = static_cast<uint16_t>(proto.num_registers + 2);
 
-    std::vector<Instr> out;
+    avastd::vector<Instr> out;
     out.reserve(proto.instructions.size() * 2 + blocks.size() * 3 + 8);
 
     Instr loadk_entry{};
@@ -231,7 +228,7 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const std::string& tag
     out.push_back(loadk_entry);
 
     const size_t dispatcher_start = out.size();
-    std::vector<size_t> dispatch_jmp_slot(total_states);
+    avastd::vector<size_t> dispatch_jmp_slot(total_states);
     for (size_t oi = 0; oi < order.size(); ++oi) {
         size_t block_id = order[oi];
         Instr eqk{};
@@ -267,7 +264,7 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const std::string& tag
         out.push_back(trap);
     }
 
-    std::vector<size_t> entry_point(total_states);
+    avastd::vector<size_t> entry_point(total_states);
     // TEST solo salta UNA instruccion (el JMP que le sigue -- protocolo
     // fijo del VM, ver opcodes.h). Si un bloque termina en TEST+JMP no se
     // puede reemplazar ese JMP por dos instrucciones en linea (LOADK+JMP):
@@ -279,8 +276,8 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const std::string& tag
     // un JMP real, unico, inmediatamente despues de TEST, apuntando a un
     // trampolin (LOADK+JMP-al-dispatcher) emitido aparte, con el offset
     // parcheado en una segunda pasada una vez se conoce su posicion.
-    std::vector<size_t> deferred_jmp_slot;
-    std::vector<size_t> deferred_target_block;
+    avastd::vector<size_t> deferred_jmp_slot;
+    avastd::vector<size_t> deferred_target_block;
 
     for (size_t block_id = 0; block_id < blocks.size(); ++block_id) {
         entry_point[block_id] = out.size();
@@ -371,7 +368,7 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const std::string& tag
         out[slot].bx32 = static_cast<int32_t>(static_cast<int64_t>(entry_point[s]) - static_cast<int64_t>(slot) - 1);
     }
 
-    proto.instructions = std::move(out);
+    proto.instructions = avastd::move(out);
     return true;
 }
 
@@ -385,7 +382,7 @@ void FlattenProtoTree(Proto& proto, const ObfuscateOptions& options, uint64_t& p
         }
     }
     if (eligible) {
-        std::string tag = proto.debug_name + "#" + std::to_string(proto_counter);
+        avastd::string tag = proto.debug_name + "#" + avastd::to_string(proto_counter);
         FlattenProtoControlFlow(proto, options.module_seed, tag);
     }
     ++proto_counter;
@@ -397,7 +394,7 @@ void FlattenProtoTree(Proto& proto, const ObfuscateOptions& options, uint64_t& p
 } // namespace
 
 void ObfuscateProto(Proto& root, const ObfuscateOptions& options,
-                     std::vector<SymbolMapEntry>* out_symbol_map) {
+                     avastd::vector<SymbolMapEntry>* out_symbol_map) {
     if (options.flatten_control_flow) {
         // Corre ANTES del renombrado de simbolos (mas abajo): flatten
         // matchea flatten_functions contra debug_name original, y no lee
@@ -426,8 +423,8 @@ void DeobfuscateStrings(Proto& root, uint64_t module_seed) {
     TransformStringsNode(root, module_seed, next_index);
 }
 
-std::string FormatSymbolMap(const std::vector<SymbolMapEntry>& map) {
-    std::ostringstream oss;
+avastd::string FormatSymbolMap(const avastd::vector<SymbolMapEntry>& map) {
+    avastd::ostringstream oss;
     oss << "# avalang symbol map -- guardar SOLO junto al proyecto fuente.\n";
     oss << "# NUNCA embeber este archivo en un build distribuido: revierte\n";
     oss << "# el propósito del pase de ofuscación (compiler/obfuscate.h).\n";

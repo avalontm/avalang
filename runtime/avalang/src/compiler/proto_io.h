@@ -1,12 +1,7 @@
 #ifndef AVA_COMPILER_PROTO_IO_H
 #define AVA_COMPILER_PROTO_IO_H
 
-#include <cstdint>
-#include <memory>
-#include <ostream>
-#include <istream>
-#include <string>
-#include <vector>
+#include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 #include "../vm/proto.h"
 
 namespace ava {
@@ -73,11 +68,11 @@ struct ProtoIoOptions {
 
 // Serializa `root` (y todo su árbol de child_protos) a `out`.
 // Devuelve false si `out` queda en mal estado (fallo de escritura).
-bool WriteProto(const Proto& root, std::ostream& out,
+bool WriteProto(const Proto& root, avastd::ostream& out,
                  const ProtoIoOptions& options = ProtoIoOptions());
 
 // Conveniencia: serializa a un buffer en memoria.
-std::vector<uint8_t> SerializeProto(const Proto& root,
+avastd::vector<uint8_t> SerializeProto(const Proto& root,
                                      const ProtoIoOptions& options = ProtoIoOptions());
 
 // Resultado de ReadProto: el Proto reconstruido, o nullptr si `in` no
@@ -85,10 +80,10 @@ std::vector<uint8_t> SerializeProto(const Proto& root,
 // etc). `error_out`, si no es null, recibe una descripción corta del
 // motivo del fallo -- pensado para mensajes de error de avahost/avacli,
 // no para lógica de negocio (no hay códigos de error estables todavía).
-std::shared_ptr<Proto> ReadProto(std::istream& in, std::string* error_out = nullptr);
+avastd::shared_ptr<Proto> ReadProto(avastd::istream& in, avastd::string* error_out = nullptr);
 
-std::shared_ptr<Proto> DeserializeProto(const std::vector<uint8_t>& bytes,
-                                         std::string* error_out = nullptr);
+avastd::shared_ptr<Proto> DeserializeProto(const avastd::vector<uint8_t>& bytes,
+                                         avastd::string* error_out = nullptr);
 
 } // namespace ava
 

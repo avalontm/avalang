@@ -9,8 +9,7 @@
 // (sleep_async / await), no depende de UI ni de un event loop de ventana.
 #include "PAL_ABI.h"
 
-#include <cstdint>
-#include <functional>
+#include "../barekernel/stdcompat/ava_stdcompat.h"
 
 namespace ava {
 namespace platform {
@@ -23,7 +22,7 @@ public:
     // pool del backend (NO garantiza que sea el hilo que llama). El
     // caller es responsable de sincronizar si toca estado compartido
     // (ver VmAsyncScheduler, que encola en vez de tocar la VM directo).
-    virtual uint64_t ScheduleOnce(uint32_t delayMs, std::function<void()> callback) = 0;
+    virtual uint64_t ScheduleOnce(uint32_t delayMs, avastd::function<void()> callback) = 0;
 
     // Cancela un timer agendado. No-op si ya disparo o handle invalido.
     virtual void Cancel(uint64_t handle) = 0;

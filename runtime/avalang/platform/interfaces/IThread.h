@@ -5,13 +5,12 @@
 // freeze/deprecation policy before changing any signature in IThread / IThreadFactory.
 #include "PAL_ABI.h"
 
-#include <functional>
-#include <cstdint>
+#include "../barekernel/stdcompat/ava_stdcompat.h"
 
 namespace ava {
 namespace platform {
 
-using ThreadFunc = std::function<void()>;
+using ThreadFunc = avastd::function<void()>;
 
 // A single OS thread handle.
 class IThread {

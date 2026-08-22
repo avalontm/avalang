@@ -37,3 +37,7 @@ target_include_directories(ava_cli PRIVATE
 set_target_properties(ava_cli PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runtime/avalang"
 )
+
+# Fase 8 -- Optimizacion: LTO + dead-code elimination + symbol stripping
+# en Release (ver cmake/OptimizationOptions.cmake).
+ava_apply_optimization_options(ava_cli)

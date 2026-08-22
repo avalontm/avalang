@@ -1,6 +1,5 @@
 #include "proto_io.h"
-#include <cstring>
-#include <sstream>
+#include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 
 namespace ava {
 
@@ -10,11 +9,11 @@ constexpr char kMagic[4] = {'A', 'V', 'B', 'C'};
 constexpr uint16_t kVersion = 1;
 constexpr uint16_t kFlagHasDebugInfo = 1u << 0;
 
-void WriteU8(std::ostream& out, uint8_t v) {
+void WriteU8(avastd::ostream& out, uint8_t v) {
     out.put(static_cast<char>(v));
 }
 
-void WriteU16(std::ostream& out, uint16_t v) {
+void WriteU16(avastd::ostream& out, uint16_t v) {
     unsigned char buf[2] = {
         static_cast<unsigned char>(v & 0xFF),
         static_cast<unsigned char>((v >> 8) & 0xFF),
@@ -22,7 +21,7 @@ void WriteU16(std::ostream& out, uint16_t v) {
     out.write(reinterpret_cast<const char*>(buf), 2);
 }
 
-void WriteU32(std::ostream& out, uint32_t v) {
+void WriteU32(avastd::ostream& out, uint32_t v) {
     unsigned char buf[4] = {
         static_cast<unsigned char>(v & 0xFF),
         static_cast<unsigned char>((v >> 8) & 0xFF),
@@ -32,32 +31,32 @@ void WriteU32(std::ostream& out, uint32_t v) {
     out.write(reinterpret_cast<const char*>(buf), 4);
 }
 
-void WriteF64(std::ostream& out, double v) {
+void WriteF64(avastd::ostream& out, double v) {
     unsigned char buf[8];
-    std::memcpy(buf, &v, 8); // host is little-endian on all avalang build targets
+    avastd::memcpy(buf, &v, 8); // host is little-endian on all avalang build targets
     out.write(reinterpret_cast<const char*>(buf), 8);
 }
 
-void WriteString(std::ostream& out, const std::string& s) {
+void WriteString(avastd::ostream& out, const avastd::string& s) {
     WriteU32(out, static_cast<uint32_t>(s.size()));
-    if (!s.empty()) out.write(s.data(), static_cast<std::streamsize>(s.size()));
+    if (!s.empty()) out.write(s.data(), static_cast<avastd::streamsize>(s.size()));
 }
 
-bool ReadU8(std::istream& in, uint8_t& v) {
+bool ReadU8(avastd::istream& in, uint8_t& v) {
     int c = in.get();
-    if (c == std::char_traits<char>::eof()) return false;
+    if (c == -1) return false;
     v = static_cast<uint8_t>(c);
     return true;
 }
 
-bool ReadU16(std::istream& in, uint16_t& v) {
+bool ReadU16(avastd::istream& in, uint16_t& v) {
     unsigned char buf[2];
     if (!in.read(reinterpret_cast<char*>(buf), 2)) return false;
     v = static_cast<uint16_t>(buf[0] | (buf[1] << 8));
     return true;
 }
 
-bool ReadU32(std::istream& in, uint32_t& v) {
+bool ReadU32(avastd::istream& in, uint32_t& v) {
     unsigned char buf[4];
     if (!in.read(reinterpret_cast<char*>(buf), 4)) return false;
     v = static_cast<uint32_t>(buf[0]) | (static_cast<uint32_t>(buf[1]) << 8) |
@@ -65,14 +64,14 @@ bool ReadU32(std::istream& in, uint32_t& v) {
     return true;
 }
 
-bool ReadF64(std::istream& in, double& v) {
+bool ReadF64(avastd::istream& in, double& v) {
     unsigned char buf[8];
     if (!in.read(reinterpret_cast<char*>(buf), 8)) return false;
-    std::memcpy(&v, buf, 8);
+    avastd::memcpy(&v, buf, 8);
     return true;
 }
 
-bool ReadString(std::istream& in, std::string& s) {
+bool ReadString(avastd::istream& in, avastd::string& s) {
     uint32_t len = 0;
     if (!ReadU32(in, len)) return false;
     // Guard against a corrupt/truncated length blowing up the allocation;
@@ -83,10 +82,10 @@ bool ReadString(std::istream& in, std::string& s) {
     if (len > kMaxReasonableStringLen) return false;
     s.resize(len);
     if (len == 0) return true;
-    return static_cast<bool>(in.read(&s[0], static_cast<std::streamsize>(len)));
+    return static_cast<bool>(in.read(&s[0], static_cast<avastd::streamsize>(len)));
 }
 
-void WriteValue(std::ostream& out, const Value& v) {
+void WriteValue(avastd::ostream& out, const Value& v) {
     switch (v.type) {
         case ValueType::Nil:
             WriteU8(out, 0);
@@ -102,7 +101,7 @@ void WriteValue(std::ostream& out, const Value& v) {
         case ValueType::String: {
             WriteU8(out, 3);
             const auto* str_obj = static_cast<const StringObj*>(v.obj);
-            WriteString(out, str_obj ? str_obj->data : std::string());
+            WriteString(out, str_obj ? str_obj->data : avastd::string());
             break;
         }
         default:
@@ -118,7 +117,7 @@ void WriteValue(std::ostream& out, const Value& v) {
     }
 }
 
-bool ReadValue(std::istream& in, Value& out_value) {
+bool ReadValue(avastd::istream& in, Value& out_value) {
     uint8_t tag = 0;
     if (!ReadU8(in, tag)) return false;
     switch (tag) {
@@ -138,7 +137,7 @@ bool ReadValue(std::istream& in, Value& out_value) {
             return true;
         }
         case 3: {
-            std::string s;
+            avastd::string s;
             if (!ReadString(in, s)) return false;
             out_value = Value::String(s);
             return true;
@@ -148,7 +147,7 @@ bool ReadValue(std::istream& in, Value& out_value) {
     }
 }
 
-void WriteProtoNode(const Proto& proto, std::ostream& out, bool with_debug_info) {
+void WriteProtoNode(const Proto& proto, avastd::ostream& out, bool with_debug_info) {
     WriteU16(out, proto.num_registers);
     WriteU8(out, proto.num_params);
     WriteU8(out, proto.is_vararg ? 1 : 0);
@@ -184,9 +183,9 @@ void WriteProtoNode(const Proto& proto, std::ostream& out, bool with_debug_info)
     }
 }
 
-bool ReadProtoNode(std::istream& in, bool with_debug_info,
-                    std::shared_ptr<Proto>& out_proto, std::string& error_out) {
-    auto proto = std::make_shared<Proto>();
+bool ReadProtoNode(avastd::istream& in, bool with_debug_info,
+                    avastd::shared_ptr<Proto>& out_proto, avastd::string& error_out) {
+    auto proto = avastd::make_shared<Proto>();
 
     uint16_t num_registers = 0;
     uint8_t num_params = 0, is_vararg = 0, is_method = 0;
@@ -244,9 +243,9 @@ bool ReadProtoNode(std::istream& in, bool with_debug_info,
     if (!ReadU32(in, child_count)) { error_out = "truncated child proto count"; return false; }
     proto->child_protos.reserve(child_count);
     for (uint32_t i = 0; i < child_count; ++i) {
-        std::shared_ptr<Proto> child;
+        avastd::shared_ptr<Proto> child;
         if (!ReadProtoNode(in, with_debug_info, child, error_out)) return false;
-        proto->child_protos.push_back(std::move(child));
+        proto->child_protos.push_back(avastd::move(child));
     }
 
     if (with_debug_info) {
@@ -262,13 +261,13 @@ bool ReadProtoNode(std::istream& in, bool with_debug_info,
         if (!ReadString(in, proto->source_name)) { error_out = "truncated source_name"; return false; }
     }
 
-    out_proto = std::move(proto);
+    out_proto = avastd::move(proto);
     return true;
 }
 
 } // namespace
 
-bool WriteProto(const Proto& root, std::ostream& out, const ProtoIoOptions& options) {
+bool WriteProto(const Proto& root, avastd::ostream& out, const ProtoIoOptions& options) {
     out.write(kMagic, 4);
     WriteU16(out, kVersion);
     uint16_t flags = options.strip_debug_info ? 0 : kFlagHasDebugInfo;
@@ -277,16 +276,16 @@ bool WriteProto(const Proto& root, std::ostream& out, const ProtoIoOptions& opti
     return static_cast<bool>(out);
 }
 
-std::vector<uint8_t> SerializeProto(const Proto& root, const ProtoIoOptions& options) {
-    std::ostringstream oss(std::ios::binary);
+avastd::vector<uint8_t> SerializeProto(const Proto& root, const ProtoIoOptions& options) {
+    avastd::ostringstream oss(avastd::ios::binary);
     WriteProto(root, oss, options);
-    const std::string& s = oss.str();
-    return std::vector<uint8_t>(s.begin(), s.end());
+    const avastd::string& s = oss.str();
+    return avastd::vector<uint8_t>(s.begin(), s.end());
 }
 
-std::shared_ptr<Proto> ReadProto(std::istream& in, std::string* error_out) {
+avastd::shared_ptr<Proto> ReadProto(avastd::istream& in, avastd::string* error_out) {
     char magic[4] = {0};
-    if (!in.read(magic, 4) || std::memcmp(magic, kMagic, 4) != 0) {
+    if (!in.read(magic, 4) || avastd::memcmp(magic, kMagic, 4) != 0) {
         if (error_out) *error_out = "not an .avbc file (bad magic)";
         return nullptr;
     }
@@ -301,8 +300,8 @@ std::shared_ptr<Proto> ReadProto(std::istream& in, std::string* error_out) {
     }
     bool with_debug_info = (flags & kFlagHasDebugInfo) != 0;
 
-    std::shared_ptr<Proto> root;
-    std::string err;
+    avastd::shared_ptr<Proto> root;
+    avastd::string err;
     if (!ReadProtoNode(in, with_debug_info, root, err)) {
         if (error_out) *error_out = err;
         return nullptr;
@@ -310,9 +309,9 @@ std::shared_ptr<Proto> ReadProto(std::istream& in, std::string* error_out) {
     return root;
 }
 
-std::shared_ptr<Proto> DeserializeProto(const std::vector<uint8_t>& bytes, std::string* error_out) {
-    std::string s(bytes.begin(), bytes.end());
-    std::istringstream iss(s, std::ios::binary);
+avastd::shared_ptr<Proto> DeserializeProto(const avastd::vector<uint8_t>& bytes, avastd::string* error_out) {
+    avastd::string s(bytes.begin(), bytes.end());
+    avastd::istringstream iss(s, avastd::ios::binary);
     return ReadProto(iss, error_out);
 }
 

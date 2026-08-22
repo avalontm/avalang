@@ -130,4 +130,8 @@ else()
     target_link_libraries(avahost PRIVATE dl pthread)
 endif()
 
+# Fase 8 -- Optimizacion: LTO + dead-code elimination + symbol stripping
+# en Release (ver cmake/OptimizationOptions.cmake).
+ava_apply_optimization_options(avahost)
+
 install(TARGETS avahost RUNTIME DESTINATION bin)

@@ -1,0 +1,17 @@
+async func lento()
+    await delay(200)
+    return "listo"
+end
+
+async func esperar_a(t)
+    r = await t
+    print(r)
+end
+
+async func main()
+    t = lento()
+    await esperar_a(t)
+    await esperar_a(t)
+end
+
+main()

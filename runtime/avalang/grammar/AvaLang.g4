@@ -58,7 +58,9 @@ compoundStatement
     | classDeclaration
     | tryStatement
     | modifiedFuncDeclaration
+    | asyncFuncDeclaration
     | externStatement
+    | selectStatement
     ;
 
 // --- class member visibility/storage modifiers -------------------------
@@ -83,6 +85,15 @@ memberModifier
 // `private func x() ... end`, `static private func x() ... end`.
 modifiedFuncDeclaration
     : memberModifier+ funcDeclaration
+    ;
+
+// `async func x() ... end` -- mismo molde que modifiedFuncDeclaration:
+// una regla aditiva separada en vez de tocar funcDeclaration/block, para
+// no arriesgar romper nada existente. `await` (ver primary) solo es
+// valido lexicamente dentro del cuerpo de una de estas -- eso lo valida
+// el compilador (Compiler::in_async_func_), no la gramatica.
+asyncFuncDeclaration
+    : 'async' funcDeclaration
     ;
 
 tryStatement
@@ -157,6 +168,32 @@ elifClause
 
 elseClause
     : 'else' block
+    ;
+
+// --- select (VB6-style switch) -------------------------------------------
+//
+// `select expr ... case ... then ... case ... then ... else ... end`.
+// Deliberadamente NO usa `end select` ni `case else`: como el resto de
+// avalang, todo bloque cierra con un `end` solo, y `elseClause` (ya
+// definido arriba, reusado por ifStatement) cubre el caso final. Se
+// resuelve en AstBuilder desazucarando a un IfStmt equivalente (ver
+// ast_builder.cpp), asi que no hace falta tocar compiler.cpp ni la VM.
+selectStatement
+    : 'select' expr (NEWLINE)* caseClause+ elseClause? 'end'
+    ;
+
+caseClause
+    : 'case' caseItem (',' caseItem)* 'then' block
+    ;
+
+// Tres formas de comparar contra el valor de `select`:
+//   90 to 100      -> valor >= 90 and valor <= 100
+//   is >= 60       -> valor >= 60 (cualquier compOp)
+//   <expr>         -> valor == expr (default, igualdad exacta)
+caseItem
+    : expr 'to' expr    # caseItemRange
+    | 'is' compOp expr  # caseItemRelational
+    | expr               # caseItemEquals
     ;
 
 whileStatement
@@ -319,6 +356,7 @@ primary
     | '(' expr ')'                  # groupAtom
     | 'base' ('.' NAME)? '(' argList? ')' trailer*  # baseAtom
     | 'yield' exprList?             # yieldAtom
+    | 'await' expr                  # awaitAtom
     ;
 
 listLiteral

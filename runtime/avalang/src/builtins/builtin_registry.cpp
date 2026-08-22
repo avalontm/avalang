@@ -42,6 +42,7 @@ void RegisterBuiltinMethods(AvaVM* vm) {
     raw_vm->RegisterNative("sleep_async", builtin_sleep_async, nullptr);
     // Fase 5.4: cancelacion.
     raw_vm->RegisterNative("clear_timeout", builtin_clear_timeout, nullptr);
+    raw_vm->RegisterNative("delay", builtin_delay, nullptr);
 }
 
 }
