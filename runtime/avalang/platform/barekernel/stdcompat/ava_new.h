@@ -22,6 +22,24 @@
 
 #else
 
+// Las "language support routines" reales (las que reservan memoria) NO
+// las provee el kernel dentro de este .so: litekernel::LibraryLoader
+// (ver docs/kernel/binding-status.md y el chequeo hecho a mano sobre
+// lib_loader.cpp) no resuelve simbolos entre bibliotecas -- cada .so que
+// carga con dlopen debe traer sus propias relocations ya resueltas
+// contra simbolos DEFINIDOS en si mismo. Si dejamos estas como
+// declaraciones sin definicion (asumiendo que "el kernel las da"), el
+// link final de libavalang.so queda con operator new/delete como UND, y
+// litekernel los relocaciona a basura en vez de fallar limpio. Por eso
+// se definen aca, delegando a ava_alloc/ava_free (BareKernelMemory.cpp),
+// que sí terminan en ckm_malloc/ckm_free.
+void* operator new(avastd::size_t size);
+void* operator new[](avastd::size_t size);
+void  operator delete(void* ptr) noexcept;
+void  operator delete[](void* ptr) noexcept;
+void  operator delete(void* ptr, avastd::size_t) noexcept;    // sized delete (C++14+)
+void  operator delete[](void* ptr, avastd::size_t) noexcept;  // sized delete (C++14+)
+
 inline void* operator new(avastd::size_t, void* ptr) noexcept { return ptr; }
 inline void* operator new[](avastd::size_t, void* ptr) noexcept { return ptr; }
 inline void  operator delete(void*, void*) noexcept {}

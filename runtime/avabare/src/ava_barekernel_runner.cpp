@@ -101,14 +101,21 @@ extern "C" void _start() {
         WriteOut(CKM_STDERR, error);
         WriteOut(CKM_STDERR, "\n");
         string_free(error);
-        module_destroy(module);
+        // Orden invertido a proposito: el Proto del modulo (via
+        // avastd::shared_ptr<Proto>) y el VM pueden tener Values
+        // compartidos apuntando al mismo Object del GC (constantes de
+        // string, etc.). Destruir el VM primero permite que suelte sus
+        // propias referencias mientras el Proto/modulo todavia esta
+        // vivo, evitando que module_destroy libere un Object que el
+        // shutdown del VM todavia espera poder tocar.
         vm_destroy(vm);
+        module_destroy(module);
         ckm_dlclose(handle);
         ckm_exit(1);
     }
 
-    module_destroy(module);
     vm_destroy(vm);
+    module_destroy(module);
     ckm_dlclose(handle);
     ckm_exit(0);
 }

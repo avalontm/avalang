@@ -24,7 +24,9 @@ static bool FileExists(const avastd::string& path) {
 }
 
 ModuleResolver::ModuleResolver() {
-    avastd::string cwd = VmPlatformAccessor::Get().Environment().GetCurrentDirectory();
+    platform::IPlatform& plat = VmPlatformAccessor::Get();
+    platform::IEnvironment& env = plat.Environment();
+    avastd::string cwd = env.GetCurrentDirectory();
     AddSearchPath(cwd);
 }
 

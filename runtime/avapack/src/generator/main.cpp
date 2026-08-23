@@ -432,8 +432,10 @@ int main(int argc, char** argv) {
         size_t bc_len = 0;
         char* symbol_map = nullptr;
         uint8_t* bc = ava_module_serialize(module, &sopts, &bc_len, &symbol_map);
-        ava_module_destroy(module);
+        // Orden invertido: ver comentario en ava_barekernel_runner.cpp
+        // sobre el use-after-free de teardown.
         ava_vm_destroy(vm);
+        ava_module_destroy(module);
         if (!bc) {
             std::cerr << "avapack_gen: --obfuscate: ava_module_serialize devolvió NULL\n";
             if (symbol_map) ava_string_free(symbol_map);

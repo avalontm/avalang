@@ -216,6 +216,16 @@ AVA_API void ava_run(AvaVM* vm, AvaModule* module, ava_value_t* out_result, char
 #if AVA_HAVE_EXCEPTIONS
     try {
         Value result = raw_vm->Run(module->proto);
+        // ava_run hands out_result to the host as a retained reference
+        // (see the "Ref-counting" contract on ava_value_retain/release
+        // in avalang.h): the host is expected to eventually call
+        // ava_value_release() on it. Without this Retain(), `result`'s
+        // own destructor (RAII, ~Value() -> Release()) fires when this
+        // function returns and can drop the object's refcount to 0 --
+        // freeing it before/as the host even receives the handle. That
+        // was a use-after-free: the host's out_result pointed at freed
+        // memory the moment control returned to it.
+        Retain(result);
         if (out_result) *out_result = ToC(result);
     } catch (const AvaError& e) {
         ReportError(raw_vm, e, true, e.line, e.column, e.source, out_error);
@@ -227,6 +237,7 @@ AVA_API void ava_run(AvaVM* vm, AvaModule* module, ava_value_t* out_result, char
 #else
     AVA_TRY {
         Value result = raw_vm->Run(module->proto);
+        Retain(result);  // ver comentario en la rama AVA_HAVE_EXCEPTIONS arriba
         if (out_result) *out_result = ToC(result);
     } AVA_CATCH(avastd::exception, e) {
         if (e.ava_type_tag() == 2) {
@@ -248,6 +259,7 @@ AVA_API void ava_call(AvaVM* vm, ava_value_t callable, const ava_value_t* args, 
         vargs.reserve(arg_count);
         for (size_t i = 0; i < arg_count; ++i) vargs.push_back(FromC(args[i]));
         Value result = raw_vm->Call(FromC(callable), vargs);
+        Retain(result);  // ver comentario en ava_run sobre por que hace falta
         if (out_result) *out_result = ToC(result);
     } catch (const AvaError& e) {
         ReportError(raw_vm, e, true, e.line, e.column, e.source, out_error);
@@ -262,6 +274,7 @@ AVA_API void ava_call(AvaVM* vm, ava_value_t callable, const ava_value_t* args, 
         vargs.reserve(arg_count);
         for (size_t i = 0; i < arg_count; ++i) vargs.push_back(FromC(args[i]));
         Value result = raw_vm->Call(FromC(callable), vargs);
+        Retain(result);  // ver comentario en ava_run sobre por que hace falta
         if (out_result) *out_result = ToC(result);
     } AVA_CATCH(avastd::exception, e) {
         if (e.ava_type_tag() == 2) {
@@ -288,6 +301,7 @@ AVA_API ava_value_t ava_import(AvaVM* vm, const char* module_path, const char* a
 #if AVA_HAVE_EXCEPTIONS
     try {
         Value result = raw_vm->DoImport(module_path, alias ? alias : "");
+        Retain(result);  // ver comentario en ava_run sobre por que hace falta
         return ToC(result);
     } catch (const AvaError& e) {
         ReportError(raw_vm, e, true, e.line, e.column, e.source, out_error);
@@ -300,6 +314,7 @@ AVA_API ava_value_t ava_import(AvaVM* vm, const char* module_path, const char* a
     ava_value_t result = ToC(Value::Nil());
     AVA_TRY {
         Value r = raw_vm->DoImport(module_path, alias ? alias : "");
+        Retain(r);  // ver comentario en ava_run sobre por que hace falta
         result = ToC(r);
     } AVA_CATCH(avastd::exception, e) {
         if (e.ava_type_tag() == 2) {

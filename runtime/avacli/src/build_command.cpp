@@ -1,5 +1,7 @@
 #include "build_command.h"
 
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -9,12 +11,15 @@
 #include <regex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include "platform/Platform.h"
 #include "platform/interfaces/IProcessStream.h"
+
+#include "avalang.h"
 
 #if defined(_WIN32)
     #define AVACLI_EXE_SUFFIX ".exe"
@@ -30,13 +35,6 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// Carpeta donde vive el propio ava_cli.exe en ejecucion -- en build_cli\ esa
-// carpeta ya tiene avalang.dll/avalang.lib/avalang_ui.dll/avalang_ui.lib (ver
-// RUNTIME_OUTPUT_DIRECTORY/ARCHIVE_OUTPUT_DIRECTORY en runtime/avacli/
-// CMakeLists.txt y runtime/avaui/CMakeLists.txt), asi que sirve directo como
-// AVA_PREBUILT_AVALANG_DIR para el build_pack de `ava_cli build` (ver mas
-// abajo). Devuelve una ruta vacia si no se pudo determinar (best-effort, cae
-// de vuelta a compilar avalang desde fuente).
 fs::path GetSelfExecutableDir() {
 #if defined(_WIN32)
     char buf[MAX_PATH];
@@ -78,6 +76,10 @@ struct BuildOptions {
     std::string sign_pfx;
     std::string sign_password_env;
     std::string sign_timestamp_url;
+    std::string target = "desktop";
+    std::string toolchain_dir;            
+    std::optional<std::uint32_t> stack_size; 
+    std::optional<std::uint32_t> bss_size; 
 };
 
 void PrintBuildUsage() {
@@ -140,7 +142,31 @@ void PrintBuildUsage() {
         "                URL of an RFC 3161 timestamp server (e.g.\n"
         "                http://timestamp.digicert.com). Recommended: without a\n"
         "                timestamp, the signature becomes invalid once the\n"
-        "                certificate expires, even if the binary hasn't changed.\n";
+        "                certificate expires, even if the binary hasn't changed.\n"
+        "\n"
+        "  --target <desktop|barekernel>\n"
+        "                Default 'desktop' (everything above). 'barekernel'\n"
+        "                switches to Fase B2 of plan_avapack_barekernel.md: packages\n"
+        "                --entry as an AppHeader .exe for litekernel instead of a\n"
+        "                Windows PE. Ignores --obfuscate/--zero-disk/--sign-*/\n"
+        "                --key-file (none apply to that target yet). Requires\n"
+        "                --toolchain-dir.\n"
+        "  --toolchain-dir <dir>\n"
+        "                (--target barekernel only) folder containing the i686-elf\n"
+        "                cross-compiler (i686-elf-gcc/g++/ld/objcopy/nm), same as\n"
+        "                scripts/build_barekernel.bat's TOOLCHAIN_DIR argument.\n"
+        "  --stack-size <N>\n"
+        "                (--target barekernel only) stack size in bytes for the\n"
+        "                AppHeader. Default: 65536 (AppBuilder's real default, see\n"
+        "                apphdr_writer.h).\n"
+        "  --bss-size <N>\n"
+        "                (--target barekernel only) manual override for .bss size in\n"
+        "                bytes in the AppHeader. Normally NOT needed: by default this\n"
+        "                is computed automatically from the linked app.elf's section\n"
+        "                table (sum of SHT_NOBITS+SHF_ALLOC sections, see\n"
+        "                elf32_bss.h), so it always matches what the binary actually\n"
+        "                needs. Only pass this for edge cases where the auto-computed\n"
+        "                value is wrong for your program.\n";
 }
 
 bool ParseBuildArgs(int argc, char** argv, BuildOptions& opts, std::string& error) {
@@ -192,6 +218,24 @@ bool ParseBuildArgs(int argc, char** argv, BuildOptions& opts, std::string& erro
         } else if (arg == "--sign-timestamp-url") {
             const char* v = next_value("--sign-timestamp-url"); if (!v) return false;
             opts.sign_timestamp_url = v;
+        } else if (arg == "--target") {
+            const char* v = next_value("--target"); if (!v) return false;
+            opts.target = v;
+        } else if (arg == "--toolchain-dir") {
+            const char* v = next_value("--toolchain-dir"); if (!v) return false;
+            opts.toolchain_dir = v;
+        } else if (arg == "--stack-size") {
+            const char* v = next_value("--stack-size"); if (!v) return false;
+            char* end = nullptr;
+            unsigned long parsed = std::strtoul(v, &end, 0);
+            if (end == v || *end != '\0') { error = "invalid --stack-size"; return false; }
+            opts.stack_size = static_cast<std::uint32_t>(parsed);
+        } else if (arg == "--bss-size") {
+            const char* v = next_value("--bss-size"); if (!v) return false;
+            char* end = nullptr;
+            unsigned long parsed = std::strtoul(v, &end, 0);
+            if (end == v || *end != '\0') { error = "invalid --bss-size"; return false; }
+            opts.bss_size = static_cast<std::uint32_t>(parsed);
         } else if (arg == "--help" || arg == "-h") {
             PrintBuildUsage();
             std::exit(0);
@@ -205,6 +249,14 @@ bool ParseBuildArgs(int argc, char** argv, BuildOptions& opts, std::string& erro
     if (opts.project_dir.empty()) { error = "missing --project"; return false; }
     if (opts.entry_file.empty()) { error = "missing --entry"; return false; }
     if (opts.out_path.empty()) { error = "missing --out"; return false; }
+    if (opts.target != "desktop" && opts.target != "barekernel") {
+        error = "--target must be 'desktop' or 'barekernel' (got '" + opts.target + "')";
+        return false;
+    }
+    if (opts.target == "barekernel" && opts.toolchain_dir.empty()) {
+        error = "--target barekernel requires --toolchain-dir <folder with i686-elf-gcc/g++/ld/objcopy/nm>";
+        return false;
+    }
     if (!opts.sign_pfx.empty() && opts.sign_pfx.substr(0, 2) == "--") {
         error = "--sign-pfx seems to be missing its value (got '" + opts.sign_pfx + "')";
         return false;
@@ -218,14 +270,7 @@ bool ParseBuildArgs(int argc, char** argv, BuildOptions& opts, std::string& erro
 
 bool RunTool(ava::platform::IProcess& process, const std::string& command,
              const std::vector<std::string>& args, const std::string& step_label) {
-    // Stream cmake/msbuild's own output straight to our (now unbuffered,
-    // see main.cpp) stdout as it's produced, instead of buffering the
-    // whole thing in a ProcessResult and only printing it once the
-    // subprocess exits -- cmake configure and especially `cmake --build`
-    // (MSBuild compiling avapack_gen/avapack_build) are the slowest part
-    // of a package build by far, so this is what actually makes the
-    // Build panel's "real time" log real for the bulk of a build's
-    // duration, not just for ava_cli's own few progress lines.
+
     if (auto* streaming = dynamic_cast<ava::platform::IProcessStream*>(&process)) {
         int exit_code = -1;
         const bool launched = streaming->ExecuteStreaming(
@@ -245,8 +290,6 @@ bool RunTool(ava::platform::IProcess& process, const std::string& command,
         return true;
     }
 
-    // Fallback for backends that don't implement IProcessStream (e.g.
-    // the Linux/Mac stubs) -- same blocking behavior as before.
     ava::platform::ProcessResult result;
     bool launched = process.Execute(command, args, result);
     if (!launched) {
@@ -289,15 +332,6 @@ void CopyRuntimeDllIfPresent(const fs::path& built_binary_dir, const fs::path& o
     }
 }
 
-// avalang_ui.dll: avalang.dll la necesita para linkear (ver nota de
-// AVA_BUILD_UI mas arriba), asi que build_pack ya la compila y el
-// RUNTIME_OUTPUT_DIRECTORY de avalang_ui (runtime/avaui/CMakeLists.txt) la
-// deja en la misma carpeta que avalang.dll y avapack_gen.exe -- built_binary_dir
-// ya deberia tenerla. Este fallback a build_cli\ (build_cli.bat la deja en
-// runtime/avaui/<Config>/, ver ese script) queda solo por si built_binary_dir
-// no la tiene por algun motivo (p.ej. build_pack quedo en un estado raro
-// antes de --clean). Si no esta ni en build_pack ni en build_cli, seguimos
-// sin ella -- best effort, sin bloquear el build.
 void CopyAvaUiDllIfAvailable(const fs::path& built_binary_dir, const fs::path& out_dir,
                               const fs::path& repo_root, const std::string& config) {
     const std::string dll_name = "avalang_ui.dll";
@@ -389,8 +423,6 @@ std::optional<fs::path> FindDllForExternName(const fs::path& libraries_dir, cons
     std::error_code ec;
     if (!fs::exists(libraries_dir, ec) || !fs::is_directory(libraries_dir, ec)) return std::nullopt;
 
-    // Espeja vm_extern.cpp::CandidateFileNames: en Windows busca <name>.dll;
-    // en Linux busca lib<name>.so y <name>.so (en ese orden, igual que el VM).
 #if defined(_WIN32)
     std::vector<std::string> wanted_names = { name + ".dll" };
 #else
@@ -486,6 +518,365 @@ bool SignBinary(ava::platform::IProcess& process, const fs::path& exe_path,
     return RunTool(process, "signtool", args, "signtool sign");
 }
 
+std::optional<fs::path> FindI686ElfTool(const fs::path& toolchain_dir, const std::string& basename) {
+    std::error_code ec;
+    if (!fs::exists(toolchain_dir, ec) || !fs::is_directory(toolchain_dir, ec)) {
+        return std::nullopt;
+    }
+    std::string wanted = basename;
+#if defined(_WIN32)
+    wanted += ".exe";
+#endif
+    for (auto it = fs::recursive_directory_iterator(
+             toolchain_dir, fs::directory_options::skip_permission_denied, ec);
+         it != fs::recursive_directory_iterator() && !ec; it.increment(ec)) {
+        std::error_code fe;
+        if (!it->is_regular_file(fe)) continue;
+        if (it->path().filename().string() == wanted) return it->path();
+    }
+    return std::nullopt;
+}
+
+std::optional<fs::path> FindHostToolBinary(const fs::path& build_dir, const std::string& target_name,
+                                            const std::string& config) {
+    fs::path multi_config = build_dir / "runtime" / "avalang" / config /
+                             (target_name + AVACLI_EXE_SUFFIX);
+    if (fs::exists(multi_config)) return multi_config;
+    fs::path single_config = build_dir / "runtime" / "avalang" / (target_name + AVACLI_EXE_SUFFIX);
+    if (fs::exists(single_config)) return single_config;
+    return std::nullopt;
+}
+
+bool CompileEntryToAvb(const std::string& entry_source, const std::string& entry_rel_name,
+                        const fs::path& out_avb_path, std::string& error_out) {
+    AvaVM* vm = ava_vm_create();
+    char* compile_error = nullptr;
+    AvaModule* module = ava_compile(vm, entry_source.c_str(), entry_rel_name.c_str(), &compile_error);
+    if (!module) {
+        error_out = compile_error ? compile_error : "unknown compile error";
+        if (compile_error) ava_string_free(compile_error);
+        ava_vm_destroy(vm);
+        return false;
+    }
+
+    size_t bc_len = 0;
+    char* symbol_map = nullptr;
+    uint8_t* bc = ava_module_serialize(module, /*options=*/nullptr, &bc_len, &symbol_map);
+    // Orden invertido: ver comentario en ava_barekernel_runner.cpp sobre
+    // el use-after-free de teardown cuando module_destroy libera antes
+    // que el VM suelte sus propias referencias compartidas.
+    ava_vm_destroy(vm);
+    ava_module_destroy(module);
+    if (symbol_map) ava_string_free(symbol_map); 
+    if (!bc) {
+        error_out = "ava_module_serialize devolvio NULL";
+        return false;
+    }
+
+    std::error_code ec;
+    fs::create_directories(out_avb_path.parent_path(), ec);
+    std::ofstream out(out_avb_path, std::ios::binary);
+    bool wrote_ok = static_cast<bool>(out);
+    if (wrote_ok) {
+        out.write(reinterpret_cast<const char*>(bc), static_cast<std::streamsize>(bc_len));
+        wrote_ok = out.good();
+    }
+    ava_string_free(reinterpret_cast<char*>(bc));
+
+    if (!wrote_ok) {
+        error_out = "no se pudo escribir " + out_avb_path.string();
+        return false;
+    }
+    return true;
+}
+
+int RunBuildBarekernelCommand(ava::platform::IProcess& process, const BuildOptions& opts,
+                               const fs::path& repo_root, const fs::path& project_dir_abs,
+                               const fs::path& out_path_abs) {
+    std::error_code ec;
+
+    fs::path entry_path = project_dir_abs / opts.entry_file;
+    if (!fs::exists(entry_path, ec)) {
+        std::cerr << "error: --entry no existe: " << entry_path.string() << "\n";
+        return 1;
+    }
+    std::string entry_source;
+    if (!ReadFileToString(entry_path, entry_source)) {
+        std::cerr << "error: no se pudo leer --entry: " << entry_path.string() << "\n";
+        return 1;
+    }
+
+    fs::path work_dir = repo_root / "build_pack_barekernel";
+    fs::path avb_path = work_dir / "entry.avb";
+    fs::path embedded_cpp_path = work_dir / "embedded_avb.cpp";
+    fs::path elf_path = work_dir / "app.elf";
+    fs::path bin_path = work_dir / "app.bin";
+
+    std::cout << "ava_cli build --target barekernel: compilando " << opts.entry_file
+              << " a bytecode .avb ...\n";
+    std::string compile_error;
+    if (!CompileEntryToAvb(entry_source, opts.entry_file, avb_path, compile_error)) {
+        std::cerr << "error: el entry no compilo/serializo: " << compile_error << "\n";
+        return 1;
+    }
+    fs::path host_build_dir = repo_root / "build_pack";
+    const std::string host_config = "Release";
+    std::cout << "ava_cli build --target barekernel: configurando herramientas de host ("
+              << host_build_dir.string() << ") ...\n";
+    std::vector<std::string> host_configure_args = {
+        "-S", repo_root.string(),
+        "-B", host_build_dir.string(),
+        "-DAVA_BUILD_PACK=ON",
+        "-DAVA_BUILD_CLI=OFF",
+        "-DAVA_BUILD_STUDIO=OFF",
+        "-DAVA_BUILD_AVAHOST=OFF",
+        "-DCMAKE_BUILD_TYPE=" + host_config,
+    };
+
+    fs::path prebuilt_dir = GetSelfExecutableDir();
+    bool have_prebuilt = !prebuilt_dir.empty()
+        && fs::exists(prebuilt_dir / "avalang.dll")
+        && fs::exists(prebuilt_dir / "avalang.lib")
+        && fs::exists(prebuilt_dir / "avalang_ui.dll")
+        && fs::exists(prebuilt_dir / "avalang_ui.lib");
+    if (have_prebuilt) {
+        host_configure_args.push_back("-DAVA_PACK_USE_PREBUILT_AVALANG=ON");
+        host_configure_args.push_back("-DAVA_PREBUILT_AVALANG_DIR=" + prebuilt_dir.string());
+    }
+    if (!RunTool(process, "cmake", host_configure_args, "cmake (configure herramientas de host)")) {
+        return 1;
+    }
+    std::vector<std::string> host_build_args = {
+        "--build", host_build_dir.string(),
+        "--target", "avapack_barekernel_gen",
+        "--target", "ava_apphdr_writer",
+        "--config", host_config,
+        "--parallel",
+    };
+    std::cout << "ava_cli build --target barekernel: compilando herramientas de host ...\n";
+    if (!RunTool(process, "cmake", host_build_args, "cmake --build (herramientas de host)")) {
+        return 1;
+    }
+
+    auto gen_bin = FindHostToolBinary(host_build_dir, "avapack_barekernel_gen", host_config);
+    auto apphdr_bin = FindHostToolBinary(host_build_dir, "ava_apphdr_writer", host_config);
+    if (!gen_bin || !apphdr_bin) {
+        std::cerr << "error: avapack_barekernel_gen/ava_apphdr_writer no aparecieron bajo "
+                  << host_build_dir.string() << "/runtime/avalang/ tras el build -- revisar el log.\n";
+        return 1;
+    }
+
+    std::string entry_name = fs::path(opts.entry_file).stem().string();
+    std::vector<std::string> gen_args = {
+        "--avb", avb_path.string(),
+        "--out", embedded_cpp_path.string(),
+        "--entry-name", entry_name,
+    };
+    std::cout << "ava_cli build --target barekernel: generando embedded_avb.cpp ...\n";
+    if (!RunTool(process, gen_bin->string(), gen_args, "avapack_barekernel_gen")) {
+        return 1;
+    }
+
+    fs::path cross_build_dir = repo_root / "build_barekernel_pack";
+    std::cout << "ava_cli build --target barekernel: configurando build cruzado ("
+              << cross_build_dir.string() << ", toolchain " << opts.toolchain_dir << ") ...\n";
+    std::vector<std::string> cross_configure_args = {
+        "-S", repo_root.string(),
+        "-B", cross_build_dir.string(),
+        "-G", "Ninja", 
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_TOOLCHAIN_FILE=" + (repo_root / "cmake" / "toolchain-i686-elf.cmake").string(),
+        "-DAVA_I686_ELF_TOOLCHAIN_DIR=" + opts.toolchain_dir,
+        "-DAVA_TARGET_BAREKERNEL=ON",
+        "-DAVA_BUILD_CLI=OFF",
+        "-DAVA_BUILD_UI=OFF",
+        "-DAVA_BUILD_STUDIO=OFF",
+        "-DAVA_BUILD_AVAHOST=OFF",
+        "-DAVA_BUILD_PACK=OFF",
+        "-DAVAPACK_BAREKERNEL_EMBEDDED_AVB_CPP=" + embedded_cpp_path.string(),
+    };
+    if (!RunTool(process, "cmake", cross_configure_args, "cmake (configure cruzado)")) {
+        return 1;
+    }
+    std::vector<std::string> cross_build_args = {
+        "--build", cross_build_dir.string(),
+        "--target", "avalang",
+        "--target", "avalang_barekernel_so",
+        "--target", "avapack_barekernel_app",
+        "--parallel",
+    };
+    std::cout << "ava_cli build --target barekernel: compilando (cruzado, i686-elf) ...\n";
+    if (!RunTool(process, "cmake", cross_build_args, "cmake --build (cruzado)")) {
+        std::cerr << "error: el build cruzado fallo -- si es una pared de \"undefined reference\", "
+                     "es CKM_CAP_LIBSTDCPP=0 (ver docs/kernel/binding-status.md), no necesariamente "
+                     "un bug de este comando.\n";
+        return 1;
+    }
+
+    fs::path app_lib = cross_build_dir / "avapack_barekernel_app" / "libavapack_barekernel_app.a";
+    if (!fs::exists(app_lib, ec)) {
+        std::cerr << "error: no se encontro " << app_lib.string() << " tras el build cruzado.\n";
+        return 1;
+    }
+
+    auto ld_bin = FindI686ElfTool(opts.toolchain_dir, "i686-elf-ld");
+    auto objcopy_bin = FindI686ElfTool(opts.toolchain_dir, "i686-elf-objcopy");
+    auto nm_bin = FindI686ElfTool(opts.toolchain_dir, "i686-elf-nm");
+    if (!ld_bin || !objcopy_bin || !nm_bin) {
+        std::cerr << "error: no se encontraron i686-elf-ld/objcopy/nm bajo --toolchain-dir '"
+                  << opts.toolchain_dir << "' -- el mismo toolchain que necesita "
+                     "cmake/toolchain-i686-elf.cmake (i686-elf-gcc/g++) tiene que traer estos "
+                     "tambien.\n";
+        return 1;
+    }
+
+    fs::path app_ld = repo_root / "runtime" / "avapack" / "src" / "barekernel" / "app.ld";
+    std::vector<std::string> ld_args = {
+        "-T", app_ld.string(),
+        "-o", elf_path.string(),
+        // app_lib es el UNICO input de este link, asi que _start (y todo
+        // lo demas) solo va a entrar si ld decide extraer el miembro del
+        // .a -- normalmente ENTRY(_start) fuerza eso, pero algunas
+        // versiones de ld no lo garantizan cuando no hay ningun otro .o
+        // con una referencia pendiente. --whole-archive elimina la
+        // ambiguedad: mete TODOS los objetos del .a, sin depender de
+        // resolucion de simbolos.
+        "--whole-archive",
+        app_lib.string(),
+        "--no-whole-archive",
+    };
+    std::vector<std::string> objcopy_args = { "-O", "binary", elf_path.string(), bin_path.string() };
+
+    // Confirmado en la practica (Windows): el .a que acaba de escribir
+    // ninja/ar puede no estar "asentado" todavia (AV escaneandolo, handle
+    // sin liberar del todo) cuando ld lo abre inmediatamente despues --
+    // el mismo comando, corrido a mano unos segundos mas tarde contra los
+    // mismos archivos, encuentra _start sin problema. En vez de fallar a
+    // la primera, reintentamos el link completo unas pocas veces con una
+    // espera corta antes de darlo por perdido.
+    constexpr int kMaxLinkAttempts = 3;
+    constexpr auto kLinkRetryDelay = std::chrono::milliseconds(600);
+
+    std::uint32_t start_address = 0;
+    bool found_start = false;
+    ava::platform::ProcessResult nm_result;
+
+    for (int attempt = 1; attempt <= kMaxLinkAttempts; ++attempt) {
+        std::cout << "ava_cli build --target barekernel: linkeando (" << app_ld.string() << ") "
+                  << "intento " << attempt << "/" << kMaxLinkAttempts << " ...\n";
+        if (!RunTool(process, ld_bin->string(), ld_args, "i686-elf-ld")) {
+            return 1;
+        }
+        if (!RunTool(process, objcopy_bin->string(), objcopy_args, "i686-elf-objcopy")) {
+            return 1;
+        }
+
+        nm_result = ava::platform::ProcessResult{};
+        if (!process.Execute(nm_bin->string(), { elf_path.string() }, nm_result) ||
+            nm_result.exit_code != 0) {
+            std::cerr << "error: no se pudo correr i686-elf-nm sobre " << elf_path.string() << "\n";
+            return 1;
+        }
+
+        found_start = false;
+        std::istringstream nm_lines(nm_result.stdout_output);
+        std::string line;
+        static const std::regex start_line_re(R"(^([0-9a-fA-F]+)\s+\S\s+_start$)");
+        while (std::getline(nm_lines, line)) {
+            // i686-elf-nm.exe en Windows escribe \r\n; std::getline solo
+            // corta en \n, asi que cada linea queda con un \r colgando al
+            // final ("...T _start\r"). El regex de abajo ancla $ justo
+            // despues de "_start", asi que ese \r sobrante lo hacia fallar
+            // SIEMPRE (no es timing -- por eso los reintentos no ayudaban).
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+            std::smatch m;
+            if (std::regex_match(line, m, start_line_re)) {
+                start_address = static_cast<std::uint32_t>(std::strtoul(m[1].str().c_str(), nullptr, 16));
+                found_start = true;
+                break;
+            }
+        }
+
+        if (found_start) {
+            break;
+        }
+        if (attempt < kMaxLinkAttempts) {
+            std::cout << "ava_cli build --target barekernel: _start no aparecio en el intento "
+                      << attempt << " (probable timing de archivo en Windows) -- reintentando ...\n";
+            std::this_thread::sleep_for(kLinkRetryDelay);
+        }
+    }
+
+    if (!found_start) {
+        std::cerr << "error: no se encontro el simbolo _start en la salida de i686-elf-nm sobre "
+                  << elf_path.string() << " tras " << kMaxLinkAttempts << " intentos -- revisar que "
+                     "main_barekernel.cpp siga exportandolo.\n";
+        return 1;
+    }
+
+    constexpr std::uint32_t kAppBaseAddress = 0x40000000u;
+    if (start_address < kAppBaseAddress) {
+        std::cerr << "error: _start (0x" << std::hex << start_address << std::dec
+                  << ") esta antes de la base de carga esperada (0x40000000) -- algo cambio en "
+                     "app.ld o en como objcopy aplano las secciones, no asumir el offset.\n";
+        return 1;
+    }
+    std::uint32_t entry_offset = start_address - kAppBaseAddress;
+
+    // bss_size ya NO tiene un default hardcodeado del lado de
+    // ava_apphdr_writer (ver apphdr_writer.h / apphdr_cli/main.cpp,
+    // elf32_bss.h) -- por default se calcula automaticamente leyendo la
+    // tabla de secciones de elf_path (el mismo .elf sin aplanar que ya
+    // usamos arriba para sacar _start con nm), asi que SIEMPRE lo
+    // pasamos. --bss-size del usuario de ava_cli (opts.bss_size) sigue
+    // siendo un override manual disponible para casos raros, pero ya no
+    // es necesario para el caso comun -- el calculo automatico es correcto
+    // por construccion (no depende de que nadie recuerde actualizar un
+    // numero a mano cuando el .bss real del programa crece).
+    std::vector<std::string> apphdr_args = {
+        "--bin", bin_path.string(),
+        "--elf", elf_path.string(),
+        "--entry-offset", "0x" + [&]{ std::ostringstream o; o << std::hex << entry_offset; return o.str(); }(),
+        "--out", out_path_abs.string(),
+    };
+    if (opts.stack_size) {
+        apphdr_args.push_back("--stack-size");
+        apphdr_args.push_back(std::to_string(*opts.stack_size));
+    }
+    if (opts.bss_size) {
+        apphdr_args.push_back("--bss-size");
+        apphdr_args.push_back(std::to_string(*opts.bss_size));
+        std::cout << "ava_cli build --target barekernel: --bss-size " << *opts.bss_size
+                  << " explicito -- se ignora el auto-calculo desde " << elf_path.string() << "\n";
+    }
+    fs::create_directories(out_path_abs.parent_path(), ec);
+    std::cout << "ava_cli build --target barekernel: escribiendo AppHeader (entry_offset=0x"
+              << std::hex << entry_offset << std::dec << ", bss auto-calculado desde "
+              << elf_path.filename().string() << ") ...\n";
+    if (!RunTool(process, apphdr_bin->string(), apphdr_args, "ava_apphdr_writer")) {
+        return 1;
+    }
+
+    fs::path cross_so = cross_build_dir / "libavalang.so";
+    if (fs::exists(cross_so, ec)) {
+        fs::path so_dest = out_path_abs.parent_path() / "libavalang.so";
+        fs::copy_file(cross_so, so_dest, fs::copy_options::overwrite_existing, ec);
+        if (!ec) {
+            std::cout << "[info] libavalang.so (cruzado) copiada a " << so_dest.string()
+                      << " -- va en /system/lib/ del disco del kernel (Fase B3), no al lado del "
+                         ".exe en /apps/.\n";
+        }
+    }
+
+    std::cout << "ava_cli build --target barekernel: listo -> " << out_path_abs.string() << "\n";
+    std::cout << "  (NO validado contra litekernel real/QEMU en este build -- eso es Fase B3. "
+                 "Este comando corrio herramientas reales con argumentos reales; si algo de esto "
+                 "fallo, el mensaje de arriba es sobre esa herramienta real, no un mock.)\n";
+    return 0;
+}
+
 } // namespace
 
 int RunBuildCommand(int argc, char** argv) {
@@ -543,12 +934,6 @@ int RunBuildCommand(int argc, char** argv) {
         return 1;
     }
 
-    // --out puede ser el path completo del .exe final (comportamiento
-    // original) o, si el usuario pasa una carpeta (existente, o que termina
-    // en '/' o '\\'), el nombre del binario se deriva de --entry y se
-    // guarda ADENTRO de esa carpeta -- evita el caso confuso de que
-    // copy_file falle (o peor, cree un archivo sin extension) cuando el
-    // usuario en realidad queria decir "guardalo en esta carpeta".
     fs::path raw_out(opts.out_path);
     bool out_is_dir = fs::is_directory(raw_out, ec);
     if (!out_is_dir && !opts.out_path.empty()) {
@@ -560,7 +945,8 @@ int RunBuildCommand(int argc, char** argv) {
     if (out_is_dir) {
         std::string default_name = fs::path(opts.entry_file).stem().string();
         if (default_name.empty()) default_name = "packaged";
-        out_path_abs = fs::absolute(raw_out, ec) / (default_name + AVACLI_EXE_SUFFIX);
+        std::string suffix = (opts.target == "barekernel") ? ".exe" : AVACLI_EXE_SUFFIX;
+        out_path_abs = fs::absolute(raw_out, ec) / (default_name + suffix);
         std::cout << "[info] --out is a directory -- the packaged binary will be saved as "
                   << out_path_abs.string() << "\n";
     } else {
@@ -579,16 +965,14 @@ int RunBuildCommand(int argc, char** argv) {
     auto platform = ava::platform::Platform::Create();
     ava::platform::IProcess& process = platform->Process();
 
+    if (opts.target == "barekernel") {
+        return RunBuildBarekernelCommand(process, opts, repo_root, project_dir_abs, out_path_abs);
+    }
+
     fs::path build_dir = repo_root / "build_pack";
     const std::string target_name = "avapack_build";
     const std::string build_config = opts.debug_unencrypted ? "Debug" : "Release";
 
-    // build_pack/ ya NO se borra despues de un build exitoso (ver mas abajo)
-    // -- persiste entre corridas a proposito, para que CMake solo recompile
-    // lo que realmente cambio (normalmente nada de avalang.dll/avapack_gen,
-    // solo el embedded_project.cpp del proyecto empacado). --clean pide
-    // explicitamente un arbol de build fresco, ej. si sospechas que quedo
-    // en un estado raro.
     if (opts.clean_pack && fs::exists(build_dir)) {
         std::cout << "ava_cli build: --clean -- removing " << build_dir.string() << " ...\n";
         fs::remove_all(build_dir, ec);
@@ -606,17 +990,7 @@ int RunBuildCommand(int argc, char** argv) {
         "-DAVAPACK_ENTRY_FILE=" + opts.entry_file,
         "-DAVAPACK_OUT_NAME=" + target_name,
     };
-    // avapack_gen y el .exe empacado solo necesitan linkear contra
-    // avalang.dll/avalang_ui.dll (ver runtime/avapack/CMakeLists.txt) -- no
-    // hay que recompilar avalang/avaui desde fuente en build_pack cada vez
-    // que corre `ava_cli build`, ya estan compilados en build_cli\ (la misma
-    // carpeta donde vive este propio ava_cli.exe, ver GetSelfExecutableDir
-    // mas abajo). AVA_PACK_USE_PREBUILT_AVALANG=ON hace que el CMakeLists.txt
-    // raiz declare avalang/avalang_ui como targets IMPORTED en vez de
-    // compilarlos (ver ese archivo). Si por algun motivo no se puede
-    // determinar esa carpeta (o le faltan los binarios), caemos de vuelta a
-    // compilar avalang/avaui desde fuente -- mas lento, pero siempre
-    // funciona.
+
     fs::path prebuilt_dir = GetSelfExecutableDir();
     bool have_prebuilt = !prebuilt_dir.empty()
         && fs::exists(prebuilt_dir / "avalang.dll")

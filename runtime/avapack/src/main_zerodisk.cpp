@@ -203,14 +203,14 @@ int main(int argc, char** argv) {
     if (error) {
         std::fprintf(stderr, "runtime error: %s\n", error);
         ava_string_free(error);
-        ava_module_destroy(module);
         std::memset(key, 0, sizeof(key));
+        // Orden invertido: ver comentario en ava_barekernel_runner.cpp
+        // sobre el use-after-free de teardown.
         ava_vm_destroy(vm);
+        ava_module_destroy(module);
         ava::VmPlatformAccessor::ClearOverride();
         return 1;
     }
-
-    ava_module_destroy(module);
 
     {
         while (raw_vm->HasPendingAsyncWork()) {
@@ -224,7 +224,11 @@ int main(int argc, char** argv) {
     // VM termina de correr -- recien aca se borra.
     std::memset(key, 0, sizeof(key));
 
+    // El VM tiene que seguir vivo para el pump de arriba; el modulo se
+    // destruye recien despues del VM (ver comentario en
+    // ava_barekernel_runner.cpp sobre el use-after-free de teardown).
     ava_vm_destroy(vm);
+    ava_module_destroy(module);
 
     // Deshace el override antes de salir -- higiene, no estrictamente
     // necesario porque el proceso termina de todas formas, pero evita

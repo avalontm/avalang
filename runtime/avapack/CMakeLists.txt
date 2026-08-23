@@ -185,6 +185,53 @@ ava_apply_optimization_options(${AVAPACK_OUT_NAME})
 # es un no-op: ya estan en la misma carpeta gracias a su propio
 # RUNTIME_OUTPUT_DIRECTORY/ARCHIVE_OUTPUT_DIRECTORY, copy_if_different no
 # hace nada.
+# ---------------------------------------------------------------------
+# Fase B1 (plan_avapack_barekernel.md) -- herramientas de HOST para el
+# target AVA_TARGET_BAREKERNEL. A diferencia de todo lo de arriba, estas
+# dos NO linkean avalang ni tiny-AES-c/sha256 -- son tools de host lisos
+# (mismo motivo que avapack_gen antes de Fase 6, ver comentario de
+# cabecera de src/barekernel/gen/main.cpp):
+#
+#   avapack_barekernel_gen -- toma un .avb ya serializado (host, fuera de
+#     este build) y escribe embedded_avb.cpp (src/barekernel/embedded_avb.h)
+#     para compilarlo junto con main_barekernel.cpp con el toolchain
+#     i686-elf (target AVA_TARGET_BAREKERNEL, ver src/barekernel/CMakeLists.txt).
+#   ava_apphdr_writer -- toma el .bin plano (post-objcopy) de ese build
+#     cruzado y le antepone el AppHeader -- ver src/barekernel/apphdr_writer.h.
+#
+# Ambos corren en el HOST siempre (nunca cross-compilados) porque son
+# herramientas de build, no código que corre dentro de litekernel -- por
+# eso viven bajo AVA_BUILD_PACK (el build normal, no bajo
+# AVA_TARGET_BAREKERNEL) igual que avapack_gen. Ver nota sobre esta misma
+# distinción (host vs. cross) en la Fase B2 del plan: `ava_cli build
+# --target barekernel` va a necesitar invocar este binario ya compilado
+# para HOST antes de lanzar el build cruzado, no compilarlo con el
+# toolchain i686-elf -- ese es justamente el problema que
+# scripts/build_barekernel.bat ya resuelve para 'avalang' (compila solo
+# ESE target con el toolchain cruzado) y que B2 tiene que resolver también
+# para este generador.
+add_executable(avapack_barekernel_gen src/barekernel/gen/main.cpp)
+target_include_directories(avapack_barekernel_gen PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/barekernel
+)
+set_target_properties(avapack_barekernel_gen PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runtime/avalang"
+)
+ava_apply_optimization_options(avapack_barekernel_gen)
+
+add_executable(ava_apphdr_writer
+    src/barekernel/apphdr_cli/main.cpp
+    src/barekernel/apphdr_writer.cpp
+    src/barekernel/elf32_bss.cpp
+)
+target_include_directories(ava_apphdr_writer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/barekernel
+)
+set_target_properties(ava_apphdr_writer PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runtime/avalang"
+)
+ava_apply_optimization_options(ava_apphdr_writer)
+
 if(AVA_PACK_USE_PREBUILT_AVALANG)
     add_custom_command(TARGET avapack_gen POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different

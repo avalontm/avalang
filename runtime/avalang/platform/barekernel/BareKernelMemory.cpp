@@ -1,5 +1,7 @@
 #include "../AvaMemory.h"
 #include "ckm_contract.h"
+#include "stdcompat/ava_platform_caps.h"
+#include "stdcompat/ava_types.h"
 
 namespace {
 
@@ -45,3 +47,61 @@ void ava_free(void* ptr) {
 }
 
 }
+
+// operator new/delete "normales" (no placement): sin libstdc++ el
+// compilador igual los necesita como "language support routines" para
+// cualquier `new`/`delete` que use el codigo (avastd::shared_ptr,
+// vectores, etc). Se definen ACA -- adentro del propio binario de
+// avalang -- y no se asume que el kernel los provea, porque
+// LibraryLoader::ApplyRelocation (lib_loader.cpp del kernel) resuelve
+// simbolos unicamente contra el symtab del propio .so, nunca contra
+// otras bibliotecas ya cargadas. Ver ava_new.h para las declaraciones
+// y el razonamiento completo.
+#if !AVA_HAVE_STD_LIBRARY
+
+namespace {
+// Diagnostico temporal: sin excepciones, si ckm_malloc falla,
+// ava_alloc devuelve nullptr y el new-expression sigue construyendo
+// el objeto en la direccion 0 sin avisar -- eso encajaria exactamente
+// con un vtable read en address 0 mas adelante. Este log lo hace visible.
+void DebugWriteAllocFail(avastd::size_t size) {
+    ckm_write(CKM_STDOUT, "[AVALANG] operator new(", 23);
+    char digits[24];
+    int n = 0;
+    unsigned long s = (unsigned long)size;
+    if (s == 0) { digits[n++] = '0'; }
+    while (s > 0) { digits[n++] = char('0' + (s % 10)); s /= 10; }
+    while (n > 0) { ckm_write(CKM_STDOUT, &digits[--n], 1); }
+    ckm_write(CKM_STDOUT, ") -> ava_alloc devolvio NULL\n", 29);
+}
+}
+
+void* operator new(avastd::size_t size) {
+    void* p = ava_alloc(size ? size : 1);
+    if (!p) DebugWriteAllocFail(size);
+    return p;
+}
+
+void* operator new[](avastd::size_t size) {
+    void* p = ava_alloc(size ? size : 1);
+    if (!p) DebugWriteAllocFail(size);
+    return p;
+}
+
+void operator delete(void* ptr) noexcept {
+    ava_free(ptr);
+}
+
+void operator delete[](void* ptr) noexcept {
+    ava_free(ptr);
+}
+
+void operator delete(void* ptr, avastd::size_t) noexcept {
+    ava_free(ptr);
+}
+
+void operator delete[](void* ptr, avastd::size_t) noexcept {
+    ava_free(ptr);
+}
+
+#endif  // !AVA_HAVE_STD_LIBRARY

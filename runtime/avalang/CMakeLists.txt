@@ -108,6 +108,17 @@ if(AVA_TARGET_BAREKERNEL)
         platform/barekernel/BareKernelProcess.cpp
         platform/barekernel/BareKernelThread.cpp
         platform/barekernel/BareKernelTimer.cpp
+        # Definen avastd::AvaThrow/CurrentErrorFrame/ava_setjmp/ava_longjmp
+        # (ver ava_error.h). Faltaba en esta lista -- por eso el link
+        # anterior tiraba "undefined reference" para esos 3 simbolos pese a
+        # que estan implementados: el .cpp que los define simplemente nunca
+        # se compilaba para este target.
+        platform/barekernel/stdcompat/ava_error.cpp
+        # mem*/str* globales (memcpy/memmove/memset/memcmp/strlen) y el
+        # resto de libm/ABI de C++ que este toolchain freestanding
+        # (--without-headers, sin libstdc++/libsupc++/libm) no provee. Ver
+        # el comentario grande al inicio de ese archivo.
+        platform/barekernel/BareKernelRuntimeSupport.cpp
     )
     message(STATUS "avalang: BareKernel backend selected")
 elseif(WIN32)
@@ -172,7 +183,91 @@ if(AVA_BUILD_UI)
     list(APPEND PUBLIC_SOURCES api/src/c_api_ui.cpp)
 endif()
 
-if(AVA_BUILD_SHARED)
+if(AVA_TARGET_BAREKERNEL)
+    # CMAKE_SYSTEM_NAME=Generic (necesario para cross-compilar contra el
+    # toolchain freestanding i686-elf, ver cmake/toolchain-i686-elf.cmake)
+    # no trae reglas de "como armar una libreria compartida" -- esas viven
+    # en los modulos Platform/Linux.cmake, Platform/Windows.cmake, etc.,
+    # que Generic no carga. Consecuencia real (confirmada: un build asi
+    # produjo un libavalang.a de 50 objetos en vez de un .so) es que
+    # add_library(... SHARED ...) NO genera un ELF ET_DYN aca, aunque no
+    # tire error. Por eso, para AVA_TARGET_BAREKERNEL, SIEMPRE se compila
+    # como STATIC (que si funciona de forma confiable) y el .so real se
+    # arma aparte, con un paso de link explicito (ver mas abajo).
+    add_library(avalang STATIC ${PUBLIC_SOURCES})
+
+    # Estas flags se pasaban antes SOLO en el paso de link manual de mas
+    # abajo (avalang_barekernel_so) -- demasiado tarde. Para cuando ese
+    # comando corre, los .obj de avalang ya fueron compilados (arriba, en
+    # add_library) SIN estas flags, así que igual traían secciones
+    # .eh_frame reales (con referencia a __gxx_personality_v0) y RTTI real
+    # (typeinfo apuntando a las vtables de __cxxabiv1::__class_type_info /
+    # __si_class_type_info) -- ninguna de las dos existe en este target
+    # freestanding (sin libstdc++/libsupc++). -fno-exceptions/-fno-rtti al
+    # compilar (no solo al linkear) evita que el compilador genere esa
+    # informacion en primer lugar. Es seguro para todo el codigo real: el
+    # manejo de errores de AvaLang en este target no usa throw/try/catch
+    # reales en ningun lado que se compile aca -- pasa por las macros
+    # AVA_TRY/AVA_THROW/AVA_CATCH de ava_error.h, que con
+    # CKM_CAP_STD_EXCEPTIONS=0 (ver binding.cmake) ya expanden a
+    # setjmp/longjmp, no a throw/catch reales (confirmado: los unicos
+    # throw/try/catch literales del codebase viven en frontend_antlr.cpp/
+    # ast_builder.cpp/compiler.cpp, que ni se compilan aca -- este target
+    # no tiene antlr4-runtime y usa frontend_stub.cpp en su lugar -- y en
+    # bloques ya guardados con #if AVA_HAVE_EXCEPTIONS / #if
+    # AVA_HAVE_STD_LIBRARY en vm.cpp/vm_task.cpp/vm_extern.cpp/c_api.cpp).
+    #
+    # -fno-threadsafe-statics: sin esto, el Meyer's singleton de
+    # VmPlatformAccessor::Get() (unique_ptr local static) genera codigo de
+    # inicializacion thread-safe que llama __cxa_guard_acquire/_release/
+    # _abort -- otro trio de simbolos que este target no tiene. Correcto
+    # de quitar: CKM_CAP_THREADS=0 (ver binding.cmake), no hay ejecucion
+    # paralela real que necesite esa proteccion.
+    #
+    # -fno-builtin: ver el comentario grande en
+    # platform/barekernel/BareKernelRuntimeSupport.cpp -- sin esto, GCC
+    # puede reconocer el cuerpo de memcpy/memset/strlen definidos ahi como
+    # instancias del propio patron que implementan y reescribirlos como
+    # llamadas a si mismos (recursion infinita, solo en Release). Aplicada
+    # a todo el target (no solo a ese archivo) porque el mismo problema en
+    # general (el compilador generando una llamada implicita a
+    # memcpy/memset/strlen/round/sqrt/pow/fmod que este toolchain sin libc
+    # no provee) puede originarse en cualquier .cpp, no solo en ese.
+    # -fPIC: SIN esto, el compilador nunca pide relocations en runtime
+    # para direcciones de funcion guardadas como DATOS (no como "call"
+    # relativo a PC). El caso real que esto rompia: las entradas de
+    # .init_array (punteros a los constructores globales de C++) se
+    # grababan como constantes absolutas calculadas en tiempo de link
+    # asumiendo base 0 -- exactamente el mismo valor que su offset dentro
+    # de la libreria -- y como nunca se generaba una relocation
+    # R_386_RELATIVE para esas entradas, LibraryLoader::RunInitializers
+    # (litekernel) las llamaba tal cual, saltando a esa direccion CHICA
+    # (offset, no virtual final) en vez de a
+    # lib->mapped_base + offset -- confirmado con el log: "Calling
+    # constructor 0 at 0x156C0" (offset, no una direccion 0x600xxxxx),
+    # seguido de un cuelgue total.
+    #
+    # Las llamadas a funcion normales (R_386_PC32, relativas a PC) y
+    # dlsym (que lee st_value de la tabla de simbolos directo, sin pasar
+    # por relocations) nunca mostraron este problema -- por eso el resto
+    # del pipeline (dlopen, los 6916 REL, los dlsym de ava_vm_create/
+    # ava_run/etc.) funcionaba perfecto y esto recien aparecia al llegar
+    # al primer puntero-a-funcion guardado como dato.
+    #
+    # Este gap ya estaba anotado (sin resolver) en
+    # cmake/toolchain-i686-elf.cmake, comentario sobre el fallback a
+    # gcc -m32: "los .o estaticos no se compilan con -fPIC... revisar el
+    # loader propio antes de asumir que es inocuo en otro kernel". Litekernel
+    # ya fue revisado (RunInitializers asume relocation ya aplicada) --
+    # esto SI era el problema real.
+    target_compile_options(avalang PRIVATE
+        -fno-exceptions
+        -fno-rtti
+        -fno-threadsafe-statics
+        -fno-builtin
+        -fPIC
+    )
+elseif(AVA_BUILD_SHARED)
     add_library(avalang SHARED ${PUBLIC_SOURCES})
 else()
     add_library(avalang STATIC ${PUBLIC_SOURCES})
@@ -298,4 +393,112 @@ install(TARGETS avalang
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin
 )
+
+# ---------------------------------------------------------------------
+# BareKernel: link real del .so (ET_DYN) a partir del libavalang.a
+# estatico de arriba.
+#
+# Por que un paso aparte y no add_library(SHARED): ver el comentario
+# junto a add_library(avalang STATIC ...) mas arriba -- CMAKE_SYSTEM_NAME
+# Generic no tiene reglas de shared library, asi que invocamos el
+# linker a mano con las flags correctas.
+#
+# -Wl,--whole-archive / --no-whole-archive: sin esto, el linker solo
+# saca de libavalang.a los .o que resuelven un simbolo ya pedido, y como
+# nada externo "pide" por ejemplo ava_vm_create todavia, esa funcion
+# (y el resto de la C API publica) quedaria afuera del .so. whole-archive
+# fuerza a meter los 50 objetos completos.
+#
+# -Wl,-z,defs: hace que el link FALLE si queda algun simbolo sin
+# resolver (UND), en vez de que litekernel lo descubra en runtime como
+# una relocation resuelta a basura -- ver docs/kernel/binding-status.md
+# y el analisis de LibraryLoader::ApplyRelocation (el loader del kernel
+# resuelve simbolos SOLO contra el symtab del propio .so, nunca contra
+# otras bibliotecas). Si este link falla con "undefined reference",
+# esa es informacion real: algo todavia depende de simbolos que el
+# kernel no va a poder proveer en carga.
+#
+# -Wl,-shared (NO "-shared" a secas) -nostdlib -m32: ELF32 compartido,
+# sin arrastrar libc/libstdc++ del host ni del cross-compiler (fuera de
+# -lgcc, que sí hace falta: trae helpers de soporte del compilador como
+# los de aritmetica de 64 bits en 32-bit, no funciones de SO).
+#
+# Por que -Wl,-shared y no -shared: este toolchain i686-elf esta
+# configurado con --without-headers (bare-metal, sin libc), y por eso
+# no tiene las "specs" de gcc que le dicen que hacer con -shared -- gcc
+# lo descarta en silencio de COLLECT_GCC_OPTIONS antes de pasarselo a
+# collect2/ld (se puede confirmar con -v: no aparece en la linea final
+# de collect2.exe). El resultado sin este fix es un ELF ET_EXEC, no
+# ET_DYN, y el LibraryLoader del kernel (que espera ET_DYN) lo rechaza
+# o lo carga mal. -Wl,-shared salta la logica de specs de gcc y llega
+# directo al linker.
+if(AVA_TARGET_BAREKERNEL)
+    set(AVA_BAREKERNEL_SO "${CMAKE_BINARY_DIR}/libavalang.so")
+
+    # -Wl,-N -Wl,-Ttext-segment=0x0: CRITICO para litekernel::LibraryLoader.
+    #
+    # Un `ld -shared` normal (sin estos flags) separa el .so en al menos
+    # dos segmentos PT_LOAD (uno read+exec para .text/.rodata, otro
+    # read+write para .data/.got/.init_array/.bss), cada uno alineado a
+    # pagina (4096) EN MEMORIA pero NO en el archivo -- entre ambos queda
+    # un salto constante (tipicamente 0x1000) entre sh_addr y sh_offset
+    # para cualquier seccion del segundo segmento en adelante
+    # (.init_array, .got, .got.plt, .dynamic, etc). Confirmado con
+    # readelf -S sobre un .so de prueba: sin este flag, .init_array
+    # queda en Addr=0x3f58 / Off=0x2f58 (gap de 0x1000); con el flag,
+    # Addr=0x35c / Off=0x35c (identicos).
+    #
+    # LibraryLoader::ParseSections (litekernel, lib_loader.cpp) lee cada
+    # seccion como `base_addr + sh_offset` (offset de ARCHIVO, valido
+    # porque el .so entero se copia byte a byte), pero
+    # LibraryLoader::ApplyRelocation escribe cada relocation en
+    # `base_addr + r_offset` (r_offset es una DIRECCION, en la misma
+    # base que sh_addr). El loader entero asume sh_addr == sh_offset
+    # para toda seccion SHF_ALLOC -- valido solo si el .so es UN SOLO
+    # segmento sin padding de alineacion entre archivo y memoria.
+    #
+    # Sin este flag, la relocation R_386_RELATIVE que corrige cada
+    # entrada de .init_array (constructores globales de C++) se escribe
+    # 4096 bytes mas adelante de donde realmente vive esa entrada en el
+    # buffer copiado -- el slot real nunca se toca y conserva el valor
+    # crudo del archivo (el offset link-time sin relocar, p.ej. 0x9740
+    # en vez de 0x60009740). RunInitializers despues llama a esa
+    # direccion cruda, que cae en memoria de kernel identity-mapped
+    # (por eso el sintoma es un CUELGUE, no un page fault limpio: la
+    # CPU termina ejecutando codigo de kernel arbitrario en vez de
+    # faultear contra una pagina no mapeada).
+    #
+    # -Wl,-N (OMAGIC): no alinea segmentos a pagina, y hace todo el .so
+    # RW+X en un unico PT_LOAD (ld avisa "LOAD segment with RWX
+    # permissions" -- inofensivo aca, no hay modelo de W^X en este
+    # kernel).
+    # -Wl,-Ttext-segment=0x0: sin esto, -N igual mantiene el base
+    # tradicional de ET_EXEC (0x08048000 en x86); con esto el .so sigue
+    # siendo ET_DYN con direcciones relativas a 0, que es lo que
+    # LibraryLoader espera (le suma su propia direccion virtual fija).
+    if(AVA_TARGET_BAREKERNEL)
+        set(AVA_BAREKERNEL_SO_LAYOUT_FLAGS -Wl,-N -Wl,-Ttext-segment=0x0)
+    endif()
+
+    add_custom_command(
+        OUTPUT ${AVA_BAREKERNEL_SO}
+        COMMAND ${CMAKE_CXX_COMPILER}
+                -Wl,-shared -m32 -nostdlib -fno-exceptions -fno-rtti
+                ${AVA_BAREKERNEL_SO_LAYOUT_FLAGS}
+                -o ${AVA_BAREKERNEL_SO}
+                -Wl,--whole-archive $<TARGET_FILE:avalang> -Wl,--no-whole-archive
+                -Wl,-z,defs
+                -lgcc
+        DEPENDS avalang
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        COMMENT "BareKernel: linking libavalang.so (ET_DYN, layout plano sh_addr==sh_offset) from libavalang.a"
+        VERBATIM
+    )
+
+    add_custom_target(avalang_barekernel_so ALL
+        DEPENDS ${AVA_BAREKERNEL_SO}
+    )
+
+    install(FILES ${AVA_BAREKERNEL_SO} DESTINATION lib OPTIONAL)
+endif()
 install(FILES api/include/avalang.h DESTINATION include)

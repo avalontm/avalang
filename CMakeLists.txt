@@ -90,6 +90,12 @@ endif()
 
 if(AVA_TARGET_BAREKERNEL)
     add_subdirectory(runtime/avabare)
+    # Fase B1 de plan_avapack_barekernel.md -- main_barekernel.cpp +
+    # embedded_avb.cpp, el reemplazo con .avb embebido para
+    # ava_barekernel_runner. Vive bajo runtime/avapack/src/barekernel/
+    # (no runtime/avabare/) porque conceptualmente es parte de
+    # avapack_barekernel, no del bootstrap mínimo original -- ver el plan.
+    add_subdirectory(runtime/avapack/src/barekernel avapack_barekernel_app)
 endif()
 
 # ---------------------------------------------------------------------

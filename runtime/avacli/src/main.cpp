@@ -299,12 +299,12 @@ int main(int argc, char** argv) {
     if (error) {
         std::fprintf(stderr, "runtime error: %s\n", error);
         ava_string_free(error);
-        ava_module_destroy(module);
+        // Orden invertido: ver comentario en ava_barekernel_runner.cpp
+        // sobre el use-after-free de teardown.
         ava_vm_destroy(vm);
+        ava_module_destroy(module);
         return 1;
     }
-
-    ava_module_destroy(module);
 
     {
         ava::VM* raw_vm = reinterpret_cast<ava::VM*>(vm);
@@ -314,6 +314,11 @@ int main(int argc, char** argv) {
         }
     }
 
+    // El VM todavia tenia que estar vivo para el pump de arriba, asi que
+    // el modulo se destruye recien despues. Orden invertido respecto al
+    // original (vm_destroy antes que module_destroy) por la misma razon
+    // que en ava_barekernel_runner.cpp.
     ava_vm_destroy(vm);
+    ava_module_destroy(module);
     return 0;
 }

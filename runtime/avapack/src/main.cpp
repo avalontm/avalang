@@ -311,13 +311,13 @@ int main(int argc, char** argv) {
     if (error) {
         std::fprintf(stderr, "runtime error: %s\n", error);
         ava_string_free(error);
-        ava_module_destroy(module);
         std::memset(key, 0, sizeof(key));
+        // Orden invertido: ver comentario en ava_barekernel_runner.cpp
+        // sobre el use-after-free de teardown.
         ava_vm_destroy(vm);
+        ava_module_destroy(module);
         return 1;
     }
-
-    ava_module_destroy(module);
 
     // Igual que ava_cli: drenar timers/callbacks async pendientes antes de
     // salir (ver Fase 5 del Async Runtime, comentario en avacli/src/main.cpp).
@@ -338,7 +338,11 @@ int main(int argc, char** argv) {
     // callbacks async, etc.), no solo durante la compilacion inicial.
     std::memset(key, 0, sizeof(key));
 
+    // El VM tiene que seguir vivo para el pump de arriba; el modulo se
+    // destruye recien despues del VM por la misma razon que en
+    // ava_barekernel_runner.cpp (evitar el use-after-free de teardown).
     ava_vm_destroy(vm);
+    ava_module_destroy(module);
     return 0;
     // temp_guard se destruye aca (y en cualquier return de arriba) y borra
     // cualquier resto que haya quedado bajo temp_dir.
