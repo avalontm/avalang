@@ -40,7 +40,7 @@ REM Nota honesta (ver docs\kernel\binding-status.md): este script te lleva
 REM hasta invocar el compilador/linker real. Si tu toolchain no trae
 REM libstdc++ portado con soporte de excepciones, el build fallara en el
 REM link con "undefined reference" -- eso es informacion real sobre el
-REM obstaculo critico documentado en docs\kernel\kernel.md §6.1, no un bug
+REM obstaculo critico documentado en docs\kernel\kernel.md seccion 6.1, no un bug
 REM de este script.
 REM =====================================================================
 
@@ -94,10 +94,17 @@ if errorlevel 1 (
 )
 
 if not exist "%TOOLCHAIN_DIR%" (
-    echo [ERROR] Toolchain folder not found: %TOOLCHAIN_DIR%
-    echo         Pass the real path as the first argument, e.g.:
-    echo           build_barekernel.bat D:\ruta\real\tools\x86
-    exit /b 1
+    echo [WARNING] Toolchain folder not found: %TOOLCHAIN_DIR%
+    echo           No se encontro el cross-compiler real i686-elf-gcc/g++ ahi.
+    echo           Seguimos igual: cmake\toolchain-i686-elf.cmake va a caer a un
+    echo           FALLBACK con gcc/g++ del host -m32 ^(MinGW-w64 con multilib de
+    echo           32 bits necesario en PATH^) en vez de abortar. Ver el
+    echo           comentario grande en ese .cmake para las diferencias reales
+    echo           conocidas de ese sustituto frente al toolchain real.
+    echo           Si preferis que esto sea un error duro, pasa
+    echo           -DAVA_REQUIRE_REAL_I686_ELF_TOOLCHAIN=ON a mano con cmake, o
+    echo           corregi la ruta: build_barekernel.bat D:\ruta\real\tools\x86
+    echo.
 )
 
 if "%CLEAN%"=="1" (
@@ -108,6 +115,16 @@ if "%CLEAN%"=="1" (
 )
 
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
+
+if not exist "%TOOLCHAIN_DIR%" (
+    where gcc >nul 2>nul
+    if errorlevel 1 (
+        echo [ERROR] No hay toolchain real en %TOOLCHAIN_DIR% Y no hay gcc en PATH
+        echo         para el fallback. Instalar un MinGW-w64 con soporte -m32, o
+        echo         conseguir el i686-elf-gcc real y pasar su ruta como argumento.
+        exit /b 1
+    )
+)
 
 echo.
 echo Toolchain dir: %TOOLCHAIN_DIR%
@@ -133,8 +150,14 @@ if errorlevel 1 (
 )
 
 echo.
-echo Building ^(%BUILD_TYPE%^) -- targets avalang + ava_barekernel_runner ...
-cmake --build "%BUILD_DIR%" --target avalang ava_barekernel_runner --parallel
+echo Building ^(%BUILD_TYPE%^) -- targets avalang + avalang_barekernel_so + ava_barekernel_runner ...
+REM avalang_barekernel_so es el paso de link real (.a -> .so ET_DYN) que
+REM compensa que CMAKE_SYSTEM_NAME=Generic no sabe armar shared libraries
+REM por si solo -- ver el comentario en runtime/avalang/CMakeLists.txt.
+REM Sin pedirlo explicitamente aca, "cmake --build --target avalang ..."
+REM NO lo arma (los targets pedidos a mano no arrastran los ALL a menos
+REM que se pida el build completo).
+cmake --build "%BUILD_DIR%" --target avalang avalang_barekernel_so ava_barekernel_runner --parallel
 
 if errorlevel 1 (
     echo.
@@ -151,8 +174,16 @@ if errorlevel 1 (
 echo.
 echo =====================================================================
 echo Build succeeded.
-echo Look for the resulting avalang binary under %BUILD_DIR%\runtime\avalang\
-echo and ava_barekernel_runner.a under %BUILD_DIR%\runtime\avabare\
+echo   libavalang.a (static, intermediate) : %BUILD_DIR%\runtime\avalang\
+echo   libavalang.so (the real ET_DYN, this is what litekernel loads) :
+echo                                          %BUILD_DIR%\libavalang.so
+echo   ava_barekernel_runner.a             : %BUILD_DIR%\runtime\avabare\
+echo.
+echo If the .so link step failed with "undefined reference", that is real
+echo information -- something still expects a symbol litekernel's loader
+echo can't provide at dlopen time (it only resolves symbols within the
+echo same .so, see docs\kernel\binding-status.md). Fix the missing symbol
+echo and re-run, don't ignore it.
 echo =====================================================================
 
 endlocal
