@@ -53,6 +53,14 @@ static ava_value_t ToAvaValue(const avalang::ui::PropertyValue& pv) {
             const avastd::string& s = pv.AsString();
             auto* so = new StringObj(s);
             Value v; v.type = ValueType::String; v.obj = so;
+            // Same fix as ava_string_create/ava_list_create/ava_dict_create
+            // in c_api.cpp (Fase 7 bugfix) and builtin_str/type/etc. in
+            // builtins/: ToC() never retains, so a freshly `new`'d object
+            // (refcount 1, owned only by this local `v`) gets deleted by
+            // `v`'s destructor the instant this function returns, leaving
+            // the handle already-returned dangling -- Retain() first keeps
+            // the object alive past that point, for the caller's own copy.
+            Retain(v);
             return ToC(v);
         }
         default:

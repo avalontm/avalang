@@ -53,7 +53,81 @@ static void SetNestedNamespace(
     }
 }
 
+// Phase 1 of AVALANG_IMPORT_SYSTEM_PLAN.md. Places an already-built
+// module Value (either the Dict assembled from a compiled module's
+// globals_, or one returned by a native module factory) into scope,
+// following the exact same three rules DoImport always used: an
+// explicit `as alias` sets that one name; a dotted module_path builds
+// (or extends) a nested namespace via SetNestedNamespace; a single
+// bare segment dumps the module's own entries straight into scope
+// (the "from X import *" behavior imports already relied on). Factored
+// out so a native module -- which skips file resolution/compilation
+// entirely -- lands in scope through the identical rules a file-backed
+// import uses, instead of a second, divergent copy of this logic.
+static void PlaceModuleInScope(VM& vm, const avastd::string& module_path,
+                                const avastd::string& alias, Value module_dict) {
+    if (!alias.empty()) {
+        vm.SetGlobal(alias, module_dict);
+        return;
+    }
+
+    avastd::vector<avastd::string> parts;
+    avastd::string temp = module_path;
+    size_t start = 0;
+    while ((start = temp.find('.')) != avastd::string::npos) {
+        parts.push_back(temp.substr(0, start));
+        temp = temp.substr(start + 1);
+    }
+    parts.push_back(temp);
+
+    if (parts.size() > 1) {
+        avastd::vector<avastd::string> ns_parts(parts.begin(), parts.end() - 1);
+        SetNestedNamespace(vm.Globals(), ns_parts, 0, module_dict);
+    } else {
+        auto* dict = static_cast<DictObj*>(module_dict.obj);
+        for (auto& entry : dict->entries) {
+            vm.SetGlobal(entry.first, entry.second);
+        }
+    }
+}
+
+// Ver declaracion en vm.h. `symbol` se busca solo entre las entradas de
+// nivel superior de cada Dict construido por una factory registrada --
+// alcanza para el caso real que motiva esto ("Console" vive en el nivel
+// superior de "system", ver builtins/system_module.cpp) sin necesitar
+// bajar recursivamente por sub-namespaces.
+avastd::string VM::FindNativeModuleExporting(const avastd::string& symbol) const {
+    for (auto& entry : native_modules_) {
+        // const_cast: la factory pide VM& (para poder registrar
+        // builtins/leer VmPlatformAccessor si hiciera falta), pero este
+        // metodo es const desde afuera -- no muta ningun estado del VM
+        // propiamente dicho, solo construye un Dict transitorio que se
+        // descarta al salir del scope (ver comentario en vm.h).
+        Value module_dict = entry.second(const_cast<VM&>(*this));
+        if (module_dict.type == ValueType::Dict) {
+            auto* dict = static_cast<DictObj*>(module_dict.obj);
+            if (dict->index.find(symbol) != dict->index.end()) {
+                return entry.first;
+            }
+        }
+    }
+    return avastd::string();
+}
+
 Value VM::DoImport(const avastd::string& module_path, const avastd::string& alias) {
+    // Phase 1 of AVALANG_IMPORT_SYSTEM_PLAN.md: a registered native
+    // module short-circuits everything below -- no ModuleResolver
+    // lookup, no IFileSystem read, no CompileSource/ExecuteFrame. The
+    // factory builds the module Dict directly in C++ (see
+    // builtins/system_module.cpp) and it's placed in scope the same
+    // way a file-backed import's Dict would be.
+    auto native_it = native_modules_.find(module_path);
+    if (native_it != native_modules_.end()) {
+        Value module_dict = native_it->second(*this);
+        PlaceModuleInScope(*this, module_path, alias, module_dict);
+        return Value::Nil();
+    }
+
     avastd::string current_dir = GetCurrentDir();
     
     avastd::string resolved_path = module_resolver_.ResolveModulePath(module_path, current_dir);
@@ -154,66 +228,14 @@ Value VM::DoImport(const avastd::string& module_path, const avastd::string& alia
         dict->entries.emplace_back(entry.first, entry.second);
     }
     
-    if (alias.empty()) {
-        avastd::vector<avastd::string> parts;
-        avastd::string temp = module_path;
-        size_t start = 0;
-        while ((start = temp.find('.')) != avastd::string::npos) {
-            parts.push_back(temp.substr(0, start));
-            temp = temp.substr(start + 1);
-        }
-        parts.push_back(temp);
-        
-        if (parts.size() > 1) {
-            avastd::vector<avastd::string> ns_parts(parts.begin(), parts.end() - 1);
-            globals_ = avastd::move(outer_globals);
-            SetNestedNamespace(globals_, ns_parts, 0, module_dict);
-        } else {
-            // Import de un solo segmento sin alias -- el caso común,
-            // `import Dog` para usar la clase `Dog` definida en
-            // dog.ava/Dog.ava -- exactamente como ya asume el editor
-            // (ClassIndex::ScanImports en
-            // studio/src/languages/class_index.cpp sigue los imports y
-            // vuelca sus clases DIRECTO al índice, sin ningún prefijo
-            // de namespace). Antes, acá se hacía
-            // `SetGlobal(module_path, module_dict)`: el global "Dog"
-            // terminaba apuntando al DICCIONARIO del módulo entero, no
-            // a la clase -- así que `Dog()` fallaba en runtime con
-            // "attempt to call a non-callable value" (un Dict no es
-            // invocable) aunque el editor lo autocompletara y coloreara
-            // como si fuera perfectamente válido (ver
-            // test.ava/scripts/dog.ava, y la Fase 5 de
-            // TODO_autocompletado_miembros.md que asume lo mismo).
-            //
-            // Fix: en vez de exponer el módulo como un único namespace
-            // bajo su propio nombre, cada definición de nivel superior
-            // del módulo (`class Dog`, cualquier `func` suelta, etc.) se
-            // vuelca directo al scope del importador -- mismo efecto
-            // que un "from Dog import *" -- así que `Dog()` referencia
-            // la clase de verdad. Los imports con punto (`import
-            // a.b.c`, arriba) y los que usan `as alias` (abajo) NO se
-            // tocan: ahí el nombre elegido a propósito por quien
-            // escribe el import sí tiene sentido como namespace
-            // explícito, en vez de volcarse a ciegas al scope de quien
-            // importa.
-            globals_ = avastd::move(outer_globals);
-            for (auto& entry : dict->entries) {
-                SetGlobal(entry.first, entry.second);
-            }
-            // module_dict no se guarda en ningun lado en esta rama (sus
-            // entries se copiaron una por una via SetGlobal); su propia
-            // referencia (ref_count=1 de la creacion, arriba) la libera
-            // su destructor automatico al salir de DoImport. El
-            // Release(module_dict) manual que habia aca duplicaba esa
-            // liberacion (double-release).
-        }
-    } else {
-        globals_ = avastd::move(outer_globals);
-        SetGlobal(alias, module_dict);
-        // Mismo caso: SetGlobal ya tomo su propia copia retenida
-        // (parametro por valor); la referencia local de module_dict la
-        // libera su destructor automatico, no un Release() manual.
-    }
+    // Placement rules (alias / dotted namespace / single-segment dump
+    // straight into scope -- see PlaceModuleInScope's own comment above
+    // for the reasoning behind each, in particular why a bare `import
+    // Dog` must dump Dog's own entries into scope instead of nesting
+    // them under a "Dog" dict: a Dict isn't callable, so `Dog()` would
+    // otherwise fail with "attempt to call a non-callable value").
+    globals_ = avastd::move(outer_globals);
+    PlaceModuleInScope(*this, module_path, alias, module_dict);
     
     return Value::Nil();
 }

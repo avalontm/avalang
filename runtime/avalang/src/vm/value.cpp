@@ -86,6 +86,20 @@ Value FromC(const ava_value_t& v) {
             out.obj = reinterpret_cast<Object*>(v.as.ref.id);
             break;
     }
+    // Critical: `out` is a real RAII Value -- its destructor will
+    // unconditionally call Release() on `out.obj` once `out` goes out of
+    // scope. Every call site in c_api.cpp does `Value v = FromC(handle);`
+    // as a purely internal staging step and lets `v` die at the end of
+    // its scope. Without this Retain(), that death silently steals one
+    // reference from the *caller's* object -- a reference FromC() never
+    // actually took out -- corrupting refcounts on essentially every
+    // C API call that takes an ava_value_t argument (ava_call's args,
+    // ava_list_append/get/set, ava_dict_set/get, ava_set_global, etc.),
+    // even though none of those call sites store or "consume" the value.
+    // This mirrors the copy constructor below (CopyUnionFrom + Retain):
+    // FromC() is conceptually creating a new owning alias of an existing
+    // reference, exactly like a copy, so it must retain like one.
+    Retain(out);
     return out;
 }
 

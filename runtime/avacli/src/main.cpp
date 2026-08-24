@@ -17,6 +17,18 @@
 #include <unistd.h>
 #endif
 
+#if defined(__linux__)
+// Windows reconstruye argv en cada llamada a
+// System.Environment.GetCommandLineArgs() via CommandLineToArgvW, asi
+// que no necesita ayuda de main(). En Linux no hay forma de recuperar
+// argv despues de que main() ya arranco, asi que LinEnvironment expone
+// un setter explicito que hay que llamar una sola vez acá con el
+// argc/argv real del proceso -- si no se llama, GetCommandLineArgs()
+// devuelve siempre una lista vacia (gap real encontrado en la Fase 7
+// de AVALANG_IMPORT_SYSTEM_PLAN.md).
+#include "platform/linux/LinEnvironment.h"
+#endif
+
 #define AVA_CLI_VERSION "0.1.0"
 
 namespace {
@@ -145,6 +157,82 @@ void PrintBanner() {
     std::printf("Type \"ava_cli --help\" for usage information.\n");
 }
 
+// Formatea un error (de compilacion o de runtime) con archivo:linea:columna
+// + snippet de la fuente + caret "^", igual que cualquier compilador decente.
+// Si el VM no tiene posicion asociada (line/col <= 0), cae a un mensaje
+// plano con el prefijo `fallback_label` (p.ej. "compile error" o
+// "runtime error").
+void PrintFormattedError(AvaVM* vm, const char* script_path,
+                          const std::string& err_msg,
+                          const char* fallback_label) {
+    int err_line = ava_last_error_line(vm);
+    int err_col = ava_last_error_column(vm);
+    char* err_src = ava_last_error_source(vm);
+    // La columna solo existe para errores de compilacion (el parser la
+    // trackea); los errores de runtime de la VM (MakeFrameError,
+    // vm/vm_errors.cpp) solo saben la linea -- ahi column llega en 0.
+    // Exigir columna > 0 para mostrar el formato lindo dejaba a TODO
+    // error de runtime cayendo siempre al fallback plano aunque la
+    // linea si fuera valida. Ahora alcanza con tener linea; el caret
+    // se omite (no se dibuja "^") cuando no hay columna real.
+    if (err_line > 0) {
+        if (err_col > 0) {
+            std::fprintf(stderr, "error at %s:%d:%d: %s\n",
+                         err_src ? err_src : script_path, err_line, err_col,
+                         err_msg.c_str());
+        } else {
+            std::fprintf(stderr, "error at %s:%d: %s\n",
+                         err_src ? err_src : script_path, err_line,
+                         err_msg.c_str());
+        }
+        std::ifstream src_file(script_path);
+        if (src_file) {
+            std::string src_line;
+            int cur = 1;
+            while (std::getline(src_file, src_line)) {
+                if (cur == err_line) {
+                    if (!src_line.empty() && src_line.back() == '\r') src_line.pop_back();
+                    std::fprintf(stderr, "    %d | %s\n", err_line, src_line.c_str());
+                    if (err_col > 0) {
+                        // Mismo algoritmo que formatError() en
+                        // frontend/frontend_antlr.cpp (errores de
+                        // compilacion): "^" en la columna, seguido de
+                        // "~" hasta el proximo separador (espacio o
+                        // puntuacion), tope 20 caracteres, para
+                        // subrayar el token entero en vez de un solo
+                        // caracter.
+                        size_t display_col = static_cast<size_t>(err_col) <= src_line.size() + 1
+                            ? static_cast<size_t>(err_col) : src_line.size() + 1;
+                        size_t indent = 5 + std::to_string(err_line).size();
+                        std::fprintf(stderr, "%*s", static_cast<int>(indent), "");
+                        for (size_t i = 1; i < display_col; ++i) {
+                            if (i - 1 < src_line.size() && (src_line[i-1] == '\t' || (unsigned char)src_line[i-1] < 32))
+                                std::fputc(src_line[i-1], stderr);
+                            else
+                                std::fputc(' ', stderr);
+                        }
+                        std::fputc('^', stderr);
+                        if (static_cast<size_t>(err_col) <= src_line.size()) {
+                            std::string token_text = src_line.substr(static_cast<size_t>(err_col) - 1);
+                            size_t token_end = token_text.find_first_of(" \t\n\r.,;:!?()[]{}");
+                            if (token_end == std::string::npos) token_end = token_text.size();
+                            for (size_t i = 1; i < token_end && i < 20; ++i) {
+                                std::fputc('~', stderr);
+                            }
+                        }
+                        std::fputc('\n', stderr);
+                    }
+                    break;
+                }
+                ++cur;
+            }
+        }
+    } else {
+        std::fprintf(stderr, "%s: %s\n", fallback_label, err_msg.c_str());
+    }
+    if (err_src) ava_string_free(err_src);
+}
+
 void PrintUsage(const char* argv0) {
     std::printf(
         "usage:\n"
@@ -181,6 +269,15 @@ int main(int argc, char** argv) {
     // pipe (and Ava Studio's reader thread) immediately.
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::setvbuf(stderr, nullptr, _IONBF, 0);
+
+#if defined(__linux__)
+    // Semilla de argv real para System.Environment.GetCommandLineArgs(),
+    // ANTES de que ExtractFlagValue (mas abajo) mute argc/argv quitando
+    // --modules -- igual que CommandLineToArgvW en Windows, se quiere el
+    // argv original tal cual lo vio el proceso, no la version ya
+    // recortada que usa el resto de este main() para su propio parsing.
+    ava::platform::linux_::SetCommandLineArgs(argc, argv);
+#endif
 
     if (argc < 2) {
         PrintBanner();
@@ -255,39 +352,7 @@ int main(int argc, char** argv) {
         if (err_msg.substr(0, 9) == "error at ") {
             std::fprintf(stderr, "%s\n", err_msg.c_str());
         } else {
-            int err_line = ava_last_error_line(vm);
-            int err_col = ava_last_error_column(vm);
-            char* err_src = ava_last_error_source(vm);
-            if (err_line > 0 && err_col > 0) {
-                std::fprintf(stderr, "error at %s:%d:%d: %s\n",
-                             err_src ? err_src : argv[1], err_line, err_col,
-                             err_msg.c_str());
-                std::ifstream src_file(argv[1]);
-                if (src_file) {
-                    std::string src_line;
-                    int cur = 1;
-                    while (std::getline(src_file, src_line)) {
-                        if (cur == err_line) {
-                            if (!src_line.empty() && src_line.back() == '\r') src_line.pop_back();
-                            std::fprintf(stderr, "    %d | %s\n", err_line, src_line.c_str());
-                            size_t indent = 5 + std::to_string(err_line).size();
-                            std::fprintf(stderr, "%*s", static_cast<int>(indent), "");
-                            for (int i = 1; i < err_col; ++i) {
-                                if (i - 1 < static_cast<int>(src_line.size()) && (src_line[i-1] == '\t' || (unsigned char)src_line[i-1] < 32))
-                                    std::fputc(src_line[i-1], stderr);
-                                else
-                                    std::fputc(' ', stderr);
-                            }
-                            std::fprintf(stderr, "^\n");
-                            break;
-                        }
-                        ++cur;
-                    }
-                }
-            } else {
-                std::fprintf(stderr, "compile error: %s\n", err_msg.c_str());
-            }
-            if (err_src) ava_string_free(err_src);
+            PrintFormattedError(vm, argv[1], err_msg, "compile error");
         }
         if (error) ava_string_free(error);
         ava_vm_destroy(vm);
@@ -297,7 +362,7 @@ int main(int argc, char** argv) {
     ava_value_t result{};
     ava_run(vm, module, &result, &error);
     if (error) {
-        std::fprintf(stderr, "runtime error: %s\n", error);
+        PrintFormattedError(vm, argv[1], error, "runtime error");
         ava_string_free(error);
         // Orden invertido: ver comentario en ava_barekernel_runner.cpp
         // sobre el use-after-free de teardown.

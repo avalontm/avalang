@@ -5,6 +5,7 @@
 #include "ava_types.h"
 #include "ava_utility.h"
 #include "ava_new.h"
+#include "ava_initializer_list.h"
 #include "../../AvaMemory.h"
 
 #if AVA_HAVE_STD_LIBRARY
@@ -59,7 +60,28 @@ public:
         for (; first != last; ++first) push_back(*first);
     }
 
+    // Constructor de lista `{a, b, c}` -- necesario para que
+    // `BuildNativeNamespace({{"Foo", foo}, {"Bar", bar}})` y patrones
+    // equivalentes (tablas estaticas armadas con brace-init) compilen
+    // en este target. Sin esto, `vector<T> v = {a, b, c};` o pasar un
+    // `{...}` a un parametro `const vector<T>&` no tiene forma de
+    // convertirse: fallaba en el link cruzado real contra
+    // i686-elf-g++ (ver AVALANG_IMPORT_SYSTEM_PLAN.md, Fase 7) con
+    // "invalid initialization of reference ... from ... brace-enclosed
+    // initializer list" en cada uno de esos sitios de system_module.cpp.
+    vector(std::initializer_list<T> il) : data_(nullptr), size_(0), capacity_(0) {
+        reserve(il.size());
+        for (const auto& item : il) push_back(item);
+    }
+
     ~vector() { clear_and_free(); }
+
+    vector& operator=(std::initializer_list<T> il) {
+        clear();
+        reserve(il.size());
+        for (const auto& item : il) push_back(item);
+        return *this;
+    }
 
     vector& operator=(const vector& other) {
         if (this == &other) return *this;

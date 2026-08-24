@@ -63,6 +63,7 @@ void Compiler::Emit(OpCode op, uint16_t a, uint16_t b, uint16_t c) {
     proto_->instructions.push_back({op, static_cast<uint8_t>(a), b, c});
 
     proto_->debug_lines.push_back(static_cast<uint32_t>(current_line_));
+    proto_->debug_columns.push_back(static_cast<uint32_t>(current_col_));
     if (next_reg_ > max_reg_) max_reg_ = next_reg_;
 }
 
@@ -601,8 +602,12 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
     throw std::runtime_error("unknown expr type in compiler");
 }
 
-void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
+void Compiler::StampLine(const std::shared_ptr<StmtNode>& stmt) {
     if (stmt->line > 0) { current_line_ = stmt->line; current_col_ = stmt->col; }
+}
+
+void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
+    StampLine(stmt);
 
     if (auto* e = dynamic_cast<ExprStmt*>(stmt.get())) {
 
@@ -1760,6 +1765,12 @@ std::shared_ptr<Proto> Compiler::Compile(const std::shared_ptr<Chunk>& chunk,
 }
 
 uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
+    // Ver StampLine() en compiler.h -- CompileChunk manda la ULTIMA statement
+    // del chunk por aca en vez de por CompileStmt (implicit-return del ultimo
+    // valor), asi que necesita el mismo stamping o los errores dentro de la
+    // ultima statement de un chunk se reportan en la statement previa.
+    StampLine(stmt);
+
     if (auto* e = dynamic_cast<ExprStmt*>(stmt.get())) {
         return CompileExpr(e->expr);
     }

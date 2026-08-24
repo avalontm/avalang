@@ -102,7 +102,9 @@ Value VM::Call(const Value& callable, const avastd::vector<Value>& args) {
     if (callable.type == ValueType::Coroutine) {
         auto* co = reinterpret_cast<Coroutine*>(callable.obj);
         if (co->status == CoStatus::Running) {
-            AVA_THROW(avastd::runtime_error("attempt to call a running coroutine"));
+            AVA_THROW(frames_.empty()
+                ? AvaError("attempt to call a running coroutine")
+                : MakeFrameError(frames_.back(), "attempt to call a running coroutine"));
         }
 
         co->status = CoStatus::Running;
@@ -126,17 +128,6 @@ Value VM::Call(const Value& callable, const avastd::vector<Value>& args) {
             resume_frame.argc = static_cast<uint32_t>(args.size());
             frames_.push_back(resume_frame);
         } else {
-            // Resuming a coroutine that's already suspended on a `yield`:
-            // whatever's passed to resume() now becomes the *result* of that
-            // `yield` expression, not a fresh set of call arguments. The
-            // frame that's about to continue is frames_.back() (the one that
-            // was actively running when the whole call chain suspended), and
-            // its pc already advanced past the YIELD instruction that put it
-            // to sleep -- so code[pc-1] IS that YIELD instruction, and its
-            // `a` field tells us exactly which register to overwrite with
-            // the resume value (packed into a list the same way multi-value
-            // yields are packed, so `x = yield a, b` / `resume(co, 1, 2)`
-            // lines up with `x, y = yield a, b`-style unpacking).
             auto& top_frame = frames_.back();
             bool wrote_resume_value = false;
             if (top_frame.proto && top_frame.pc > 0 &&
@@ -157,9 +148,6 @@ Value VM::Call(const Value& callable, const avastd::vector<Value>& args) {
                 }
             }
             if (!wrote_resume_value) {
-                // Defensive fallback (should not normally happen): keep the
-                // old behavior so a malformed/unexpected suspension point
-                // doesn't silently drop the resume args.
                 for (size_t i = 0; i < args.size() && i < frames_[0].registers.size(); ++i) {
                     frames_[0].registers[i] = args[i];
                 }
@@ -185,8 +173,10 @@ Value VM::Call(const Value& callable, const avastd::vector<Value>& args) {
         return result;
     }
 
-    AVA_THROW(avastd::runtime_error("attempt to call a non-callable value (type=" +
-                              avastd::to_string(static_cast<int>(callable.type)) + ")"));
+    AVA_THROW(frames_.empty()
+        ? AvaError("attempt to call a non-callable value (type=" +
+                   avastd::to_string(static_cast<int>(callable.type)) + ")")
+        : MakeNonCallableError(*this, frames_.back(), callable));
 }
 
 } // namespace ava

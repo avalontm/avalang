@@ -178,6 +178,15 @@ void WriteProtoNode(const Proto& proto, avastd::ostream& out, bool with_debug_in
     if (with_debug_info) {
         WriteU32(out, static_cast<uint32_t>(proto.debug_lines.size()));
         for (uint32_t line : proto.debug_lines) WriteU32(out, line);
+        // debug_columns es nuevo (antes MakeFrameError solo tenia
+        // linea); serializado siempre despues de debug_lines, tamano
+        // propio por si algun Proto viejo en memoria no tiene una
+        // entrada 1:1 con instructions (no deberia pasar, pero no vale
+        // la pena asumirlo en el formato on-disk). Rompe compatibilidad
+        // con .avapack generados antes de este cambio -- aceptable,
+        // formato en desarrollo activo, no hay consumidores externos.
+        WriteU32(out, static_cast<uint32_t>(proto.debug_columns.size()));
+        for (uint32_t col : proto.debug_columns) WriteU32(out, col);
         WriteString(out, proto.debug_name);
         WriteString(out, proto.source_name);
     }
@@ -256,6 +265,14 @@ bool ReadProtoNode(avastd::istream& in, bool with_debug_info,
             uint32_t line = 0;
             if (!ReadU32(in, line)) { error_out = "truncated debug line"; return false; }
             proto->debug_lines.push_back(line);
+        }
+        uint32_t debug_col_count = 0;
+        if (!ReadU32(in, debug_col_count)) { error_out = "truncated debug column count"; return false; }
+        proto->debug_columns.reserve(debug_col_count);
+        for (uint32_t i = 0; i < debug_col_count; ++i) {
+            uint32_t col = 0;
+            if (!ReadU32(in, col)) { error_out = "truncated debug column"; return false; }
+            proto->debug_columns.push_back(col);
         }
         if (!ReadString(in, proto->debug_name)) { error_out = "truncated debug_name"; return false; }
         if (!ReadString(in, proto->source_name)) { error_out = "truncated source_name"; return false; }

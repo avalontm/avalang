@@ -1,0 +1,96 @@
+# system_demo.ava
+#
+# Ejemplo de referencia de `import system` -- pensado para leer, no para
+# ejercitar casos borde (eso ya lo hace samples/test/system_console_demo.ava,
+# que es exhaustivo pero pensado como test, no como documentacion).
+#
+# `import system` trae de una sola vez los cinco namespaces del PAL:
+# Console, Environment, IO, Diagnostics.Process y DateTime. Si un script
+# solo necesita una de estas areas, existe el azucar `import system.io`
+# (equivalente a system.io/environment/console/datetime/diagnostics) --
+# ver Fase 6 del plan para el detalle de esa forma alternativa.
+
+import system
+
+# ---------------------------------------------------------------------
+# Console
+# ---------------------------------------------------------------------
+
+Console.WriteLine("=== system_demo.ava ===")
+Console.Write("sin salto de linea, ")
+Console.WriteLine("y esto sigue en la misma linea")
+
+Console.ForegroundColor(Console.Colors.Cyan)
+Console.WriteLine("texto en color (si la terminal lo soporta)")
+Console.ResetColor()
+
+# ---------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------
+
+Console.WriteLine("")
+Console.WriteLine("directorio actual: " + Environment.GetCurrentDirectory())
+
+Environment.SetEnvironmentVariable("AVALANG_DEMO_GREETING", "hola desde avalang")
+Console.WriteLine(Environment.GetEnvironmentVariable("AVALANG_DEMO_GREETING"))
+
+# GetEnvironmentVariable() devuelve nil (no string vacio) si la variable
+# no existe -- siempre hay que comparar contra nil, no contra "".
+missing = Environment.GetEnvironmentVariable("UNA_VARIABLE_QUE_NO_EXISTE")
+if missing == nil then
+    Console.WriteLine("UNA_VARIABLE_QUE_NO_EXISTE no esta definida")
+end
+
+# ---------------------------------------------------------------------
+# IO (archivos y directorios)
+# ---------------------------------------------------------------------
+
+Console.WriteLine("")
+IO.File.WriteAllText("system_demo_scratch.txt", "contenido de prueba")
+Console.WriteLine("contenido leido: " + IO.File.ReadAllText("system_demo_scratch.txt"))
+Console.WriteLine("tamano en bytes: " + str(IO.File.Size("system_demo_scratch.txt")))
+
+#IO.Directory.Create("system_demo_scratch_dir")
+for entry in IO.Directory.Enumerate(Environment.GetCurrentDirectory()) then
+    if entry.Name == "system_demo_scratch.txt" or entry.Name == "system_demo_scratch_dir" then
+        Console.WriteLine("encontrado: " + entry.Name + " (directorio: " + str(entry.IsDirectory) + ")")
+    end
+end
+
+# limpieza -- este script se puede correr mas de una vez sin dejar basura
+IO.Directory.Delete("system_demo_scratch_dir")
+IO.File.Delete("system_demo_scratch.txt")
+
+# ---------------------------------------------------------------------
+# Diagnostics.Process
+# ---------------------------------------------------------------------
+
+Console.WriteLine("")
+Console.WriteLine("pid actual: " + str(Diagnostics.Process.GetCurrentId()))
+
+result = Diagnostics.Process.Start("echo", ["hola", "desde", "un", "proceso", "hijo"])
+if result != nil then
+    Console.WriteLine("el proceso hijo termino con exit code: " + str(result.ExitCode))
+else
+    # Start devuelve nil solo si el proceso ni siquiera pudo lanzarse
+    # (tipicamente el binario no existe) -- no confundir con "el proceso
+    # corrio y devolvio un codigo de error", que es un Dict valido.
+    Console.WriteLine("no se pudo lanzar el proceso")
+end
+
+# ---------------------------------------------------------------------
+# DateTime
+# ---------------------------------------------------------------------
+
+Console.WriteLine("")
+now = DateTime.Now()
+Console.WriteLine("ahora: " + DateTime.ToString(now))
+Console.WriteLine("anio: " + str(now.Year) + ", dia de la semana: " + str(now.DayOfWeek))
+
+before = DateTime.Now()
+DateTime.Sleep(100)
+after = DateTime.Now()
+Console.WriteLine("Sleep(100) durmio " + str(after.Ticks - before.Ticks) + "ms")
+
+Console.WriteLine("")
+Console.WriteLine("=== fin del demo ===")

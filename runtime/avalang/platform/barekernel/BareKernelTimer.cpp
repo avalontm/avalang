@@ -29,7 +29,8 @@ uint64_t BareKernelTimer::ScheduleOnce(uint32_t delayMs, avastd::function<void()
     // with a one-shot thread. This is correct but heavyweight; when the
     // kernel grows a timer-wheel syscall, swap this for ckm_timer.
     auto* cb = new TimerCb{avastd::move(callback), delayMs};
-    ckm_thread_create(&timer_trampoline, cb);
+    int h = ckm_thread_create(&timer_trampoline, cb);
+    if (h < 0) { delete cb; return 0; }
     return 1;
 #elif CKM_CAP_TIMERS
     if (!callback) return 0;

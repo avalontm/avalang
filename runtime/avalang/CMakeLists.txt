@@ -84,9 +84,11 @@ set(CORE_SOURCES
     src/builtins/builtin_coroutine.cpp
     src/builtins/builtin_async.cpp
     src/builtins/builtin_registry.cpp
+    src/builtins/builtin_shared.cpp
     src/builtins/builtin_natives.cpp
     src/builtins/builtin_mem.cpp
     src/builtins/builtin_init.cpp
+    src/builtins/system_module.cpp
     src/ui/builtins.cpp
     ${FRONTEND_SOURCES}
 )

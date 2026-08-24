@@ -217,15 +217,47 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& 
     const uint16_t tmp_reg = static_cast<uint16_t>(proto.num_registers + 1);
     proto.num_registers = static_cast<uint16_t>(proto.num_registers + 2);
 
+    // proto.debug_lines/debug_columns tienen que quedar alineados 1:1 con
+    // proto.instructions al final de esta funcion, igual que los deja
+    // Compiler::Emit() (ver compiler.cpp) -- este pase reconstruye
+    // instructions entero en `out`, asi que construye out_lines/out_cols en
+    // el mismo orden en vez de dejar los arrays viejos (de otro largo y
+    // otro mapeo) pisados por el `proto.instructions = move(out)` de abajo.
+    // Antes de este fix, cualquier bytecode que pasara por flatten
+    // (ava_pack/ava_cli build --obfuscate) quedaba con debug_lines
+    // desalineado -- errores runtime en un build empacado reportaban
+    // linea/columna de otra instruccion cualquiera, no la que fallo.
     avastd::vector<Instr> out;
-    out.reserve(proto.instructions.size() * 2 + blocks.size() * 3 + 8);
+    const bool have_debug_info = !proto.debug_lines.empty();
+    avastd::vector<uint32_t> out_lines;
+    avastd::vector<uint32_t> out_cols;
+    if (have_debug_info) {
+        out_lines.reserve(proto.instructions.size() * 2 + blocks.size() * 3 + 8);
+        out_cols.reserve(proto.instructions.size() * 2 + blocks.size() * 3 + 8);
+    }
+    // Instrucciones sinteticas del dispatcher/trampolines (no vienen de
+    // ninguna statement real) -- se stampean con linea/columna 0, el mismo
+    // "desconocido" que ya usa MakeFrameError cuando no hay debug info.
+    auto push_synth = [&](const Instr& instr) {
+        out.push_back(instr);
+        if (have_debug_info) { out_lines.push_back(0); out_cols.push_back(0); }
+    };
+    // Instruccion copiada tal cual desde proto.instructions[src_idx] --
+    // arrastra su linea/columna original.
+    auto push_orig = [&](size_t src_idx) {
+        out.push_back(proto.instructions[src_idx]);
+        if (have_debug_info) {
+            out_lines.push_back(src_idx < proto.debug_lines.size() ? proto.debug_lines[src_idx] : 0);
+            out_cols.push_back(src_idx < proto.debug_columns.size() ? proto.debug_columns[src_idx] : 0);
+        }
+    };
 
     Instr loadk_entry{};
     loadk_entry.op = OpCode::LOADK;
     loadk_entry.a = state_reg;
     loadk_entry.b = state_const_idx[0];
     loadk_entry.c = 0;
-    out.push_back(loadk_entry);
+    push_synth(loadk_entry);
 
     const size_t dispatcher_start = out.size();
     avastd::vector<size_t> dispatch_jmp_slot(total_states);
@@ -236,20 +268,20 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& 
         eqk.a = tmp_reg;
         eqk.b = state_reg;
         eqk.c = state_const_idx[block_id];
-        out.push_back(eqk);
+        push_synth(eqk);
 
         Instr test{};
         test.op = OpCode::TEST;
         test.a = tmp_reg;
         test.b = 0;
         test.c = 1;
-        out.push_back(test);
+        push_synth(test);
 
         dispatch_jmp_slot[block_id] = out.size();
         Instr jmp{};
         jmp.op = OpCode::JMP;
         jmp.bx32 = 0;
-        out.push_back(jmp);
+        push_synth(jmp);
     }
     {
         // Estado desconocido (no deberia poder pasar con bytecode propio,
@@ -261,7 +293,7 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& 
         trap.a = 0;
         trap.b = 0;
         trap.c = 0;
-        out.push_back(trap);
+        push_synth(trap);
     }
 
     avastd::vector<size_t> entry_point(total_states);
@@ -289,11 +321,11 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& 
         const size_t body_end = ends_in_jmp ? blk.end - 1 : blk.end;
 
         for (size_t i = blk.start; i < body_end; ++i) {
-            out.push_back(proto.instructions[i]);
+            push_orig(i);
         }
 
         if (ends_in_return) {
-            out.push_back(proto.instructions[blk.end - 1]);
+            push_orig(blk.end - 1);
             continue;
         }
 
@@ -317,19 +349,19 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& 
             jm.bx32 = 0;
             deferred_jmp_slot.push_back(out.size());
             deferred_target_block.push_back(target_block_id);
-            out.push_back(jm);
+            push_synth(jm);
         } else {
             Instr lk{};
             lk.op = OpCode::LOADK;
             lk.a = state_reg;
             lk.b = state_const_idx[target_block_id];
             lk.c = 0;
-            out.push_back(lk);
+            push_synth(lk);
 
             Instr jm{};
             jm.op = OpCode::JMP;
             jm.bx32 = static_cast<int32_t>(static_cast<int64_t>(dispatcher_start) - static_cast<int64_t>(out.size()) - 1);
-            out.push_back(jm);
+            push_synth(jm);
         }
     }
 
@@ -342,12 +374,12 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& 
         lk.a = state_reg;
         lk.b = state_const_idx[deferred_target_block[k]];
         lk.c = 0;
-        out.push_back(lk);
+        push_synth(lk);
 
         Instr jm{};
         jm.op = OpCode::JMP;
         jm.bx32 = static_cast<int32_t>(static_cast<int64_t>(dispatcher_start) - static_cast<int64_t>(out.size()) - 1);
-        out.push_back(jm);
+        push_synth(jm);
 
         size_t slot = deferred_jmp_slot[k];
         out[slot].bx32 = static_cast<int32_t>(static_cast<int64_t>(trampoline_entry) - static_cast<int64_t>(slot) - 1);
@@ -360,7 +392,7 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& 
         ret.a = 0;
         ret.b = 0;
         ret.c = 0;
-        out.push_back(ret);
+        push_synth(ret);
     }
 
     for (size_t s = 0; s < total_states; ++s) {
@@ -369,6 +401,10 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& 
     }
 
     proto.instructions = avastd::move(out);
+    if (have_debug_info) {
+        proto.debug_lines = avastd::move(out_lines);
+        proto.debug_columns = avastd::move(out_cols);
+    }
     return true;
 }
 

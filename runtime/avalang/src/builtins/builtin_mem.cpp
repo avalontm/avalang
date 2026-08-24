@@ -25,6 +25,7 @@
 #include "builtin_natives.h"
 
 #include "vm/value.h"
+#include "builtin_shared.h"
 
 #include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 
@@ -56,7 +57,7 @@ ava_value_t builtin_mem_peek_string(AvaVM*, const ava_value_t* args, size_t coun
     if (count < 1) return ToC(Value::Nil());
     void* ptr = AsPtr(FromC(args[0]));
     if (!ptr) return ToC(Value::Nil());
-    return ToC(Value::String(avastd::string(static_cast<const char*>(ptr))));
+    return ToCNew(Value::String(avastd::string(static_cast<const char*>(ptr))));
 }
 
 ava_value_t builtin_mem_peek_ptr(AvaVM*, const ava_value_t* args, size_t count, void*) {

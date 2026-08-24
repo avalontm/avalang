@@ -16,6 +16,7 @@
     { "include": "#operators-logical" },
     { "include": "#language-constants" },
     { "include": "#this-reference" },
+    { "include": "#stdlib-namespaces" },
     { "include": "#property-access" },
     { "include": "#strings" },
     { "include": "#numbers" },
@@ -144,6 +145,12 @@
       "name": "variable.language.this.avalang"
     },
 
+    "stdlib-namespaces": {
+      "comment": "Namespaces del modulo nativo 'system' (runtime/avalang/src/builtins/system_module.cpp): System, System.Console, System.DateTime, System.Environment, System.IO.{File,Directory}, System.Diagnostics.Process. Solo colorea cuando el identificador va seguido de un punto (uso como namespace), para no pisar variables sueltas que se llamen igual.",
+      "match": "\\b(System|Console|DateTime|Environment|IO|File|Directory|Diagnostics|Process)\\b(?=\\s*\\.)",
+      "name": "support.class.avalang"
+    },
+
     "property-access": {
       "match": "(?<=\\.)\\s*\\b([a-zA-Z_][a-zA-Z_0-9]*)\\b(?!\\s*\\()",
       "captures": {
@@ -256,6 +263,7 @@
             { "include": "#operators-logical" },
             { "include": "#language-constants" },
             { "include": "#this-reference" },
+            { "include": "#stdlib-namespaces" },
             { "include": "#property-access" },
             { "include": "#strings" },
             { "include": "#numbers" },

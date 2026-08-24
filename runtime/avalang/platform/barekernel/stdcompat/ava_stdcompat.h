@@ -20,6 +20,7 @@
 #include "ava_new.h"
 #include "ava_utility.h"
 #include "ava_atomic.h"
+#include "ava_initializer_list.h"
 #include "ava_vector.h"
 #include "ava_string.h"
 #include "ava_error.h"

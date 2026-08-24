@@ -21,6 +21,8 @@
 // bindings/target/ckm_syscall.h (incluido mas abajo, dentro del bloque
 // AVA_BAREKERNEL_TARGET_BINDING) -- ese archivo ya no incluye
 // <stdint.h>/<stddef.h> por su cuenta, ver el comentario ahi.
+typedef __UINT8_TYPE__  uint8_t;
+typedef __UINT16_TYPE__ uint16_t;
 typedef __UINT32_TYPE__ uint32_t;
 typedef __UINT64_TYPE__ uint64_t;
 typedef __INT32_TYPE__  int32_t;

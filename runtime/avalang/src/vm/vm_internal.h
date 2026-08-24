@@ -9,23 +9,17 @@
 #include "coroutine.h"
 #include "module.h"
 #include "vm_helpers.h"
+#include "../common/ava_error.h"
 
 namespace ava {
 
 struct AvaRaiseException : public avastd::exception {
     const char* what() const noexcept override { return "ava raise"; }
 #if !AVA_HAVE_EXCEPTIONS
-    // Ver ava_type_tag() en ava_error.h: solo existe en la clase
-    // avastd::exception propia (target sin RTTI real). En hosts con
-    // excepciones reales avastd::exception ES std::exception (alias), que
-    // no tiene este metodo -- ahi vm.cpp sigue usando
-    // catch(AvaRaiseException&) / catch(std::exception&) normales, sin
-    // necesitar ningun tag.
     int ava_type_tag() const noexcept override { return 1; }
 #endif
 };
 
-// Opcode implementations
 void OpAdd(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 void OpSub(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 void OpMul(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
@@ -78,6 +72,18 @@ void OpResume(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K,
 void OpAwait(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 
 void HandleFrameError(VM& vm, size_t frame_idx, const avastd::exception& e);
+
+AvaError MakeFrameError(const CallFrame& frame, const avastd::string& message);
+
+// Construye el AvaError para un CALL/BASECALL cuyo callee no es
+// invocable. Si el callee se puede rastrear hasta un identificador
+// directo (una variable global, opcionalmente con un `.attr`, como
+// `Console` o `Console.WriteLine`) el mensaje lo nombra explicitamente;
+// si ademas ese identificador raiz coincide con lo que expone un modulo
+// nativo registrado (ver VM::FindNativeModuleExporting), sugiere el
+// `import` que falta. Sin rastro reconstruible, cae al mensaje generico
+// de siempre ("non-callable value (type=N)").
+AvaError MakeNonCallableError(VM& vm, const CallFrame& frame, const Value& callee);
 
 } // namespace ava
 

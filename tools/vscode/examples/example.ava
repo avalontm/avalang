@@ -94,3 +94,27 @@ end
 
 print(calificacion(95))
 
+import system
+
+System.Console.ForegroundColor(System.Console.Colors.Cyan)
+System.Console.WriteLine($"hello from {System.Environment.GetEnvironmentVariable("USER")}")
+System.Console.ResetColor()
+
+now = System.DateTime.Now()
+print(System.DateTime.ToString(now))
+System.DateTime.Sleep(10)
+
+if System.IO.File.Exists("config.json") then
+    contents = System.IO.File.ReadAllText("config.json")
+    print(contents)
+end
+
+for entry in System.IO.Directory.Enumerate(".") then
+    print(entry["Name"])
+end
+
+result = System.Diagnostics.Process.Start("echo", ["hi"])
+if result then
+    print(result["Stdout"])
+end
+

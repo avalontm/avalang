@@ -19,6 +19,14 @@ public:
 
     void SetForegroundColor(ConsoleColor color) override;
     void ResetColor() override;
+
+private:
+    // Fase 7 bugfix: ReadFile() crudo no bufferea internamente entre
+    // llamadas como sí lo hace fgets() en libc (el que usa LinConsole).
+    // Si una sola lectura trae mas de una linea, todo lo que quede
+    // despues del primer '\n' tiene que sobrevivir hasta el proximo
+    // ReadLine() en vez de perderse -- ver ReadLine() en el .cpp.
+    std::string pending_input_;
 };
 
 } // namespace windows

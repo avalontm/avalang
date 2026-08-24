@@ -5,7 +5,20 @@
 
 namespace {
 
-struct AvaAllocHeader {
+// alignas(16): sin esto, sizeof(AvaAllocHeader) es sizeof(size_t) == 4
+// bytes en este target (i686, 32 bits) -- y como el puntero que se
+// devuelve al llamador es exactamente `raw + sizeof(AvaAllocHeader)`,
+// cualquier alineacion que ckm_malloc(total) haya garantizado sobre
+// `raw` queda corrida 4 bytes en el puntero de usuario. operator new
+// esta obligado por el standard a devolver memoria alineada a
+// __STDCPP_DEFAULT_NEW_ALIGNMENT__ (16 en x86, cubre double/int64_t/
+// SSE), y ese es justamente el unico consumidor real de ava_alloc en
+// este target (ver ava_new.h). Con el header paddeado a 16 bytes, el
+// corrimiento es un multiplo exacto de 16 y no rompe nada que
+// ckm_malloc ya haya alineado; no depende de conocer el alineamiento
+// exacto que da ckm_malloc, solo de que sea <= 16 (cualquier
+// allocator de proposito general cumple esto).
+struct alignas(16) AvaAllocHeader {
     size_t size;
 };
 

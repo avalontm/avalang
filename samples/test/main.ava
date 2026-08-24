@@ -1,1 +1,8 @@
+import system
+
 print("hola mundo!!")
+
+Console.WriteLine("hola mundo!!")
+msg = Console.ReadLine()
+
+print(msg)

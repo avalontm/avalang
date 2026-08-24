@@ -29,8 +29,33 @@ public:
     void RegisterNative(const avastd::string& name, AvaNativeFn fn, void* user_data);
     void RegisterBuiltinMethod(const avastd::string& name, AvaNativeFn fn, void* user_data);
 
+    // Phase 1 of AVALANG_IMPORT_SYSTEM_PLAN.md: lets an embedder (a
+    // builtins/*.cpp registration function, not user script code) expose
+    // a module by exact name that `import <module_path>` can resolve
+    // without touching disk. `factory` is invoked once per `DoImport`
+    // call for that name and must return a Dict value (built the same
+    // way a builtin registration function already builds native
+    // functions, see builtins/system_module.cpp) -- the same value that
+    // `import <name>` would otherwise have built out of a compiled
+    // module's globals_. No caching happens here: every `import` of a
+    // registered name re-invokes `factory`.
+    using NativeModuleFactory = avastd::function<Value(VM&)>;
+    void RegisterNativeModule(const avastd::string& module_path, NativeModuleFactory factory);
+
     Value GetGlobal(const avastd::string& name) const;
     void  SetGlobal(const avastd::string& name, Value value);
+    bool  HasGlobal(const avastd::string& name) const { return globals_.find(name) != globals_.end(); }
+
+    // Busca, entre los modulos nativos registrados (RegisterNativeModule --
+    // "system", "system.console", etc.), el primero cuyo Dict de nivel
+    // superior expone una entrada llamada `symbol`. Construye cada Dict
+    // de forma transitoria (invocando la factory sin llamar a
+    // PlaceModuleInScope) solo para inspeccionarlo -- las factories
+    // registradas en este codebase (ver builtins/system_module.cpp) son
+    // puro armado de Value/Dict, sin efectos secundarios, asi que esto es
+    // seguro de llamar desde un path de error. Devuelve el module_path
+    // (p.ej. "system") o "" si ningun modulo nativo expone ese nombre.
+    avastd::string FindNativeModuleExporting(const avastd::string& symbol) const;
 
     Value Run(const avastd::shared_ptr<Proto>& main);
     Value RunFile(const avastd::string& file_path);
@@ -302,6 +327,10 @@ private:
     ModuleCache module_cache_;
     avastd::string current_module_;
     avastd::unordered_map<avastd::string, avastd::pair<AvaNativeFn, void*>> builtin_methods_;
+    // Phase 1 of AVALANG_IMPORT_SYSTEM_PLAN.md. Keyed by exact
+    // module_path (e.g. "system"), checked in DoImport before any file
+    // resolution is attempted.
+    avastd::unordered_map<avastd::string, NativeModuleFactory> native_modules_;
 
     Value pending_exception_;
     bool try_had_exception_ = false;

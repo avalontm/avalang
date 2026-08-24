@@ -123,5 +123,195 @@
       "$\"${1:text}{${0:expr}}\""
     ],
     "description": "f-string with interpolation"
+  },
+
+  "import-system": {
+    "prefix": "import.system",
+    "body": [
+      "import system"
+    ],
+    "description": "import system (Console, DateTime, Environment, IO, Diagnostics)"
+  },
+  "system-console-write": {
+    "prefix": "System.Console.Write",
+    "body": [
+      "System.Console.Write(${1:text})"
+    ],
+    "description": "System.Console.Write(text)"
+  },
+  "system-console-writeline": {
+    "prefix": "System.Console.WriteLine",
+    "body": [
+      "System.Console.WriteLine(${1:text})"
+    ],
+    "description": "System.Console.WriteLine(text)"
+  },
+  "system-console-writeerror": {
+    "prefix": "System.Console.WriteError",
+    "body": [
+      "System.Console.WriteError(${1:text})"
+    ],
+    "description": "System.Console.WriteError(text)"
+  },
+  "system-console-readline": {
+    "prefix": "System.Console.ReadLine",
+    "body": [
+      "System.Console.ReadLine()"
+    ],
+    "description": "System.Console.ReadLine() -- nil on EOF"
+  },
+  "system-console-foregroundcolor": {
+    "prefix": "System.Console.ForegroundColor",
+    "body": [
+      "System.Console.ForegroundColor(System.Console.Colors.${1|Default,Black,Red,Green,Yellow,Blue,Magenta,Cyan,White|})"
+    ],
+    "description": "System.Console.ForegroundColor(colorName) -- returns false on bad color name"
+  },
+  "system-console-resetcolor": {
+    "prefix": "System.Console.ResetColor",
+    "body": [
+      "System.Console.ResetColor()"
+    ],
+    "description": "System.Console.ResetColor()"
+  },
+  "system-datetime-now": {
+    "prefix": "System.DateTime.Now",
+    "body": [
+      "System.DateTime.Now()"
+    ],
+    "description": "System.DateTime.Now() -- Dict{Year,Month,Day,Hour,Minute,Second,Millisecond,DayOfWeek,Ticks}"
+  },
+  "system-datetime-utcnow": {
+    "prefix": "System.DateTime.UtcNow",
+    "body": [
+      "System.DateTime.UtcNow()"
+    ],
+    "description": "System.DateTime.UtcNow()"
+  },
+  "system-datetime-tostring": {
+    "prefix": "System.DateTime.ToString",
+    "body": [
+      "System.DateTime.ToString(${1:dt})"
+    ],
+    "description": "System.DateTime.ToString(dt) -- ISO 8601 (YYYY-MM-DDTHH:MM:SS.mmmZ)"
+  },
+  "system-datetime-sleep": {
+    "prefix": "System.DateTime.Sleep",
+    "body": [
+      "System.DateTime.Sleep(${1:milliseconds})"
+    ],
+    "description": "System.DateTime.Sleep(ms)"
+  },
+  "system-environment-getvar": {
+    "prefix": "System.Environment.GetEnvironmentVariable",
+    "body": [
+      "System.Environment.GetEnvironmentVariable(${1:name})"
+    ],
+    "description": "System.Environment.GetEnvironmentVariable(name) -- nil if not set"
+  },
+  "system-environment-setvar": {
+    "prefix": "System.Environment.SetEnvironmentVariable",
+    "body": [
+      "System.Environment.SetEnvironmentVariable(${1:name}, ${2:value})"
+    ],
+    "description": "System.Environment.SetEnvironmentVariable(name, value)"
+  },
+  "system-environment-getcwd": {
+    "prefix": "System.Environment.GetCurrentDirectory",
+    "body": [
+      "System.Environment.GetCurrentDirectory()"
+    ],
+    "description": "System.Environment.GetCurrentDirectory()"
+  },
+  "system-environment-setcwd": {
+    "prefix": "System.Environment.SetCurrentDirectory",
+    "body": [
+      "System.Environment.SetCurrentDirectory(${1:path})"
+    ],
+    "description": "System.Environment.SetCurrentDirectory(path)"
+  },
+  "system-environment-args": {
+    "prefix": "System.Environment.GetCommandLineArgs",
+    "body": [
+      "System.Environment.GetCommandLineArgs()"
+    ],
+    "description": "System.Environment.GetCommandLineArgs() -- List of strings"
+  },
+  "system-io-file-readalltext": {
+    "prefix": "System.IO.File.ReadAllText",
+    "body": [
+      "System.IO.File.ReadAllText(${1:path})"
+    ],
+    "description": "System.IO.File.ReadAllText(path) -- nil on failure"
+  },
+  "system-io-file-writealltext": {
+    "prefix": "System.IO.File.WriteAllText",
+    "body": [
+      "System.IO.File.WriteAllText(${1:path}, ${2:content})"
+    ],
+    "description": "System.IO.File.WriteAllText(path, content)"
+  },
+  "system-io-file-delete": {
+    "prefix": "System.IO.File.Delete",
+    "body": [
+      "System.IO.File.Delete(${1:path})"
+    ],
+    "description": "System.IO.File.Delete(path)"
+  },
+  "system-io-file-exists": {
+    "prefix": "System.IO.File.Exists",
+    "body": [
+      "System.IO.File.Exists(${1:path})"
+    ],
+    "description": "System.IO.File.Exists(path) -- false for directories"
+  },
+  "system-io-file-size": {
+    "prefix": "System.IO.File.Size",
+    "body": [
+      "System.IO.File.Size(${1:path})"
+    ],
+    "description": "System.IO.File.Size(path) -- nil on failure"
+  },
+  "system-io-directory-create": {
+    "prefix": "System.IO.Directory.Create",
+    "body": [
+      "System.IO.Directory.Create(${1:path})"
+    ],
+    "description": "System.IO.Directory.Create(path)"
+  },
+  "system-io-directory-delete": {
+    "prefix": "System.IO.Directory.Delete",
+    "body": [
+      "System.IO.Directory.Delete(${1:path})"
+    ],
+    "description": "System.IO.Directory.Delete(path)"
+  },
+  "system-io-directory-exists": {
+    "prefix": "System.IO.Directory.Exists",
+    "body": [
+      "System.IO.Directory.Exists(${1:path})"
+    ],
+    "description": "System.IO.Directory.Exists(path) -- false for files"
+  },
+  "system-io-directory-enumerate": {
+    "prefix": "System.IO.Directory.Enumerate",
+    "body": [
+      "System.IO.Directory.Enumerate(${1:path})"
+    ],
+    "description": "System.IO.Directory.Enumerate(path) -- List of Dict{Name, IsDirectory}, nil on failure"
+  },
+  "system-diagnostics-process-start": {
+    "prefix": "System.Diagnostics.Process.Start",
+    "body": [
+      "System.Diagnostics.Process.Start(${1:command}, [${2:args}])"
+    ],
+    "description": "System.Diagnostics.Process.Start(command, args) -- blocking, Dict{ExitCode,Stdout,Stderr} or nil if it could not launch"
+  },
+  "system-diagnostics-process-getcurrentid": {
+    "prefix": "System.Diagnostics.Process.GetCurrentId",
+    "body": [
+      "System.Diagnostics.Process.GetCurrentId()"
+    ],
+    "description": "System.Diagnostics.Process.GetCurrentId()"
   }
 }

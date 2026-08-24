@@ -3,6 +3,7 @@
 #include "frontend/frontend.h"
 #include "builtins/builtin.h"
 #include "builtins/builtin_natives.h"
+#include "builtins/system_module.h"
 #include "ui/builtins.h"
 #include "compiler/proto_io.h"
 #include "compiler/obfuscate.h"
@@ -34,6 +35,7 @@ AVA_API AvaVM* ava_vm_create() {
     VM* vm = new VM();
     RegisterBuiltinMethods(reinterpret_cast<AvaVM*>(vm));
     RegisterBuiltinGlobals(reinterpret_cast<AvaVM*>(vm));
+    RegisterSystemModule(*vm);
     ava::ui::RegisterUIBuiltins(reinterpret_cast<AvaVM*>(vm));
     return reinterpret_cast<AvaVM*>(vm);
 }
@@ -419,6 +421,7 @@ AVA_API AvaCoStatus ava_coroutine_status(AvaVM*, AvaCoroutine* co) {
 AVA_API ava_value_t ava_string_create(AvaVM*, const char* utf8, size_t len) {
     auto* s = new StringObj(avastd::string(utf8, len));
     Value v; v.type = ValueType::String; v.obj = s;
+    Retain(v);  // ver comentario en ava_run sobre por que hace falta
     return ToC(v);
 }
 
@@ -432,6 +435,7 @@ AVA_API const char* ava_string_data(AvaVM*, ava_value_t str, size_t* out_len) {
 AVA_API ava_value_t ava_list_create(AvaVM*) {
     auto* l = new ListObj();
     Value v; v.type = ValueType::List; v.obj = l;
+    Retain(v);  // ver comentario en ava_run sobre por que hace falta
     return ToC(v);
 }
 
@@ -476,6 +480,7 @@ AVA_API void ava_list_set(AvaVM*, ava_value_t list, size_t index, ava_value_t va
 AVA_API ava_value_t ava_dict_create(AvaVM*) {
     auto* d = new DictObj();
     Value v; v.type = ValueType::Dict; v.obj = d;
+    Retain(v);  // ver comentario en ava_run sobre por que hace falta
     return ToC(v);
 }
 

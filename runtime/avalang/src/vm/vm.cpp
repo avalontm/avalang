@@ -10,22 +10,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
     auto& K = frames_[frame_idx].proto->constants;
 
     bool need_restart = false;
-    // Logica comun a los dos casos que el try/catch de abajo puede
-    // atrapar: una AvaRaiseException (viene de un `raise` de un script
-    // AvaLang, via RaiseException()) o cualquier otra avastd::exception
-    // (error interno del VM/builtin -- indice fuera de rango, division
-    // por cero, etc.). Factorizado en un lambda para no duplicar esta
-    // logica entre la rama con excepciones C++ reales (host) y la rama
-    // con AVA_TRY/AVA_CATCH + tag manual (barekernel, sin RTTI real -- ver
-    // ava_type_tag() en ava_error.h). Devuelve true si el error fue
-    // consumido por un handler de AvaLang activo en este frame (hay que
-    // reiniciar el loop de instrucciones desde el catch_pc), false si hay
-    // que seguir propagando hacia el llamador.
-    //
-    // OJO: declarado ANTES del AVA_TRY/try a proposito. AVA_CATCH abre un
-    // scope C++ distinto del cuerpo del AVA_TRY (son dos ramas de un
-    // if/else generado por la macro) -- si este lambda se declarara
-    // adentro del try, no seria visible desde el catch.
+
     auto handle_vm_exception = [&](bool is_raise, const avastd::exception& e) -> bool {
         if (!is_raise) {
             HandleFrameError(*this, frame_idx, e);
@@ -41,14 +26,6 @@ Value VM::ExecuteFrame(size_t frame_idx) {
             RaiseException(msg);
         }
         exception_handlers_.pop_back();
-        // Calls that were aborted mid-propagation (OpCall/OpBaseCall/
-        // constructor calls) never reached their normal-path
-        // frames_.pop_back(), so any frames pushed above the frame
-        // that's catching this exception are now stale garbage. Trim
-        // them so frames_.size()-1 (used by OpTry to compute a NEW
-        // handler's frame_idx) reflects reality again -- otherwise a
-        // later try/catch registers a handler with an inflated frame_idx
-        // that never matches, and its exceptions escape uncaught.
         if (frames_.size() > frame_idx + 1) {
             frames_.resize(frame_idx + 1);
         }
@@ -233,12 +210,6 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                         inst->attrs["__base__"] = base_it->second;
                     }
                     
-                    // v recien creado: ref_count=1 propio de v (misma
-                    // convencion que Value::String()); el
-                    // copy-assignment de abajo ya Retiene (RAII) para
-                    // dar a registers[save_a] su propia referencia. El
-                    // Retain(v) manual que estaba aca dejaba una tercera
-                    // referencia que nadie liberaba.
                     Value v; v.type = ValueType::Instance; v.obj = inst;
                     frames_[frame_idx].registers[save_a] = v;
                     
@@ -310,7 +281,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                         frames_[frame_idx].registers[save_a] = result;
                     }
                 } else {
-                    AVA_THROW(avastd::runtime_error("attempt to call a non-callable value"));
+                    AVA_THROW(MakeNonCallableError(*this, frames_[frame_idx], callee));
                 }
                 break;
             }
@@ -327,19 +298,10 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                     if (uvd.from_parent_local) {
                         auto upval = avastd::make_shared<Upvalue>();
                         upval->location = &frames_[frame_idx].registers[uvd.index];
-                        // upval->value es Value (closure.h) -- este
-                        // copy-assignment ya Retiene (RAII); el
-                        // Retain() manual que seguia duplicaba esa
-                        // retencion.
                         upval->value = frames_[frame_idx].registers[uvd.index];
-                        // `upval` no se reusa despues de esto en esta
-                        // iteracion -- move en vez de copia, mismo
-                        // motivo que module.cpp/vm_import.cpp.
                         closure->upvalues.push_back(avastd::move(upval));
                     }
                 }
-                // Mismo patron que en Instance mas arriba: la
-                // asignacion de abajo ya Retiene por si sola.
                 Value v; v.type = ValueType::Function; v.obj = closure;
                 frames_[frame_idx].registers[in.a] = v;
                 break;
@@ -358,13 +320,6 @@ Value VM::ExecuteFrame(size_t frame_idx) {
             case OpCode::SETUPVAL: {
                 auto* closure = frames_[frame_idx].closure.get();
                 if (closure && in.b < closure->upvalues.size()) {
-                    // El copy-assignment de Value (RAII, sub-fase 2) ya
-                    // Retiene el valor nuevo y Libera el viejo por su
-                    // cuenta. El Release() manual de ANTES de esta
-                    // linea liberaba el valor viejo una primera vez, y
-                    // el operator= lo volvia a liberar -- double-release
-                    // real sobre el upvalue viejo. El Retain() manual de
-                    // DESPUES duplicaba la retencion del nuevo.
                     closure->upvalues[in.b]->value = frames_[frame_idx].registers[in.a];
                     closure->upvalues[in.b]->location = &closure->upvalues[in.b]->value;
                 }
@@ -419,7 +374,8 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 break;
 
             default:
-                AVA_THROW(avastd::runtime_error("unknown opcode: " + avastd::to_string(static_cast<int>(in.op))));
+                AVA_THROW(MakeFrameError(frames_[frame_idx],
+                    "unknown opcode: " + avastd::to_string(static_cast<int>(in.op))));
         }
     }
 #if AVA_HAVE_EXCEPTIONS

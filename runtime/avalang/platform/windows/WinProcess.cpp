@@ -105,8 +105,24 @@ bool WinProcess::Execute(const std::string& command,
 
     CloseHandle(pi.hThread);
 
-    ReadPipeFully(stdout_read, out_result.stdout_output);
-    ReadPipeFully(stderr_read, out_result.stderr_output);
+    // Fase 7 bugfix: draining stdout_read fully and THEN stderr_read
+    // (the original sequential order here) deadlocks for real -- an
+    // anonymous pipe's OS buffer is finite (a few KB to ~64KB); if the
+    // child writes enough to stderr while this thread is still blocked
+    // in ReadFile() on stdout, the child's own WriteFile() to stderr
+    // blocks (nobody is draining it), and this thread never gets more
+    // stdout to unblock its read either -- both sides wait forever.
+    // ExecuteStreaming() below already avoids this correctly with one
+    // reader thread per pipe; do the same here instead of reading them
+    // one after the other.
+    std::string stdout_output;
+    std::string stderr_output;
+    std::thread stdout_thread([&]() { ReadPipeFully(stdout_read, stdout_output); });
+    std::thread stderr_thread([&]() { ReadPipeFully(stderr_read, stderr_output); });
+    stdout_thread.join();
+    stderr_thread.join();
+    out_result.stdout_output = std::move(stdout_output);
+    out_result.stderr_output = std::move(stderr_output);
 
     WaitForSingleObject(pi.hProcess, INFINITE);
 

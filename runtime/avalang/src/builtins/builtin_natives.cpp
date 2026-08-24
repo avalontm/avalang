@@ -3,161 +3,23 @@
 #include "vm/value.h"
 #include "vm/vm.h"
 #include "vm/vm_platform_accessor.h"
+#include "builtin_shared.h"
 
 #include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 
 using namespace ava;
 
-namespace {
-
-Value MakeNilV() { return Value::Nil(); }
-
-avastd::string NumberToString(double n) {
-    if (avastd::abs(n - avastd::round(n)) < 0.0000001)
-        return avastd::to_string(static_cast<long long>(avastd::round(n)));
-    avastd::ostringstream oss;
-    oss << avastd::setprecision(15) << n;
-    avastd::string s = oss.str();
-    size_t dot = s.find('.');
-    if (dot != avastd::string::npos) {
-        size_t last_not_zero = s.find_last_not_of('0');
-        if (last_not_zero == dot)
-            s.erase(dot);
-        else
-            s.erase(last_not_zero + 1);
-    }
-    return s;
-}
-
-avastd::string TypeName(const Value& v) {
-    switch (v.type) {
-        case ValueType::Nil:       return "nil";
-        case ValueType::Bool:      return "bool";
-        case ValueType::Number:    return "number";
-        case ValueType::String:    return "string";
-        case ValueType::List:      return "list";
-        case ValueType::Dict:      return "dict";
-        case ValueType::Function:  return "function";
-        case ValueType::Instance:  return "instance";
-        case ValueType::Class:     return "class";
-        case ValueType::Coroutine: return "coroutine";
-        case ValueType::Native:    return "native";
-        case ValueType::Bound:     return "bound";
-        case ValueType::Exception: return "exception";
-        case ValueType::Module:    return "module";
-        default:                   return "unknown";
-    }
-}
-
-avastd::string ToDisplayString(const Value& v) {
-    switch (v.type) {
-        case ValueType::Nil:    return "nil";
-        case ValueType::Bool:   return v.b ? "true" : "false";
-        case ValueType::Number: return NumberToString(v.n);
-        case ValueType::String: return static_cast<StringObj*>(v.obj)->data;
-        case ValueType::List: {
-            auto* list = static_cast<ListObj*>(v.obj);
-            avastd::string out = "[";
-            for (size_t i = 0; i < list->items.size(); ++i) {
-                if (i > 0) out += ", ";
-                if (list->items[i].type == ValueType::String) {
-                    out += "\"" + static_cast<StringObj*>(list->items[i].obj)->data + "\"";
-                } else {
-                    out += ToDisplayString(list->items[i]);
-                }
-            }
-            out += "]";
-            return out;
-        }
-        case ValueType::Dict: {
-            auto* dict = static_cast<DictObj*>(v.obj);
-            avastd::string out = "{";
-            for (size_t i = 0; i < dict->entries.size(); ++i) {
-                if (i > 0) out += ", ";
-                out += "\"" + dict->entries[i].first + "\": ";
-                const Value& ev = dict->entries[i].second;
-                if (ev.type == ValueType::String) {
-                    out += "\"" + static_cast<StringObj*>(ev.obj)->data + "\"";
-                } else {
-                    out += ToDisplayString(ev);
-                }
-            }
-            out += "}";
-            return out;
-        }
-        case ValueType::Instance: {
-            auto* inst = static_cast<InstanceObj*>(v.obj);
-            return "<" + (inst->cls ? inst->cls->name : avastd::string("instance")) + ">";
-        }
-        case ValueType::Class: {
-            auto* cls = static_cast<ClassObj*>(v.obj);
-            return "<class " + cls->name + ">";
-        }
-        case ValueType::Module: {
-            auto* mod = static_cast<ModuleObj*>(v.obj);
-            return "<extern " + mod->name + ">";
-        }
-        default:
-            return "<" + TypeName(v) + ">";
-    }
-}
-
-double AsNumber(const Value& v) {
-    switch (v.type) {
-        case ValueType::Number: return v.n;
-        case ValueType::Bool:   return v.b ? 1.0 : 0.0;
-        case ValueType::String: {
-#if AVA_HAVE_STD_LIBRARY
-            // avastd::stod == std::stod aqui (alias hosted) y SI puede
-            // lanzar (invalid_argument/out_of_range) con input no
-            // numerico -- se atrapa para devolver 0.0 como antes. En
-            // freestanding (rama de abajo) avastd::stod es un parser
-            // manual que nunca lanza (ver ava_string.h), asi que un
-            // try/catch ahi seria codigo muerto (y potencialmente ni
-            // compila si el kernel se construye con -fno-exceptions).
-            try { return avastd::stod(static_cast<StringObj*>(v.obj)->data); }
-            catch (...) { return 0.0; }
-#else
-            return avastd::stod(static_cast<StringObj*>(v.obj)->data);
-#endif
-        }
-        default: return 0.0;
-    }
-}
-
-avastd::vector<Value> CollectItems(const avastd::vector<Value>& args) {
-    if (args.size() == 1 && args[0].type == ValueType::List) {
-        return static_cast<ListObj*>(args[0].obj)->items;
-    }
-    return args;
-}
-
-avastd::vector<Value> ArgsToValues(const ava_value_t* args, size_t count) {
-    avastd::vector<Value> out;
-    out.reserve(count);
-    for (size_t i = 0; i < count; ++i) out.push_back(FromC(args[i]));
-    return out;
-}
-
-bool LessThan(const Value& a, const Value& b) {
-    if (a.type == ValueType::String && b.type == ValueType::String) {
-        return static_cast<StringObj*>(a.obj)->data < static_cast<StringObj*>(b.obj)->data;
-    }
-    return AsNumber(a) < AsNumber(b);
-}
-
-} // namespace
 
 extern "C" {
 
 ava_value_t builtin_type(AvaVM*, const ava_value_t* args, size_t count, void*) {
-    if (count < 1) return ToC(Value::String("nil"));
-    return ToC(Value::String(TypeName(FromC(args[0]))));
+    if (count < 1) return ToCNew(Value::String("nil"));
+    return ToCNew(Value::String(TypeName(FromC(args[0]))));
 }
 
 ava_value_t builtin_str(AvaVM*, const ava_value_t* args, size_t count, void*) {
-    if (count < 1) return ToC(Value::String(""));
-    return ToC(Value::String(ToDisplayString(FromC(args[0]))));
+    if (count < 1) return ToCNew(Value::String(""));
+    return ToCNew(Value::String(ToDisplayString(FromC(args[0]))));
 }
 
 ava_value_t builtin_int(AvaVM*, const ava_value_t* args, size_t count, void*) {
@@ -210,7 +72,7 @@ ava_value_t builtin_input(AvaVM* vm, const ava_value_t* args, size_t count, void
         }
         VmPlatformAccessor::Get().Console().ReadLine(line);
     }
-    return ToC(Value::String(line));
+    return ToCNew(Value::String(line));
 }
 
 ava_value_t builtin_abs(AvaVM*, const ava_value_t* args, size_t count, void*) {
@@ -276,7 +138,7 @@ ava_value_t builtin_sorted(AvaVM*, const ava_value_t* args, size_t count, void*)
     avastd::sort(items.begin(), items.end(), LessThan);
     Value out; out.type = ValueType::List; out.obj = new ListObj();
     static_cast<ListObj*>(out.obj)->items = items;
-    return ToC(out);
+    return ToCNew(out);
 }
 
 ava_value_t builtin_reversed(AvaVM*, const ava_value_t* args, size_t count, void*) {
@@ -285,7 +147,7 @@ ava_value_t builtin_reversed(AvaVM*, const ava_value_t* args, size_t count, void
     avastd::reverse(items.begin(), items.end());
     Value out; out.type = ValueType::List; out.obj = new ListObj();
     static_cast<ListObj*>(out.obj)->items = items;
-    return ToC(out);
+    return ToCNew(out);
 }
 
 ava_value_t builtin_any(AvaVM*, const ava_value_t* args, size_t count, void*) {
@@ -417,7 +279,7 @@ ava_value_t builtin_slice(AvaVM*, const ava_value_t* args, size_t count, void*) 
             }
         }
         Value out; out.type = ValueType::List; out.obj = result;
-        return ToC(out);
+        return ToCNew(out);
     }
 
     auto* str = static_cast<StringObj*>(obj.obj);
@@ -435,7 +297,7 @@ ava_value_t builtin_slice(AvaVM*, const ava_value_t* args, size_t count, void*) 
             if (i >= 0 && i < static_cast<long long>(len)) result += str->data[i];
         }
     }
-    return ToC(Value::String(result));
+    return ToCNew(Value::String(result));
 }
 
 ava_value_t builtin_setglobal(AvaVM* vm, const ava_value_t* args, size_t count, void*) {

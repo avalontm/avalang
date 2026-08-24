@@ -445,6 +445,12 @@ WS
     : [ \t]+ -> skip
     ;
 
-LINE_JOIN
-    : '\\' '\r'? '\n' -> skip
-    ;
+// LINE_JOIN ('\' + newline -> skip) se saco de aca: era un splice sin
+// contexto al estilo C -- se comia CUALQUIER backslash suelto antes de
+// llegar al parser, sin importar si de verdad estaba continuando una
+// expresion incompleta o no. Un caracter sin ningun proposito (ej. un '\'
+// solo en su propia linea) desaparecia en silencio en vez de dar syntax
+// error, y ningun .ava del repo lo usaba. Sin esta regla, un '\' que no
+// forma parte de ningun otro token (STRING, ESCAPE_SEQ, etc.) cae al path
+// de error normal del lexer -- reportado por AvaLangErrorListener con
+// linea/columna como cualquier otro caracter invalido.

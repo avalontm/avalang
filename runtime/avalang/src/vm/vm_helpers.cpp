@@ -188,4 +188,75 @@ ClassObj* FindClassOwningAttr(ClassObj* cls, const avastd::string& name) {
     return nullptr;
 }
 
+const char* ValueTypeName(ValueType t) {
+    switch (t) {
+        case ValueType::Nil:       return "Nil";
+        case ValueType::Bool:      return "Bool";
+        case ValueType::Number:    return "Number";
+        case ValueType::String:    return "String";
+        case ValueType::List:      return "List";
+        case ValueType::Dict:      return "Dict";
+        case ValueType::Function:  return "Function";
+        case ValueType::Instance:  return "Instance";
+        case ValueType::Class:     return "Class";
+        case ValueType::Coroutine: return "Coroutine";
+        case ValueType::Native:    return "Native";
+        case ValueType::Bound:     return "Bound";
+        case ValueType::Exception: return "Exception";
+        case ValueType::Module:    return "Module";
+        case ValueType::Task:      return "Task";
+    }
+    return "Unknown";
+}
+
+// Ver el comentario de la declaracion en vm_helpers.h. Vive ACA (no
+// duplicada en vm_arith.cpp y vm_compare.cpp) a proposito: es el mismo
+// tipo de decision que antes vivia repetida en dos lugares que tenian
+// que estar de acuerdo a mano (CompileStmt/CompileExprToReg con
+// current_line_, el fprintf duplicado de avacli) y terminaba
+// divergiendo. Con un solo helper compartido, los operadores
+// aritmeticos Y los relacionales usan la misma definicion de "esto
+// coerciona a numero".
+double CoerceToNumber(const Value& v, const char* op) {
+    if (v.type == ValueType::Number) {
+        return v.n;
+    }
+    if (v.type == ValueType::String) {
+        const avastd::string& raw = static_cast<StringObj*>(v.obj)->data;
+        avastd::size_t n = raw.size();
+
+        avastd::size_t start = 0;
+        while (start < n && (raw[start] == ' ' || raw[start] == '\t' ||
+                              raw[start] == '\r' || raw[start] == '\n')) {
+            ++start;
+        }
+        avastd::size_t end = n;
+        while (end > start && (raw[end - 1] == ' ' || raw[end - 1] == '\t' ||
+                                raw[end - 1] == '\r' || raw[end - 1] == '\n')) {
+            --end;
+        }
+        avastd::string trimmed = raw.substr(start, end - start);
+
+        bool looks_numeric = !trimmed.empty();
+        if (looks_numeric) {
+            char c0 = trimmed[0];
+            looks_numeric = (c0 == '+' || c0 == '-' || c0 == '.' ||
+                              (c0 >= '0' && c0 <= '9'));
+        }
+        if (looks_numeric) {
+            avastd::size_t consumed = 0;
+            double parsed = avastd::stod(trimmed, &consumed);
+            if (consumed == trimmed.size()) {
+                return parsed;
+            }
+        }
+        AVA_THROW(avastd::runtime_error(
+            avastd::string("type mismatch: '") + op +
+            "' expects Number, got non-numeric String \"" + raw + "\""));
+    }
+    AVA_THROW(avastd::runtime_error(
+        avastd::string("type mismatch: '") + op + "' expects Number, got " +
+        ValueTypeName(v.type)));
+}
+
 } // namespace ava

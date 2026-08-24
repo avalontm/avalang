@@ -55,10 +55,6 @@ void OpCall(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, V
             inst->attrs["__base__"] = base_it->second;
         }
         
-        // v recien creado: ref_count=1 propio; la asignacion de abajo
-        // ya Retiene (RAII) para dar a frame.registers su propia
-        // referencia. El Retain(v) manual dejaba una tercera referencia
-        // que nadie liberaba.
         Value v; v.type = ValueType::Instance; v.obj = inst;
         frame.registers[save_a] = v;
         
@@ -134,8 +130,7 @@ void OpCall(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, V
             vm.frames_[frame_idx_fn].registers[save_a] = result;
         }
     } else {
-        AVA_THROW(avastd::runtime_error("attempt to call a non-callable value (type=" +
-                                  avastd::to_string(static_cast<int>(callee.type)) + ")"));
+        AVA_THROW(MakeNonCallableError(vm, frame, callee));
     }
 }
 
@@ -152,14 +147,10 @@ void OpClosure(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K
         if (uvd.from_parent_local) {
             auto upval = avastd::make_shared<Upvalue>();
             upval->location = &frame.registers[uvd.index];
-            // upval->value es Value -- este copy-assignment ya Retiene
-            // (RAII); el Retain() manual duplicaba esa retencion.
             upval->value = frame.registers[uvd.index];
-            // `upval` no se reusa despues -- move en vez de copia.
             closure->upvalues.push_back(avastd::move(upval));
         }
     }
-    // Mismo patron que en Instance mas arriba.
     Value v; v.type = ValueType::Function; v.obj = closure;
     frame.registers[in.a] = v;
 }
@@ -176,9 +167,6 @@ void OpGetUpval(CallFrame& frame, const Instr& in, const avastd::vector<Value>& 
 void OpSetUpval(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     auto* closure = frame.closure.get();
     if (closure && in.b < closure->upvalues.size()) {
-        // El operator= de Value (RAII) ya Retiene el nuevo y Libera el
-        // viejo por su cuenta -- el Release()/Retain() manual de antes
-        // duplicaba ambos (double-release real sobre el valor viejo).
         closure->upvalues[in.b]->value = frame.registers[in.a];
         closure->upvalues[in.b]->location = &closure->upvalues[in.b]->value;
     }
@@ -223,7 +211,7 @@ Value OpBaseCall(CallFrame& frame, const Instr& in, const avastd::vector<Value>&
             }
         }
     }
-    AVA_THROW(avastd::runtime_error("base() call failed - __base__ not found"));
+    AVA_THROW(MakeFrameError(frame, "base() call failed - __base__ not found"));
 }
 
 } // namespace ava

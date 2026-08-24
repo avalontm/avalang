@@ -31,6 +31,10 @@ struct AVA_PROTO_API Proto {
     avastd::vector<avastd::shared_ptr<Proto>> child_protos;
 
     avastd::vector<avastd::uint32_t>   debug_lines;
+    // Columna (1-based) paralela a debug_lines; 0 = desconocida. Igual
+    // que debug_lines, cada Emit() empuja una entrada -- ver
+    // Compiler::Emit (compiler.cpp) y Compiler::current_col_.
+    avastd::vector<avastd::uint32_t>   debug_columns;
     avastd::string             debug_name;
     // Path of the source file this Proto was compiled from (top-level
     // script, or the module a function/method/lambda was defined in).

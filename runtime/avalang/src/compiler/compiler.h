@@ -89,6 +89,18 @@ private:
 
     void Emit(OpCode op, uint16_t a = 0, uint16_t b = 0, uint16_t c = 0);
 
+    // Punto UNICO donde current_line_/current_col_ se actualizan a partir de
+    // una statement. CompileStmt y CompileExprToReg son los dos puntos de
+    // entrada que compilan una StmtNode "de punta a punta" (CompileChunk
+    // manda la ultima statement del chunk por CompileExprToReg en vez de
+    // CompileStmt, para soportar el implicit-return del ultimo valor) --
+    // los dos DEBEN llamar a esto antes de emitir nada, o current_line_
+    // queda pegado en lo que dejo la statement anterior y los errores se
+    // reportan en la statement equivocada. Si en el futuro aparece un
+    // tercer punto de entrada de este tipo, tiene que llamar a esto tambien
+    // en vez de reimplementar el check.
+    void StampLine(const std::shared_ptr<StmtNode>& stmt);
+
     uint16_t CompileExpr(const std::shared_ptr<ExprNode>& expr);
     void CompileStmt(const std::shared_ptr<StmtNode>& stmt);
     void CompileChunk(const std::vector<std::shared_ptr<StmtNode>>& stmts);

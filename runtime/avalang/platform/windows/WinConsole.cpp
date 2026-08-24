@@ -71,22 +71,43 @@ bool WinConsole::ReadLine(std::string& out_line) {
         return false;
     }
 
-    char buffer[4096];
+    // Fase 7 bugfix: un ReadFile() puede traer varias lineas de un
+    // saque (pipes, entrada ya bufferizada por la terminal, etc.). Antes,
+    // todo lo que quedaba en `buffer` despues del primer '\n' se perdia
+    // silenciosamente -- esta llamada terminaba, y la proxima arrancaba
+    // con un ReadFile() nuevo que ya no veia esos bytes. `pending_input_`
+    // es el equivalente al buffer interno que fgets() (usado en
+    // LinConsole) ya mantiene gratis via stdio: lo que sobra de una
+    // lectura se guarda ahi y se consume antes de pedir mas al SO.
     for (;;) {
-        DWORD read = 0;
-        if (!ReadFile(in, buffer, sizeof(buffer), &read, nullptr) || read == 0) {
-            return !out_line.empty();
+        size_t newline_pos = pending_input_.find('\n');
+        if (newline_pos != std::string::npos) {
+            out_line.append(pending_input_, 0, newline_pos);
+            pending_input_.erase(0, newline_pos + 1);
+            if (!out_line.empty() && out_line.back() == '\r') {
+                out_line.pop_back();
+            }
+            return true;
         }
 
-        for (DWORD i = 0; i < read; ++i) {
-            if (buffer[i] == '\n') {
+        char buffer[4096];
+        DWORD read = 0;
+        if (!ReadFile(in, buffer, sizeof(buffer), &read, nullptr) || read == 0) {
+            // EOF (o error): lo que haya quedado en pending_input_ es la
+            // ultima linea sin '\n' final -- se entrega igual, como ya
+            // hacia el `!out_line.empty()` original.
+            if (!pending_input_.empty()) {
+                out_line.append(pending_input_);
+                pending_input_.clear();
                 if (!out_line.empty() && out_line.back() == '\r') {
                     out_line.pop_back();
                 }
                 return true;
             }
-            out_line.push_back(buffer[i]);
+            return !out_line.empty();
         }
+
+        pending_input_.append(buffer, read);
     }
 }
 

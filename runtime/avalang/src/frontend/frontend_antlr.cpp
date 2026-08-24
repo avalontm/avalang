@@ -128,6 +128,31 @@ std::shared_ptr<Proto> CompileSource(const std::string& source, const std::strin
 
     auto* tree = parser.chunk();
 
+    // `chunk : (statement | NEWLINE)*` no termina en EOF. Un lazo `*` de
+    // ANTLR no es "todo o nada": en cuanto el siguiente token no matchea
+    // ni `statement` ni `NEWLINE`, el lazo simplemente deja de intentar y
+    // el parser vuelve "exitosamente" con el prefijo que sí pudo
+    // consumir -- sin llamar a syntaxError(), sin tocar
+    // parser.getNumberOfSyntaxErrors(). Lo que haya quedado después
+    // (un token suelto, una statement incompleta, basura al final del
+    // archivo) se queda sin tocar en el token stream y el compilador
+    // nunca se entera: compila en silencio solo el prefijo válido.
+    //
+    // Esto NO es un cambio de gramática (chunk sigue sin EOF) -- es el
+    // único call site de parser.chunk() en todo el repo (CompileSource
+    // es el único lugar que lo invoca; import, ejecución de archivo y la
+    // C API pasan todos por acá) negándose a tratar "parseé un prefijo"
+    // como "parseé el archivo entero".
+    if (tokens.LA(1) != antlr4::Token::EOF) {
+        antlr4::Token* leftover = tokens.LT(1);
+        SourceError err;
+        err.line = leftover->getLine();
+        err.column = leftover->getCharPositionInLine() + 1;
+        err.message = "extraneous input '" + leftover->getText() +
+                      "' expecting <EOF>";
+        error_listener.errors.push_back(err);
+    }
+
     if (!error_listener.errors.empty()) {
         std::ostringstream err_out;
         for (const auto& err : error_listener.errors) {

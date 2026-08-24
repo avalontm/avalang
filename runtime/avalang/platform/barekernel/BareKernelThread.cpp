@@ -12,7 +12,16 @@ struct ThreadCtx { ThreadFunc func; };
 extern "C" void trampoline(void* raw) {
     auto* ctx = static_cast<ThreadCtx*>(raw);
     ThreadFunc f = avastd::move(ctx->func);
+    // ctx fue creado con `new ThreadCtx{...}` (new-expression completa:
+    // ava_alloc + construccion), no con placement new -- por lo tanto
+    // destruirlo a mano sin liberar el bloque pierde la asignacion
+    // subyacente (ava_alloc/ckm_malloc) en cada hilo lanzado. `delete`
+    // haria doble-destruccion aca porque ya movimos `func` afuera antes
+    // de destruir, asi que se separa en destructor manual + operator
+    // delete explicito (equivalente a `delete ctx;` pero sin volver a
+    // tocar un miembro ya vaciado por el move).
     ctx->~ThreadCtx();
+    operator delete(ctx);
     if (f) f();
 }
 }

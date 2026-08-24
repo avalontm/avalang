@@ -24,7 +24,9 @@ bool BareKernelProcess::Execute(const avastd::string& command,
     if (pid < 0) { out_result.exit_code = -1; return false; }
 
     int exit_code = -1;
-    if (ckm_waitpid(pid, &exit_code) != 0) { out_result.exit_code = -1; return false; }
+    // sys_waitpid real (Fase 2) devuelve el PID reapeado (>0) en exito, no 0
+    // -- antes con el stub ENOSYS (-38) "!= 0" acertaba por casualidad.
+    if (ckm_waitpid(pid, &exit_code) < 0) { out_result.exit_code = -1; return false; }
     out_result.exit_code = exit_code;
     out_result.stdout_output.clear();
     out_result.stderr_output.clear();
