@@ -51,4 +51,4 @@ private:
     static ImU32 ToImU32(const Color& c) { return IM_COL32(c.r, c.g, c.b, c.a); }
 };
 
-} // namespace avalang::ui
+}

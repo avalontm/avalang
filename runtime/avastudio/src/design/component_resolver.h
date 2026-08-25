@@ -9,4 +9,4 @@ namespace studio::design {
 
 void ResolveImportsForDocument(DesignDocument& doc, const std::string& projectRoot);
 
-} // namespace studio::design
+}

@@ -26,8 +26,6 @@ std::string ReadLastErrorSource(AvaVM* vm, const std::string& ran_source_name) {
 EngineBridge::EngineBridge() {
     vm_ = ava_vm_create();
 
-
-
     ava_vm_set_print_callback(vm_, &EngineBridge::PrintCallbackTrampoline, this);
 }
 
@@ -41,8 +39,6 @@ void EngineBridge::PrintCallbackTrampoline(const char* utf8, size_t len, void* u
 
 void EngineBridge::OnScriptPrint(const std::string& chunk) {
     pending_stdout_line_ += chunk;
-
-
 
     size_t start = 0;
     while (true) {
@@ -76,11 +72,6 @@ RunResult EngineBridge::RunScript(const std::string& source, const std::string& 
 
     console_.push_back({ConsoleLine::Kind::Info, "Run " + (source_name.empty() ? std::string("<script>") : source_name)});
 
-
-
-
-
-
     ava_vm_set_current_dir(vm_, DirOf(source_name).c_str());
 
     char* compile_error = nullptr;
@@ -102,9 +93,6 @@ RunResult EngineBridge::RunScript(const std::string& source, const std::string& 
     ava_run(vm_, module, &out_result, &run_error);
     ava_module_destroy(module);
 
-
-
-
     FlushPendingStdoutLine();
 
     if (run_error) {
@@ -122,13 +110,6 @@ RunResult EngineBridge::RunScript(const std::string& source, const std::string& 
     result.success = true;
     switch (out_result.type) {
         case AVA_NIL:
-
-
-
-
-
-
-
 
             result.message = "OK";
             break;
@@ -151,6 +132,29 @@ RunResult EngineBridge::RunScript(const std::string& source, const std::string& 
             break;
     }
     console_.push_back({ConsoleLine::Kind::Success, result.message});
+    return result;
+}
+
+RunResult EngineBridge::CheckScript(const std::string& source, const std::string& source_name) {
+    RunResult result;
+
+    ava_vm_set_current_dir(vm_, DirOf(source_name).c_str());
+
+    char* compile_error = nullptr;
+    AvaModule* module = ava_compile(vm_, source.c_str(), source_name.c_str(), &compile_error);
+    if (!module) {
+        result.success = false;
+        result.message = compile_error ? compile_error : "unknown compile error";
+        result.error_line = ava_last_error_line(vm_);
+        result.error_column = ava_last_error_column(vm_);
+        result.error_source = ReadLastErrorSource(vm_, source_name);
+        if (compile_error) ava_string_free(compile_error);
+        return result;
+    }
+
+    ava_module_destroy(module);
+    result.success = true;
+    result.message = "OK";
     return result;
 }
 
@@ -179,13 +183,6 @@ EngineBridge::DemoTree EngineBridge::BuildDemoComponentTree() {
     DemoTree result;
     result.json = ava_ui_tree_to_json(tree);
 
-
-
-
-
-
-
-
     result.root.type = "page";
     result.root.id = "Main";
     PreviewNode host_stack;
@@ -199,12 +196,6 @@ EngineBridge::DemoTree EngineBridge::BuildDemoComponentTree() {
     host_stack.children.push_back(std::move(host_text));
     host_stack.children.push_back(std::move(host_button));
     result.root.children.push_back(std::move(host_stack));
-
-
-
-
-
-
 
     ava_ui_destroy_component(button);
     ava_ui_destroy_component(text);

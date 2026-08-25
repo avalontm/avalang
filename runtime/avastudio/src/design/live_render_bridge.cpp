@@ -49,9 +49,7 @@ LiveRenderResult BuildLiveRender(avalang::ui::ComponentTree* tree, int viewportW
         std::string layoutSource = ReadFileToString(layoutPath.string());
         if (!layoutSource.empty()) {
             try {
-                // Fase 2: pass the layout's own resolved path so a syntax
-                // error inside it (found via this project's `extends`)
-                // reports that file instead of an unlabeled line number.
+
                 auto layoutParsed =
                     avalang::ui::parser::AvauiParser::Parse(layoutSource, layoutPath.string());
                 if (layoutParsed.tree && layoutParsed.tree->Root()) {
@@ -73,23 +71,12 @@ LiveRenderResult BuildLiveRender(avalang::ui::ComponentTree* tree, int viewportW
         return out;
     }
 
-
-
-
-
-
-
     avalang::ui::theme::ProjectTheme projectTheme(
         themeProvider->Current(),
         avalang::ui::theme::LoadProjectFontOverrides(projectRoot));
-    // See ui_pipeline_static_renderer.cpp / ProjectTheme::RegisterProjectFonts --
-    // must run before RenderTheme::Apply so AvaStudio's live preview matches
-    // what AvaHost actually ships (a component with an explicit fontName
-    // never triggers RenderTheme's own lazy registration).
+
     projectTheme.RegisterProjectFonts();
-    // See ui_pipeline_static_renderer.cpp -- same declared-style-file
-    // overlay (`style *` / `style <type>` blocks), so AvaStudio's live
-    // preview matches what AvaHost ships here too.
+
     avalang::ui::theme::ProjectStyleSheet projectStyles =
         avalang::ui::theme::LoadProjectStyleOverrides(projectRoot);
     avalang::ui::RenderTheme::Apply(tree, &projectTheme, &projectStyles);

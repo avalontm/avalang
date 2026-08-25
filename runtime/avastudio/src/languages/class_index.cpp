@@ -9,11 +9,6 @@ namespace studio {
 
 namespace {
 
-// The set of AvaLang block-opening keywords that require a matching `end`
-// (see grammar/AvaLang.g4: tryStatement, ifStatement, whileStatement,
-// forStatement, funcDeclaration, classDeclaration). `then`/`elif`/`else`
-// are NOT here on purpose -- they belong to the same `if` block and don't
-// introduce their own `end`.
 bool IsBlockKeyword(const std::string& word) {
     return word == "try" || word == "if" || word == "while" || word == "for" ||
            word == "func" || word == "class";
@@ -22,7 +17,6 @@ bool IsBlockKeyword(const std::string& word) {
 bool IsIdentStart(char c) { return std::isalpha(static_cast<unsigned char>(c)) || c == '_'; }
 bool IsIdentChar(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
 
-// Requires that IsIdentStart(text[i]) was already checked by the caller.
 std::string ReadIdent(const std::string& text, size_t& i) {
     size_t start = i;
     while (i < text.size() && IsIdentChar(text[i])) ++i;
@@ -33,9 +27,6 @@ void SkipInlineWhitespace(const std::string& text, size_t& i) {
     while (i < text.size() && (text[i] == ' ' || text[i] == '\t')) ++i;
 }
 
-// Same splitting rule as FunctionIndex's SplitParams (function_index.cpp):
-// respects nested (), [], {} and quoted strings so a default value like
-// `b=(1, 2)` or `c="a,b"` isn't split on its internal comma.
 std::vector<std::string> SplitParams(const std::string& raw) {
     std::vector<std::string> params;
     int depth = 0;
@@ -83,10 +74,8 @@ std::string TrimTrailing(const std::string& s) {
     return e == std::string::npos ? "" : s.substr(0, e + 1);
 }
 
-// Parses a "@param name: desc" line (already stripped of "## " and
-// trimmed). Accepts ':' or '-' as an optional separator, or none at all.
 bool ParseParamLine(const std::string& line, std::string& name, std::string& desc) {
-    size_t i = 6;  // strlen("@param")
+    size_t i = 6;
     while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
     size_t start = i;
     while (i < line.size() && (std::isalnum(static_cast<unsigned char>(line[i])) || line[i] == '_')) ++i;
@@ -101,9 +90,6 @@ bool ParseParamLine(const std::string& line, std::string& name, std::string& des
     return true;
 }
 
-// Same "##" doc-block convention as FunctionIndex (see ApplyDocBlock in
-// function_index.cpp): everything that isn't an "@param" line becomes the
-// summary in `sig.doc`; "@param name: ..." lines go into `sig.param_docs`.
 void ApplyDocBlock(FunctionSignature& sig, const std::vector<std::string>& pending_doc) {
     std::vector<std::string> summary_lines;
     for (const auto& raw_line : pending_doc) {
@@ -124,17 +110,6 @@ void ApplyDocBlock(FunctionSignature& sig, const std::vector<std::string>& pendi
     sig.doc = doc;
 }
 
-// Starting with `i` positioned right after a block-opening keyword's own
-// header (past its NAME/params/condition/etc, at the first character of
-// its body), scans forward -- skipping strings and comments -- counting
-// nested try/if/while/for/func/class blocks until it finds the `end` that
-// matches the block we started inside (depth starts at 1 for that block).
-// On success, sets `body_end` to the index where that matching `end`
-// keyword begins and advances `i` to just past it, returning true. On
-// failure (no matching `end`, e.g. the file is mid-edit and unbalanced),
-// restores `i` to its original value and returns false -- the caller
-// abandons that one class/block rather than misparsing the rest of the
-// file.
 bool FindMatchingEnd(const std::string& text, size_t& i, size_t& body_end) {
     size_t start = i;
     int depth = 1;
@@ -170,49 +145,23 @@ bool FindMatchingEnd(const std::string& text, size_t& i, size_t& body_end) {
     return false;
 }
 
-} // namespace
+}
 
 void ClassIndex::Rebuild(const std::string& text, const std::string& current_file_dir) {
     classes_.clear();
-    ScanText(text, "");  // local buffer first -- "local wins" (see header comment)
+    ScanText(text, "");
     std::unordered_set<std::string> visited;
     ScanImports(text, current_file_dir, visited);
 }
 
-// Parses `body` -- the text strictly between a class's header and its
-// closing `end` (already extracted by ScanText via FindMatchingEnd) --
-// looking for `func NAME(params) ... end` method declarations (same "##"
-// doc-comment convention as FunctionIndex) and `this.NAME = ...`
-// attribute assignments. Unlike FindMatchingEnd, this does NOT need to
-// track block nesting itself: it only cares about locating `func`
-// headers and `this` attribute writes wherever they occur in the body,
-// the same best-effort, non-block-aware philosophy FunctionIndex::ScanText
-// already uses for finding `func` anywhere in a buffer. AvaLang no tiene
-// `self` (ver el chequeo explícito más abajo).
 namespace {
 
-// Records `attr_name` as an attribute if it isn't already known, or merges
-// in `is_static`/`is_private` if it is -- but NEVER downgrades: a bare
-// `this.x = ...` assignment inside a constructor must not erase the
-// `static`/`private` flags that a class-body-level `static x = ...` /
-// `private x = ...` declaration already set for the same name (see
-// DISENO_visibilidad_clases_avalang.md §3.3 -- a `this.NAME =` write is
-// just a normal use of an already-declared attribute, not a redeclaration).
 void RecordAttribute(ClassInfo& info, const std::string& attr_name, bool is_static, bool is_private) {
-    auto& attr = info.attributes[attr_name];  // default-constructs (false, false) if new
+    auto& attr = info.attributes[attr_name];
     attr.is_static = attr.is_static || is_static;
     attr.is_private = attr.is_private || is_private;
 }
 
-// At `i` (already advanced past whatever word was just read), tries to
-// consume zero or more `static`/`private` keywords separated by inline
-// whitespace, in any order (mirrors the grammar's `memberModifier*` from
-// Fase A of DISENO_visibilidad_clases_avalang.md -- both orders are valid,
-// e.g. `static private` or `private static`). Sets `is_static`/`is_private`
-// accordingly. On the first word that ISN'T a modifier, rewinds `i` back to
-// right before that word so the caller can reparse it normally (as `func`,
-// an attribute name, or anything else) -- this function only ever consumes
-// modifier keywords, never the thing that follows them.
 void ConsumeModifiers(const std::string& body, size_t& i, bool& is_static, bool& is_private) {
     for (;;) {
         size_t before = i;
@@ -224,7 +173,7 @@ void ConsumeModifiers(const std::string& body, size_t& i, bool& is_static, bool&
         if (word == "static") { is_static = true; continue; }
         if (word == "private") { is_private = true; continue; }
 
-        i = word_start;  // not a modifier -- let the caller reparse this word
+        i = word_start;
         return;
     }
 }
@@ -262,11 +211,6 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
         if (IsIdentStart(c)) {
             std::string word = ReadIdent(body, i);
 
-            // `static`/`private` prefix (Fase E): consume any further
-            // modifiers, then expect either `func NAME(...)` (a modified
-            // method) or `NAME = expr` (a modified attribute declaration,
-            // the `attrDeclaration` from the design doc -- a bare
-            // class-body-level assignment, NOT `this.NAME =`).
             if (word == "static" || word == "private") {
                 bool is_static = (word == "static");
                 bool is_private = (word == "private");
@@ -316,16 +260,9 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                                 }
                             }
                         }
-                        // Malformed `static`/`private func` header (no
-                        // matching parens, etc.) -- fall through and
-                        // reparse from the modifier keywords as plain
-                        // identifiers, same "abandon and resync" policy as
-                        // the rest of this best-effort scanner.
+
                     } else {
-                        // `NAME = expr` / `NAME += expr` / etc -- the
-                        // `attrDeclaration` from the design doc (a bare
-                        // class-body-level assignment, distinct from a
-                        // `this.NAME = ...` write inside a method).
+
                         size_t m = k;
                         SkipInlineWhitespace(body, m);
                         bool is_assignment = false;
@@ -344,11 +281,7 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                             continue;
                         }
                     }
-                    // Neither `func NAME(...)` nor `NAME = expr` -- fall
-                    // through: rewind to the first modifier keyword and let
-                    // normal scanning continue (e.g. `static`/`private` used
-                    // as a plain identifier somewhere unrelated, or a
-                    // malformed declaration).
+
                 }
 
                 i = save;
@@ -386,10 +319,6 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                 if (!pending_doc.empty()) ApplyDocBlock(method_info.signature, pending_doc);
                 pending_doc.clear();
 
-                // Constructor methods share the class's own name (see
-                // scripts/dog.ava: `class dog` / `dog()`) -- still indexed
-                // as a plain method like any other; the popup can filter
-                // it out later if that turns out to be noisy.
                 if (info.methods.find(name) == info.methods.end())
                     info.methods[name] = std::move(method_info);
 
@@ -397,10 +326,6 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                 continue;
             }
 
-            // AvaLang solo tiene `this` -- no existe `self` en el lenguaje
-            // (confirmado: no aparece en grammar/AvaLang.g4 ni en el
-            // frontend). Si algún archivo tiene `self`, es resto de otro
-            // lenguaje/plantilla y no debe tratarse como acceso a atributo.
             if (word == "this") {
                 size_t k = i;
                 SkipInlineWhitespace(body, k);
@@ -421,13 +346,7 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                             is_assignment = true;
                         }
 
-                        // A plain `this.NAME = ...` write, with no
-                        // modifier prefix, never upgrades an attribute to
-                        // static/private on its own -- see RecordAttribute
-                        // (it only ever ORs flags in, defaulting to false
-                        // here, so a name already marked static/private via
-                        // a class-body-level declaration stays that way).
-                        if (is_assignment) RecordAttribute(info, attr_name, /*is_static=*/false, /*is_private=*/false);
+                        if (is_assignment) RecordAttribute(info, attr_name, false, false);
 
                         i = after_attr;
                         pending_doc.clear();
@@ -445,7 +364,7 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
     }
 }
 
-} // namespace
+}
 
 void ClassIndex::ScanText(const std::string& text, const std::string& source_file) {
     size_t i = 0;
@@ -486,16 +405,14 @@ void ClassIndex::ScanText(const std::string& text, const std::string& source_fil
                 if (i < text.size() && IsIdentStart(text[i])) {
                     base_name = ReadIdent(text, i);
                 } else {
-                    i = colon;  // not actually a classHeritage colon -- leave it for normal scanning
+                    i = colon;
                 }
             }
 
             size_t body_start = i;
             size_t body_end = 0;
             if (!FindMatchingEnd(text, i, body_end)) {
-                // Unmatched `end` (file mid-edit, or something we can't
-                // parse with confidence) -- abandon just this class and
-                // let the outer loop resume scanning from body_start.
+
                 continue;
             }
 
@@ -551,17 +468,8 @@ void ClassIndex::ScanImports(const std::string& text, const std::string& current
                             ss << file.rdbuf();
                             std::string imported_text = ss.str();
 
-                            // Local buffer already scanned first in
-                            // Rebuild(); for imports there's no "local
-                            // wins" tie-break to preserve, so just index
-                            // whatever this import defines.
                             ScanText(imported_text, path);
 
-                            // TRANSITIVE, unlike FunctionIndex::ScanImports
-                            // (which only follows one level): also walk
-                            // THIS file's own imports, resolved relative to
-                            // its own directory, so a class several
-                            // imports away still surfaces in the popup.
                             namespace fs = std::filesystem;
                             std::string imported_dir = fs::path(path).parent_path().string();
                             ScanImports(imported_text, imported_dir, visited);
@@ -602,7 +510,7 @@ std::string ClassIndex::ResolveImportPath(const std::vector<std::string>& module
 std::vector<ClassMember> ClassIndex::FlattenedMembers(const std::string& class_name) const {
     std::vector<ClassMember> result;
     std::unordered_set<std::string> seen;
-    std::unordered_set<std::string> visited_classes;  // guards against inheritance cycles
+    std::unordered_set<std::string> visited_classes;
 
     std::string current = class_name;
     while (!current.empty() && visited_classes.insert(current).second) {
@@ -647,31 +555,22 @@ std::vector<ClassMember> ClassIndex::FilterForAccess(const std::vector<ClassMemb
     result.reserve(members.size());
 
     for (const auto& member : members) {
-        // "Own private member" -- visible only where the modifier's whole
-        // point is to still work: from inside the very class that declared
-        // it (see DISENO_visibilidad_clases_avalang.md §3.3 -- a private
-        // member inherited from a base class is NOT "own" for the child).
+
         bool is_own_private_context = !viewer_class.empty() && member.declared_in == viewer_class;
 
         switch (kind) {
             case MemberAccessKind::kInstance:
-                // `variable.` from outside the class -- §5, first bullet:
-                // only public members, static or not.
+
                 if (!member.is_private) result.push_back(member);
                 break;
 
             case MemberAccessKind::kThis:
-                // `this.` inside a method of `viewer_class` -- §5/§9: every
-                // public member, plus this class's own private members
-                // (never a private member inherited from a base class).
+
                 if (!member.is_private || is_own_private_context) result.push_back(member);
                 break;
 
             case MemberAccessKind::kClassName:
-                // `NombreDeClase.` -- §5, third bullet: only `static`
-                // members. A private static is only offered from inside
-                // its own declaring class (e.g. Contador.validarLimite);
-                // a public static is always offered.
+
                 if (member.is_static && (!member.is_private || is_own_private_context)) result.push_back(member);
                 break;
         }
@@ -680,4 +579,4 @@ std::vector<ClassMember> ClassIndex::FilterForAccess(const std::vector<ClassMemb
     return result;
 }
 
-} // namespace studio
+}

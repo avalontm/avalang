@@ -1,5 +1,3 @@
-// Auto-generated from JetBrainsMono-Bold.ttf by tools/embed_font.py -- do not edit by hand.
-// Regenerate with: python tools/embed_font.py <input.ttf> <output.h> <array_name>
 #pragma once
 
 namespace studio::fonts {
@@ -13714,4 +13712,4 @@ inline constexpr unsigned char kJetBrainsMonoBoldTTF[] = {
 
 inline constexpr unsigned int kJetBrainsMonoBoldTTFLen = sizeof(kJetBrainsMonoBoldTTF);
 
-} // namespace studio::fonts
+}

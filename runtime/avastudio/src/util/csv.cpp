@@ -24,7 +24,7 @@ std::vector<std::vector<std::string>> ParseCsv(const std::string& text) {
         char c = text[i];
         if (in_quotes) {
             if (c == '"') {
-                if (i + 1 < n && text[i + 1] == '"') { // "" -> " literal
+                if (i + 1 < n && text[i + 1] == '"') {
                     field += '"';
                     i += 2;
                     continue;
@@ -39,12 +39,12 @@ std::vector<std::vector<std::string>> ParseCsv(const std::string& text) {
         }
         if (c == '"') { in_quotes = true; ++i; continue; }
         if (c == ',') { end_field(); ++i; continue; }
-        if (c == '\r') { ++i; continue; } // CRLF -> ignorar el \r, el \n cierra la fila
+        if (c == '\r') { ++i; continue; }
         if (c == '\n') { end_row(); ++i; continue; }
         field += c;
         ++i;
     }
-    // Última fila sin salto de línea final.
+
     if (!field.empty() || !row.empty()) end_row();
     return rows;
 }
@@ -113,4 +113,4 @@ std::string JoinOn(const std::vector<std::string>& parts, const std::string& sep
     return out;
 }
 
-} // namespace studio::util
+}

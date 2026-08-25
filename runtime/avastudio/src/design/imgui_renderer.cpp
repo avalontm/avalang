@@ -3,15 +3,6 @@
 #include <unordered_map>
 #include <unordered_set>
 
-// Own texture cache, same pattern as designer_canvas.cpp's
-// GetOrLoadImagePreview/ResolveImageSrcPath (Fase 10) -- those live in
-// designer_canvas.cpp's anonymous namespace and aren't exposed outside
-// that TU yet, so this keeps its own decoded-texture cache instead of
-// reaching into another file's internals. Fase 4 (wiring this into
-// designer_canvas.cpp) can decide whether to unify the two caches;
-// until then a duplicate cache is a harmless, self-contained gap, not
-// a correctness issue (both key off the same resolved path and would
-// simply decode the same file twice, once per cache).
 #include "GLFW/glfw3.h"
 #include "stb_image.h"
 
@@ -66,7 +57,7 @@ const ImageEntry* GetOrLoadImage(const std::string& path) {
     return &it->second;
 }
 
-} // namespace
+}
 
 ImGuiRenderer::ImGuiRenderer(int width, int height) : BaseRenderer(width, height) {}
 
@@ -144,16 +135,7 @@ void ImGuiRenderer::OnDrawLink(float x, float y,
                                const Color& color, const std::string& href,
                                const std::string& clickHandler,
                                const std::string& className) {
-    // This used to fall through to OnDrawHtmlFragment (a no-op, same as
-    // GdiRenderer -- ImGui has no DOM to hand raw HTML to either), which
-    // is why a Link rendered as a completely blank box in the designer
-    // canvas: nothing else in the pipeline gave it a visual. `href`
-    // isn't a real navigation target at design time regardless (there's
-    // nowhere to navigate to inside the canvas), so it's unused here,
-    // same as `clickHandler`/`className` for OnDrawText above -- but the
-    // label itself needs to actually be drawn, styled to read as a link
-    // (link-blue text, underlined) so it's visible and positionable like
-    // every other control.
+
     (void)href;
     (void)clickHandler;
     (void)className;
@@ -194,4 +176,4 @@ void ImGuiRenderer::OnDrawButton(float x, float y, float width, float height,
                std::string(), -1.0f, false);
 }
 
-} // namespace avalang::ui
+}

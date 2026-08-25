@@ -38,20 +38,11 @@ AvaVM* BuildStateVM(const DesignDocument& doc) {
 std::string EvalPropertyExpr(AvaVM* vm, const std::string& raw_value) {
     if (!vm || raw_value.empty()) return raw_value;
 
-
-
-
-
-
-
     const std::string source = "__avaui_eval__ = (" + raw_value + ")";
 
     char* compile_error = nullptr;
     AvaModule* module = ava_compile(vm, source.c_str(), "<avaui-prop>", &compile_error);
     if (!module) {
-
-
-
 
         if (compile_error) ava_string_free(compile_error);
         return raw_value;
@@ -81,14 +72,8 @@ std::string EvalPropertyExpr(AvaVM* vm, const std::string& raw_value) {
         }
         case AVA_NIL:
 
-
-
-
-
             return raw_value;
         default:
-
-
 
             ava_value_release(vm, result);
             return raw_value;
@@ -96,9 +81,6 @@ std::string EvalPropertyExpr(AvaVM* vm, const std::string& raw_value) {
 }
 
 std::string GetDisplayPropertyKey(const std::string& node_type) {
-
-
-
 
     if (node_type == "text" || node_type == "textbox" || node_type == "button" || node_type == "link" ||
         node_type == "checkbox" || node_type == "radiobutton") {
@@ -109,15 +91,6 @@ std::string GetDisplayPropertyKey(const std::string& node_type) {
 
 void BindCodeBehind(AvaVM* vm, const DesignDocument& doc) {
     if (!vm || doc.code_behind.empty()) return;
-
-
-
-
-
-
-
-
-
 
     char* compile_error = nullptr;
     AvaModule* module = ava_compile(vm, doc.code_behind.c_str(), "<avaui-code-behind>", &compile_error);
@@ -135,18 +108,6 @@ void BindCodeBehind(AvaVM* vm, const DesignDocument& doc) {
 
 bool InvokeHandler(AvaVM* vm, const std::string& handler_name, std::string* out_error) {
     if (!vm || handler_name.empty()) return false;
-
-
-
-
-
-
-
-
-
-
-
-
 
     const std::string source = "__avaui_invoke_result__ = " + handler_name +
                                 (LooksLikeCall(handler_name) ? "" : "()");
@@ -173,11 +134,6 @@ bool InvokeHandler(AvaVM* vm, const std::string& handler_name, std::string* out_
 
     ava_value_t result = ava_get_global(vm, "__avaui_invoke_result__");
     if (result.type == AVA_STRING) {
-
-
-
-
-
 
         ava_value_release(vm, result);
     }

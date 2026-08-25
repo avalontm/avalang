@@ -28,14 +28,12 @@ FunctionSignature Make(const std::string& name, std::vector<std::string> params,
     sig.display = std::move(display);
     sig.doc = doc;
     sig.is_builtin = true;
-    // Every builtin here is registered via VM::RegisterNative, which goes
-    // through the same SetGlobal() as a top-level `func` -- so all of
-    // them are overridable by a same-named local declaration.
+
     sig.overridable = true;
     return sig;
 }
 
-} // namespace
+}
 
 const std::unordered_map<std::string, FunctionSignature>& DefaultBuiltinSignatures() {
     static const std::unordered_map<std::string, FunctionSignature> table = [] {
@@ -110,13 +108,6 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// data/builtin_signatures.csv columns: name,params,doc
-//  - params: pipe-separated raw parameter tokens as they'd appear in
-//    FunctionSignature::params ("value", "*values", "base|exponent" for
-//    two params). has_var_args is derived from any token starting with
-//    "*", rather than a separate column, since the token already carries
-//    that information.
-//  - doc: plain sentence(s).
 bool LoadBuiltinSignaturesFromCsv(const std::string& path,
                                    std::unordered_map<std::string, FunctionSignature>& out) {
     std::string text;
@@ -126,11 +117,11 @@ bool LoadBuiltinSignaturesFromCsv(const std::string& path,
     if (rows.empty()) return false;
 
     std::unordered_map<std::string, FunctionSignature> parsed;
-    // rows[0] is the header (name,params,doc) -- skip it.
+
     for (size_t r = 1; r < rows.size(); ++r) {
         const auto& row = rows[r];
-        if (row.size() == 1 && row[0].empty()) continue; // blank line
-        if (row.size() < 3) continue; // malformed row -- skip rather than crash on it
+        if (row.size() == 1 && row[0].empty()) continue;
+        if (row.size() < 3) continue;
 
         const std::string name = row[0];
         if (name.empty()) continue;
@@ -152,7 +143,7 @@ bool LoadBuiltinSignaturesFromCsv(const std::string& path,
     return true;
 }
 
-} // namespace
+}
 
 const std::unordered_map<std::string, FunctionSignature>& BuiltinSignatures() {
     static std::unordered_map<std::string, FunctionSignature> table;
@@ -160,7 +151,7 @@ const std::unordered_map<std::string, FunctionSignature>& BuiltinSignatures() {
     static bool loaded_from_csv = false;
     static bool first_call = true;
 
-    const std::string csv_path = util::ResolveDataDir() + "builtin_signatures.csv";
+    const std::string csv_path = util::ResolveDataDir() + "docs/builtin_signatures.csv";
     std::error_code ec;
     fs::file_time_type current_time = fs::last_write_time(csv_path, ec);
     bool csv_exists = !ec;
@@ -180,4 +171,4 @@ const std::unordered_map<std::string, FunctionSignature>& BuiltinSignatures() {
     return table;
 }
 
-} // namespace studio
+}

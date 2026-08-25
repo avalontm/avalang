@@ -27,6 +27,7 @@
 #include "imgui.h"
 #include "palette.h"
 #include "panels/toolbox_panel.h"
+#include "util/i18n.h"
 
 #include "GLFW/glfw3.h"
 #include "stb_image.h"
@@ -34,6 +35,18 @@
 namespace studio {
 
 namespace {
+
+std::string TrFormat(const std::string& key, std::initializer_list<std::string> args) {
+    std::string result = util::Tr(key);
+    for (const std::string& arg : args) {
+        const size_t pos = result.find("%s");
+        if (pos == std::string::npos) break;
+        result = result.substr(0, pos) + arg + result.substr(pos + 2);
+    }
+    return result;
+}
+
+std::string TrFormat(const std::string& key, const std::string& arg) { return TrFormat(key, {arg}); }
 
 std::string LowerAscii(const std::string& s) {
     std::string out = s;
@@ -160,39 +173,19 @@ constexpr float kRealContainerPadTop = kChipHeight + kRealContainerPadSide;
 constexpr float kSelectionPad = 4.0f;
 constexpr float kSelectionPadCompact = 2.0f;
 constexpr float kCompactNodeHeightThreshold = 24.0f;
-// Single shared visual language for the selection ring, used identically for
-// containers and leaf controls (previously containers drew a fainter,
-// thinner, more-rounded ring than leaves -- see designer_canvas.cpp session
-// notes, "selection consistency" pass).
+
 constexpr float kSelectionBorderThickness = 2.0f;
 constexpr float kSelectionCornerRadius = 2.5f;
 const ImU32 kSelectionBorderColor = palette::U32FromHex(palette::kPrimary);
 const ImU32 kHoverBorderColor = palette::U32FromHex(palette::kPrimary, 0.7f);
 constexpr float kCanvasTopReserve = kRealContainerPadTop;
 
-// Single source of truth for "what rectangle does the selection system use
-// for this node/region". Every place that needs to know the selection box --
-// the hit-test area for hover/click, the hover ring, the selected ring, the
-// resize handles -- calls this once and uses the result, instead of each
-// site re-deriving its own padding/threshold logic (which is exactly how the
-// hover/selected/hit-test mismatches from before crept in: three separate
-// call sites, three subtly different rectangles). A future change to the pad
-// amount or the compact threshold only has to happen here.
 struct SelectionBox {
     ImVec2 p0;
     ImVec2 p1;
     bool compact = false;
 };
 
-// `has_own_padding`: true for containers, whose base rect is already
-// chrome_p0/chrome_p1 -- a decorative box padded outward from the real
-// layout rect (kRealContainerPadSide/kRealContainerPadTop) so the type chip
-// and border have room to draw. Adding the usual selection pad ON TOP of
-// that stacked two paddings, so a selected/hovered container's ring grew
-// well past its own chrome and could bleed into a tightly-packed sibling
-// right below it. Containers get pad=0 here (their chrome already supplies
-// the breathing room); only leaf controls, which have no chrome of their
-// own, get the extra pad.
 SelectionBox ComputeSelectionBox(ImVec2 base_p0, ImVec2 base_p1, bool has_own_padding = false) {
     SelectionBox box;
     box.compact = !has_own_padding && (base_p1.y - base_p0.y) < kCompactNodeHeightThreshold;
@@ -202,10 +195,6 @@ SelectionBox ComputeSelectionBox(ImVec2 base_p0, ImVec2 base_p1, bool has_own_pa
     return box;
 }
 
-// Single draw call for the selection/hover ring -- color is the only thing
-// that ever differs between "hovering" and "selected", so thickness/radius
-// live here once instead of being repeated (and able to drift) at every
-// AddRect call site.
 void DrawSelectionRing(ImDrawList* draw_list, ImVec2 p0, ImVec2 p1, ImU32 color) {
     draw_list->AddRect(p0, p1, color, kSelectionCornerRadius, 0, kSelectionBorderThickness);
 }
@@ -354,7 +343,7 @@ const ImagePreviewEntry* GetOrLoadImagePreview(const std::string& resolved_path)
     if (cached != g_image_preview_cache.end()) return &cached->second;
 
     int width = 0, height = 0, channels = 0;
-    unsigned char* pixels = stbi_load(resolved_path.c_str(), &width, &height, &channels, 4 /* force RGBA */);
+    unsigned char* pixels = stbi_load(resolved_path.c_str(), &width, &height, &channels, 4 );
     if (pixels == nullptr) {
         g_image_preview_failed.insert(resolved_path);
         return nullptr;
@@ -444,7 +433,7 @@ bool DrawRealWidget(avalang::ui::IComponent* node, const std::string& evaluated_
         ImGui::GetWindowDrawList()->AddLine(ImVec2(p0.x, p0.y + size.y * 0.5f), ImVec2(p1.x, p0.y + size.y * 0.5f),
                                              palette::U32FromHex(palette::kBorder), 1.0f);
     } else if (type == "spacer") {
-        // intencionalmente vacio
+
     } else if (type == "image") {
         const std::string src = FindPropValue(properties, "src", "");
         const std::string resolved_path = ResolveImageSrcPath(src, project_root);
@@ -521,15 +510,9 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
     constexpr bool synthetic = false;
     ImGui::PushID(node->NodeId().c_str());
 
-    // Computed once and shared by the hover ring AND the selected ring below
-    // (previously hover drew at the tight p0/hit_p1 bounds while the selected
-    // ring drew at these padded sel_p0/sel_p1 bounds, and for containers the
-    // selected ring additionally started from the bigger chrome_p0/chrome_p1
-    // instead of p0/p1 -- so selecting a hovered node visibly "grew" the box
-    // instead of just changing its color, which is what was reported).
     const ImVec2 base_sel_p0 = is_container ? chrome_p0 : (skip_leaf_wireframe ? raw_p0 : p0);
     const ImVec2 base_sel_p1 = is_container ? chrome_p1 : (skip_leaf_wireframe ? raw_p1 : p1);
-    const SelectionBox sel_box = ComputeSelectionBox(base_sel_p0, base_sel_p1, /*has_own_padding=*/is_container);
+    const SelectionBox sel_box = ComputeSelectionBox(base_sel_p0, base_sel_p1, is_container);
     const ImVec2 sel_p0 = sel_box.p0;
     const ImVec2 sel_p1 = sel_box.p1;
     const bool compact = sel_box.compact;
@@ -551,12 +534,7 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
     }
 
     if (selected) {
-        // Unified selection chrome (09_DESIGNER_CANVAS_UX_PLAN.md "selection
-        // consistency" pass): containers and leaf controls now share the exact
-        // same ring color/opacity/thickness/corner-radius and the same padding
-        // rule, instead of containers getting a fainter, thinner, more-rounded
-        // ring with no handles. The only thing that still varies by size is
-        // whether resize handles fit -- not the ring itself.
+
         DrawSelectionRing(draw_list, sel_p0, sel_p1, kSelectionBorderColor);
 
         if (!compact) {
@@ -584,11 +562,6 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
                 draw_list->AddRect(hp0, hp1, handle_border, 0.0f, 0, 1.0f);
             }
 
-            // Resize handles are now available for containers too, not just
-            // leaf controls -- width/height are plain properties on any node
-            // (see SetSizeProperty/TryGetNumericProperty above), so there was
-            // no functional reason a Panel/Row/Column couldn't be resized the
-            // same way a Button or Label already could.
             if (!synthetic) {
                 const auto ResizeHandle = [&](const char* str_id, ImVec2 center, ImGuiMouseCursor cursor, bool adjust_x,
                                               bool adjust_y) {
@@ -657,9 +630,10 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
                                 ImVec2(body_center.x + half, body_center.y - 12.0f), hint_color, 1.5f);
             draw_list->AddLine(ImVec2(body_center.x, body_center.y - 12.0f - half),
                                 ImVec2(body_center.x, body_center.y - 12.0f + half), hint_color, 1.5f);
-            const char* hint_text = "Arrastrá un control acá";
-            const ImVec2 text_size = ImGui::CalcTextSize(hint_text);
-            draw_list->AddText(ImVec2(body_center.x - text_size.x * 0.5f, body_center.y), hint_color, hint_text);
+            const std::string hint_text = util::Tr("canvas.drop_hint");
+            const ImVec2 text_size = ImGui::CalcTextSize(hint_text.c_str());
+            draw_list->AddText(ImVec2(body_center.x - text_size.x * 0.5f, body_center.y), hint_color,
+                                hint_text.c_str());
         }
     }
 
@@ -710,33 +684,23 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
     }
 
     const ImVec2 hit_p1 = !is_container ? p1 : (header_reserves_space ? ImVec2(p1.x, header_bottom) : p1);
-    // Hit-test area now matches sel_p0/sel_p1 -- the same padded rect the
-    // hover/selected ring is drawn at -- instead of the tighter p0/hit_p1.
-    // That was the last piece of the mismatch: the ring already lined up
-    // between hover and selected, but the mouse only actually registered as
-    // "over the node" inside the narrower p0/hit_p1 box, so there was a dead
-    // strip (the padding) where you could see the ring's territory but
-    // hovering there did nothing.
+
     ImGui::SetCursorScreenPos(sel_p0);
     ImGui::SetNextItemAllowOverlap();
     ImGui::InvisibleButton("##node_hit_area",
                             ImVec2(std::max(sel_p1.x - sel_p0.x, 1.0f), std::max(sel_p1.y - sel_p0.y, 1.0f)));
     const bool node_hovered = ImGui::IsItemHovered();
     if (!synthetic && node_hovered) {
-        // Arrow, not Hand: this is a design-surface selection affordance, not
-        // a hyperlink/button action -- Hand here was misleading (matches the
-        // report that the cursor shouldn't change to a hand on hover).
+
         ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
         if (!selected) {
-            // Same sel_p0/sel_p1 rect the selected ring below uses -- hover
-            // and selected now trace the identical rectangle both for what's
-            // drawn AND for what actually responds to the mouse.
+
             DrawSelectionRing(draw_list, sel_p0, sel_p1, kHoverBorderColor);
         }
     }
     if (ImGui::IsItemClicked()) {
         doc.selected_node_id = node->NodeId();
-        out_selected = ToPropertiesState(node, /*editable=*/!synthetic, tab_id);
+        out_selected = ToPropertiesState(node, !synthetic, tab_id);
 
         const bool should_invoke_click = !synthetic && state_vm && ImGui::GetIO().KeyCtrl;
         if (should_invoke_click) {
@@ -770,7 +734,7 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
     }
 
     if (movable && ImGui::BeginPopupContextItem("##node_context_menu")) {
-        if (ImGui::MenuItem("Delete")) {
+        if (ImGui::MenuItem(util::Tr("explorer.delete").c_str())) {
             g_canvas_delete_request = {true, tab_id, node->NodeId()};
         }
         ImGui::EndPopup();
@@ -780,19 +744,6 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
         HandleDropTarget(node, doc, is_container, p0, hit_p1);
     }
 
-    // Only reserve a separate body hit-area when a header strip actually
-    // takes up its own space (the non-live-render placeholder mode). In the
-    // normal live-render mode header_reserves_space is false and hit_p1
-    // above already equals p1 -- so this used to fire anyway (guarded only by
-    // "header_bottom < p1.y", which is true for any container with height)
-    // and stamped a second, fully-overlapping InvisibleButton directly on top
-    // of "##node_hit_area" for every container. Because it was added later
-    // it silently won hover every time, which meant the container's
-    // right-click delete menu and its drag-to-move source -- both bound to
-    // "##node_hit_area" as "the last item" -- stopped firing, and clicks
-    // landed on whichever of the two duplicate buttons ImGui happened to
-    // resolve. That's the actual cause of containers selecting/behaving
-    // inconsistently, not just a cursor style issue.
     if (is_container && !synthetic && header_reserves_space) {
         const SelectionBox body_sel_box = ComputeSelectionBox(ImVec2(p0.x, header_bottom), p1);
         ImGui::SetCursorScreenPos(ImVec2(p0.x, header_bottom));
@@ -804,16 +755,14 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
             if (ImGui::GetDragDropPayload() != nullptr) {
                 draw_list->AddRectFilled(ImVec2(p0.x, header_bottom), p1, palette::U32FromHex(palette::kPrimary, 0.06f));
             }
-            // Same helper/box the header/leaf hit-area uses -- any future
-            // change to padding, color, or ring style applies here too
-            // automatically instead of needing a matching edit.
+
             if (!selected) {
                 DrawSelectionRing(draw_list, body_sel_box.p0, body_sel_box.p1, kHoverBorderColor);
             }
         }
         if (ImGui::IsItemClicked()) {
             doc.selected_node_id = node->NodeId();
-            out_selected = ToPropertiesState(node, /*editable=*/true, tab_id);
+            out_selected = ToPropertiesState(node, true, tab_id);
         }
         HandleDropTarget(node, doc, is_container, ImVec2(p0.x, header_bottom), p1);
     }
@@ -866,7 +815,7 @@ float DrawBreadcrumbBar(avalang::ui::IComponent* root_to_draw, design::DesignDoc
         if (ImGui::SmallButton(path[i].label.c_str())) {
             doc.selected_node_id = path[i].node_id;
             if (avalang::ui::IComponent* real = design::FindNodeById(doc.Root(), path[i].node_id)) {
-                out_selected = ToPropertiesState(real, /*editable=*/true, tab_id);
+                out_selected = ToPropertiesState(real, true, tab_id);
             }
         }
         ImGui::EndDisabled();
@@ -899,7 +848,7 @@ float DrawDialogTray(avalang::ui::IComponent* root_to_draw, design::DesignDocume
     if (dialogs.empty()) return 0.0f;
 
     ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("Dialogs (non-visual):");
+    ImGui::TextDisabled("%s", util::Tr("canvas.dialogs_label").c_str());
     for (size_t i = 0; i < dialogs.size(); ++i) {
         ImGui::SameLine();
         ImGui::PushID(static_cast<int>(i));
@@ -910,7 +859,7 @@ float DrawDialogTray(avalang::ui::IComponent* root_to_draw, design::DesignDocume
         if (ImGui::SmallButton(dialogs[i].label.c_str())) {
             doc.selected_node_id = dialogs[i].node_id;
             if (avalang::ui::IComponent* real = design::FindNodeById(doc.Root(), dialogs[i].node_id)) {
-                out_selected = ToPropertiesState(real, /*editable=*/true, tab_id);
+                out_selected = ToPropertiesState(real, true, tab_id);
             }
         }
         if (is_selected) {
@@ -924,12 +873,14 @@ float DrawDialogTray(avalang::ui::IComponent* root_to_draw, design::DesignDocume
 void DrawCanvasDeleteConfirmPopup(design::DesignDocument& doc, int tab_id,
                                    std::optional<PropertiesState>& out_selected) {
     if (g_canvas_delete_request.tab_id != tab_id) return;
+
+    const std::string delete_title = util::Tr("canvas.delete_title") + "##CanvasDeleteConfirm";
     if (g_canvas_delete_request.open) {
-        ImGui::OpenPopup("Delete node?");
+        ImGui::OpenPopup(delete_title.c_str());
         g_canvas_delete_request.open = false;
     }
     ImGui::SetNextWindowSize(ImVec2(360.0f, 0.0f));
-    if (ImGui::BeginPopupModal("Delete node?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::BeginPopupModal(delete_title.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         avalang::ui::IComponent* node = design::FindNodeById(doc.Root(), g_canvas_delete_request.node_id);
         std::string label = "this node";
         if (node) {
@@ -937,8 +888,8 @@ void DrawCanvasDeleteConfirmPopup(design::DesignDocument& doc, int tab_id,
             const std::string node_id_prop = GetNodeIdProp(node);
             if (!node_id_prop.empty()) label += " (" + node_id_prop + ")";
         }
-        ImGui::TextWrapped("Delete \"%s\" and everything inside it?", label.c_str());
-        ImGui::TextDisabled("This can't be undone.");
+        ImGui::TextWrapped("%s", TrFormat("canvas.delete_confirm", label).c_str());
+        ImGui::TextDisabled("%s", util::Tr("explorer.delete_undone").c_str());
         ImGui::Dummy(ImVec2(0.0f, 6.0f));
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0.0f, 8.0f));
@@ -949,7 +900,7 @@ void DrawCanvasDeleteConfirmPopup(design::DesignDocument& doc, int tab_id,
         ImGui::PushStyleColor(ImGuiCol_Button, palette::FromHex(palette::kError, 0.75f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, palette::FromHex(palette::kError, 0.95f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, palette::FromHex(0xc93b3b));
-        if (ImGui::Button("Delete", ImVec2(button_w, 0.0f))) {
+        if (ImGui::Button(util::Tr("explorer.delete").c_str(), ImVec2(button_w, 0.0f))) {
             if (design::RemoveNode(doc, g_canvas_delete_request.node_id)) {
                 if (out_selected && (out_selected->selected_node_id == g_canvas_delete_request.node_id ||
                                       doc.selected_node_id.empty())) {
@@ -962,7 +913,7 @@ void DrawCanvasDeleteConfirmPopup(design::DesignDocument& doc, int tab_id,
         ImGui::PopStyleColor(3);
         ImGui::SameLine(0.0f, spacing);
 
-        if (ImGui::Button("Cancel", ImVec2(button_w, 0.0f))) {
+        if (ImGui::Button(util::Tr("common.cancel").c_str(), ImVec2(button_w, 0.0f))) {
             g_canvas_delete_request = {};
             ImGui::CloseCurrentPopup();
         }
@@ -970,7 +921,7 @@ void DrawCanvasDeleteConfirmPopup(design::DesignDocument& doc, int tab_id,
     }
 }
 
-} // namespace
+}
 
 std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, ImVec2 size,
                                                    const std::string& project_root, int tab_id,
@@ -1080,9 +1031,9 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
     }
 
     if (!live_render->ok) {
-        ImGui::TextColored(palette::FromHex(palette::kError), "Error de render: %s",
-                            live_render->error.c_str());
-        ImGui::TextDisabled("No se pudo reconstruir el layout real -- revisa el arbol/import.");
+        ImGui::TextColored(palette::FromHex(palette::kError), "%s",
+                            TrFormat("canvas.render_error", live_render->error).c_str());
+        ImGui::TextDisabled("%s", util::Tr("canvas.render_error_hint").c_str());
         ImGui::Separator();
     }
 
@@ -1106,16 +1057,17 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
                              " nodo(s) sin entrada en uid_to_rect (no se dibujaron): " + joined);
         }
         *last_logged_missing_rects = joined;
-        ImGui::TextColored(palette::FromHex(palette::kWarning),
-                            "%d nodo(s) sin layout -- no se dibujaron este frame.",
-                            static_cast<int>(missing_rect_uids.size()));
+        ImGui::TextColored(palette::FromHex(palette::kWarning), "%s",
+                            TrFormat("canvas.missing_layout_nodes",
+                                     std::to_string(missing_rect_uids.size()))
+                                .c_str());
     } else {
         last_logged_missing_rects->clear();
     }
 
     if (!doc.selected_node_id.empty()) {
         if (avalang::ui::IComponent* found = design::FindNodeById(doc.Root(), doc.selected_node_id)) {
-            selected = ToPropertiesState(found, /*editable=*/true, tab_id);
+            selected = ToPropertiesState(found, true, tab_id);
         } else {
             doc.selected_node_id.clear();
             selected.reset();
@@ -1140,4 +1092,4 @@ void InvalidateDesignerVmCache(int tab_id) {
     g_designer_vm_cache.erase(it);
 }
 
-} // namespace studio
+}

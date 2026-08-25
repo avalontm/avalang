@@ -19,7 +19,7 @@ KeywordDoc Make(const std::string& name, std::vector<std::string> syntax, const 
     return entry;
 }
 
-} // namespace
+}
 
 const std::unordered_map<std::string, KeywordDoc>& DefaultKeywordDocs() {
     static const std::unordered_map<std::string, KeywordDoc> table = [] {
@@ -183,12 +183,6 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// data/keyword_docs.csv columns: name,syntax,example,doc
-//  - syntax: one or more forms joined by "|||", each with literal "\n"
-//    for line breaks (see util/csv.h's UnescapeCell/SplitOn).
-//  - example: a single concrete snippet, literal "\n" for line breaks.
-//    May be empty.
-//  - doc: plain sentence(s), no special escaping beyond CSV quoting.
 bool LoadKeywordDocsFromCsv(const std::string& path, std::unordered_map<std::string, KeywordDoc>& out) {
     std::string text;
     if (!util::ReadFileToString(path, text)) return false;
@@ -197,11 +191,11 @@ bool LoadKeywordDocsFromCsv(const std::string& path, std::unordered_map<std::str
     if (rows.empty()) return false;
 
     std::unordered_map<std::string, KeywordDoc> parsed;
-    // rows[0] is the header (name,syntax,example,doc) -- skip it.
+
     for (size_t r = 1; r < rows.size(); ++r) {
         const auto& row = rows[r];
-        if (row.size() == 1 && row[0].empty()) continue; // blank line
-        if (row.size() < 4) continue; // malformed row -- skip rather than crash on it
+        if (row.size() == 1 && row[0].empty()) continue;
+        if (row.size() < 4) continue;
 
         KeywordDoc entry;
         entry.name = row[0];
@@ -220,7 +214,7 @@ bool LoadKeywordDocsFromCsv(const std::string& path, std::unordered_map<std::str
     return true;
 }
 
-} // namespace
+}
 
 const std::unordered_map<std::string, KeywordDoc>& KeywordDocs() {
     static std::unordered_map<std::string, KeywordDoc> table;
@@ -228,16 +222,11 @@ const std::unordered_map<std::string, KeywordDoc>& KeywordDocs() {
     static bool loaded_from_csv = false;
     static bool first_call = true;
 
-    const std::string csv_path = util::ResolveDataDir() + "keyword_docs.csv";
+    const std::string csv_path = util::ResolveDataDir() + "docs/keyword_docs.csv";
     std::error_code ec;
     fs::file_time_type current_time = fs::last_write_time(csv_path, ec);
     bool csv_exists = !ec;
 
-    // Reload when: first call ever, or the CSV exists and its mtime moved
-    // forward since the last successful load (someone edited it while Ava
-    // Studio was open). A missing/unreadable CSV on first call falls back
-    // to the embedded defaults once and stops re-checking their mtime
-    // (there's nothing to check).
     bool should_reload = first_call || (csv_exists && current_time != last_loaded_time);
 
     if (should_reload) {
@@ -246,10 +235,7 @@ const std::unordered_map<std::string, KeywordDoc>& KeywordDocs() {
             loaded_from_csv = true;
             last_loaded_time = current_time;
         } else if (!loaded_from_csv) {
-            // Only fall back if we've never had a good CSV load -- a CSV
-            // that briefly fails to parse mid-edit (e.g. an unbalanced
-            // quote while typing) shouldn't blow away a working table
-            // that's already loaded and in use.
+
             table = DefaultKeywordDocs();
         }
     }
@@ -257,4 +243,4 @@ const std::unordered_map<std::string, KeywordDoc>& KeywordDocs() {
     return table;
 }
 
-} // namespace studio
+}

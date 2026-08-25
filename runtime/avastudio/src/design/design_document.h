@@ -29,23 +29,6 @@ std::string GenerateNodeUid();
 
 DesignDocument NewBlankAvauiDocument();
 
-
-
-
-
-
-// sourcePath is optional: text coming straight from the editor may not
-// be saved to disk yet, so there may be nothing to pass. When it IS
-// known (LoadAvauiFile always has it), it's threaded into AvauiParser::
-// Parse so a ParseError carries the right file (see Fase 2,
-// PLAN_DIAGNOSTICOS_AVAUI.md).
-//
-// out_info (Fase 4) is filled in, when non-null, with the same
-// message/line/column/source a ParseError carried -- structured, so a
-// caller like editor_panel.cpp can hand it straight to HighlightError
-// instead of only getting the flattened `out_error` string. Mirrors the
-// outParseError out-param added to avahost's RenderAvauiDynamic* in
-// Fase 3.
 bool ParseAvauiText(const std::string& text, DesignDocument& out_doc, std::string& out_error,
                      const std::string& sourcePath = "",
                      avalang::ui::parser::ParseErrorInfo* out_info = nullptr);

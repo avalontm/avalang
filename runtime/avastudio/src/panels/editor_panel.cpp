@@ -15,13 +15,23 @@
 #include "palette.h"
 #include "panels/designer_canvas.h"
 #include "parser/AvauiWriter.h"
+#include "util/i18n.h"
 
 namespace studio {
 
 namespace {
 
+std::string TrFormat(const std::string& key, std::initializer_list<std::string> args) {
+    std::string result = util::Tr(key);
+    for (const std::string& arg : args) {
+        const size_t pos = result.find("%s");
+        if (pos == std::string::npos) break;
+        result = result.substr(0, pos) + arg + result.substr(pos + 2);
+    }
+    return result;
+}
 
-
+std::string TrFormat(const std::string& key, const std::string& arg) { return TrFormat(key, {arg}); }
 
 std::string DirOf(const std::string& file_path) {
     if (file_path.empty()) return "";
@@ -34,11 +44,6 @@ std::string BaseNameOf(const std::string& file_path) {
     auto pos = file_path.find_last_of("/\\");
     return pos == std::string::npos ? file_path : file_path.substr(pos + 1);
 }
-
-
-
-
-
 
 void RebuildAutocompleteTrie(EditorTab& tab) {
     tab.autocomplete_trie.clear();
@@ -58,52 +63,17 @@ void RebuildAutocompleteTrie(EditorTab& tab) {
     }
 }
 
-
-
 void RebuildIndexAndTrie(EditorTab& tab) {
     tab.function_index.Rebuild(tab.GetText(), DirOf(tab.file_path));
-
-
-
 
     tab.class_index.Rebuild(tab.GetText(), DirOf(tab.file_path));
     tab.variable_type_index.Rebuild(tab.GetText(), tab.class_index);
     RebuildAutocompleteTrie(tab);
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 std::string TextBeforeCursor(EditorTab& tab, const TextEditor::CursorPosition& pos) {
     return tab.editor.GetSectionText(pos.line, 0, pos.line, pos.column);
 }
-
-
-
-
-
-
-
-
-
-
 
 bool ResolveVisibleMembers(EditorTab& tab, int cursor_line, const std::string& before,
                            MemberAccessContext& out_ctx, std::vector<ClassMember>& out_members) {
@@ -117,19 +87,6 @@ bool ResolveVisibleMembers(EditorTab& tab, int cursor_line, const std::string& b
     out_members = ClassIndex::FilterForAccess(out_members, out_ctx.kind, out_ctx.viewer_class);
     if (out_members.empty()) return false;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
     out_members.erase(
         std::remove_if(out_members.begin(), out_members.end(),
                         [](const ClassMember& m) { return m.is_method && m.name == m.declared_in; }),
@@ -137,32 +94,9 @@ bool ResolveVisibleMembers(EditorTab& tab, int cursor_line, const std::string& b
     return !out_members.empty();
 }
 
-
-
-
-
-
-
 std::string MemberSuggestionLabel(const ClassMember& member) {
     return member.is_method && member.signature ? member.signature->display : member.name;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 bool PopulateMemberSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& ac_state) {
     TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
@@ -172,14 +106,8 @@ bool PopulateMemberSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& ac
     std::vector<ClassMember> members;
     if (!ResolveVisibleMembers(tab, pos.line, before, ctx, members)) return false;
 
-
-
-
-
-
     ac_state.suggestions.clear();
     for (const auto& member : members) {
-
 
         if (!ac_state.searchTerm.empty() &&
             member.name.compare(0, ac_state.searchTerm.size(), ac_state.searchTerm) != 0) {
@@ -189,12 +117,6 @@ bool PopulateMemberSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& ac
     }
     return true;
 }
-
-
-
-
-
-
 
 struct CallContext {
     std::string function_name;
@@ -230,11 +152,6 @@ bool FindEnclosingCall(const std::string& line_before_cursor, CallContext& out) 
 bool IsIdentStart(char c) { return std::isalpha(static_cast<unsigned char>(c)) || c == '_'; }
 bool IsIdentChar(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
 
-
-
-
-
-
 std::string WordEndingAtCursor(const std::string& line_before_cursor) {
     size_t end = line_before_cursor.size();
     size_t start = end;
@@ -242,25 +159,7 @@ std::string WordEndingAtCursor(const std::string& line_before_cursor) {
     return line_before_cursor.substr(start, end - start);
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 constexpr float kHintContentWidth = 380.0f;
-
-
-
 
 void DrawHintBadge(const char* label, ImU32 bg_color, ImU32 text_color) {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -273,20 +172,9 @@ void DrawHintBadge(const char* label, ImU32 bg_color, ImU32 text_color) {
     ImGui::Dummy(ImVec2(box_max.x - origin.x, box_max.y - origin.y));
 }
 
-
-
-
-
-
 void DrawHintSectionLabel(const char* text) {
     ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s", text);
 }
-
-
-
-
-
-
 
 void DrawHintCodeBox(const std::string& text, ImU32 border_color) {
     const ImVec2 padding(10.0f, 8.0f);
@@ -304,21 +192,9 @@ void DrawHintCodeBox(const std::string& text, ImU32 border_color) {
     ImGui::TextUnformatted(text.c_str());
     ImGui::PopTextWrapPos();
 
-
-
-
-
-
-
-
-
     ImGui::SetCursorScreenPos(origin);
     ImGui::Dummy(box_size);
 }
-
-
-
-
 
 bool DrawParameterHint(EditorTab& tab) {
     TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
@@ -333,19 +209,13 @@ bool DrawParameterHint(EditorTab& tab) {
     ImGui::SetNextWindowBgAlpha(0.97f);
     ImGui::BeginTooltip();
 
-
-
-
-
     if (sig->is_builtin) {
-        DrawHintBadge("BUILT-IN", palette::U32FromHex(palette::kBorder), palette::U32FromHex(palette::kTextSecondary));
+        DrawHintBadge(util::Tr("editor.hint.builtin").c_str(), palette::U32FromHex(palette::kBorder),
+                      palette::U32FromHex(palette::kTextSecondary));
     } else {
-        DrawHintBadge("FUNCION", palette::U32FromHex(palette::kPrimary), palette::U32FromHex(palette::kBackground));
+        DrawHintBadge(util::Tr("editor.hint.function").c_str(), palette::U32FromHex(palette::kPrimary),
+                      palette::U32FromHex(palette::kBackground));
     }
-
-
-
-
 
     ImGui::TextColored(palette::FromHex(palette::kSynFunction), "%s", sig->name.c_str());
     ImGui::SameLine(0, 0);
@@ -362,26 +232,13 @@ bool DrawParameterHint(EditorTab& tab) {
     ImGui::SameLine(0, 0);
     ImGui::TextUnformatted(")");
 
-
-
-
-
-
-
     if (!sig->doc.empty()) {
         ImGui::Spacing();
-        DrawHintSectionLabel("QUE HACE");
+        DrawHintSectionLabel(util::Tr("editor.hint.what_it_does").c_str());
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + kHintContentWidth);
         ImGui::TextColored(palette::FromHex(palette::kTextPrimary), "%s", sig->doc.c_str());
         ImGui::PopTextWrapPos();
     }
-
-
-
-
-
-
-
 
     if (!sig->param_docs.empty() && ctx.active_param >= 0 &&
         static_cast<size_t>(ctx.active_param) < sig->params.size()) {
@@ -401,27 +258,17 @@ bool DrawParameterHint(EditorTab& tab) {
     ImGui::Spacing();
     if (sig->is_builtin) {
 
-
-
         if (sig->overridable) {
-            ImGui::TextColored(palette::FromHex(palette::kTextDisabled),
-                                "Viene con AvaLang. Podes definir tu propia func %s(...) para reemplazarla.",
-                                sig->name.c_str());
+            ImGui::TextColored(palette::FromHex(palette::kTextDisabled), "%s",
+                                TrFormat("editor.hint.builtin_overridable_note", sig->name).c_str());
         }
     } else if (!sig->source_file.empty()) {
-        ImGui::TextColored(palette::FromHex(palette::kTextDisabled), "Definida en %s", sig->source_file.c_str());
+        ImGui::TextColored(palette::FromHex(palette::kTextDisabled), "%s",
+                            TrFormat("editor.hint.defined_in", sig->source_file).c_str());
     }
     ImGui::EndTooltip();
     return true;
 }
-
-
-
-
-
-
-
-
 
 bool DrawKeywordHint(EditorTab& tab) {
     TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
@@ -430,13 +277,8 @@ bool DrawKeywordHint(EditorTab& tab) {
 
     const auto& docs = KeywordDocs();
 
-
     auto exact = docs.find(word);
     const KeywordDoc* match = exact != docs.end() ? &exact->second : nullptr;
-
-
-
-
 
     if (!match) {
         const KeywordDoc* candidate = nullptr;
@@ -453,49 +295,31 @@ bool DrawKeywordHint(EditorTab& tab) {
     ImGui::SetNextWindowBgAlpha(0.97f);
     ImGui::BeginTooltip();
 
-
-
-
-
-    DrawHintBadge("PALABRA CLAVE", palette::U32FromHex(palette::kPrimary), palette::U32FromHex(palette::kBackground));
+    DrawHintBadge(util::Tr("editor.hint.keyword").c_str(), palette::U32FromHex(palette::kPrimary),
+                  palette::U32FromHex(palette::kBackground));
     ImGui::SameLine();
     ImGui::TextColored(palette::FromHex(palette::kSynKeyword), "%s", match->name.c_str());
 
-
-
-
-
-
-
     ImGui::Spacing();
-    DrawHintSectionLabel(match->syntax.size() > 1 ? "COMO SE ESCRIBE (varias formas válidas)" : "COMO SE ESCRIBE");
+    DrawHintSectionLabel(util::Tr(match->syntax.size() > 1 ? "editor.hint.syntax_multi" : "editor.hint.syntax").c_str());
     for (size_t i = 0; i < match->syntax.size(); ++i) {
         if (match->syntax.size() > 1) {
-            ImGui::TextColored(palette::FromHex(palette::kTextMuted), "Opcion %zu", i + 1);
+            ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s",
+                                TrFormat("editor.hint.option_n", std::to_string(i + 1)).c_str());
         }
         DrawHintCodeBox(match->syntax[i], palette::U32FromHex(palette::kBorder));
         ImGui::Dummy(ImVec2(0.0f, 3.0f));
     }
 
-
-
-
-
-
-
-
     if (!match->example.empty()) {
         ImGui::Dummy(ImVec2(0.0f, 2.0f));
-        DrawHintSectionLabel("EJEMPLO");
+        DrawHintSectionLabel(util::Tr("editor.hint.example").c_str());
         DrawHintCodeBox(match->example, palette::U32FromHex(palette::kPrimary));
     }
 
-
-
-
     if (!match->doc.empty()) {
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
-        DrawHintSectionLabel("QUE HACE");
+        DrawHintSectionLabel(util::Tr("editor.hint.what_it_does").c_str());
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + kHintContentWidth);
         ImGui::TextColored(palette::FromHex(palette::kTextPrimary), "%s", match->doc.c_str());
         ImGui::PopTextWrapPos();
@@ -505,17 +329,7 @@ bool DrawKeywordHint(EditorTab& tab) {
     return true;
 }
 
-
-
-
-
-
 float EstimateGutterWidth(EditorTab& tab, float glyph_width) {
-
-
-
-
-
 
     const std::string text = tab.GetText();
     int total_lines = 1 + static_cast<int>(std::count(text.begin(), text.end(), '\n'));
@@ -523,23 +337,6 @@ float EstimateGutterWidth(EditorTab& tab, float glyph_width) {
     for (int n = total_lines; n >= 10; n /= 10) ++digits;
     return glyph_width * (static_cast<float>(digits) + 3.0f);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 ImVec2 EstimateCaretScreenPos(EditorTab& tab, const TextEditor::CursorPosition& pos,
                                const ImVec2& editor_screen_min) {
@@ -555,42 +352,6 @@ ImVec2 EstimateCaretScreenPos(EditorTab& tab, const TextEditor::CursorPosition& 
                      static_cast<float>(pos.line - first_visible_line) * line_height;
     return ImVec2(x, y);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 bool DrawDotCompletionPopup(EditorTab& tab, const ImVec2& editor_screen_min) {
     TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
@@ -610,23 +371,10 @@ bool DrawDotCompletionPopup(EditorTab& tab, const ImVec2& editor_screen_min) {
                                          ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                                          ImGuiWindowFlags_AlwaysAutoResize;
 
-
-
-
-
     const std::string window_id = "##dot_completion_popup_" + std::to_string(tab.id);
     if (ImGui::Begin(window_id.c_str(), nullptr, kFlags)) {
         for (const auto& member : members) {
             ImGui::PushID(member.name.c_str());
-
-
-
-
-
-
-
-
-
 
             const ImU32 dot_color = member.is_method
                                          ? palette::U32FromHex(palette::kSynFunction)
@@ -642,19 +390,10 @@ bool DrawDotCompletionPopup(EditorTab& tab, const ImVec2& editor_screen_min) {
 
             if (ImGui::Selectable(MemberSuggestionLabel(member).c_str())) {
 
-
-
-
-
-
-
                 std::string insert_text = member.name;
                 int caret_offset = static_cast<int>(insert_text.size());
                 if (member.is_method) {
                     insert_text += "()";
-
-
-
 
                     bool has_params = member.signature && !member.signature->params.empty();
                     caret_offset = static_cast<int>(insert_text.size()) - (has_params ? 1 : 0);
@@ -669,25 +408,9 @@ bool DrawDotCompletionPopup(EditorTab& tab, const ImVec2& editor_screen_min) {
     return true;
 }
 
-
-
-
-
-
 void InitTab(EditorTab& tab) {
     tab.editor.SetLanguage(languages::AvaLang());
     TextEditor::Palette palette = TextEditor::GetDarkPalette();
-
-
-
-
-
-
-
-
-
-
-
 
     palette[static_cast<size_t>(TextEditor::Color::keyword)] = IM_COL32(217, 122, 61, 255);
     palette[static_cast<size_t>(TextEditor::Color::declaration)] = IM_COL32(217, 122, 61, 255);
@@ -699,9 +422,6 @@ void InitTab(EditorTab& tab) {
     palette[static_cast<size_t>(TextEditor::Color::knownIdentifier)] = IM_COL32(224, 200, 132, 255);
     palette[static_cast<size_t>(TextEditor::Color::punctuation)] = IM_COL32(200, 186, 171, 255);
 
-
-
-
     tab.editor.SetPalette(palette);
     tab.editor.SetShowLineNumbersEnabled(true);
     tab.editor.SetTabSize(4);
@@ -709,20 +429,8 @@ void InitTab(EditorTab& tab) {
     tab.editor.SetShowMatchingBrackets(true);
     tab.editor.SetCompletePairedGlyphs(true);
 
-
-
-
-
-
-
-
-
     tab.editor.SetBoldFont(GetCodeFont());
     tab.editor.SetBoldColors({TextEditor::Color::keyword, TextEditor::Color::declaration});
-
-
-
-
 
     tab.editor.SetChangeCallback([&tab] {
         tab.dirty = true;
@@ -739,9 +447,6 @@ void InitTab(EditorTab& tab) {
     RebuildIndexAndTrie(tab);
 }
 
-
-
-
 int FindTabForPath(EditorState& state, const std::string& path) {
     if (path.empty()) return -1;
     for (int i = 0; i < static_cast<int>(state.tabs.size()); ++i) {
@@ -749,13 +454,6 @@ int FindTabForPath(EditorState& state, const std::string& path) {
     }
     return -1;
 }
-
-
-
-
-
-
-
 
 bool PathContains(const std::filesystem::path& parent, const std::filesystem::path& child,
                    std::filesystem::path* remainder = nullptr) {
@@ -775,12 +473,6 @@ bool PathContains(const std::filesystem::path& parent, const std::filesystem::pa
 void CloseTabNow(EditorState& state, int index) {
     if (index < 0 || index >= static_cast<int>(state.tabs.size())) return;
 
-
-
-
-
-
-
     InvalidateDesignerVmCache(state.tabs[index]->id);
     state.tabs.erase(state.tabs.begin() + index);
 
@@ -789,8 +481,6 @@ void CloseTabNow(EditorState& state, int index) {
     } else if (state.active_tab >= static_cast<int>(state.tabs.size())) {
         state.active_tab = static_cast<int>(state.tabs.size()) - 1;
     } else if (index <= state.active_tab && state.active_tab > 0) {
-
-
 
         --state.active_tab;
     }
@@ -805,8 +495,8 @@ void CloseTabNow(EditorState& state, int index) {
 }
 
 std::string EditorTab::DisplayName() const {
-    if (is_welcome) return "Welcome";
-    return file_path.empty() ? "Untitled" : BaseNameOf(file_path);
+    if (is_welcome) return util::Tr("editor.tab.welcome");
+    return file_path.empty() ? util::Tr("editor.tab.untitled") : BaseNameOf(file_path);
 }
 
 EditorTab* EditorState::Active() {
@@ -818,9 +508,6 @@ const EditorTab* EditorState::Active() const {
 }
 
 void InitEditorPanel(EditorState& ) {
-
-
-
 
 }
 
@@ -845,19 +532,8 @@ EditorTab& OpenFileInTab(EditorState& state, const std::string& path) {
             tab->SetText(ss.str());
             tab->dirty = false;
 
-
-
-
             RebuildIndexAndTrie(*tab);
         }
-
-
-
-
-
-
-
-
 
         if (std::filesystem::path(path).extension().string() == ".avaui") {
             tab->is_avaui = true;
@@ -865,14 +541,6 @@ EditorTab& OpenFileInTab(EditorState& state, const std::string& path) {
 
             std::string load_error;
             if (!design::LoadAvauiFile(path, tab->design, load_error)) {
-
-
-
-
-
-
-
-
 
                 tab->design = design::NewBlankAvauiDocument();
                 if (!tab->GetText().empty()) {
@@ -897,8 +565,6 @@ EditorTab& OpenWelcomeTab(EditorState& state) {
     tab->id = state.next_tab_id++;
     tab->is_welcome = true;
 
-
-
     state.tabs.push_back(std::move(tab));
     state.active_tab = static_cast<int>(state.tabs.size()) - 1;
     return *state.tabs.back();
@@ -909,17 +575,6 @@ void SaveTab(EditorTab& tab) {
 
     if (tab.is_avaui) {
         if (tab.view_mode == TabViewMode::Code) {
-
-
-
-
-
-
-
-
-
-
-
 
             design::DesignDocument parsed_doc;
             std::string parse_error;
@@ -934,9 +589,6 @@ void SaveTab(EditorTab& tab) {
             tab.dirty = false;
             return;
         }
-
-
-
 
         if (design::SaveAvauiFile(tab.design, tab.file_path)) {
             tab.design.dirty = false;
@@ -956,10 +608,6 @@ void ToggleTabViewMode(EditorTab& tab) {
 
     if (tab.view_mode == TabViewMode::Design) {
 
-
-
-
-
         tab.SetText([&] {
             avalang::ui::parser::AvauiWriteOptions opts;
             opts.code_behind = tab.design.code_behind;
@@ -976,10 +624,6 @@ void ToggleTabViewMode(EditorTab& tab) {
         return;
     }
 
-
-
-
-
     design::DesignDocument parsed_doc;
     std::string parse_error;
     avalang::ui::parser::ParseErrorInfo parse_error_info;
@@ -989,20 +633,24 @@ void ToggleTabViewMode(EditorTab& tab) {
         tab.avaui_load_error.clear();
         tab.view_mode = TabViewMode::Design;
     } else {
-        // Fase 4: same machinery already used for .ava errors -- jump to
-        // the offending line/column and mark it, instead of only showing
-        // the flattened message in the Code-mode banner below.
-        HighlightError(state, tab.file_path, parse_error_info.line, parse_error_info.column,
-                        parse_error_info.line > 0 ? parse_error_info.message : parse_error);
+        if (parse_error_info.line > 0) {
+            tab.editor.ClearMarkers();
+
+            const ImU32 error_color = palette::U32FromHex(palette::kError, 0.35f);
+            const std::string tooltip = parse_error_info.column > 0
+                                             ? parse_error_info.message
+                                             : (TrFormat("editor.error_at_line", std::to_string(parse_error_info.line)) +
+                                                parse_error_info.message);
+
+            tab.editor.AddMarker(parse_error_info.line - 1, error_color, error_color, tooltip, tooltip);
+            tab.editor.SetCursor(parse_error_info.line - 1, parse_error_info.column > 0 ? parse_error_info.column - 1 : 0);
+            tab.editor.ScrollToLine(parse_error_info.line - 1, TextEditor::Scroll::alignMiddle);
+        }
         tab.avaui_load_error = parse_error;
     }
 }
 
 namespace {
-
-
-
-
 
 int FindLineOf(const std::string& text, const std::string& needle) {
     const size_t pos = text.find(needle);
@@ -1010,28 +658,12 @@ int FindLineOf(const std::string& text, const std::string& needle) {
     return static_cast<int>(std::count(text.begin(), text.begin() + static_cast<long>(pos), '\n'));
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 void JumpToCodeBehindHandler(EditorTab& tab, const std::string& handler_name) {
     if (tab.view_mode == TabViewMode::Design) {
         ToggleTabViewMode(tab);
     }
     const int func_line = FindLineOf(tab.GetText(), "func " + handler_name + "(");
     if (func_line < 0) return;
-
-
-
 
     tab.editor.SetCursor(func_line + 1, 4);
     tab.editor.ScrollToLine(func_line, TextEditor::Scroll::alignMiddle);
@@ -1049,31 +681,16 @@ bool HasUnsavedChanges(const EditorState& state) {
 void SaveAllTabs(EditorState& state) {
     for (auto& tab : state.tabs) {
 
-
-
-
-
-
-
         if (!tab->is_welcome && tab->dirty) SaveTab(*tab);
     }
 }
 
 namespace {
 
-
-
-
-
 void DrawWelcomeTab(EditorState& state) {
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     ImGui::Dummy(ImVec2(0.0f, avail.y * 0.16f));
     const float center_x = ImGui::GetCursorPosX() + avail.x * 0.5f;
-
-
-
-
-
 
     constexpr float kIconSize = 56.0f;
     {
@@ -1083,7 +700,6 @@ void DrawWelcomeTab(EditorState& state) {
             ImGui::SetCursorScreenPos(ImVec2(center_x - kIconSize * 0.5f, icon_pos.y));
             ImGui::Image(static_cast<ImTextureID>(logo_texture), ImVec2(kIconSize, kIconSize));
         } else {
-
 
             ImGui::GetWindowDrawList()->AddCircleFilled(
                 ImVec2(center_x, icon_pos.y + kIconSize * 0.5f), kIconSize * 0.5f,
@@ -1098,10 +714,10 @@ void DrawWelcomeTab(EditorState& state) {
         ImGui::TextColored(palette::FromHex(palette::kTextPrimary), "%s", title);
     }
     {
-        const char* subtitle = "AvaLang editor & runtime";
-        const ImVec2 size = ImGui::CalcTextSize(subtitle);
+        const std::string subtitle = util::Tr("about.tagline");
+        const ImVec2 size = ImGui::CalcTextSize(subtitle.c_str());
         ImGui::SetCursorPosX(center_x - size.x * 0.5f);
-        ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s", subtitle);
+        ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s", subtitle.c_str());
     }
 
     ImGui::Dummy(ImVec2(0.0f, 28.0f));
@@ -1109,7 +725,7 @@ void DrawWelcomeTab(EditorState& state) {
     const float button_w = 180.0f;
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 10.0f));
     ImGui::SetCursorPosX(center_x - (button_w + 90.0f) * 0.5f);
-    if (ImGui::Button("New File", ImVec2(button_w, 0.0f))) {
+    if (ImGui::Button(util::Tr("explorer.new_file").c_str(), ImVec2(button_w, 0.0f))) {
         state.new_tab_requested = true;
     }
     ImGui::SameLine();
@@ -1117,29 +733,25 @@ void DrawWelcomeTab(EditorState& state) {
     ImGui::TextDisabled("Ctrl+N");
 
     ImGui::SetCursorPosX(center_x - (button_w + 90.0f) * 0.5f);
-    if (ImGui::Button("Open File...", ImVec2(button_w, 0.0f))) {
+    if (ImGui::Button(util::Tr("editor.welcome.open_file").c_str(), ImVec2(button_w, 0.0f))) {
         state.open_requested = true;
     }
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("Ctrl+O");
 
-
-
-
-
     ImGui::SetCursorPosX(center_x - (button_w + 90.0f) * 0.5f);
-    if (ImGui::Button("Open Folder...", ImVec2(button_w, 0.0f))) {
+    if (ImGui::Button(util::Tr("menu.file.open_folder").c_str(), ImVec2(button_w, 0.0f))) {
         state.open_folder_requested = true;
     }
     ImGui::PopStyleVar();
 
     ImGui::Dummy(ImVec2(0.0f, 24.0f));
     {
-        const char* hint = "Or double-click a file in Explorer to start editing.";
-        const ImVec2 size = ImGui::CalcTextSize(hint);
+        const std::string hint = util::Tr("editor.welcome.hint");
+        const ImVec2 size = ImGui::CalcTextSize(hint.c_str());
         ImGui::SetCursorPosX(center_x - size.x * 0.5f);
-        ImGui::TextDisabled("%s", hint);
+        ImGui::TextDisabled("%s", hint.c_str());
     }
 }
 
@@ -1166,9 +778,6 @@ void CloseTabForPath(EditorState& state, const std::string& path) {
         CloseTabNow(state, index);
     }
 
-
-
-
     const std::filesystem::path dir(path);
     for (int i = static_cast<int>(state.tabs.size()) - 1; i >= 0; --i) {
         if (PathContains(dir, std::filesystem::path(state.tabs[i]->file_path))) {
@@ -1185,9 +794,6 @@ void RenameTabPath(EditorState& state, const std::string& old_path, const std::s
         state.tabs[index]->file_path = new_path;
         return;
     }
-
-
-
 
     const std::filesystem::path old_dir(old_path);
     const std::filesystem::path new_dir(new_path);
@@ -1206,29 +812,14 @@ void HighlightError(EditorState& state, const std::string& file_path, int line, 
     if (index < 0) return;
     EditorTab& tab = *state.tabs[index];
 
-
-
     tab.editor.ClearMarkers();
-
-
 
     const ImU32 error_color = palette::U32FromHex(palette::kError, 0.35f);
 
-
-
-
-
-
-    std::string tooltip = column > 0 ? message : ("Line " + std::to_string(line) + ": " + message);
-
-
-
-
+    std::string tooltip =
+        column > 0 ? message : (TrFormat("editor.error_at_line", std::to_string(line)) + message);
 
     tab.editor.AddMarker(line - 1, error_color, error_color, tooltip, tooltip);
-
-
-
 
     tab.editor.SetCursor(line - 1, column > 0 ? column - 1 : 0);
     tab.editor.ScrollToLine(line - 1, TextEditor::Scroll::alignMiddle);
@@ -1240,20 +831,32 @@ void ClearErrorHighlights(EditorState& state) {
     }
 }
 
+void SelectMatchInEditor(EditorState& state, const std::string& file_path, int line, int column_start,
+                          int column_end) {
+    if (line <= 0 || file_path.empty()) return;
+    int index = FindTabForPath(state, file_path);
+    if (index < 0) return;
+    EditorTab& tab = *state.tabs[index];
+
+    const int start_col = column_start > 0 ? column_start - 1 : 0;
+    const int end_col = column_end > column_start ? column_end - 1 : start_col + 1;
+
+    tab.editor.SelectRegion(line - 1, start_col, line - 1, end_col);
+    tab.editor.ScrollToLine(line - 1, TextEditor::Scroll::alignMiddle);
+}
+
 void DrawEditorPanel(EditorState& state) {
     state.designer_selection.reset();
+    state.code_editor_has_focus = false;
 
-    ImGui::Begin("Code Editor");
+    const std::string panel_title = util::Tr("panel.editor.title") + "###code_editor";
+    ImGui::Begin(panel_title.c_str());
 
     if (state.tabs.empty()) {
-        ImGui::TextDisabled("No file open. Use File > Open or double-click a file in Explorer.");
+        ImGui::TextDisabled("%s", util::Tr("editor.no_file_open").c_str());
         ImGui::End();
         return;
     }
-
-
-
-
 
     const ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_Reorderable |
                                             ImGuiTabBarFlags_AutoSelectNewTabs |
@@ -1262,19 +865,12 @@ void DrawEditorPanel(EditorState& state) {
 
     int tab_to_close = -1;
 
-
-
-
-
     ImGui::PushStyleColor(ImGuiCol_TabActive, palette::FromHex(palette::kPrimary, 0.18f));
     ImGui::PushStyleColor(ImGuiCol_TabUnfocusedActive, palette::FromHex(palette::kPrimary, 0.12f));
 
     if (ImGui::BeginTabBar("##EditorTabs", tab_bar_flags)) {
         for (int i = 0; i < static_cast<int>(state.tabs.size()); ++i) {
             EditorTab& tab = *state.tabs[i];
-
-
-
 
             std::string label = tab.DisplayName();
             if (tab.dirty) label += " *";
@@ -1283,18 +879,10 @@ void DrawEditorPanel(EditorState& state) {
 
             bool tab_open = true;
 
-
-
-
-
-
             const ImGuiTabItemFlags item_flags =
                 (tab.id == state.focus_tab_id) ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
             const bool selected = ImGui::BeginTabItem(id_buf, &tab_open, item_flags);
             if (selected) {
-
-
-
 
                 const ImVec2 p0 = ImGui::GetItemRectMin();
                 const ImVec2 p1 = ImGui::GetItemRectMax();
@@ -1311,23 +899,12 @@ void DrawEditorPanel(EditorState& state) {
                     DrawWelcomeTab(state);
                 } else if (tab.is_avaui && tab.view_mode == TabViewMode::Design) {
                     if (!tab.avaui_load_error.empty()) {
-                        ImGui::TextColored(palette::FromHex(palette::kWarning), "No se pudo leer %s: %s",
-                                            tab.DisplayName().c_str(), tab.avaui_load_error.c_str());
-                        ImGui::TextDisabled("Mostrando una página en blanco -- guardar sobrescribe el archivo original.");
+                        ImGui::TextColored(
+                            palette::FromHex(palette::kWarning), "%s",
+                            TrFormat("editor.avaui.read_error", {tab.DisplayName(), tab.avaui_load_error}).c_str());
+                        ImGui::TextDisabled("%s", util::Tr("editor.avaui.blank_page_note").c_str());
                         ImGui::Separator();
                     }
-
-
-
-
-
-
-
-
-
-
-
-
 
                     ImVec2 avail = ImGui::GetContentRegionAvail();
                     std::string generated_handler;
@@ -1337,46 +914,28 @@ void DrawEditorPanel(EditorState& state) {
                     }
                     if (tab.design.dirty) tab.dirty = true;
 
-
-
-
-
-
-
                     if (!generated_handler.empty()) {
                         JumpToCodeBehindHandler(tab, generated_handler);
                     }
                 } else {
 
-
-
-
-
-
-
-
-
-
                     if (tab.is_avaui && !tab.avaui_load_error.empty()) {
-                        ImGui::TextColored(palette::FromHex(palette::kWarning), "No se pudo interpretar %s: %s",
-                                            tab.DisplayName().c_str(), tab.avaui_load_error.c_str());
-                        ImGui::TextDisabled("Arreglá la sintaxis y probá F7 de nuevo para volver a Design.");
+                        ImGui::TextColored(
+                            palette::FromHex(palette::kWarning), "%s",
+                            TrFormat("editor.avaui.parse_error", {tab.DisplayName(), tab.avaui_load_error}).c_str());
+                        ImGui::TextDisabled("%s", util::Tr("editor.avaui.fix_syntax_hint").c_str());
                         ImGui::Separator();
                     }
                     ImVec2 avail = ImGui::GetContentRegionAvail();
 
-
-
-
-
-
                     const ImVec2 editor_min = ImGui::GetCursorScreenPos();
                     const ImVec2 editor_max = ImVec2(editor_min.x + avail.x, editor_min.y + avail.y);
                     tab.editor.Render("##editor", avail, false);
-
-
-
-
+                    // Render() submits the code area as a child window of this
+                    // tab item, so IsItemFocused() right after it still refers
+                    // to that child (same "query the item after End*()" pattern
+                    // ImGui uses for IsItemHovered() after EndChild()).
+                    state.code_editor_has_focus = ImGui::IsItemFocused();
 
                     if (ImGui::IsMouseHoveringRect(editor_min, editor_max)) {
                         if (!DrawParameterHint(tab)) {
@@ -1399,35 +958,30 @@ void DrawEditorPanel(EditorState& state) {
         RequestCloseTab(state, tab_to_close);
     }
 
-
+    const std::string unsaved_title = util::Tr("editor.unsaved.title") + "##EditorCloseConfirm";
     if (state.pending_close_index >= 0) {
-        ImGui::OpenPopup("Unsaved Changes##EditorCloseConfirm");
+        ImGui::OpenPopup(unsaved_title.c_str());
     }
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(340.0f, 0.0f));
-    if (ImGui::BeginPopupModal("Unsaved Changes##EditorCloseConfirm", nullptr,
+    if (ImGui::BeginPopupModal(unsaved_title.c_str(), nullptr,
                                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse)) {
         const int idx = state.pending_close_index;
         if (idx < 0 || idx >= static_cast<int>(state.tabs.size())) {
             state.pending_close_index = -1;
             ImGui::CloseCurrentPopup();
         } else {
-            ImGui::TextWrapped("Do you want to save the changes you made to %s?",
-                                state.tabs[idx]->DisplayName().c_str());
+            ImGui::TextWrapped("%s", TrFormat("editor.unsaved.message", state.tabs[idx]->DisplayName()).c_str());
             ImGui::Spacing();
-            ImGui::TextDisabled("Your changes will be lost if you don't save them.");
+            ImGui::TextDisabled("%s", util::Tr("editor.unsaved.warning").c_str());
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
 
             const float button_w = 100.0f;
             const bool is_untitled = state.tabs[idx]->file_path.empty();
-            if (ImGui::Button("Save", ImVec2(button_w, 0.0f))) {
+            if (ImGui::Button(util::Tr("menu.file.save").c_str(), ImVec2(button_w, 0.0f))) {
                 if (is_untitled) {
-
-
-
-
 
                     state.pending_close_index = -1;
                 } else {
@@ -1437,12 +991,12 @@ void DrawEditorPanel(EditorState& state) {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
-            if (ImGui::Button("Don't Save", ImVec2(button_w, 0.0f))) {
+            if (ImGui::Button(util::Tr("editor.unsaved.dont_save").c_str(), ImVec2(button_w, 0.0f))) {
                 CloseTabNow(state, idx);
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(button_w, 0.0f))) {
+            if (ImGui::Button(util::Tr("common.cancel").c_str(), ImVec2(button_w, 0.0f))) {
                 state.pending_close_index = -1;
                 ImGui::CloseCurrentPopup();
             }

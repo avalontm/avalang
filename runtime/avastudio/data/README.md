@@ -1,4 +1,13 @@
-# `data/` — Ava Studio tooltips and autocomplete
+# `data/` — Ava Studio editable content
+
+```
+data/
+  docs/     keyword_docs.csv, builtin_signatures.csv  (editor tooltips/autocomplete)
+  design/   component_catalog.csv                     (Toolbox components)
+  langs/    en.csv, es.csv                             (UI strings, see util/i18n.h)
+```
+
+## `docs/` — tooltips and autocomplete
 
 These two files are what the Code Editor shows in its tooltips
 (`DrawKeywordHint` / `DrawParameterHint` in `panels/editor_panel.cpp`) and
@@ -20,7 +29,7 @@ either. If you add a new keyword or function to the language, you
 have to add the row here BY HAND for the editor to know about it —
 these are two separate things that aren't connected today.
 
-## `keyword_docs.csv` — keywords (`if`, `while`, `try`, ...)
+### `docs/keyword_docs.csv` — keywords (`if`, `while`, `try`, ...)
 
 Columns: `name,syntax,example,doc`
 
@@ -52,7 +61,7 @@ understood alongside another one (`then`, `in`, `as`, `catch`) — the
 example for the main keyword (`if`, `for`, `import`, `try`) already
 covers them.
 
-## `builtin_signatures.csv` — built-in functions (`print`, `len`, `range`, ...)
+### `docs/builtin_signatures.csv` — built-in functions (`print`, `len`, `range`, ...)
 
 Columns: `name,params,doc`
 
@@ -74,7 +83,7 @@ pow,base|exponent,Returns base raised to exponent (base ** exponent).
 print,*values,"Prints every argument, converted with the same rules as str()..."
 ```
 
-## `component_catalog.csv` — Toolbox components (`Button`, `TextBox`, `CheckBox`, ...)
+## `design/component_catalog.csv` — Toolbox components (`Button`, `TextBox`, `CheckBox`, ...)
 
 Columns: `type,display_name,is_container,properties`
 
@@ -111,8 +120,8 @@ instead of failing -- see `panels/designer_canvas.cpp`.
    (`lang.keywords` or `lang.identifiers`) so it gets highlighted and
    shows up in autocomplete — this step is still C++, it's not in
    the CSV.
-3. Add the corresponding row here (`keyword_docs.csv` or
-   `builtin_signatures.csv`) so it has a tooltip. This step really is
+3. Add the corresponding row here (`docs/keyword_docs.csv` or
+   `docs/builtin_signatures.csv`) so it has a tooltip. This step really is
    just text, no recompiling needed.
 
 If a generator from the grammar is ever built
@@ -120,3 +129,9 @@ If a generator from the grammar is ever built
 these CSVs, but it doesn't read the grammar yet), step 3 would stop
 being manual for keywords. See `autocompletado-avalang.md` for the
 full context on that idea.
+
+## `langs/` — UI strings (i18n)
+
+Columns: `key,value`
+
+One file per locale: `en.csv` (canonical -- every key must exist here) and `es.csv`. A key missing from `es.csv` falls back to `en.csv`; missing from both shows up in the UI as `[key]` on purpose, so an untranslated string is easy to spot during development. See `util/i18n.h`/`Tr()`. Re-checked for changes the same way as the other CSVs here -- no recompile needed to see an edit.

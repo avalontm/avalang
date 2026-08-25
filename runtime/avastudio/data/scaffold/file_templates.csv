@@ -1,0 +1,24 @@
+kind,extension,content
+class,.ava,"class {ClassName}
+    func {ClassName}()
+    end
+end
+"
+screen,.avaui,"properties
+    title = ""{DisplayName}""
+end
+
+view
+    column
+        padding = 20
+        gap = 16
+
+        text
+            text = ""{DisplayName}""
+        end
+    end
+end
+
+code
+end
+"

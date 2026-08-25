@@ -1,15 +1,3 @@
-# system_demo.ava
-#
-# Ejemplo de referencia de `import system` -- pensado para leer, no para
-# ejercitar casos borde (eso ya lo hace samples/test/system_console_demo.ava,
-# que es exhaustivo pero pensado como test, no como documentacion).
-#
-# `import system` trae de una sola vez los cinco namespaces del PAL:
-# Console, Environment, IO, Diagnostics.Process y DateTime. Si un script
-# solo necesita una de estas areas, existe el azucar `import system.io`
-# (equivalente a system.io/environment/console/datetime/diagnostics) --
-# ver Fase 6 del plan para el detalle de esa forma alternativa.
-
 import system
 
 # ---------------------------------------------------------------------

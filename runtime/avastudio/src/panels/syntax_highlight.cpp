@@ -22,10 +22,8 @@ const std::unordered_set<std::string>& TypeSet() {
     return set;
 }
 
-} // namespace
+}
 
-// Keywords straight out of grammar/AvaLang.g4 (statement/control-flow
-// literals used verbatim in the grammar's quoted terminals).
 const std::vector<std::string> kKeywords = {
     "if", "then", "elif", "else", "end", "while", "for", "in",
     "func", "class", "try", "catch", "finally",
@@ -34,15 +32,11 @@ const std::vector<std::string> kKeywords = {
     "base", "as",
 };
 
-// Builtin type constructors (core/src/builtins) -- colored as Types even
-// when used as a call, e.g. int(x), since they name a type, not a verb.
 const std::vector<std::string> kTypes = {
     "int", "float", "str", "string", "bool", "list", "dict",
     "number", "function", "instance", "exception", "native", "coroutine",
 };
 
-// Builtin free functions (core/src/builtins) -- offered in autocomplete;
-// colored as Function via the generic "NAME immediately followed by (" rule.
 const std::vector<std::string> kBuiltinFunctions = {
     "print", "len", "range", "type", "abs", "min", "max", "pow", "sqrt",
     "round", "floor", "ceil", "sorted", "reversed", "sum", "all", "any", "resume",
@@ -57,7 +51,7 @@ std::vector<Token> Tokenize(const std::string& text) {
     std::vector<Token> tokens;
     const int n = static_cast<int>(text.size());
     int i = 0;
-    std::string prev_keyword; // "func" | "class" | "" -- drives the NAME right after a declaration
+    std::string prev_keyword;
 
     auto push = [&](int s, int e, TokenKind k) {
         if (e > s) tokens.push_back({s, e, k});
@@ -66,7 +60,6 @@ std::vector<Token> Tokenize(const std::string& text) {
     while (i < n) {
         const char c = text[i];
 
-        // Comments: '#' to end of line.
         if (c == '#') {
             const int s = i;
             while (i < n && text[i] != '\n') i++;
@@ -74,13 +67,11 @@ std::vector<Token> Tokenize(const std::string& text) {
             continue;
         }
 
-        // Strings and f-strings ($"..."). Interpolation braces are not
-        // sub-highlighted -- the whole literal is treated as one string.
         if (c == '"' || c == '\'' || (c == '$' && i + 1 < n && text[i + 1] == '"')) {
             const int s = i;
             char quote;
             if (c == '$') {
-                i += 2; // skip $"
+                i += 2;
                 quote = '"';
             } else {
                 quote = c;
@@ -96,7 +87,6 @@ std::vector<Token> Tokenize(const std::string& text) {
             continue;
         }
 
-        // Numbers: DIGIT+ ('.' DIGIT+)?
         if (std::isdigit(static_cast<unsigned char>(c))) {
             const int s = i;
             while (i < n && std::isdigit(static_cast<unsigned char>(text[i]))) i++;
@@ -109,7 +99,6 @@ std::vector<Token> Tokenize(const std::string& text) {
             continue;
         }
 
-        // Identifiers / keywords / types / function calls.
         if (IsNameStart(c)) {
             const int s = i;
             while (i < n && IsNameChar(text[i])) i++;
@@ -119,9 +108,9 @@ std::vector<Token> Tokenize(const std::string& text) {
             if (KeywordSet().count(word)) {
                 kind = TokenKind::Keyword;
             } else if (prev_keyword == "func") {
-                kind = TokenKind::Function; // name being declared: func NAME(...)
+                kind = TokenKind::Function;
             } else if (prev_keyword == "class") {
-                kind = TokenKind::Type; // name being declared: class NAME
+                kind = TokenKind::Type;
             } else if (TypeSet().count(word)) {
                 kind = TokenKind::Type;
             } else {
@@ -135,10 +124,6 @@ std::vector<Token> Tokenize(const std::string& text) {
             continue;
         }
 
-        // Everything else (operators, punctuation, whitespace, newlines):
-        // one char at a time, default color. Whitespace doesn't reset
-        // prev_keyword (so `func` / `class` still applies across the gap
-        // to the NAME that follows); any other punctuation does.
         {
             const int s = i;
             i++;
@@ -160,7 +145,7 @@ ImU32 ColorForToken(TokenKind kind) {
         case TokenKind::Number:   return U32FromHex(kSynNumber);
         case TokenKind::Comment:  return U32FromHex(kSynComment);
         case TokenKind::Default:
-        default:                 return U32FromHex(kSynVariable); // == kSynOperator, same hex
+        default:                 return U32FromHex(kSynVariable);
     }
 }
 
@@ -171,7 +156,7 @@ std::vector<std::string> CollectIdentifiers(const std::string& text) {
     int i = 0;
     while (i < n) {
         const char c = text[i];
-        if (c == '"' || c == '\'') { // skip over string contents, don't harvest identifiers from them
+        if (c == '"' || c == '\'') {
             const char quote = c;
             i++;
             while (i < n && text[i] != quote && text[i] != '\n') {
@@ -195,4 +180,4 @@ std::vector<std::string> CollectIdentifiers(const std::string& text) {
     return result;
 }
 
-} // namespace studio::syntax
+}

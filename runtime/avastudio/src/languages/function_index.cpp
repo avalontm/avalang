@@ -14,7 +14,6 @@ namespace {
 bool IsIdentStart(char c) { return std::isalpha(static_cast<unsigned char>(c)) || c == '_'; }
 bool IsIdentChar(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
 
-// Requiere que IsIdentStart(text[i]) ya haya sido verificado por el caller.
 std::string ReadIdent(const std::string& text, size_t& i) {
     size_t start = i;
     while (i < text.size() && IsIdentChar(text[i])) ++i;
@@ -25,9 +24,6 @@ void SkipInlineWhitespace(const std::string& text, size_t& i) {
     while (i < text.size() && (text[i] == ' ' || text[i] == '\t')) ++i;
 }
 
-// Divide el texto crudo entre el '(' de una función y su ')' de cierre en
-// parámetros individuales, respetando (), [], {} anidados y strings, para
-// no partir en la coma interna de algo como `b=(1, 2)` o `c="a,b"`.
 std::vector<std::string> SplitParams(const std::string& raw) {
     std::vector<std::string> params;
     int depth = 0;
@@ -53,7 +49,7 @@ std::vector<std::string> SplitParams(const std::string& raw) {
     std::vector<std::string> trimmed;
     for (auto& p : params) {
         size_t b = p.find_first_not_of(" \t\r\n");
-        if (b == std::string::npos) continue; // ignora "func f()" -> [""] y comas colgantes
+        if (b == std::string::npos) continue;
         size_t e = p.find_last_not_of(" \t\r\n");
         trimmed.push_back(p.substr(b, e - b + 1));
     }
@@ -75,12 +71,8 @@ std::string TrimTrailing(const std::string& s) {
     return e == std::string::npos ? "" : s.substr(0, e + 1);
 }
 
-// Parsea una línea "## @param nombre: descripción" (ya sin el "## " y
-// trimeada). Acepta ':' o '-' como separador opcional, o ninguno
-// ("@param nombre descripción"). Devuelve false si no hay un identificador
-// válido justo después de "@param".
 bool ParseParamLine(const std::string& line, std::string& name, std::string& desc) {
-    size_t i = 6; // strlen("@param")
+    size_t i = 6;
     while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
     size_t start = i;
     while (i < line.size() && (std::isalnum(static_cast<unsigned char>(line[i])) || line[i] == '_')) ++i;
@@ -95,11 +87,6 @@ bool ParseParamLine(const std::string& line, std::string& name, std::string& des
     return true;
 }
 
-// Reparte un bloque "##" ya juntado en pending_doc entre sig.doc (resumen
-// general) y sig.param_docs (una entrada por cada línea "@param nombre:
-// ..."), matcheando `nombre` contra ParamBaseName() de cada parámetro real
-// -- así "## @param name: ..." documenta el param aunque en la firma
-// tenga un default o sea *rest.
 void ApplyDocBlock(FunctionSignature& sig, const std::vector<std::string>& pending_doc) {
     std::vector<std::string> summary_lines;
     for (const auto& raw_line : pending_doc) {
@@ -120,11 +107,8 @@ void ApplyDocBlock(FunctionSignature& sig, const std::vector<std::string>& pendi
     sig.doc = doc;
 }
 
-} // namespace
+}
 
-// nombre "limpio" de un parámetro para matchear contra @param: quita el
-// '*' de var-args y todo lo que venga después de un '=' (default value),
-// así "@param items" matchea tanto "items" como "*items" o "items=[]".
 std::string ParamBaseName(const std::string& raw_param) {
     std::string p = raw_param;
     size_t b = p.find_first_not_of(" \t");
@@ -140,23 +124,11 @@ std::string ParamBaseName(const std::string& raw_param) {
 void FunctionIndex::ScanText(const std::string& text, const std::string& source_file) {
     size_t i = 0;
 
-    // "##" doc-comment convention: one or more consecutive lines starting
-    // with "##" immediately above a `func` become that function's summary,
-    // shown in the parameter hint tooltip the same way BuiltinSignatures()
-    // docs already are (see DrawParameterHint in editor_panel.cpp). Plain
-    // "#" comments are never picked up as doc -- otherwise any unrelated
-    // comment sitting above a function would silently become its "doc",
-    // which is worse than showing nothing. pending_doc is cleared by
-    // anything (code, a blank "#" comment, a string) other than more "##"
-    // lines or blank/whitespace, so the block must be truly immediately
-    // above the `func` it documents.
     std::vector<std::string> pending_doc;
 
     while (i < text.size()) {
         char c = text[i];
 
-        // Saltar comentarios (# hasta fin de línea) y strings para no
-        // confundir la palabra "func" si aparece dentro de ellos.
         if (c == '#') {
             size_t start = i;
             while (i < text.size() && text[i] != '\n') ++i;
@@ -199,7 +171,7 @@ void FunctionIndex::ScanText(const std::string& text, const std::string& source_
                 if (text[j] == '(') ++depth;
                 else if (text[j] == ')') { --depth; if (depth == 0) break; }
             }
-            if (j >= text.size()) { i = save; pending_doc.clear(); continue; } // paréntesis sin cerrar, abandonar
+            if (j >= text.size()) { i = save; pending_doc.clear(); continue; }
 
             FunctionSignature sig;
             sig.name = name;
@@ -260,8 +232,7 @@ void FunctionIndex::ScanImports(const std::string& text, const std::string& curr
                         if (file) {
                             std::ostringstream ss;
                             ss << file.rdbuf();
-                            // Solo un nivel: escaneamos símbolos del módulo
-                            // importado, no seguimos SUS imports.
+
                             ScanText(ss.str(), path);
                         }
                     }
@@ -294,21 +265,18 @@ std::string FunctionIndex::ResolveImportPath(const std::vector<std::string>& mod
     candidate = base / rel / "index.ava";
     if (fs::exists(candidate, ec)) return candidate.string();
 
-    return ""; // no resuelto -- se ignora en silencio, best-effort
+    return "";
 }
 
 void FunctionIndex::Rebuild(const std::string& text, const std::string& current_file_dir) {
     signatures_.clear();
-    ScanText(text, "");   // definiciones locales -- siempre ganan (ver comentario en el .h)
+    ScanText(text, "");
     std::unordered_set<std::string> visited;
     ScanImports(text, current_file_dir, visited);
 
-    // Builtins van al final y solo rellenan huecos: si el script ya
-    // declaró (o importó) algo con ese nombre, esa entrada se queda tal
-    // cual -- ver el comentario sobre "override" en builtin_signatures.h.
     for (const auto& [name, sig] : BuiltinSignatures()) {
         signatures_.emplace(name, sig);
     }
 }
 
-} // namespace studio
+}

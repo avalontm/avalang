@@ -32,7 +32,7 @@ struct CatalogMetadata {
 std::unordered_map<std::string, CatalogMetadata> LoadCatalogMetadata() {
     std::unordered_map<std::string, CatalogMetadata> metadata;
     std::string text;
-    if (!util::ReadFileToString(util::ResolveDataDir() + "component_catalog.csv", text)) {
+    if (!util::ReadFileToString(util::ResolveDataDir() + "design/component_catalog.csv", text)) {
         return metadata;
     }
     auto rows = util::ParseCsv(text);

@@ -5,20 +5,7 @@
 
 #include "panels/properties_panel.h"
 
-
-
 namespace studio::design {
-
-
-
-
-
-
-
-
-
-
-
 
 struct ComponentTypeInfo {
     std::string type;
@@ -30,19 +17,7 @@ struct ComponentTypeInfo {
     std::string icon;
 };
 
-
-
-
-
-
-
-
 const std::vector<ComponentTypeInfo>& GetComponentCatalog();
-
-
-
-
-
 
 const ComponentTypeInfo* FindComponentType(const std::string& type);
 

@@ -130,9 +130,12 @@ set(STUDIO_SOURCES
     src/languages/keyword_docs.cpp
     src/util/csv.cpp
     src/util/data_dir.cpp
+    src/util/i18n.cpp
     src/util/settings.cpp
     src/util/ava_cli_locator.cpp
     src/util/process_log.cpp
+    src/util/project_utils.cpp
+    src/util/scaffold_templates.cpp
     src/design/component_catalog.cpp
     src/design/design_document.cpp
     src/design/component_resolver.cpp
@@ -148,8 +151,14 @@ set(STUDIO_SOURCES
     src/panels/preview_panel.cpp
     src/panels/terminal_panel.cpp
     src/panels/logs_panel.cpp
+    src/panels/problems_panel.cpp
+    src/panels/find_in_project_panel.cpp
+    src/panels/command_palette.cpp
+    src/panels/quick_open_panel.cpp
+    src/panels/new_project_panel.cpp
     src/panels/titlebar_panel.cpp
     src/panels/toolbox_panel.cpp
+    src/panels/activity_bar_panel.cpp
     src/panels/designer_canvas.cpp
     src/panels/pending_edits_panel.cpp
     src/platform/win32_titlebar.cpp
@@ -187,21 +196,25 @@ target_include_directories(ava_studio PRIVATE
 
 target_link_libraries(ava_studio PRIVATE avalang imgui_docking text_editor avalang_ui)
 
-# data/keyword_docs.csv, data/builtin_signatures.csv and
-# data/component_catalog.csv -- the editable
-# tooltip/autocomplete-help tables (see languages/keyword_docs.h and
-# languages/builtin_signatures.h). Copied next to the .exe on every
-# build, same folder ResolveDataDir() (util/data_dir.cpp) looks in at
-# runtime, mirroring how ResolveWorkspaceDir() in main.cpp already
-# resolves "scripts/" the same way. Uses copy_directory instead of
-# copy_if_different so deleting a row from the source CSV during
-# development is reflected in the build output too, not just additions.
+# data/docs/keyword_docs.csv, data/docs/builtin_signatures.csv,
+# data/design/component_catalog.csv, data/langs/en.csv/es.csv and (Fase 5)
+# data/scaffold/file_templates.csv -- the editable tooltip/autocomplete-
+# help/i18n/scaffold tables (see languages/keyword_docs.h,
+# languages/builtin_signatures.h, util/i18n.h and util/scaffold_templates.h).
+# Copied next to the .exe on every build, same folder ResolveDataDir()
+# (util/data_dir.cpp) looks in at runtime, mirroring how
+# ResolveWorkspaceDir() in main.cpp already resolves "scripts/" the same
+# way. Uses copy_directory instead of copy_if_different so deleting a row
+# from the source CSV during development is reflected in the build
+# output too, not just additions -- and since it copies the whole data/
+# tree recursively, the langs/docs/design/scaffold subfolders need no
+# extra CMake wiring of their own.
 add_custom_command(TARGET ava_studio POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:ava_studio>/data"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/data"
             "$<TARGET_FILE_DIR:ava_studio>/data"
-    COMMENT "Copying data/ (keyword_docs.csv, builtin_signatures.csv, component_catalog.csv) next to ava_studio.exe"
+    COMMENT "Copying data/ (docs/, design/, langs/, scaffold/) next to ava_studio.exe"
 )
 
 # avalang.dll / avalang_ui.dll -- ava_studio.exe links directly against

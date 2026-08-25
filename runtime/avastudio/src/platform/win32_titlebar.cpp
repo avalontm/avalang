@@ -108,7 +108,7 @@ LRESULT CALLBACK WndProcHook(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
     return CallWindowProc(g_prev_wndproc, hwnd, msg, wparam, lparam);
 }
 
-} // anonymous namespace
+}
 
 void Install(GLFWwindow* window) {
     HWND hwnd = glfwGetWin32Window(window);
@@ -126,16 +126,6 @@ void Install(GLFWwindow* window) {
     SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
                  SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 
-    // NOTE: we deliberately do NOT call DwmExtendFrameIntoClientArea here.
-    // It's the usual way to keep the native drop shadow on a borderless
-    // window, but GLFW/WGL windows use the legacy (BitBlt-model) OpenGL
-    // swap chain, not a DXGI flip-model swap chain -- and DWM only
-    // composites the extended margin correctly for flip-model/Direct3D
-    // content. On a BitBlt-model GL window it instead paints the current
-    // Windows accent color solid over the extended area (that's the
-    // orange full-width bar bug). We lose the native drop shadow as a
-    // result; if that's wanted later, draw a fake shadow ourselves with
-    // ImGui/a few translucent rects instead of via DWM.
 }
 
 void UpdateHitRegions(int titlebar_height, Rect minimize_btn, Rect maximize_btn, Rect close_btn,
@@ -165,8 +155,7 @@ bool IsWindowMaximizedNow(GLFWwindow* window) {
 }
 
 void OpenUrl(const char* url) {
-    // SW_SHOWNORMAL launches whatever the user has set as their default
-    // browser, same as double-clicking a link anywhere else in Windows.
+
     ShellExecuteA(nullptr, "open", url, nullptr, nullptr, SW_SHOWNORMAL);
 }
 
@@ -208,10 +197,6 @@ bool SaveFileDialog(GLFWwindow* window, std::string& out_path, const std::string
 bool OpenFolderDialog(GLFWwindow* window, std::string& out_path, const std::string& initial_dir) {
     HWND owner = window ? glfwGetWin32Window(window) : nullptr;
 
-    // Modern Common Item Dialog (the same file-browser look "Open File..."
-    // uses -- address bar, sidebar, list/details view) restricted to
-    // folders via FOS_PICKFOLDERS, instead of the old-style SHBrowseForFolder
-    // tree control, which looks dated and feels like a different app.
     const bool co_initialized =
         SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE));
 
@@ -264,26 +249,23 @@ bool IsDirectoryPath(const std::string& path) {
     return (attrs != INVALID_FILE_ATTRIBUTES) && (attrs & FILE_ATTRIBUTE_DIRECTORY);
 }
 
-} // namespace
+}
 
 void RevealInFileExplorer(const std::string& path) {
     if (path.empty()) return;
     if (IsDirectoryPath(path)) {
-        // A folder: just open it, same as double-clicking into it.
+
         ShellExecuteA(nullptr, "explore", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     } else {
-        // A file: open its *parent* folder with the file itself
-        // highlighted, same as VSCode/Windows' own "Open Containing
-        // Folder" / "Show in Explorer". /select, needs the whole thing as
-        // one quoted parameter string, not a bare path.
+
         const std::string param = "/select,\"" + path + "\"";
         ShellExecuteA(nullptr, "open", "explorer.exe", param.c_str(), nullptr, SW_SHOWNORMAL);
     }
 }
 
-} // namespace studio::titlebar
+}
 
-#else // !_WIN32
+#else
 
 namespace studio::titlebar {
 
@@ -296,6 +278,6 @@ bool SaveFileDialog(GLFWwindow*, std::string&, const std::string&) { return fals
 bool OpenFolderDialog(GLFWwindow*, std::string&, const std::string&) { return false; }
 void RevealInFileExplorer(const std::string&) {}
 
-} // namespace studio::titlebar
+}
 
 #endif

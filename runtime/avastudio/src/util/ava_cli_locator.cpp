@@ -33,24 +33,16 @@ fs::path SelfExecutableDir() {
 #endif
 }
 
-// ava_studio.exe and ava_cli.exe land under the same build_cli/runtime/
-// tree but in different target subfolders (runtime/avastudio/<Config>/
-// vs. runtime/avalang/<Config>/, the latter forced by
-// runtime/avacli/CMakeLists.txt's RUNTIME_OUTPUT_DIRECTORY override --
-// see the comment there). Try every layout that produces: multi-config
-// generators (VS, with a Release/Debug subfolder) AND single-config ones
-// (Ninja/Make, no subfolder), covering both a same-name-as-self-dir
-// config folder and a config-less one.
 fs::path DetectAvaCliPath() {
     const std::string exe_name = std::string("ava_cli") + AVASTUDIO_EXE_SUFFIX;
     fs::path self_dir = SelfExecutableDir();
     if (self_dir.empty()) return {};
 
     std::vector<fs::path> candidates = {
-        self_dir / exe_name,                                                       // same folder
-        self_dir.parent_path().parent_path() / "avalang" / self_dir.filename() / exe_name, // sibling, same config subfolder
-        self_dir.parent_path().parent_path() / "avalang" / exe_name,               // sibling, no config subfolder
-        self_dir.parent_path() / "avalang" / exe_name,                             // sibling one level up
+        self_dir / exe_name,
+        self_dir.parent_path().parent_path() / "avalang" / self_dir.filename() / exe_name,
+        self_dir.parent_path().parent_path() / "avalang" / exe_name,
+        self_dir.parent_path() / "avalang" / exe_name,
     };
     for (const fs::path& candidate : candidates) {
         std::error_code ec;
@@ -59,4 +51,4 @@ fs::path DetectAvaCliPath() {
     return {};
 }
 
-} // namespace studio
+}

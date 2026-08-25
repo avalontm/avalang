@@ -13,7 +13,6 @@ namespace studio {
 
 namespace {
 
-// One line of a computed diff -- see ComputeLineDiff below.
 struct DiffLine {
     enum class Kind { Context, Added, Removed };
     Kind kind;
@@ -24,23 +23,12 @@ std::vector<std::string> SplitLines(const std::string& text) {
     std::vector<std::string> lines;
     std::istringstream stream(text);
     std::string line;
-    // std::getline drops the trailing '\n' that separates each line but
-    // also silently drops the *file's* final line if it has no trailing
-    // newline of its own -- rebuilding line-by-line like this is fine
-    // either way for a review diff (a missing final blank line is not
-    // something the person needs highlighted).
+
     while (std::getline(stream, line)) lines.push_back(line);
     return lines;
 }
 
-// A small LCS-based line diff -- good enough for reviewing an agent's
-// proposed edit, not meant to be a general-purpose diff engine. O(n*m)
-// in the number of lines on each side, so capped: past kMaxDiffCells
-// total table entries, this gives up on a line-level diff and falls
-// back to "everything old removed, everything new added" so a huge
-// file still renders (just without line-level highlighting) instead of
-// hanging the UI thread computing an LCS table.
-constexpr size_t kMaxDiffCells = 4'000'000; // e.g. ~2000 lines x ~2000 lines
+constexpr size_t kMaxDiffCells = 4'000'000;
 
 std::vector<DiffLine> ComputeLineDiff(const std::string& old_content, const std::string& new_content) {
     std::vector<std::string> a = SplitLines(old_content);
@@ -56,8 +44,6 @@ std::vector<DiffLine> ComputeLineDiff(const std::string& old_content, const std:
         return result;
     }
 
-    // Standard LCS length table, then backtrack to emit context/added/
-    // removed lines in order.
     std::vector<std::vector<int>> lcs(n + 1, std::vector<int>(m + 1, 0));
     for (size_t i = 1; i <= n; ++i) {
         for (size_t j = 1; j <= m; ++j) {
@@ -110,7 +96,7 @@ void DrawDiffLine(const DiffLine& line) {
     ImGui::PopStyleColor();
 }
 
-} // namespace
+}
 
 void DrawPendingEditsPanel(PluginHost& plugin_host) {
     std::vector<PendingEdit> edits = plugin_host.PendingEdits();
@@ -118,10 +104,7 @@ void DrawPendingEditsPanel(PluginHost& plugin_host) {
 
     char title[64];
     std::snprintf(title, sizeof(title), "Cambios propuestos (%zu)###pending_edits", edits.size());
-    // Not docked (no default_dock_slot -- this isn't a plugin panel, it's
-    // host UI) -- a floating window makes more sense for something that
-    // pops up rarely and needs a decision before it's dismissed, rather
-    // than permanently occupying a dock slot the rest of the session.
+
     ImGui::SetNextWindowSize(ImVec2(640, 420), ImGuiCond_FirstUseEver);
     bool open = true;
     if (!ImGui::Begin(title, &open)) {
@@ -163,13 +146,10 @@ void DrawPendingEditsPanel(PluginHost& plugin_host) {
     }
 
     ImGui::End();
-    // Closing the window via its titlebar X rejects every proposal still
-    // shown, rather than leaving them queued invisibly -- "nunca se
-    // aplica solo" cuts both ways: dismissing the review is a rejection,
-    // not a silent approval.
+
     if (!open) {
         for (const PendingEdit& edit : edits) plugin_host.RejectEdit(edit.id);
     }
 }
 
-} // namespace studio
+}

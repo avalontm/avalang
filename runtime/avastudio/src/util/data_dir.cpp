@@ -52,4 +52,4 @@ bool ReadFileToString(const std::string& path, std::string& out) {
     return true;
 }
 
-} // namespace studio::util
+}

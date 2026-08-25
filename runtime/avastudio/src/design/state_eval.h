@@ -7,50 +7,6 @@
 
 namespace studio::design {
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 AvaVM* BuildStateVM(const DesignDocument& doc);
 
 std::string EvalPropertyExpr(AvaVM* vm, const std::string& raw_value);

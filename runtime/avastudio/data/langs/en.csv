@@ -1,0 +1,207 @@
+key,value
+i18n.test.greeting,Hello from Ava Studio
+i18n.test.language_name,English
+menu.file,File
+menu.file.new_file,New File
+menu.file.open,Open...
+menu.file.open_folder,Open Folder...
+menu.file.save,Save
+menu.file.close_tab,Close Tab
+menu.file.save_as,Save As...
+menu.file.view_code,View Code
+menu.file.view_design,View Design
+menu.file.preferences,Preferences
+menu.file.settings,Settings
+menu.file.extensions,Extensions
+menu.file.exit,Exit
+menu.edit,Edit
+menu.edit.find_in_project,Find in Project...
+menu.view,View
+menu.run,Run
+menu.run.run_script,Run Script
+menu.run.run_project,Run Project
+menu.run.check,Check
+menu.run.build,Build Executable...
+menu.about,About
+about.tagline,AvaLang editor & runtime
+about.version_label,Version
+about.built_on,Built on the AvaLang core VM
+about.created_by,Created by
+common.close,Close
+plugins.title,Plugins
+plugins.installed,Installed plugins
+plugins.description,"Enable or disable a plugin found in the plugins/ folder. Changes apply immediately -- no need to restart Ava Studio."
+plugins.empty,No plugins found in plugins/.
+plugins.not_loaded,(not loaded)
+plugins.by,by
+panel.explorer.title,Explorer
+explorer.new_file,New File
+explorer.new_folder,New Folder
+explorer.new_file_kind_class,Class (.ava)
+explorer.new_file_kind_screen,Screen (.avaui)
+explorer.create,Create
+explorer.open_in_file_manager,Open in File Manager
+explorer.rename,Rename
+explorer.delete,Delete
+explorer.delete_title,Delete?
+explorer.delete_folder_confirm,"Delete folder ""%s"" and everything inside it?"
+explorer.delete_file_confirm,"Delete ""%s""?"
+explorer.delete_undone,This can't be undone.
+explorer.folder_not_found,(folder not found: %s)
+common.cancel,Cancel
+panel.editor.title,Code Editor
+editor.no_file_open,No file open. Use File > Open or double-click a file in Explorer.
+editor.welcome.open_file,Open File...
+editor.welcome.hint,Or double-click a file in Explorer to start editing.
+editor.tab.welcome,Welcome
+editor.tab.untitled,Untitled
+editor.hint.builtin,BUILT-IN
+editor.hint.function,FUNCTION
+editor.hint.what_it_does,WHAT IT DOES
+editor.hint.keyword,KEYWORD
+editor.hint.syntax,HOW TO WRITE IT
+editor.hint.syntax_multi,HOW TO WRITE IT (multiple valid forms)
+editor.hint.option_n,Option %s
+editor.hint.example,EXAMPLE
+editor.hint.defined_in,Defined in %s
+editor.hint.builtin_overridable_note,Comes with AvaLang. You can define your own func %s(...) to override it.
+editor.avaui.read_error,"Could not read %s: %s"
+editor.avaui.blank_page_note,Showing a blank page -- saving will overwrite the original file.
+editor.avaui.parse_error,"Could not parse %s: %s"
+editor.avaui.fix_syntax_hint,Fix the syntax and try F7 again to go back to Design.
+editor.unsaved.title,Unsaved Changes
+editor.unsaved.message,Do you want to save the changes you made to %s?
+editor.unsaved.warning,Your changes will be lost if you don't save them.
+editor.unsaved.dont_save,Don't Save
+editor.error_at_line,"Line %s: "
+canvas.drop_hint,Drag a control here
+canvas.dialogs_label,Dialogs (non-visual):
+canvas.delete_title,Delete node?
+canvas.delete_confirm,"Delete ""%s"" and everything inside it?"
+canvas.render_error,"Render error: %s"
+canvas.render_error_hint,Could not rebuild the real layout -- check the tree/import.
+canvas.missing_layout_nodes,"%s node(s) with no layout -- not drawn this frame."
+panel.toolbox.title,Toolbox
+toolbox.hint,Drag a control onto the Design canvas
+toolbox.container_tag,(container)
+panel.properties.title,Properties
+properties.column_key,Key
+properties.column_value,Value
+properties.new_key_hint,new key
+properties.empty_selection,Select a component on the canvas to view and edit its properties.
+properties.type_label,Type
+properties.id_label,Id
+properties.type_display,"Type: %s"
+properties.id_display,"Id: %s"
+properties.readonly_note,Read-only (no editable source for this selection).
+properties.column_property,Property
+properties.section_events,Events
+properties.column_event,Event
+properties.column_handler,Handler
+panel.logs.title,Logs
+logs.section_label,General logs
+logs.copy_all_button,Copy all
+logs.empty,Plugin and host events will show up here.
+common.copy,Copy
+common.copy_all,Copy All
+common.select_all,Select All
+common.clear,Clear
+panel.terminal.title,Terminal
+terminal.section_label,Execution console
+terminal.copy_console,Copy console
+terminal.empty,Press Run (F5) to compile and run the editor's script.
+terminal.input_hint,"Type something and press Enter (input() doesn't exist in the language yet)..."
+panel.problems.title,Problems
+panel.problems.title_with_count,Problems (%s)
+problems.section_label,Diagnostics
+problems.empty,No problems have been detected.
+panel.find_in_project.title,Find in Project
+find_in_project.query_label,Find:
+find_in_project.case_sensitive,Case sensitive
+find_in_project.search_button,Search
+find_in_project.empty_hint,Type a search term and press Enter to search the project's .ava/.avaui files.
+find_in_project.no_results,No matches found.
+find_in_project.results_count,%s matches
+find_in_project.results_truncated,Showing the first %s matches -- narrow your search to see more.
+panel.build.title,Build
+build.intro,"Packages the current project into a standalone .exe (see runtime/avapack/README.md). This runs 'ava_cli build' in the background -- everything below just fills in its flags."
+build.section_target,Target
+build.platform_label,Platform
+build.platform_value,"%s (detected)"
+build.target_label,Build type
+build.target_desktop,Desktop
+build.target_barekernel,BareKernel
+build.toolchain_dir_label,Cross-toolchain folder
+build.toolchain_dir_hint,"(i686-elf-gcc/g++/ld/objcopy/nm)"
+build.barekernel_note,"Encryption, obfuscation, zero-disk, and code signing are desktop-only and don't apply to BareKernel -- that section is hidden below."
+build.error_toolchain_dir_missing,"could not find the cross-toolchain folder -- set it above."
+build.section_project,Project
+build.section_options,Options
+build.section_advanced,Advanced
+build.default_path_hint,"(default: %s)"
+build.project_folder_label,Project folder
+build.entry_script_label,"Entry script (.ava)"
+build.entry_script_hint,"(default: auto-detect main.ava)"
+build.detect_button,Detect
+common.browse,Browse...
+build.output_folder_label,Output folder
+build.obfuscate_label,Obfuscate
+build.obfuscate_tooltip,"Compiles the entry to .avbc bytecode instead of embedding plain .ava source.\nAlso produces a <out>.avmap SymbolMap next to the build -- keep it yourself,\nnever distribute it alongside the .exe."
+build.obfuscate_strings_label,Obfuscate strings
+build.flatten_control_flow_label,Flatten control flow
+build.zero_disk_label,Zero-disk
+build.zero_disk_tooltip,"Resolves the packaged project against an in-memory virtual filesystem instead\nof a temp dir -- no .ava/.avbc touches disk, not even briefly."
+build.debug_unencrypted_label,"Debug build (unencrypted)"
+build.debug_unencrypted_warning,do not distribute this .exe
+build.key_file_label,"AES key file (optional)"
+build.key_file_hint,"(default: random key per build)"
+build.repo_root_label,AvaLang repo root
+build.repo_root_hint,"(default: auto-detect)"
+build.auto_detect_button,Auto-detect
+build.ava_cli_path_label,ava_cli path
+build.ava_cli_path_hint,"(default: auto-detect next to ava_studio.exe)"
+build.vcpkg_root_label,"VCPKG_ROOT (optional)"
+build.vcpkg_not_found_hint,"(not found -- click Install vcpkg below)"
+build.install_vcpkg_button,Install vcpkg
+build.installing_vcpkg_button,Installing vcpkg...
+build.vcpkg_installing_status,"cloning + bootstrapping + building antlr4/curl -- can take several minutes..."
+build.vcpkg_ready,"vcpkg ready at %s"
+build.vcpkg_failed,vcpkg install failed -- see log in Output.
+build.build_button,Build Executable
+build.building_button,Building...
+build.building_status,"this can take a while the first time (compiling avapack_gen)..."
+build.succeeded,"Build succeeded -> %s"
+build.failed,Build failed -- see log below.
+build.error_ava_cli_not_found,could not find ava_cli(.exe) -- set its path under Advanced.
+build.error_repo_root_not_found,could not find the AvaLang repo root -- set it under Advanced.
+build.error_project_dir_missing,project folder does not exist.
+build.error_entry_file_missing,could not find an entry .ava file -- set 'Entry script' above.
+panel.settings.title,Settings
+settings.language_label,Language
+settings.section_general,General
+settings.editor_item,Editor
+settings.no_plugins,(none)
+settings.modules_folder_label,Modules folder
+settings.modules_folder_description,"In addition to imports relative to the open file, ""import"" also looks here -- meant for base/shared modules across projects. Leave blank to use the modules folder next to the executable."
+settings.modules_folder_hint,"(default: folder next to the executable)"
+menu.view.command_palette,Command Palette...
+command_palette.hint,Type a command...
+command_palette.no_results,No matching commands.
+menu.edit.quick_open,Quick Open...
+quick_open.hint,Go to file...
+quick_open.no_results,No matching files.
+quick_open.no_project_files,No .ava/.avaui files found in this project.
+menu.file.new_project,New Project...
+new_project.name_label,Project name
+new_project.name_hint,MyProject
+new_project.destination_label,Destination folder
+new_project.template_label,Template
+new_project.template_empty,Empty
+new_project.template_with_screen,With example screen
+new_project.preview_label,"Will create: %s"
+new_project.create_button,Create Project
+new_project.error_name_required,Enter a project name.
+new_project.error_destination_required,Choose a destination folder.
+new_project.error_destination_missing,Destination folder does not exist.
+new_project.error_already_exists,"A folder with that name already exists there."
+new_project.error_create_failed,Could not create the project folder.

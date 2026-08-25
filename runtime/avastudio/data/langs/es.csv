@@ -1,0 +1,207 @@
+key,value
+i18n.test.greeting,Hola desde Ava Studio
+i18n.test.language_name,Español
+menu.file,Archivo
+menu.file.new_file,Nuevo Archivo
+menu.file.open,Abrir...
+menu.file.open_folder,Abrir Carpeta...
+menu.file.save,Guardar
+menu.file.close_tab,Cerrar Pestaña
+menu.file.save_as,Guardar Como...
+menu.file.view_code,Ver Código
+menu.file.view_design,Ver Diseño
+menu.file.preferences,Preferencias
+menu.file.settings,Configuración
+menu.file.extensions,Extensiones
+menu.file.exit,Salir
+menu.edit,Editar
+menu.edit.find_in_project,Buscar en el proyecto...
+menu.view,Ver
+menu.run,Ejecutar
+menu.run.run_script,Ejecutar Script
+menu.run.run_project,Ejecutar Proyecto
+menu.run.check,Verificar
+menu.run.build,Compilar Ejecutable...
+menu.about,Acerca de
+about.tagline,Editor y runtime de AvaLang
+about.version_label,Versión
+about.built_on,Construido sobre el VM núcleo de AvaLang
+about.created_by,Creado por
+common.close,Cerrar
+plugins.title,Complementos
+plugins.installed,Complementos instalados
+plugins.description,"Habilita o deshabilita un complemento encontrado en la carpeta plugins/. Los cambios se aplican de inmediato -- no es necesario reiniciar Ava Studio."
+plugins.empty,No se encontraron complementos en plugins/.
+plugins.not_loaded,(no cargado)
+plugins.by,por
+panel.explorer.title,Explorador
+explorer.new_file,Nuevo Archivo
+explorer.new_folder,Nueva Carpeta
+explorer.new_file_kind_class,Clase (.ava)
+explorer.new_file_kind_screen,Pantalla (.avaui)
+explorer.create,Crear
+explorer.open_in_file_manager,Abrir en el Explorador de Archivos
+explorer.rename,Renombrar
+explorer.delete,Eliminar
+explorer.delete_title,¿Eliminar?
+explorer.delete_folder_confirm,"¿Eliminar la carpeta ""%s"" y todo su contenido?"
+explorer.delete_file_confirm,"¿Eliminar ""%s""?"
+explorer.delete_undone,Esta acción no se puede deshacer.
+explorer.folder_not_found,(carpeta no encontrada: %s)
+common.cancel,Cancelar
+panel.editor.title,Editor de Código
+editor.no_file_open,No hay ningún archivo abierto. Usa Archivo > Abrir o doble clic en un archivo del Explorador.
+editor.welcome.open_file,Abrir Archivo...
+editor.welcome.hint,O hacé doble clic en un archivo del Explorador para empezar a editar.
+editor.tab.welcome,Bienvenida
+editor.tab.untitled,Sin título
+editor.hint.builtin,INCORPORADA
+editor.hint.function,FUNCIÓN
+editor.hint.what_it_does,QUÉ HACE
+editor.hint.keyword,PALABRA CLAVE
+editor.hint.syntax,CÓMO SE ESCRIBE
+editor.hint.syntax_multi,CÓMO SE ESCRIBE (varias formas válidas)
+editor.hint.option_n,Opción %s
+editor.hint.example,EJEMPLO
+editor.hint.defined_in,Definida en %s
+editor.hint.builtin_overridable_note,Viene con AvaLang. Podés definir tu propia func %s(...) para reemplazarla.
+editor.avaui.read_error,"No se pudo leer %s: %s"
+editor.avaui.blank_page_note,Mostrando una página en blanco -- guardar sobrescribe el archivo original.
+editor.avaui.parse_error,"No se pudo interpretar %s: %s"
+editor.avaui.fix_syntax_hint,Arreglá la sintaxis y probá F7 de nuevo para volver a Design.
+editor.unsaved.title,Cambios sin guardar
+editor.unsaved.message,¿Querés guardar los cambios que hiciste en %s?
+editor.unsaved.warning,Tus cambios se perderán si no los guardás.
+editor.unsaved.dont_save,No Guardar
+editor.error_at_line,"Línea %s: "
+canvas.drop_hint,Arrastrá un control acá
+canvas.dialogs_label,Diálogos (no visuales):
+canvas.delete_title,¿Eliminar nodo?
+canvas.delete_confirm,"¿Eliminar ""%s"" y todo su contenido?"
+canvas.render_error,"Error de render: %s"
+canvas.render_error_hint,No se pudo reconstruir el layout real -- revisá el árbol/import.
+canvas.missing_layout_nodes,"%s nodo(s) sin layout -- no se dibujaron este frame."
+panel.toolbox.title,Herramientas
+toolbox.hint,Arrastrá un control al lienzo de Design
+toolbox.container_tag,(contenedor)
+panel.properties.title,Propiedades
+properties.column_key,Clave
+properties.column_value,Valor
+properties.new_key_hint,nueva clave
+properties.empty_selection,Seleccioná un componente en el canvas para ver y editar sus propiedades.
+properties.type_label,Tipo
+properties.id_label,Id
+properties.type_display,"Tipo: %s"
+properties.id_display,"Id: %s"
+properties.readonly_note,Solo lectura (no hay una fuente editable para esta selección).
+properties.column_property,Propiedad
+properties.section_events,Eventos
+properties.column_event,Evento
+properties.column_handler,Manejador
+panel.logs.title,Registro
+logs.section_label,Registro general
+logs.copy_all_button,Copiar todo
+logs.empty,Acá van a aparecer los eventos de plugins y del host.
+common.copy,Copiar
+common.copy_all,Copiar Todo
+common.select_all,Seleccionar Todo
+common.clear,Limpiar
+panel.terminal.title,Terminal
+terminal.section_label,Consola de ejecución
+terminal.copy_console,Copiar consola
+terminal.empty,Presioná Run (F5) para compilar y ejecutar el script del editor.
+terminal.input_hint,"Escribí algo y presioná Enter (input() todavía no existe en el lenguaje)..."
+panel.problems.title,Problemas
+panel.problems.title_with_count,Problemas (%s)
+problems.section_label,Diagnósticos
+problems.empty,No se detectaron problemas.
+panel.find_in_project.title,Buscar en el proyecto
+find_in_project.query_label,Buscar:
+find_in_project.case_sensitive,Distinguir mayúsculas
+find_in_project.search_button,Buscar
+find_in_project.empty_hint,Escribí un texto y presioná Enter para buscar en los .ava/.avaui del proyecto.
+find_in_project.no_results,No se encontraron resultados.
+find_in_project.results_count,%s resultados
+find_in_project.results_truncated,Mostrando los primeros %s resultados -- acotá la búsqueda para ver más.
+panel.build.title,Compilar
+build.intro,"Empaqueta el proyecto actual en un .exe independiente (ver runtime/avapack/README.md). Esto ejecuta 'ava_cli build' en segundo plano -- todo lo de abajo simplemente completa sus flags."
+build.section_target,Destino
+build.platform_label,Plataforma
+build.platform_value,"%s (detectada)"
+build.target_label,Tipo de build
+build.target_desktop,Desktop
+build.target_barekernel,BareKernel
+build.toolchain_dir_label,Carpeta del cross-toolchain
+build.toolchain_dir_hint,"(i686-elf-gcc/g++/ld/objcopy/nm)"
+build.barekernel_note,"Cifrado, ofuscación, disco cero y firma de código son solo para desktop y no aplican a BareKernel -- esa sección se oculta abajo."
+build.error_toolchain_dir_missing,"no se encontró la carpeta del cross-toolchain -- configurala arriba."
+build.section_project,Proyecto
+build.section_options,Opciones
+build.section_advanced,Avanzado
+build.default_path_hint,"(por defecto: %s)"
+build.project_folder_label,Carpeta del proyecto
+build.entry_script_label,"Script de entrada (.ava)"
+build.entry_script_hint,"(por defecto: detecta main.ava automáticamente)"
+build.detect_button,Detectar
+common.browse,Explorar...
+build.output_folder_label,Carpeta de salida
+build.obfuscate_label,Ofuscar
+build.obfuscate_tooltip,"Compila el archivo de entrada a bytecode .avbc en vez de incluir el código .ava en texto plano.\nTambién genera un SymbolMap <out>.avmap junto al build -- guardalo vos,\nnunca lo distribuyas junto al .exe."
+build.obfuscate_strings_label,Ofuscar strings
+build.flatten_control_flow_label,Aplanar flujo de control
+build.zero_disk_label,Disco cero
+build.zero_disk_tooltip,"Resuelve el proyecto empaquetado contra un sistema de archivos virtual en memoria\nen vez de una carpeta temporal -- ningún .ava/.avbc toca el disco, ni siquiera brevemente."
+build.debug_unencrypted_label,"Build de debug (sin encriptar)"
+build.debug_unencrypted_warning,no distribuyas este .exe
+build.key_file_label,"Archivo de clave AES (opcional)"
+build.key_file_hint,"(por defecto: clave aleatoria por build)"
+build.repo_root_label,Raíz del repo de AvaLang
+build.repo_root_hint,"(por defecto: detectar automáticamente)"
+build.auto_detect_button,Detectar automáticamente
+build.ava_cli_path_label,Ruta de ava_cli
+build.ava_cli_path_hint,"(por defecto: detectar automáticamente junto a ava_studio.exe)"
+build.vcpkg_root_label,"VCPKG_ROOT (opcional)"
+build.vcpkg_not_found_hint,"(no encontrado -- hacé clic en Instalar vcpkg abajo)"
+build.install_vcpkg_button,Instalar vcpkg
+build.installing_vcpkg_button,Instalando vcpkg...
+build.vcpkg_installing_status,"clonando + inicializando + compilando antlr4/curl -- puede tardar varios minutos..."
+build.vcpkg_ready,"vcpkg listo en %s"
+build.vcpkg_failed,La instalación de vcpkg falló -- mirá el log en Salida.
+build.build_button,Compilar Ejecutable
+build.building_button,Compilando...
+build.building_status,"esto puede tardar la primera vez (compilando avapack_gen)..."
+build.succeeded,"Build exitoso -> %s"
+build.failed,El build falló -- mirá el log abajo.
+build.error_ava_cli_not_found,no se encontró ava_cli(.exe) -- configurá su ruta en Avanzado.
+build.error_repo_root_not_found,no se encontró la raíz del repo de AvaLang -- configurala en Avanzado.
+build.error_project_dir_missing,la carpeta del proyecto no existe.
+build.error_entry_file_missing,no se encontró un archivo .ava de entrada -- configurá 'Script de entrada' arriba.
+panel.settings.title,Configuración
+settings.language_label,Idioma
+settings.section_general,General
+settings.editor_item,Editor
+settings.no_plugins,(ninguno)
+settings.modules_folder_label,Carpeta de módulos
+settings.modules_folder_description,"Además de los imports relativos al archivo abierto, ""import"" también busca acá -- pensado para módulos base/compartidos entre proyectos. Dejalo en blanco para usar la carpeta de módulos junto al ejecutable."
+settings.modules_folder_hint,"(por defecto: carpeta junto al ejecutable)"
+menu.view.command_palette,Paleta de Comandos...
+command_palette.hint,Escribí un comando...
+command_palette.no_results,No hay comandos que coincidan.
+menu.edit.quick_open,Abrir Rápido...
+quick_open.hint,Ir a un archivo...
+quick_open.no_results,No hay archivos que coincidan.
+quick_open.no_project_files,No se encontraron archivos .ava/.avaui en este proyecto.
+menu.file.new_project,Nuevo Proyecto...
+new_project.name_label,Nombre del proyecto
+new_project.name_hint,MiProyecto
+new_project.destination_label,Carpeta destino
+new_project.template_label,Plantilla
+new_project.template_empty,Vacío
+new_project.template_with_screen,Con pantalla de ejemplo
+new_project.preview_label,"Se creará: %s"
+new_project.create_button,Crear Proyecto
+new_project.error_name_required,Ingresá un nombre de proyecto.
+new_project.error_destination_required,Elegí una carpeta destino.
+new_project.error_destination_missing,La carpeta destino no existe.
+new_project.error_already_exists,"Ya existe una carpeta con ese nombre ahí."
+new_project.error_create_failed,No se pudo crear la carpeta del proyecto.

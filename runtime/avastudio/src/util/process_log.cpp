@@ -21,4 +21,4 @@ void FlushLogToOutput(const std::string& log, std::string::size_type& forwarded_
     forwarded_upto = start;
 }
 
-} // namespace studio
+}

@@ -81,10 +81,7 @@ bool ParseAvauiText(const std::string& text, DesignDocument& out_doc, std::strin
             out_doc.tree = std::move(parsed.tree);
         }
     } catch (const avalang::ui::parser::ParseError& e) {
-        // Caught separately from std::exception below (ParseError IS-A
-        // std::exception, so order matters) so callers that want the
-        // structured position -- editor_panel.cpp's HighlightError, via
-        // out_info -- can get it instead of only the flattened what().
+
         out_error = e.what();
         if (out_info) {
             out_info->message = e.RawMessage();

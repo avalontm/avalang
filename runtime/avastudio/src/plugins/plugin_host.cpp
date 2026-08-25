@@ -39,9 +39,6 @@ void* LoadLibraryPortable(const std::string& path) {
     return static_cast<void*>(LoadLibraryA(path.c_str()));
 #else
 
-
-
-
     return dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
 #endif
 }
@@ -63,19 +60,9 @@ void UnloadLibraryPortable(void* handle) {
 #endif
 }
 
-
-
-
-
-
 std::string SafeCStr(const char* s) {
     return s ? std::string(s) : std::string();
 }
-
-
-
-
-
 
 struct PluginMetadata {
     std::string name;
@@ -94,11 +81,6 @@ PluginMetadata ReadPluginMetadata(void* handle) {
     if (author_fn) metadata.author = SafeCStr(author_fn());
     return metadata;
 }
-
-
-
-
-
 
 bool ResolveWithinRoot(const std::string& root, const std::string& requested_relative_path,
                        fs::path* out_resolved) {
@@ -119,16 +101,6 @@ bool ResolveWithinRoot(const std::string& root, const std::string& requested_rel
     *out_resolved = candidate_canonical;
     return true;
 }
-
-
-
-
-
-
-
-
-
-
 
 std::vector<PropertyRow> ParsePropertiesKv(const std::string& kv) {
     std::vector<PropertyRow> out;
@@ -183,9 +155,6 @@ void PluginHost::LoadAll(const std::string& plugins_dir, const std::vector<std::
         const std::string path = entry.path().string();
         const std::string display_name = entry.path().filename().string();
 
-
-
-
         if (std::find(disabled_plugins.begin(), disabled_plugins.end(), display_name) != disabled_plugins.end()) {
             if (callbacks_.log) callbacks_.log("[plugin_host] " + display_name + " desactivado por el usuario -- omitido");
             continue;
@@ -212,12 +181,6 @@ void PluginHost::LoadAll(const std::string& plugins_dir, const std::vector<std::
             continue;
         }
 
-
-
-
-
-
-
         const int plugin_abi = abi_version_fn();
         if (plugin_abi > AVA_STUDIO_PLUGIN_ABI_VERSION || plugin_abi <= 0) {
             if (callbacks_.log) {
@@ -228,11 +191,6 @@ void PluginHost::LoadAll(const std::string& plugins_dir, const std::vector<std::
             UnloadLibraryPortable(handle);
             continue;
         }
-
-
-
-
-
 
         bool init_ok = false;
         loading_plugin_name_ = display_name;
@@ -252,9 +210,6 @@ void PluginHost::LoadAll(const std::string& plugins_dir, const std::vector<std::
         if (!init_ok) {
             if (callbacks_.log) callbacks_.log("[plugin_host] " + display_name + " init failed -- skipped");
 
-
-
-
             UnloadLibraryPortable(handle);
             continue;
         }
@@ -272,8 +227,6 @@ void PluginHost::UnloadAll() {
             try {
                 it->shutdown();
             } catch (...) {
-
-
 
             }
         }
@@ -306,12 +259,6 @@ std::vector<PluginInfo> PluginHost::ScanAvailable(const std::string& plugins_dir
         info.file_name = entry.path().filename().string();
         info.enabled =
             std::find(disabled_plugins.begin(), disabled_plugins.end(), info.file_name) == disabled_plugins.end();
-
-
-
-
-
-
 
         auto loaded_it = std::find_if(loaded_.begin(), loaded_.end(), [&info](const LoadedPlugin& lp) {
             return lp.display_name == info.file_name;
@@ -350,9 +297,6 @@ std::vector<PluginInfo> PluginHost::ScanAvailable(const std::string& plugins_dir
         result.push_back(std::move(info));
     }
 
-
-
-
     std::sort(result.begin(), result.end(),
               [](const PluginInfo& a, const PluginInfo& b) { return a.file_name < b.file_name; });
     return result;
@@ -363,9 +307,6 @@ int PluginHost::RegisterPanelTrampoline(AvaStudioHost* host, const AvaPanelRegis
     auto* self = static_cast<PluginHost*>(host->_internal_host_reserved);
 
     for (const auto& existing : self->panels_) {
-
-
-
 
         if (existing.name == registration->name && existing.is_settings == registration->is_settings) return -1;
     }
@@ -399,8 +340,6 @@ bool PluginHost::GetActiveFileTrampoline(AvaStudioHost* host, const char** out_p
     if (out_path) *out_path = self->scratch_active_path_.c_str();
     if (out_content) *out_content = self->scratch_active_content_.c_str();
 
-
-
     if (out_selection_start) *out_selection_start = -1;
     if (out_selection_end) *out_selection_end = -1;
     return true;
@@ -422,9 +361,6 @@ bool PluginHost::GetLastRunOutputTrampoline(AvaStudioHost* host, const char** ou
 void PluginHost::LogTrampoline(AvaStudioHost* host, const char* message) {
     auto* self = static_cast<PluginHost*>(host->_internal_host_reserved);
     if (!self->callbacks_.log || !message) return;
-
-
-
 
     const std::string prefix = self->loading_plugin_name_.empty() ? "[plugin]" : "[" + self->loading_plugin_name_ + "]";
     self->callbacks_.log(prefix + " " + message);
@@ -449,9 +385,6 @@ bool PluginHost::QueueEdit(PluginHost* self, const std::string& path, const std:
         return false;
     }
 
-
-
-
     std::string old_content;
     std::error_code ec;
     if (fs::exists(resolved, ec) && fs::is_regular_file(resolved, ec)) {
@@ -464,12 +397,6 @@ bool PluginHost::QueueEdit(PluginHost* self, const std::string& path, const std:
     }
 
     PendingEdit edit;
-
-
-
-
-
-
 
     edit.owner_plugin = "plugin";
     edit.path = path;
@@ -511,14 +438,9 @@ bool PluginHost::RunProjectTrampoline(AvaStudioHost* host, const char** out_outp
 
     std::unique_lock<std::mutex> lock(mbox.mutex);
 
-
-
     mbox.cv.wait(lock, [&] { return !mbox.request_pending; });
     mbox.request_pending = true;
     mbox.result_ready = false;
-
-
-
 
     mbox.cv.wait(lock, [&] { return mbox.result_ready; });
 
@@ -544,9 +466,6 @@ bool PluginHost::FetchActiveAvauiDocument(PluginHost* self, std::string& out_pat
     DesignDocMailbox& mbox = self->design_doc_mailbox_;
 
     std::unique_lock<std::mutex> lock(mbox.mutex);
-
-
-
 
     mbox.cv.wait(lock, [&] { return !mbox.request_pending; });
     mbox.request_pending = true;

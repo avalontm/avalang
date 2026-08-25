@@ -6,14 +6,6 @@ namespace studio {
 
 namespace {
 
-// PROPERTIES_EDITABLE: this only reads from PreviewNode into
-// PropertiesState, and leaves PropertiesState::editable at its default
-// (false) -- Properties shows this selection read-only. Write-back
-// exists now (see designer_canvas.cpp's ToPropertiesState and
-// properties_panel.cpp/main.cpp, Fase 3 of 08_DESIGNER_VIEW_PLAN.md),
-// but only for a real IComponent backed by an actual .avaui file --
-// this demo Component Tree has no source file to write into (see the
-// note in engine_bridge.cpp), so it stays read-only on purpose.
 void DrawNode(const EngineBridge::PreviewNode& node, std::optional<PropertiesState>& selected) {
     std::string label = node.type;
     if (!node.id.empty()) label += " (" + node.id + ")";
@@ -40,12 +32,12 @@ void DrawNode(const EngineBridge::PreviewNode& node, std::optional<PropertiesSta
     }
 }
 
-} // namespace
+}
 
 std::optional<PropertiesState> DrawPreviewPanel(const EngineBridge::PreviewNode& root, bool* p_open) {
     std::optional<PropertiesState> selected;
 
-    ImGui::Begin("Preview", p_open);
+    ImGui::Begin("Preview###preview", p_open);
     ImGui::TextDisabled("Component Tree (demo -- see note in engine_bridge.cpp)");
     ImGui::Separator();
     DrawNode(root, selected);
@@ -54,4 +46,4 @@ std::optional<PropertiesState> DrawPreviewPanel(const EngineBridge::PreviewNode&
     return selected;
 }
 
-} // namespace studio
+}

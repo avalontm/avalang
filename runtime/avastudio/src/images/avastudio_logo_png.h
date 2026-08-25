@@ -1,5 +1,3 @@
-// Auto-generated from avastudio_logo_128.png by tools/embed_image.py -- do not edit by hand.
-// Regenerate with: python tools/embed_image.py <input.png> <output.h> <array_name> <namespace>
 #pragma once
 
 namespace studio::images {
@@ -397,4 +395,4 @@ inline constexpr unsigned char kAvaStudioLogoPNG[] = {
 
 inline constexpr unsigned int kAvaStudioLogoPNGLen = sizeof(kAvaStudioLogoPNG);
 
-} // namespace studio::images
+}

@@ -5,12 +5,21 @@
 
 #include "imgui.h"
 #include "palette.h"
+#include "util/i18n.h"
+#include "util/scaffold_templates.h"
 
 namespace fs = std::filesystem;
 
 namespace studio {
 
 namespace {
+
+std::string TrFormat(const std::string& key, const std::string& arg) {
+    const std::string& fmt = util::Tr(key);
+    const size_t pos = fmt.find("%s");
+    if (pos == std::string::npos) return fmt;
+    return fmt.substr(0, pos) + arg + fmt.substr(pos + 2);
+}
 
 struct CreateRequest {
     bool open = false;
@@ -20,6 +29,13 @@ struct CreateRequest {
 
 CreateRequest g_create_request;
 char g_name_buf[128] = "";
+
+// Fase 5 ("Generar"): which boilerplate to scaffold when creating a file
+// (irrelevant for folders). Reset to kClass every time the popup opens
+// (DrawCreatePopup below), same "explicit default, not whatever was left
+// over from last time" reasoning CommandPaletteState/QuickOpenState already
+// follow for their own transient UI state.
+util::ScaffoldKind g_new_file_kind = util::ScaffoldKind::kClass;
 
 struct DeleteRequest {
     bool open = false;
@@ -36,11 +52,6 @@ struct RenameRequest {
 RenameRequest g_rename_request;
 char g_rename_buf[128] = "";
 
-// True if `child` is `parent` itself or lives somewhere underneath it.
-// Compared path-component-by-path-component so "/" vs "\\" or a trailing
-// separator don't matter. Used to (a) stop a folder being dragged inside
-// its own subtree, and (b) clear the selection when the selected entry
-// was inside a folder that just got deleted.
 bool PathContains(const fs::path& parent, const fs::path& child) {
     auto pit = parent.begin();
     auto cit = child.begin();
@@ -50,11 +61,6 @@ bool PathContains(const fs::path& parent, const fs::path& child) {
     return true;
 }
 
-// Moves `src_path` (file or folder) on disk into `dest_dir`, keeping its
-// current name. Used by every drag-and-drop drop target below. Reports
-// the move via `result.file_renamed` -- same field a manual Rename uses --
-// so the caller's existing tab-retargeting logic (main.cpp ->
-// studio::RenameTabPath) handles it identically either way.
 void PerformMove(const std::string& src_path, const std::string& dest_dir, ExplorerState& state,
                   ExplorerResult& result) {
     if (src_path.empty() || dest_dir.empty()) return;
@@ -62,13 +68,13 @@ void PerformMove(const std::string& src_path, const std::string& dest_dir, Explo
     const fs::path dest_parent(dest_dir);
     const fs::path new_path = dest_parent / src.filename();
 
-    if (new_path == src) return; // dropped back onto its own parent -- no-op
+    if (new_path == src) return;
 
     std::error_code ec;
     if (fs::is_directory(src, ec) && PathContains(src, dest_parent)) {
-        return; // can't move a folder inside itself or one of its own children
+        return;
     }
-    if (fs::exists(new_path, ec)) return; // don't clobber an existing entry with the same name
+    if (fs::exists(new_path, ec)) return;
 
     fs::rename(src, new_path, ec);
     if (!ec) {
@@ -78,7 +84,7 @@ void PerformMove(const std::string& src_path, const std::string& dest_dir, Explo
 }
 
 ImU32 IconColorFor(const fs::path& path, bool is_dir) {
-    if (is_dir) return palette::U32FromHex(0xDCB67A); // folder amber, VSCode-ish
+    if (is_dir) return palette::U32FromHex(0xDCB67A);
     const std::string ext = path.extension().string();
     if (ext == ".ava") return palette::U32FromHex(palette::kPrimary);
     if (ext == ".avaui") return palette::U32FromHex(palette::kAccentGold);
@@ -87,9 +93,6 @@ ImU32 IconColorFor(const fs::path& path, bool is_dir) {
     return palette::U32FromHex(palette::kTextMuted);
 }
 
-// Small colored square drawn inline before the label -- a lightweight
-// stand-in for per-extension file-type icons (VSCode-style) without
-// needing an icon font/texture atlas.
 void DrawIcon(ImU32 color) {
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float h = ImGui::GetTextLineHeight();
@@ -100,28 +103,61 @@ void DrawIcon(ImU32 color) {
     ImGui::SameLine(0.0f, 6.0f);
 }
 
-void DrawCreatePopup() {
+void DrawCreatePopup(ExplorerResult& result) {
     if (g_create_request.open) {
         ImGui::OpenPopup("##CreateEntry");
         g_name_buf[0] = '\0';
+        g_new_file_kind = util::ScaffoldKind::kClass;
         g_create_request.open = false;
     }
     if (ImGui::BeginPopup("##CreateEntry")) {
-        ImGui::TextDisabled("%s", g_create_request.is_folder ? "New Folder" : "New File");
+        ImGui::TextDisabled(
+            "%s", (g_create_request.is_folder ? util::Tr("explorer.new_folder") : util::Tr("explorer.new_file"))
+                      .c_str());
+
+        // Only meaningful for files -- a folder has no boilerplate to pick.
+        // Two radios rather than a combo: same reasoning as the Obfuscate/
+        // Zero-disk checkboxes in Build, this is a two-way, always-visible
+        // choice, not a longer list that would benefit from collapsing.
+        if (!g_create_request.is_folder) {
+            bool is_class = g_new_file_kind == util::ScaffoldKind::kClass;
+            if (ImGui::RadioButton(util::Tr("explorer.new_file_kind_class").c_str(), is_class)) {
+                g_new_file_kind = util::ScaffoldKind::kClass;
+            }
+            ImGui::SameLine();
+            if (ImGui::RadioButton(util::Tr("explorer.new_file_kind_screen").c_str(), !is_class)) {
+                g_new_file_kind = util::ScaffoldKind::kScreen;
+            }
+        }
+
         ImGui::SetNextItemWidth(200.0f);
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
         const bool enter =
             ImGui::InputText("##name", g_name_buf, sizeof(g_name_buf), ImGuiInputTextFlags_EnterReturnsTrue);
-        const bool create_clicked = ImGui::Button("Create");
+        const bool create_clicked = ImGui::Button(util::Tr("explorer.create").c_str());
         if ((enter || create_clicked) && g_name_buf[0] != '\0') {
             std::error_code ec;
             fs::path target = fs::path(g_create_request.target_dir) / g_name_buf;
             if (g_create_request.is_folder) {
                 fs::create_directories(target, ec);
             } else {
-                if (target.extension().empty()) target += ".ava";
+                // Extension is always forced to match `g_new_file_kind`,
+                // even if the user typed a different one (or none) --
+                // whatever the user types is just the stem; the boilerplate
+                // written below always matches the extension on disk, so
+                // the two can never disagree (a ".avaui" with .ava-style
+                // class code inside would be a silent foot-gun otherwise).
+                target.replace_extension(util::ScaffoldExtension(g_new_file_kind));
                 fs::create_directories(target.parent_path(), ec);
-                std::ofstream(target.string(), std::ios::binary).close();
+                std::ofstream out(target.string(), std::ios::binary);
+                out << util::BuildScaffoldContent(g_new_file_kind, target.stem().string());
+                out.close();
+                // Auto-open the new file, same as double-clicking it in the
+                // tree would -- reuses the existing file_to_open field
+                // instead of inventing a new result/mechanism, same "no
+                // separate source of truth" reasoning the rest of this
+                // plan's phases already follow.
+                result.file_to_open = target.string();
             }
             ImGui::CloseCurrentPopup();
         }
@@ -129,46 +165,37 @@ void DrawCreatePopup() {
     }
 }
 
-// "Delete" needs an explicit Yes/Cancel confirmation -- unlike creating a
-// file/folder, deleting one is destructive and can't be undone from
-// Explorer, so a stray click shouldn't be able to remove a script outright.
-// Actually removes the file from disk on confirm and reports it via
-// `result.file_deleted` so the caller (main.cpp) can close its tab if the
-// file happened to be open in the editor.
 void DrawDeleteConfirmPopup(ExplorerState& state, ExplorerResult& result) {
+
+    const std::string delete_title = util::Tr("explorer.delete_title") + "##DeleteConfirm";
     if (g_delete_request.open) {
-        ImGui::OpenPopup("Delete?");
+        ImGui::OpenPopup(delete_title.c_str());
         g_delete_request.open = false;
     }
     ImGui::SetNextWindowSize(ImVec2(360.0f, 0.0f));
-    if (ImGui::BeginPopupModal("Delete?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::BeginPopupModal(delete_title.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         fs::path target(g_delete_request.path);
         std::error_code type_ec;
         const bool is_dir = fs::is_directory(target, type_ec);
 
         if (is_dir) {
-            ImGui::TextWrapped("Delete folder \"%s\" and everything inside it?",
-                                target.filename().string().c_str());
+            ImGui::TextWrapped(
+                "%s", TrFormat("explorer.delete_folder_confirm", target.filename().string()).c_str());
         } else {
-            ImGui::TextWrapped("Delete \"%s\"?", target.filename().string().c_str());
+            ImGui::TextWrapped("%s", TrFormat("explorer.delete_file_confirm", target.filename().string()).c_str());
         }
-        ImGui::TextDisabled("This can't be undone.");
+        ImGui::TextDisabled("%s", util::Tr("explorer.delete_undone").c_str());
         ImGui::Dummy(ImVec2(0.0f, 6.0f));
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0.0f, 8.0f));
 
-        // Split the popup's own width evenly instead of two fixed-size
-        // buttons floating at the left -- keeps them centered and
-        // balanced regardless of how long the filename made the window.
         const float spacing = ImGui::GetStyle().ItemSpacing.x;
         const float button_w = (ImGui::GetContentRegionAvail().x - spacing) / 2.0f;
 
-        // Destructive action gets a subtle red so it doesn't read as a
-        // plain "OK" -- Cancel stays the neutral default look.
         ImGui::PushStyleColor(ImGuiCol_Button, palette::FromHex(palette::kError, 0.75f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, palette::FromHex(palette::kError, 0.95f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, palette::FromHex(0xc93b3b));
-        if (ImGui::Button("Delete", ImVec2(button_w, 0.0f))) {
+        if (ImGui::Button(util::Tr("explorer.delete").c_str(), ImVec2(button_w, 0.0f))) {
             std::error_code ec;
             if (is_dir) {
                 fs::remove_all(target, ec);
@@ -176,8 +203,7 @@ void DrawDeleteConfirmPopup(ExplorerState& state, ExplorerResult& result) {
                 fs::remove(target, ec);
             }
             result.file_deleted = g_delete_request.path;
-            // Clear the selection if it was the deleted entry itself, or
-            // (for a deleted folder) anything that used to live inside it.
+
             if (state.selected_path == g_delete_request.path ||
                 (is_dir && PathContains(target, fs::path(state.selected_path)))) {
                 state.selected_path.clear();
@@ -187,19 +213,13 @@ void DrawDeleteConfirmPopup(ExplorerState& state, ExplorerResult& result) {
         ImGui::PopStyleColor(3);
         ImGui::SameLine(0.0f, spacing);
 
-        if (ImGui::Button("Cancel", ImVec2(button_w, 0.0f))) {
+        if (ImGui::Button(util::Tr("common.cancel").c_str(), ImVec2(button_w, 0.0f))) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }
 }
 
-// "Rename" pre-fills the popup with the file's current name (not its full
-// path) so the user is just editing the base name, same as VSCode/Explorer/
-// Finder. Renames on disk immediately on confirm (no separate "are you
-// sure?" step, unlike Delete -- a rename is easy to undo by renaming back)
-// and reports {old, new} via `result.file_renamed` so the caller (main.cpp)
-// can retarget the file's tab if it's open in the editor.
 void DrawRenamePopup(ExplorerState& state, ExplorerResult& result) {
     if (g_rename_request.open) {
         ImGui::OpenPopup("##RenameEntry");
@@ -208,14 +228,14 @@ void DrawRenamePopup(ExplorerState& state, ExplorerResult& result) {
         g_rename_request.open = false;
     }
     if (ImGui::BeginPopup("##RenameEntry")) {
-        ImGui::TextDisabled("Rename");
+        ImGui::TextDisabled("%s", util::Tr("explorer.rename").c_str());
         ImGui::SetNextItemWidth(200.0f);
         if (ImGui::IsWindowAppearing()) {
             ImGui::SetKeyboardFocusHere();
         }
         const bool enter =
             ImGui::InputText("##rename_name", g_rename_buf, sizeof(g_rename_buf), ImGuiInputTextFlags_EnterReturnsTrue);
-        const bool rename_clicked = ImGui::Button("Rename");
+        const bool rename_clicked = ImGui::Button(util::Tr("explorer.rename").c_str());
         if ((enter || rename_clicked) && g_rename_buf[0] != '\0') {
             fs::path old_path(g_rename_request.path);
             fs::path new_path = old_path.parent_path() / g_rename_buf;
@@ -233,27 +253,19 @@ void DrawRenamePopup(ExplorerState& state, ExplorerResult& result) {
     }
 }
 
-// Right-click context menu shared by file *and* folder rows: New
-// File/New Folder relative to `dir` (a file's parent, so you add a
-// sibling script; a folder's own path, so you add something inside it),
-// plus Rename/Delete for `entry_path` itself -- either kind of entry
-// supports both today. The "F2"/"Del" hints are just labels here -- the
-// actual hotkeys are handled once in DrawExplorerPanel (see the comment
-// there), gated on the panel having focus, so they work no matter which
-// row's context menu (if any) is open.
 void DrawEntryContextMenu(const std::string& entry_path, const std::string& dir, ExplorerResult& result) {
     if (ImGui::BeginPopupContextItem()) {
-        if (ImGui::MenuItem("New File")) g_create_request = {true, false, dir};
-        if (ImGui::MenuItem("New Folder")) g_create_request = {true, true, dir};
+        if (ImGui::MenuItem(util::Tr("explorer.new_file").c_str())) g_create_request = {true, false, dir};
+        if (ImGui::MenuItem(util::Tr("explorer.new_folder").c_str())) g_create_request = {true, true, dir};
         ImGui::Separator();
-        if (ImGui::MenuItem("Open in Explorer")) {
+        if (ImGui::MenuItem(util::Tr("explorer.open_in_file_manager").c_str())) {
             result.reveal_in_file_manager = entry_path;
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Rename", "F2")) {
+        if (ImGui::MenuItem(util::Tr("explorer.rename").c_str(), "F2")) {
             g_rename_request = {true, entry_path};
         }
-        if (ImGui::MenuItem("Delete", "Del")) {
+        if (ImGui::MenuItem(util::Tr("explorer.delete").c_str(), "Del")) {
             g_delete_request = {true, entry_path};
         }
         ImGui::EndPopup();
@@ -263,7 +275,7 @@ void DrawEntryContextMenu(const std::string& entry_path, const std::string& dir,
 void DrawDirectory(const fs::path& dir, ExplorerState& state, ExplorerResult& result) {
     std::error_code ec;
     if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) {
-        ImGui::TextDisabled("(folder not found: %s)", dir.string().c_str());
+        ImGui::TextDisabled("%s", TrFormat("explorer.folder_not_found", dir.string()).c_str());
         return;
     }
 
@@ -276,21 +288,17 @@ void DrawDirectory(const fs::path& dir, ExplorerState& state, ExplorerResult& re
             const bool is_selected = (state.selected_path == path_str);
             const bool open = ImGui::TreeNodeEx(path.filename().string().c_str(),
                                                  is_selected ? ImGuiTreeNodeFlags_Selected : 0);
-            // A plain click both selects the row *and* (via TreeNodeEx's
-            // own default behavior) toggles it open/closed, same as
-            // before -- this just also records the selection so F2/Del
-            // and the highlight above act on folders too, not just files.
+
             if (ImGui::IsItemClicked(ImGuiMouseButton_Left) || ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
                 state.selected_path = path_str;
             }
-            // Drag source: pick this folder up to move it elsewhere.
+
             if (ImGui::BeginDragDropSource()) {
                 ImGui::SetDragDropPayload("EXPLORER_PATH", path_str.c_str(), path_str.size() + 1);
                 ImGui::TextUnformatted(path.filename().string().c_str());
                 ImGui::EndDragDropSource();
             }
-            // Drop target: dropping a file/folder here moves it inside
-            // this folder, even while it's collapsed -- same as VSCode.
+
             if (ImGui::BeginDragDropTarget()) {
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("EXPLORER_PATH")) {
                     const std::string src_path(static_cast<const char*>(payload->Data));
@@ -306,15 +314,7 @@ void DrawDirectory(const fs::path& dir, ExplorerState& state, ExplorerResult& re
         } else {
             DrawIcon(IconColorFor(path, false));
             const bool is_selected = (state.selected_path == path_str);
-            // ImGuiSelectableFlags_AllowDoubleClick makes Selectable()
-            // return true on both single and double clicks -- the
-            // IsMouseDoubleClicked() check below is what actually gates
-            // opening the file, so a single click only selects/highlights
-            // the row (VSCode-style) instead of immediately swapping the
-            // active editor tab out from under you. That selection is
-            // also what F2/Del act on (see the hotkey handling in
-            // DrawExplorerPanel), so a click always updates it even when
-            // it lands on the double-click that opens the file too.
+
             if (ImGui::Selectable(path.filename().string().c_str(), is_selected,
                                   ImGuiSelectableFlags_AllowDoubleClick)) {
                 state.selected_path = path_str;
@@ -322,21 +322,17 @@ void DrawDirectory(const fs::path& dir, ExplorerState& state, ExplorerResult& re
                     result.file_to_open = path_str;
                 }
             }
-            // Right-click also selects the row, same as left-click --
-            // otherwise "Rename"/"Delete" from the context menu could act
-            // on whatever was selected before, not the row you just
-            // right-clicked.
+
             if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
                 state.selected_path = path_str;
             }
-            // Drag source: pick this file up to move it elsewhere.
+
             if (ImGui::BeginDragDropSource()) {
                 ImGui::SetDragDropPayload("EXPLORER_PATH", path_str.c_str(), path_str.size() + 1);
                 ImGui::TextUnformatted(path.filename().string().c_str());
                 ImGui::EndDragDropSource();
             }
-            // Drop target: dropping something onto a file moves it next
-            // to that file, i.e. into the file's own containing folder.
+
             if (ImGui::BeginDragDropTarget()) {
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("EXPLORER_PATH")) {
                     const std::string src_path(static_cast<const char*>(payload->Data));
@@ -350,21 +346,17 @@ void DrawDirectory(const fs::path& dir, ExplorerState& state, ExplorerResult& re
     }
 }
 
-} // namespace
+}
 
 ExplorerResult DrawExplorerPanel(ExplorerState& state, bool* p_open) {
     ExplorerResult result;
 
-    ImGui::Begin("Explorer", p_open);
+    const std::string title = util::Tr("panel.explorer.title") + "###explorer";
+    ImGui::Begin(title.c_str(), p_open);
     ImGui::TextDisabled("%s", state.root_dir.c_str());
     ImGui::Separator();
     DrawDirectory(state.root_dir, state, result);
 
-    // Empty space below the tree (not any file/folder row) fills the rest
-    // of the panel: right-click there creates at the listing's root
-    // instead of inside whatever the last node happened to be, and
-    // dragging a file/folder there moves it back up to the project root
-    // -- both need a real item to hang off of, hence the Dummy.
     ImVec2 trailing_space = ImGui::GetContentRegionAvail();
     if (trailing_space.y < 20.0f) trailing_space.y = 20.0f;
     ImGui::Dummy(trailing_space);
@@ -379,22 +371,11 @@ ExplorerResult DrawExplorerPanel(ExplorerState& state, bool* p_open) {
         ImGui::EndDragDropTarget();
     }
     if (ImGui::BeginPopup("##RootContext")) {
-        if (ImGui::MenuItem("New File")) g_create_request = {true, false, state.root_dir};
-        if (ImGui::MenuItem("New Folder")) g_create_request = {true, true, state.root_dir};
+        if (ImGui::MenuItem(util::Tr("explorer.new_file").c_str())) g_create_request = {true, false, state.root_dir};
+        if (ImGui::MenuItem(util::Tr("explorer.new_folder").c_str())) g_create_request = {true, true, state.root_dir};
         ImGui::EndPopup();
     }
 
-    // F2 (rename) / Del (delete) act on whatever row is currently
-    // selected -- file or folder, same as Explorer/VSCode -- checked once
-    // here rather than per-row so they fire from anywhere in the panel,
-    // not just while hovering the selected row itself. Gated on the
-    // Explorer window having focus so these don't fire while e.g. the
-    // Code Editor panel has focus and the user is just typing/deleting
-    // text there; that focus also naturally goes away on its own while a
-    // popup (rename, delete confirm, ...) is open, so this can't
-    // re-trigger itself. exists() (rather than just "selected_path is
-    // non-empty") guards against a stale selection surviving the entry
-    // being deleted or renamed out from under it by some other means.
     std::error_code selection_ec;
     if (ImGui::IsWindowFocused() && !state.selected_path.empty() &&
         fs::exists(state.selected_path, selection_ec)) {
@@ -406,7 +387,7 @@ ExplorerResult DrawExplorerPanel(ExplorerState& state, bool* p_open) {
         }
     }
 
-    DrawCreatePopup();
+    DrawCreatePopup(result);
     DrawDeleteConfirmPopup(state, result);
     DrawRenamePopup(state, result);
     ImGui::End();
@@ -414,4 +395,4 @@ ExplorerResult DrawExplorerPanel(ExplorerState& state, bool* p_open) {
     return result;
 }
 
-} // namespace studio
+}

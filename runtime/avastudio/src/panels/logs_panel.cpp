@@ -4,6 +4,7 @@
 
 #include "imgui.h"
 #include "palette.h"
+#include "util/i18n.h"
 
 namespace studio {
 
@@ -30,10 +31,11 @@ void CopyAll(const std::vector<LogLine>& lines) {
     ImGui::SetClipboardText(JoinLines(lines, 0, static_cast<int>(lines.size()) - 1).c_str());
 }
 
-} // namespace
+}
 
 void DrawLogsPanel(LogsState& state, LogBridge& log_bridge, bool* p_open) {
-    ImGui::Begin("Output", p_open);
+    const std::string title = util::Tr("panel.logs.title") + "###logs";
+    ImGui::Begin(title.c_str(), p_open);
 
     const auto& lines = log_bridge.Lines();
 
@@ -43,10 +45,12 @@ void DrawLogsPanel(LogsState& state, LogBridge& log_bridge, bool* p_open) {
     }
 
     const float row_right_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
-    ImGui::TextDisabled("General logs");
+    ImGui::TextDisabled("%s", util::Tr("logs.section_label").c_str());
     ImGui::SameLine();
-    const float clear_w = ImGui::CalcTextSize("Clear").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-    const float copy_w = ImGui::CalcTextSize("Copy all").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const std::string copy_all_label = util::Tr("logs.copy_all_button");
+    const std::string clear_label = util::Tr("common.clear");
+    const float clear_w = ImGui::CalcTextSize(clear_label.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float copy_w = ImGui::CalcTextSize(copy_all_label.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f;
     const float button_gap = ImGui::GetStyle().ItemSpacing.x * 2.0f;
     const float clear_x = row_right_x - clear_w;
     const float copy_x = clear_x - button_gap - copy_w;
@@ -54,7 +58,7 @@ void DrawLogsPanel(LogsState& state, LogBridge& log_bridge, bool* p_open) {
     if (ImGui::GetCursorPosX() < copy_x) {
         ImGui::SetCursorPosX(copy_x);
     }
-    if (ImGui::SmallButton("Copy all")) {
+    if (ImGui::SmallButton(copy_all_label.c_str())) {
         CopyAll(lines);
     }
 
@@ -62,7 +66,7 @@ void DrawLogsPanel(LogsState& state, LogBridge& log_bridge, bool* p_open) {
     if (ImGui::GetCursorPosX() < clear_x) {
         ImGui::SetCursorPosX(clear_x);
     }
-    if (ImGui::SmallButton("Clear")) {
+    if (ImGui::SmallButton(clear_label.c_str())) {
         log_bridge.Clear();
         state.selection_anchor = state.selection_cursor = -1;
     }
@@ -72,7 +76,7 @@ void DrawLogsPanel(LogsState& state, LogBridge& log_bridge, bool* p_open) {
     ImGui::BeginChild("logs_scrollback", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
 
     if (lines.empty()) {
-        ImGui::TextDisabled("Plugin and host events will show up here.");
+        ImGui::TextDisabled("%s", util::Tr("logs.empty").c_str());
     } else {
         for (int i = 0; i < line_count; ++i) {
             const LogLine& line = lines[static_cast<size_t>(i)];
@@ -104,13 +108,13 @@ void DrawLogsPanel(LogsState& state, LogBridge& log_bridge, bool* p_open) {
 
     if (ImGui::BeginPopupContextWindow("##logs_context")) {
         const bool has_selection = state.selection_anchor >= 0 && state.selection_cursor >= 0;
-        if (ImGui::MenuItem("Copy", "Ctrl+C", false, has_selection)) {
+        if (ImGui::MenuItem(util::Tr("common.copy").c_str(), "Ctrl+C", false, has_selection)) {
             CopySelection(state, lines);
         }
-        if (ImGui::MenuItem("Copy All", nullptr, false, !lines.empty())) {
+        if (ImGui::MenuItem(util::Tr("common.copy_all").c_str(), nullptr, false, !lines.empty())) {
             CopyAll(lines);
         }
-        if (ImGui::MenuItem("Select All", "Ctrl+A", false, !lines.empty())) {
+        if (ImGui::MenuItem(util::Tr("common.select_all").c_str(), "Ctrl+A", false, !lines.empty())) {
             state.selection_anchor = 0;
             state.selection_cursor = line_count - 1;
         }
@@ -140,4 +144,4 @@ void DrawLogsPanel(LogsState& state, LogBridge& log_bridge, bool* p_open) {
     ImGui::End();
 }
 
-} // namespace studio
+}
