@@ -1,0 +1,5 @@
+extern "kernel32" as K
+    func Sleep(ms as int)
+end
+
+K.Sleep("cinco")

@@ -35,6 +35,40 @@ smallStatement
     | raiseStatement
     | incDecStatement
     | modifiedAssignStatement
+    | typedAssignStatement
+    | typedDeclStatement
+    ;
+
+// --- type annotations (`as Type`) ---------------------------------------
+//
+// Design: see AvaLang_Plan_Sistema_de_Tipos.md, Phase 2. Deliberately kept
+// separate from `assignStatement`/`target` instead of extending those:
+// `target` (NAME trailer*) also covers assignment to indices/attributes
+// (`items[0] = x`, `obj.attr = x`), where a type annotation makes no
+// semantic sense -- the plan only covers annotating simple variable
+// declarations (a bare NAME). Keeping these rules separate makes
+// `items[0] as int = x` invalid at the syntax level, and leaves
+// `assignStatement`/`target`/`targetList` untouched for everything else
+// (multi-assign, augAssign, incDec, for, `static`/`private`, etc.).
+//
+// `as` is already used by `importStatement` and `externStatement` with a
+// different meaning (alias); there is no ambiguity because those start
+// with the `import`/`extern` keywords, while this production starts
+// directly with NAME, same as `assignStatement`.
+typedAssignStatement
+    : NAME typeAnnotation '=' expr
+    ;
+
+// Type declaration without an initializer (`age as int`, see Phase 2 and
+// plan section 11, "Declaracion sin inicializar"). What value `age` holds
+// before the first assignment, and the rest of the semantics, are left to
+// later phases (Phase 4 onward); this only enables the syntax.
+typedDeclStatement
+    : NAME typeAnnotation
+    ;
+
+typeAnnotation
+    : 'as' NAME
     ;
 
 // atributo con modificador(es): `static contador = 0`,
@@ -148,8 +182,14 @@ importStatement
     : 'import' NAME ('.' NAME)* (as='as' NAME)?
     ;
 
+// `local` shadows/forces a new declaration in the current scope (see plan,
+// Phase 7, "Scope y shadowing con local"): applies equally to a plain
+// assignment (`local x = 1`) and to this phase's new typed forms
+// (`local x as int = 1`, `local x as int`).
 localStatement
     : 'local' assignStatement
+    | 'local' typedAssignStatement
+    | 'local' typedDeclStatement
     ;
 
 raiseStatement
@@ -206,8 +246,18 @@ forStatement
     | 'for' targetList 'in' '(' exprList ')' 'then' block 'end'
     ;
 
+// `returnType` (`as Type` after the parameter list, before the body) is
+// optional and additive -- see plan, Phase 2, "Funciones". Only added to
+// `funcDeclaration` (named func) in this phase; `lambdaExpr`/
+// `shortLambdaExpr` get their own type syntax in Phase 14 (lambdas), which
+// reuses `typeAnnotation` differently (see plan section 18) and does not
+// touch this rule.
 funcDeclaration
-    : 'func' NAME '(' paramList? ')' block 'end'
+    : 'func' NAME '(' paramList? ')' returnType? block 'end'
+    ;
+
+returnType
+    : typeAnnotation
     ;
 
 classDeclaration
@@ -229,8 +279,19 @@ externStatement
     : 'extern' STRING 'as' NAME (NEWLINE)* externFuncDeclaration* 'end'
     ;
 
+// Phase 16 of AvaLang_Plan_Sistema_de_Tipos.md ("extern"). `typeAnnotation?`
+// on externParam and `returnType?` after the parameter list mirror
+// `param`/`funcDeclaration` exactly (see those rules' own comments) --
+// same rule reused, not a new one, so there is nothing new to disambiguate
+// against `extern "lib" as Alias`'s own `as` (that one is consumed before
+// `externFuncDeclaration*` is even reached, same non-ambiguity the grammar
+// already documents above for `typedAssignStatement` vs `importStatement`/
+// `externStatement`). An extern function still has no body/defaults (no
+// native value to fall back to), so unlike `param` this does NOT gain
+// `('=' expr)?` -- only the type annotation part of that phase's syntax
+// applies here.
 externFuncDeclaration
-    : 'func' NAME '(' externParamList? ')' (NEWLINE)*
+    : 'func' NAME '(' externParamList? ')' returnType? (NEWLINE)*
     ;
 
 externParamList
@@ -238,15 +299,21 @@ externParamList
     ;
 
 externParam
-    : NAME
+    : NAME typeAnnotation?
     ;
 
 paramList
     : param (',' param)* (',' '*' NAME)?
     ;
 
+// `typeAnnotation?` enables `a as int` (see plan, Phase 2, "Funciones").
+// Placed before the default (`= expr`), matching the plan's example order
+// (`func add(a as int, b as int) as int`); a parameter with both a type
+// and a default (`a as int = 10`) also becomes valid through this rule,
+// which the plan doesn't explicitly ask for in this phase but falls out
+// naturally from combining the two existing rules at no extra grammar cost.
 param
-    : NAME ('=' expr)?
+    : NAME typeAnnotation? ('=' expr)?
     ;
 
 // --- targets --------------------------------------------------------
@@ -267,16 +334,41 @@ exprList
 
 expr
     : shortLambdaExpr                           # shortLambdaExprAlt
+    | singleParamLambdaExpr                     # singleParamLambdaExprAlt
     | lambdaExpr                                # lambdaExprAlt
     | orExpr                                    # orExprAlt
     ;
 
+// Phase 14 of AvaLang_Plan_Sistema_de_Tipos.md ("Lambdas y funciones como
+// valores"). `singleParamLambdaExpr` is new this phase: the untyped,
+// paren-less single-parameter form from the plan's first example
+// (`callback = x => x * 2`). It has no way to carry a `typeAnnotation` --
+// that is exactly the plan's own rule (section 18: "en cuanto se anota
+// algún parámetro con `as Type`, los paréntesis pasan a ser obligatorios"),
+// enforced here structurally (there is no `as Type` slot in this rule at
+// all) rather than as a separate check later. Placed before `shortLambdaExpr`
+// so a bare `x => expr` doesn't need to fall through; ANTLR4's ALL(*)
+// prediction picks the matching alternative by looking past the NAME to
+// the `=>`, same non-ambiguity argument as `typedAssignStatement` vs
+// `assignStatement` above (both start with NAME, differ later).
+singleParamLambdaExpr
+    : NAME '=>' expr
+    ;
+
+// `returnType?` mirrors `funcDeclaration` (section "Funciones" comment
+// above): reuses the same `typeAnnotation` rule, placed after the
+// parameter list and before `=>`/the body -- never after the body, to
+// avoid the cast ambiguity noted in plan section 21. Progression per the
+// plan (section 18): `(x) => x*2` (no types) already worked before this
+// phase via `paramList`'s existing `typeAnnotation?` on `param`; this
+// phase adds the RETURN type slot on both lambda forms, symmetric with
+// what `funcDeclaration` already had since Phase 2.
 shortLambdaExpr
-    : '(' paramList? ')' '=>' expr
+    : '(' paramList? ')' returnType? '=>' expr
     ;
 
 lambdaExpr
-    : 'func' '(' paramList? ')' block 'end'
+    : 'func' '(' paramList? ')' returnType? block 'end'
     ;
 
 orExpr

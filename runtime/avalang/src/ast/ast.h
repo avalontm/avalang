@@ -33,7 +33,16 @@ struct ExprNode : AstNode {};
 
 struct NumberExpr : ExprNode {
     double value;
-    explicit NumberExpr(double v) : value(v) {}
+    // Phase 5 of AvaLang_Plan_Sistema_de_Tipos.md ("Inferencia"): whether the
+    // literal was written with a decimal point (`10.0`) vs. without one
+    // (`10`). NUMBER's grammar rule is `DIGIT+ ('.' DIGIT+)?` (no exponent,
+    // no hex), so this is a plain textual check in AstBuilder::visitNumberAtom
+    // -- it does NOT look at `value` itself, because `10.0` and `10` parse to
+    // the same double but must infer as Float and Int respectively. Only
+    // Compiler::InferExprType reads this; codegen (CompileExpr) still just
+    // uses `value`, since the VM has a single numeric ValueType::Number.
+    bool is_float = false;
+    explicit NumberExpr(double v, bool is_float = false) : value(v), is_float(is_float) {}
 };
 
 struct StringExpr : ExprNode {
@@ -130,6 +139,13 @@ struct ExprStmt : StmtNode {
 
 struct AssignStmt : StmtNode {
     std::shared_ptr<ExprNode> target;
+    // nullptr only for a type declaration without an initializer (Phase 3
+    // of AvaLang_Plan_Sistema_de_Tipos.md -- `age as int` with no `= value`,
+    // see AstBuilder::visitTypedDeclStatement). Every other AssignStmt
+    // (plain `x = 1`, typed `x as int = 1`, `static`/`private` attrs)
+    // still always has a value. The compiler does not yet handle a null
+    // value (that's Phase 4/7 -- symbol table + "declaracion sin
+    // inicializar" semantics); this node only carries the information.
     std::shared_ptr<ExprNode> value;
     // Solo tienen sentido cuando esta asignación es en realidad la
     // declaración de un atributo de clase (`static x = 0` / `private x =
@@ -141,6 +157,29 @@ struct AssignStmt : StmtNode {
     // de una clase.
     bool is_static = false;
     bool is_private = false;
+    // Phase 3: raw source spelling of an explicit `as Type` annotation
+    // (e.g. "int"), or empty when there is none (plain `x = expr`). Set by
+    // AstBuilder::visitTypedAssignStatement / visitTypedDeclStatement.
+    // Resolving this string to an ava::Type (src/common/type.h, Phase 1)
+    // happens once the symbol table exists (Phase 4+) -- this field only
+    // carries the annotation through the AST, unresolved and unvalidated.
+    std::string explicit_type;
+    // Phase 7 ("Asignaciones posteriores", plan section 11, "Scope y
+    // shadowing con `local`"): true for `local x = expr` / `local x as
+    // Type = expr` / `local x as Type`, set by
+    // AstBuilder::visitLocalStatement. Consulted by
+    // Compiler::CompileStmt/CompileExprToReg to skip validating this
+    // assignment's value against a same-named symbol already in scope --
+    // `local` always starts a fresh binding on the type side, even when a
+    // name with that spelling already exists. NOTE: this only affects type
+    // bookkeeping. AvaLang's compiler has no block-level scope stack today
+    // (CompileIf/CompileWhile/CompileFor all compile their body via the
+    // same function-wide locals_/symbols_ as their surrounding code, see
+    // compiler.h), so `local` cannot yet give a name truly separate
+    // storage that shadows an outer register and un-shadows itself when
+    // the block ends -- that needs a real scope-stack, which is a bigger,
+    // separate architectural change than this plan's phases cover.
+    bool is_local = false;
     AssignStmt(std::shared_ptr<ExprNode> t, std::shared_ptr<ExprNode> v)
         : target(std::move(t)), value(std::move(v)) {}
 };
@@ -214,6 +253,26 @@ struct ForStmt : StmtNode {
 struct FuncDef : StmtNode {
     std::string name;
     std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> params;
+    // Phase 8 of AvaLang_Plan_Sistema_de_Tipos.md ("Funciones"): raw
+    // spelling of each parameter's `as Type` annotation, parallel to
+    // `params` (same index, same length once set -- empty if this FuncDef
+    // predates Phase 8 or was built some other way) -- "" = no annotation
+    // for that parameter, same convention as AssignStmt::explicit_type
+    // below. Grammar support (`param: NAME typeAnnotation? ('=' expr)?`)
+    // has existed since Phase 2; AstBuilder::visitFuncDeclaration silently
+    // discarded it until this phase. Resolving these strings to ava::Type
+    // (TypeFromName) and actually validating them (unknown type name,
+    // argument compatibility) is deferred to Phase 9 ("Validación de
+    // parámetros en llamadas") -- this struct only stops throwing the
+    // information away. Set directly after construction (like is_static/
+    // is_private/is_async below), not via the constructor, to avoid
+    // touching the one existing call site's positional-arg shape.
+    std::vector<std::string> param_types;
+    // Raw spelling of the `as Type` after the parameter list, e.g.
+    // `func add(a as int) as int` -> "int"; "" = no return annotation.
+    // Same deferred-resolution note as param_types -- consumed starting
+    // Phase 10 ("Validación de retornos").
+    std::string return_type;
     bool is_vararg = false;
     std::vector<std::shared_ptr<StmtNode>> body;
     // Mismo caveat que en AssignStmt: solo tienen significado real cuando
@@ -266,6 +325,23 @@ struct LambdaExpr : ExprNode {
     std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> defaults;
     std::vector<std::shared_ptr<StmtNode>> body;
     bool is_vararg = false;
+    // Phase 14 of AvaLang_Plan_Sistema_de_Tipos.md ("Lambdas y funciones
+    // como valores"). Same convention as FuncDef::param_types/return_type
+    // (Phase 8): raw `as Type` spelling, parallel to `defaults` (same
+    // index, "" = no annotation for that parameter), and the raw
+    // return-type spelling from the (now optional) `returnType` after the
+    // parameter list. Set directly after construction, not via the
+    // constructor, for the same reason as FuncDef's: three existing call
+    // sites (visitShortLambdaExprAlt, visitLambdaExprAlt, and the new
+    // visitSingleParamLambdaExprAlt) stay untouched positionally.
+    // `singleParamLambdaExpr` (`x => x * 2`) never populates param_types
+    // (there is no `as Type` slot in that grammar rule at all -- see the
+    // grammar comment) and never populates return_type either (no
+    // `returnType` slot there); both stay at their default-constructed
+    // empty state for that form, same "" = no annotation meaning as
+    // everywhere else.
+    std::vector<std::string> param_types;
+    std::string return_type;
     LambdaExpr(std::string n, std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> d,
                std::vector<std::shared_ptr<StmtNode>> b, bool v)
         : name(std::move(n)), defaults(std::move(d)), body(std::move(b)), is_vararg(v) {}
@@ -274,9 +350,26 @@ struct LambdaExpr : ExprNode {
 // Declaración de una función dentro de un bloque `extern` (sin cuerpo,
 // resuelta contra la librería nativa por el runtime). Ver
 // EXTERN_FFI_DESIGN.md.
+//
+// Phase 16 of AvaLang_Plan_Sistema_de_Tipos.md ("extern"): param_types/
+// return_type are the exact same parallel-array + raw-spelling pattern as
+// FuncDef's (this file, Phase 8) and LambdaExpr's (Phase 14) -- one string
+// per entry in `params`, index-aligned, "" = no annotation for that
+// position; return_type is the raw spelling after the parameter list, ""
+// = no annotation. Populated by AstBuilder::visitExternFuncDeclaration
+// from the grammar's `externParam: NAME typeAnnotation?` and
+// `externFuncDeclaration: ... ')' returnType? ...` (both reusing
+// `typeAnnotation`/`returnType`, not a new rule -- see the grammar's own
+// comment on why that's unambiguous against `extern "lib" as Alias`'s
+// `as`). Consumed by Compiler::CompileExtern to fill
+// extern_func_params_/extern_func_returns_, the Alias.Func(...) analogue
+// of known_funcs_/known_func_returns_ (free functions) and
+// class_method_params_/class_method_returns_ (obj.method()).
 struct ExternFuncDecl {
     std::string name;
     std::vector<std::string> params;
+    std::vector<std::string> param_types;
+    std::string return_type;
     bool is_vararg = false;
 };
 

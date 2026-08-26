@@ -1,0 +1,15 @@
+class Animal
+    name as string
+    func speak() as string
+        return "..."
+    end
+end
+
+class Dog: Animal
+    func speak() as string
+        return "woof"
+    end
+end
+
+pet = Dog()
+sound as string = pet.speak()

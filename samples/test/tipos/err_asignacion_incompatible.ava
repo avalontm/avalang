@@ -1,0 +1,2 @@
+age as int = 25
+age = "hello"

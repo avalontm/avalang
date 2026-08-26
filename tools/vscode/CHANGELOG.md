@@ -1,5 +1,74 @@
 # Changelog
 
+## 0.3.3
+
+- `README.md` reescrito enfocado en el usuario final en vez del mantenedor: arriba explica qué
+  hace la extensión, cómo instalarla y cómo correr un archivo con el botón "Run File" (con
+  ejemplos de configuración genéricos, sin rutas de desarrollador hardcodeadas). Todo lo de
+  mantenimiento (modo desarrollo, empaquetar, publicar al Marketplace, cómo escalar la gramática)
+  se movió a una sección plegable al final, "Para quienes quieran modificar la extensión".
+
+## 0.3.2
+
+- `package.json`: translated all `avalang.*` setting descriptions to English (they were in
+  Spanish, inconsistent with the rest of the manifest/marketplace listing). `executablePath`'s
+  example path was also a hardcoded developer path (`D:/_CODE_/avalang/...`); replaced with
+  generic cross-platform examples.
+
+## 0.3.1
+
+- **Fix: `async`/`await` no tenian resaltado.** `asyncFuncDeclaration` ('async' funcDeclaration) y
+  `awaitAtom` ('await' expr) existen en `AvaLang.g4` desde antes pero nunca se habian agregado a
+  `syntaxes/avalang.tmLanguage.json`; el texto caia en el resaltado por defecto (sin color). Ahora:
+  - `async` -> `storage.modifier.async.avalang` (mismo criterio que `storage.modifier.async` en
+    gramaticas JS/TS, para que temas existentes ya lo coloreen razonablemente distinto de
+    `static`/`private`).
+  - `await` -> `keyword.control.flow.await.avalang`, agregado antes que `#function-call` en el
+    arreglo de `patterns` para que `await(x)` (sin espacio) no se interprete como una llamada a una
+    funcion llamada `await`. Tambien se agrego dentro del bloque de expresion embebida de f-strings.
+- **Fix: `language-configuration.json` no indentaba/plegaba bien varias formas de la gramatica:**
+  - `increaseIndentPattern` exigia que la linea empezara literalmente con `func`, asi que
+    `async func x()`, `static func x()` y `private func x()` no auto-indentaban el cuerpo. Ahora
+    acepta cualquier combinacion de `static`/`private`/`async` antes de `func`.
+  - `select ... case ... then ... end` (VB6-style switch, ya resaltado como keywords desde antes)
+    nunca se habia agregado a `increaseIndentPattern`/`decreaseIndentPattern`/`folding.markers`:
+    `select` y `case ... then` ahora indentan como `if`/`elif`, y `case` desindenta como `elif`
+    antes de la siguiente rama.
+  - `folding.markers.start` no reconocia lineas que empiezan con `async`/`static`/`private`/`select`
+    como apertura de bloque (aunque el `end` de cierre sea el mismo de siempre).
+- `snippets/avalang.json`: nuevos `asyncfunc` (`async func ... end`), `await` (`await expr`),
+  `staticfunc`/`privatefunc` (`modifiedFuncDeclaration`, tampoco tenian snippet) y `select`
+  (`select ... case ... then ... else ... end`, tampoco tenia snippet).
+- `examples/example.ava` ahora ejercita `async func`, `await`, y `static func`/`private func`
+  dentro de una clase (el ejemplo real de `samples/test/fase3_02_await_metodo_con_this.ava`).
+- Verificado con `vscode-textmate`: tokenizado sin errores de los 17 archivos `.ava` de
+  `samples/test/` (incluyendo el que reporto el bug) y confirmacion puntual de que `async`/`await`/
+  `select` producen los scopes esperados.
+
+## 0.3.0
+
+- Resaltado nuevo para la sintaxis de `as Type` de `AvaLang_Plan_Sistema_de_Tipos.md`: anotacion de
+  variable (`age as int`, con o sin `= expr`), tipos de parametro (`func f(a as int)`, incluyendo
+  `externParam` dentro de un bloque `extern`) y tipo de retorno (`returnType`, tanto en `func` como
+  en las dos formas de lambda: `(x as int) as int => expr` y `func(x as int) as int ... end`).
+  Los cuatro tipos primitivos del plan (`int`, `float`, `bool`, `string`) tienen su propio scope
+  (`storage.type.primitive.avalang`); cualquier otro nombre despues de `as` (una clase de usuario,
+  o un typo) usa `entity.name.type.avalang`, igual que el nombre de una clase declarada con `class`.
+- El `as Alias` de `extern "lib" as Alias` sigue con su resaltado propio de namespace/alias sin
+  cambios -- la regla nueva lo excluye explicitamente (via lookbehind del `"` que cierra el STRING)
+  para no confundir un alias de modulo con un tipo.
+- `snippets/avalang.json`: nuevos `functyped` (`func` con parametros y retorno tipados), `astype`
+  (`name as Type = value`), `astypedecl` (`name as Type` sin inicializar), `localtyped`
+  (`local name as Type = value`, shadowing explicito), `lambdatyped` (lambda con parametro y
+  retorno tipados) y `externtyped` (`extern` con un `func` tipado).
+- `examples/example.ava` ahora tambien ejercita la sintaxis de tipos: variables inferidas y
+  anotadas, declaracion sin inicializar, funcion tipada, `local` tipado (shadowing), lambda tipada,
+  `extern` con parametros/retorno tipados y una clase con propiedad/metodo tipados.
+- Verificado igual que en 0.1.2: tokenizado automatico (`vscode-textmate`) de `examples/example.ava`
+  completo, confirmando que las reglas nuevas no rompen ninguna region existente (strings, f-strings,
+  `extern`, diccionarios) y que el alias de `extern`/`import` sigue sin pisarse con el resaltado de
+  tipos nuevo.
+
 ## 0.2.0
 
 - Nuevo comando **AvaLang: Run File**, disponible como boton de play (arriba a la derecha del

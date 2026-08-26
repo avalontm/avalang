@@ -82,3 +82,6 @@ Console.WriteLine("Sleep(100) durmio " + str(after.Ticks - before.Ticks) + "ms")
 
 Console.WriteLine("")
 Console.WriteLine("=== fin del demo ===")
+
+number as int = 12
+print("numero: " + str(number))

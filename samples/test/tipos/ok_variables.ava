@@ -1,0 +1,4 @@
+x = 10
+x as int = 10
+x as string = "hello"
+x as bool = false

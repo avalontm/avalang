@@ -118,3 +118,66 @@ if result then
     print(result["Stdout"])
 end
 
+# Sistema de tipos (AvaLang_Plan_Sistema_de_Tipos.md): `as` es anotacion, no cast.
+age = 25
+age as int = 25
+name as string = "Ava"
+active as bool = true
+price as float = 19.95
+pending as int
+
+func add(a as int, b as int) as int
+    return a + b
+end
+
+if true then
+    local age as int = 30
+end
+
+callback = (x as int) as int => x * 2
+
+extern "libmysql" as MySQLNative
+    func mysql_init(mysql)
+    func mysql_query(mysql, query, *args)
+    func Sleep(ms as int)
+    func GetTickCount() as int
+end
+
+class Robot
+    name as string
+    func speak() as string
+        return "beep"
+    end
+end
+
+bot = Robot()
+sound as string = bot.speak()
+
+# async/await (asyncFuncDeclaration / awaitAtom en AvaLang.g4)
+class Contador
+    static total = 0
+
+    async func incrementar()
+        await delay(100)
+        this.total = this.total + 1
+        return this.total
+    end
+
+    static func reset()
+        Contador.total = 0
+    end
+
+    private func log(msg)
+        print("[Contador] " + msg)
+    end
+end
+
+async func main()
+    c = Contador()
+    a = await c.incrementar()
+    b = await c.incrementar()
+    print("a=" + str(a) + " b=" + str(b))
+end
+
+main()
+

@@ -2,7 +2,7 @@
   "name": "avalang",
   "displayName": "AvaLang",
   "description": "Syntax highlighting for the AvaLang scripting language (.ava files)",
-  "version": "0.2.0",
+  "version": "0.3.3",
   "publisher": "avalontm",
   "license": "MIT",
   "engines": {
@@ -104,32 +104,32 @@
           "type": "string",
           "default": "ava_cli",
           "scope": "resource",
-          "description": "Ruta al ejecutable de ava_cli usado por \"AvaLang: Run File\" (F5 / boton de play). Puede ser solo el nombre si esta en el PATH (ej. \"ava_cli\"), o una ruta absoluta/relativa (ej. \"D:/_CODE_/avalang/build_cli/runtime/avalang/Release/ava_cli.exe\"). Admite ${workspaceFolder} y ${fileDirname}."
+          "description": "Path to the ava_cli executable used by \"AvaLang: Run File\" (F5 / play button). Can be just the name if it's on the PATH (e.g. \"ava_cli\"), or an absolute/relative path (e.g. \"/path/to/avalang/build_cli/runtime/avalang/Release/ava_cli\" or \"C:/path/to/avalang/build_cli/runtime/avalang/Release/ava_cli.exe\"). Supports ${workspaceFolder} and ${fileDirname}."
         },
         "avalang.workingDirectory": {
           "type": "string",
           "default": "${fileDirname}",
           "scope": "resource",
-          "description": "Directorio de trabajo desde el que se lanza ava_cli. Admite ${workspaceFolder}, ${fileDirname}, ${fileBasename}, ${fileBasenameNoExtension}, ${file}. Por defecto, la carpeta del archivo .ava que se esta ejecutando."
+          "description": "Working directory ava_cli is launched from. Supports ${workspaceFolder}, ${fileDirname}, ${fileBasename}, ${fileBasenameNoExtension}, ${file}. Defaults to the folder of the .ava file being run."
         },
         "avalang.modulesPath": {
           "type": "string",
           "default": "",
           "scope": "resource",
-          "description": "Override opcional de la carpeta modules/ (equivalente al flag --modules de ava_cli / la variable de entorno AVA_MODULES_PATH). Vacio = usar el default de ava_cli (modules/ junto al ejecutable)."
+          "description": "Optional override for the modules/ folder (equivalent to ava_cli's --modules flag / the AVA_MODULES_PATH environment variable). Empty = use ava_cli's default (modules/ next to the executable)."
         },
         "avalang.args": {
           "type": "array",
           "items": { "type": "string" },
           "default": [],
           "scope": "resource",
-          "description": "Argumentos extra que se agregan despues del script (disponibles en AvaLang como la lista global `args`)."
+          "description": "Extra arguments appended after the script (available in AvaLang as the global `args` list)."
         },
         "avalang.clearTerminalBeforeRun": {
           "type": "boolean",
           "default": true,
           "scope": "resource",
-          "description": "Limpia la terminal de AvaLang antes de cada ejecucion con F5 / boton de play."
+          "description": "Clear the AvaLang terminal before each run with F5 / the play button."
         }
       }
     }

@@ -11,8 +11,11 @@
     { "include": "#func-declaration" },
     { "include": "#import-statement" },
     { "include": "#member-modifiers" },
+    { "include": "#async-modifier" },
+    { "include": "#await-keyword" },
     { "include": "#keywords-control" },
     { "include": "#keywords-other" },
+    { "include": "#type-annotation" },
     { "include": "#operators-logical" },
     { "include": "#language-constants" },
     { "include": "#this-reference" },
@@ -71,7 +74,8 @@
       "patterns": [
         { "include": "#comments" },
         {
-          "match": "\\b(as)\\b\\s*([a-zA-Z_][a-zA-Z_0-9]*)",
+          "comment": "El alias de modulo (`extern \"lib\" as Alias`) es el unico `as X` de este bloque que va pegado directamente al STRING que abre el extern -- de ahi el lookbehind. Los `as Type` de un `externParam`/`returnType` (Fase 16 del plan de tipos, ej. `func Sleep(ms as int)`, `func GetTickCount() as int`) van pegados a un NAME o a `)`, nunca a un STRING, asi que quedan afuera de este match y los resuelve #type-annotation mas abajo en este mismo arreglo.",
+          "match": "(?<=\")\\s*\\b(as)\\b\\s*([a-zA-Z_][a-zA-Z_0-9]*)",
           "captures": {
             "1": { "name": "keyword.control.extern.avalang" },
             "2": { "name": "entity.name.namespace.alias.avalang" }
@@ -84,6 +88,7 @@
             "2": { "name": "entity.name.function.avalang" }
           }
         },
+        { "include": "#type-annotation" },
         { "include": "#strings" },
         { "include": "#punctuation" },
         {
@@ -120,6 +125,18 @@
       "name": "storage.modifier.avalang"
     },
 
+    "async-modifier": {
+      "comment": "`async` de asyncFuncDeclaration ('async' funcDeclaration, ver AvaLang.g4). Mismo molde sintactico que memberModifier (static/private) delante de funcDeclaration, pero con su propio scope storage.modifier.async.avalang -- el estandar en gramaticas TextMate (JS/TS: storage.modifier.async) para que los temas existentes lo coloreen distinto de static/private sin tocar member-modifiers.",
+      "match": "\\basync\\b",
+      "name": "storage.modifier.async.avalang"
+    },
+
+    "await-keyword": {
+      "comment": "`await` de awaitAtom ('await' expr, dentro de primary -- ver AvaLang.g4). Solo es valido dentro del cuerpo de un asyncFuncDeclaration; eso lo valida el compilador (Compiler::in_async_func_), no la gramatica ni este resaltado. Va antes que #function-call en el arreglo de patterns de la raiz para que 'await(x)' (sin espacio) no se interprete como una llamada a una funcion llamada 'await'.",
+      "match": "\\bawait\\b",
+      "name": "keyword.control.flow.await.avalang"
+    },
+
     "keywords-control": {
       "match": "\\b(if|then|elif|else|end|while|for|in|try|catch|finally|return|break|continue|pass|raise|select|case|to|is)\\b",
       "name": "keyword.control.avalang"
@@ -128,6 +145,26 @@
     "keywords-other": {
       "match": "\\b(local|base|yield)\\b",
       "name": "keyword.other.avalang"
+    },
+
+    "type-annotation": {
+      "comment": "`as Type` de AvaLang_Plan_Sistema_de_Tipos.md: anotacion de variable (`age as int`, con o sin `= expr`), de parametro (`func f(a as int)`, incluye `externParam`) y de retorno (`returnType`, tanto en `func` como en las dos formas de lambda). Deliberadamente NO incluye el `as` de `import ... as Alias` ni el de `extern \"lib\" as Alias` -- esos ya tienen su propio resaltado mas especifico (namespace/alias) en #import-statement y dentro de #extern-block, que van antes en el arreglo `patterns` de la raiz y ya consumen esa `as X` como parte de un match mas largo; y el `as` inmediatamente despues del STRING que abre un `extern` esta ademas excluido acá con un lookbehind, para que esta regla no lo vuelva a capturar como si fuera un tipo cuando aparece dentro del propio cuerpo de #extern-block (que sí incluye esta regla, para los `as Type` de sus `externParam`/`returnType`).",
+      "patterns": [
+        {
+          "match": "(?<!\"\\s*)\\b(as)\\b\\s*\\b(int|float|bool|string)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.as.avalang" },
+            "2": { "name": "storage.type.primitive.avalang" }
+          }
+        },
+        {
+          "match": "(?<!\"\\s*)\\b(as)\\b\\s*([a-zA-Z_][a-zA-Z_0-9]*)",
+          "captures": {
+            "1": { "name": "keyword.control.as.avalang" },
+            "2": { "name": "entity.name.type.avalang" }
+          }
+        }
+      ]
     },
 
     "operators-logical": {
@@ -258,6 +295,8 @@
           },
           "patterns": [
             { "include": "#comments" },
+            { "include": "#async-modifier" },
+            { "include": "#await-keyword" },
             { "include": "#keywords-control" },
             { "include": "#keywords-other" },
             { "include": "#operators-logical" },

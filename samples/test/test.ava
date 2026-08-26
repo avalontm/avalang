@@ -1,0 +1,18 @@
+import system
+
+func main()
+    Console.WriteLine("=== system_demo.ava ===")
+    Console.WriteLine("numero: " + str(12))
+end
+
+main()
+Console.WriteLine("=== fin del demo ===")
+
+async func esperar()
+    print("esperando 2 segundos...")
+    await delay(2000)
+    print("terminado de esperar")
+end    
+
+
+esperar()

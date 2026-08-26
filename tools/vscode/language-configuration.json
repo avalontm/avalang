@@ -23,12 +23,12 @@
   ],
   "wordPattern": "(-?\\d*\\.\\d\\w*)|([^\\`\\~\\!\\@\\#\\%\\^\\&\\*\\(\\)\\-\\=\\+\\[\\{\\]\\}\\\\\\|\\;\\:\\'\\\"\\,\\.\\<\\>\\/\\?\\s]+)",
   "indentationRules": {
-    "increaseIndentPattern": "^\\s*((if|elif|for)\\b.*\\bthen\\s*$|else\\s*$|while\\b.*$|func\\b.*\\)\\s*$|class\\b.*$|try\\s*$|finally\\s*$|catch\\b.*$|extern\\b.*\\bas\\b.*$)",
-    "decreaseIndentPattern": "^\\s*(end\\b|else\\b|elif\\b.*|catch\\b.*|finally\\b)"
+    "increaseIndentPattern": "^\\s*((if|elif|for)\\b.*\\bthen\\s*$|else\\s*$|while\\b.*$|(static\\s+|private\\s+|async\\s+)*func\\b.*\\)\\s*$|class\\b.*$|try\\s*$|finally\\s*$|catch\\b.*$|extern\\b.*\\bas\\b.*$|select\\b.*$|case\\b.*\\bthen\\s*$)",
+    "decreaseIndentPattern": "^\\s*(end\\b|else\\b|elif\\b.*|catch\\b.*|finally\\b|case\\b.*)"
   },
   "folding": {
     "markers": {
-      "start": "^\\s*(if|elif|else|while|for|func|class|try|catch|finally|extern)\\b.*$",
+      "start": "^\\s*(if|elif|else|while|for|async|static|private|func|class|try|catch|finally|extern|select)\\b.*$",
       "end": "^\\s*end\\b"
     }
   },

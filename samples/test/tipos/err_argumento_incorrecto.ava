@@ -1,0 +1,5 @@
+func add(a as int)
+    return a
+end
+
+add("hello")

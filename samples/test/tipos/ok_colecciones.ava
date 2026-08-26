@@ -1,0 +1,5 @@
+items = [1, 2, 3]
+first = items[0]
+slice = items[1:2]
+
+scores = {alice: 10, bob: 20}

@@ -1,4 +1,4 @@
-class Contador
+class Contador 
     static total = 0
 
     async func incrementar()
@@ -16,3 +16,4 @@ async func main()
 end
 
 main()
+

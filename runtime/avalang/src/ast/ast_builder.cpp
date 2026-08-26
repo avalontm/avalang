@@ -290,6 +290,31 @@ std::any AstBuilder::visitAssignStatement(AvaLangParser::AssignStatementContext*
     return std::make_shared<AssignStmt>(target, value);
 }
 
+// Phase 3 of AvaLang_Plan_Sistema_de_Tipos.md. Grammar: `NAME typeAnnotation
+// '=' expr` (grammar/AvaLang.g4, typedAssignStatement, Phase 2) -- target is
+// always a bare NAME here (unlike visitAssignStatement's target, which can
+// carry index/attr trailers), so build the NameExpr directly instead of
+// going through exprFromTarget(TargetContext*), which expects a different
+// context type.
+std::any AstBuilder::visitTypedAssignStatement(AvaLangParser::TypedAssignStatementContext* ctx) {
+    auto target = std::make_shared<NameExpr>(ctx->NAME()->getText());
+    auto value = exprFromAny(ctx->expr()->accept(this));
+    auto assign = std::make_shared<AssignStmt>(target, value);
+    assign->explicit_type = ctx->typeAnnotation()->NAME()->getText();
+    return assign;
+}
+
+// `NAME typeAnnotation` with no `= expr` (grammar/AvaLang.g4,
+// typedDeclStatement). value stays nullptr -- see ast.h's AssignStmt
+// comment: the compiler does not yet do anything sensible with a null
+// value (that lands in Phase 4/7); this only builds the AST node.
+std::any AstBuilder::visitTypedDeclStatement(AvaLangParser::TypedDeclStatementContext* ctx) {
+    auto target = std::make_shared<NameExpr>(ctx->NAME()->getText());
+    auto assign = std::make_shared<AssignStmt>(target, nullptr);
+    assign->explicit_type = ctx->typeAnnotation()->NAME()->getText();
+    return assign;
+}
+
 std::any AstBuilder::visitMultiAssignStatement(AvaLangParser::MultiAssignStatementContext* ctx) {
     std::vector<std::shared_ptr<ExprNode>> targets;
     std::vector<std::shared_ptr<ExprNode>> values;
@@ -383,6 +408,8 @@ std::any AstBuilder::visitSmallStatement(AvaLangParser::SmallStatementContext* c
     if (ctx->raiseStatement())    return visitRaiseStatement(ctx->raiseStatement());
     if (ctx->incDecStatement())  return visitIncDecStatement(ctx->incDecStatement());
     if (ctx->modifiedAssignStatement()) return visitModifiedAssignStatement(ctx->modifiedAssignStatement());
+    if (ctx->typedAssignStatement()) return visitTypedAssignStatement(ctx->typedAssignStatement());
+    if (ctx->typedDeclStatement())   return visitTypedDeclStatement(ctx->typedDeclStatement());
     throw std::runtime_error("unsupported small statement");
 }
 
@@ -460,8 +487,26 @@ std::any AstBuilder::visitPassStatement(AvaLangParser::PassStatementContext*) {
     return std::make_shared<PassStmt>();
 }
 
+// `local x = 1` / `local x as int = 1` / `local x as int` (grammar/
+// AvaLang.g4, localStatement, Phase 2 adds the last two alternatives).
+// Phase 7: marks the resulting AssignStmt with is_local = true (see ast.h)
+// so the compiler knows this line always starts a fresh binding on the
+// type side instead of validating against a same-named symbol already in
+// scope -- same std::any_cast-and-tag pattern as
+// visitModifiedAssignStatement does for `static`/`private`.
 std::any AstBuilder::visitLocalStatement(AvaLangParser::LocalStatementContext* ctx) {
-    return visitAssignStatement(ctx->assignStatement());
+    std::shared_ptr<AssignStmt> assign;
+    if (ctx->assignStatement()) {
+        assign = std::any_cast<std::shared_ptr<AssignStmt>>(visitAssignStatement(ctx->assignStatement()));
+    } else if (ctx->typedAssignStatement()) {
+        assign = std::any_cast<std::shared_ptr<AssignStmt>>(visitTypedAssignStatement(ctx->typedAssignStatement()));
+    } else if (ctx->typedDeclStatement()) {
+        assign = std::any_cast<std::shared_ptr<AssignStmt>>(visitTypedDeclStatement(ctx->typedDeclStatement()));
+    } else {
+        throw std::runtime_error("unsupported local statement");
+    }
+    assign->is_local = true;
+    return assign;
 }
 
 std::any AstBuilder::visitIfStatement(AvaLangParser::IfStatementContext* ctx) {
@@ -592,6 +637,9 @@ std::any AstBuilder::visitForStatement(AvaLangParser::ForStatementContext* ctx) 
 std::any AstBuilder::visitFuncDeclaration(AvaLangParser::FuncDeclarationContext* ctx) {
     auto name = ctx->NAME()->getText();
     std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> params;
+    // Phase 8 of AvaLang_Plan_Sistema_de_Tipos.md -- parallel to `params`
+    // below, built in the same loop so the indices always line up.
+    std::vector<std::string> param_types;
     bool is_vararg = false;
 
     if (ctx->paramList()) {
@@ -600,6 +648,7 @@ std::any AstBuilder::visitFuncDeclaration(AvaLangParser::FuncDeclarationContext*
             std::shared_ptr<ExprNode> def = nullptr;
             if (p->expr()) def = exprFromAny(p->expr()->accept(this));
             params.push_back({pname, def});
+            param_types.push_back(p->typeAnnotation() ? p->typeAnnotation()->NAME()->getText() : "");
         }
         if (ctx->paramList()->NAME()) {
             is_vararg = true;
@@ -607,7 +656,16 @@ std::any AstBuilder::visitFuncDeclaration(AvaLangParser::FuncDeclarationContext*
     }
 
     auto body = stmtsFromAny(visitBlock(ctx->block()));
-    return std::make_shared<FuncDef>(name, params, is_vararg, body);
+    auto func = std::make_shared<FuncDef>(name, params, is_vararg, body);
+    // Phase 8 of AvaLang_Plan_Sistema_de_Tipos.md ("Funciones"): stop
+    // discarding what the grammar has parsed since Phase 2
+    // (`param: NAME typeAnnotation? (...)`, `funcDeclaration: ...
+    // returnType? block 'end'`). See ast.h's FuncDef::param_types/
+    // return_type for what happens with these next (nothing yet --
+    // Phase 9/10).
+    func->param_types = param_types;
+    func->return_type = ctx->returnType() ? ctx->returnType()->typeAnnotation()->NAME()->getText() : "";
+    return func;
 }
 
 std::any AstBuilder::visitClassDeclaration(AvaLangParser::ClassDeclarationContext* ctx) {
@@ -646,11 +704,17 @@ std::any AstBuilder::visitExternFuncDeclaration(AvaLangParser::ExternFuncDeclara
     if (ctx->externParamList()) {
         for (auto* p : ctx->externParamList()->externParam()) {
             decl.params.push_back(p->NAME()->getText());
+            // Phase 16 of AvaLang_Plan_Sistema_de_Tipos.md -- same
+            // "" = no annotation convention as visitFuncDeclaration's
+            // identical param_types loop above.
+            decl.param_types.push_back(p->typeAnnotation() ? p->typeAnnotation()->NAME()->getText() : "");
         }
         if (ctx->externParamList()->NAME()) {
             decl.is_vararg = true;
         }
     }
+    // Phase 16: mirrors visitFuncDeclaration's identical return_type line.
+    decl.return_type = ctx->returnType() ? ctx->returnType()->typeAnnotation()->NAME()->getText() : "";
     return decl;
 }
 
@@ -716,9 +780,13 @@ std::any AstBuilder::visitExprList(AvaLangParser::ExprListContext* ctx) {
 }
 
 std::any AstBuilder::visitShortLambdaExprAlt(AvaLangParser::ShortLambdaExprAltContext* ctx) {
-    if (!ctx->shortLambdaExpr()) return visitLambdaExprAlt(nullptr);
+    if (!ctx->shortLambdaExpr()) return visitSingleParamLambdaExprAlt(nullptr);
     auto* lambda = ctx->shortLambdaExpr();
     std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> defaults;
+    // Phase 14 of AvaLang_Plan_Sistema_de_Tipos.md -- parallel to
+    // `defaults` below, same convention as visitFuncDeclaration's
+    // param_types (Phase 8): "" = no annotation for that parameter.
+    std::vector<std::string> param_types;
     std::string name = "<lambda>";
 
     if (lambda->paramList()) {
@@ -727,18 +795,45 @@ std::any AstBuilder::visitShortLambdaExprAlt(AvaLangParser::ShortLambdaExprAltCo
             std::shared_ptr<ExprNode> def = nullptr;
             if (p->expr()) def = exprFromAny(p->expr()->accept(this));
             defaults.push_back({pname, def});
+            param_types.push_back(p->typeAnnotation() ? p->typeAnnotation()->NAME()->getText() : "");
         }
     }
 
     auto body = std::make_shared<ReturnStmt>(exprFromAny(lambda->expr()->accept(this)));
     std::vector<std::shared_ptr<StmtNode>> body_stmts = {body};
-    return std::make_shared<LambdaExpr>(name, defaults, body_stmts, false);
+    auto result = std::make_shared<LambdaExpr>(name, defaults, body_stmts, false);
+    result->param_types = param_types;
+    // Phase 14: the optional `as Type` after the parameter list, before
+    // `=>` -- see grammar/AvaLang.g4's shortLambdaExpr and returnType.
+    result->return_type = lambda->returnType() ? lambda->returnType()->typeAnnotation()->NAME()->getText() : "";
+    return result;
+}
+
+// Phase 14 of AvaLang_Plan_Sistema_de_Tipos.md ("Lambdas y funciones como
+// valores"): the new bare, paren-less, untyped single-parameter form
+// (`callback = x => x * 2`, grammar/AvaLang.g4's singleParamLambdaExpr).
+// Mirrors visitShortLambdaExprAlt's body-building (implicit `return` of
+// the single expression) but there is no paramList/typeAnnotation/
+// returnType to read at all -- the grammar rule itself has no slot for
+// any of those (see the grammar comment on why that's deliberate, not a
+// gap), so param_types/return_type are left at their default-constructed
+// empty state on the resulting LambdaExpr.
+std::any AstBuilder::visitSingleParamLambdaExprAlt(AvaLangParser::SingleParamLambdaExprAltContext* ctx) {
+    if (!ctx->singleParamLambdaExpr()) return visitLambdaExprAlt(nullptr);
+    auto* lambda = ctx->singleParamLambdaExpr();
+    auto pname = lambda->NAME()->getText();
+    std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> defaults = {{pname, nullptr}};
+
+    auto body = std::make_shared<ReturnStmt>(exprFromAny(lambda->expr()->accept(this)));
+    std::vector<std::shared_ptr<StmtNode>> body_stmts = {body};
+    return std::make_shared<LambdaExpr>("<lambda>", defaults, body_stmts, false);
 }
 
 std::any AstBuilder::visitLambdaExprAlt(AvaLangParser::LambdaExprAltContext* ctx) {
     if (!ctx->lambdaExpr()) return visitOrExprAlt(nullptr);
     auto* lambda = ctx->lambdaExpr();
     std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> defaults;
+    std::vector<std::string> param_types;
     bool is_vararg = false;
     std::string name = "<lambda>";
 
@@ -748,12 +843,19 @@ std::any AstBuilder::visitLambdaExprAlt(AvaLangParser::LambdaExprAltContext* ctx
             std::shared_ptr<ExprNode> def = nullptr;
             if (p->expr()) def = exprFromAny(p->expr()->accept(this));
             defaults.push_back({pname, def});
+            param_types.push_back(p->typeAnnotation() ? p->typeAnnotation()->NAME()->getText() : "");
         }
         if (lambda->paramList()->NAME()) is_vararg = true;
     }
 
     auto body = stmtsFromAny(visitBlock(lambda->block()));
-    return std::make_shared<LambdaExpr>(name, defaults, body, is_vararg);
+    auto result = std::make_shared<LambdaExpr>(name, defaults, body, is_vararg);
+    result->param_types = param_types;
+    // Phase 14: same returnType? slot as shortLambdaExpr above, added to
+    // the `func(...) end` anonymous lambda form in symmetry with
+    // funcDeclaration (see grammar/AvaLang.g4's lambdaExpr).
+    result->return_type = lambda->returnType() ? lambda->returnType()->typeAnnotation()->NAME()->getText() : "";
+    return result;
 }
 
 std::any AstBuilder::visitOrExprAlt(AvaLangParser::OrExprAltContext* ctx) {
@@ -908,8 +1010,13 @@ std::any AstBuilder::visitNameAtom(AvaLangParser::NameAtomContext* ctx) {
 }
 
 std::any AstBuilder::visitNumberAtom(AvaLangParser::NumberAtomContext* ctx) {
-    double val = std::stod(ctx->NUMBER()->getText());
-    return std::make_shared<NumberExpr>(val);
+    std::string text = ctx->NUMBER()->getText();
+    double val = std::stod(text);
+    // Phase 5 of AvaLang_Plan_Sistema_de_Tipos.md: `10` -> Int, `10.0` ->
+    // Float (see NumberExpr::is_float in ast.h). Textual check, not a check
+    // on `val`, so `10.0` doesn't get misread as an int-valued double.
+    bool is_float = text.find('.') != std::string::npos;
+    return std::make_shared<NumberExpr>(val, is_float);
 }
 
 std::any AstBuilder::visitStringAtom(AvaLangParser::StringAtomContext* ctx) {

@@ -147,6 +147,358 @@ static void RejectDuplicateFuncDefs(const std::vector<std::shared_ptr<StmtNode>>
     }
 }
 
+// Phase 9 of AvaLang_Plan_Sistema_de_Tipos.md ("Validación de parámetros
+// en llamadas"). Pre-pass over a chunk's OWN statement list -- same
+// granularity as RejectDuplicateFuncDefs right above (called from the same
+// place, CompileChunk, on every invocation including nested if/while/for
+// bodies that share their enclosing function's Compiler instance -- see
+// compiler.h's comment on symbols_ for why that sharing is the existing,
+// documented architecture, not something new introduced here). Records
+// each FuncDef's parameter names + resolved types (Phase 8's `param_types`
+// strings, turned into `ava::Type` via TypeFromName) into `out`, keyed by
+// function name, so CompileExpr(CallExpr) can check a call's arguments
+// against them without caring whether the call textually precedes or
+// follows the def in the same chunk (this runs before any statement in
+// `stmts` is compiled). A parameter with no `as Type` annotation records
+// Type::Unknown for that position -- Compiler::CheckCallArgs treats that
+// as "nothing to check", same convention as the rest of the type system.
+// Does NOT recurse into nested blocks (a `func` declared inside an `if`
+// inside this chunk is still found, since RejectDuplicateFuncDefs's own
+// non-recursion into ITS `stmts` doesn't apply here -- this is a shallow
+// scan of exactly the same `stmts` list); does NOT touch class bodies or
+// externs (methods are called via AttrExpr, not a plain NameExpr, so
+// Compiler::CheckCallArgs never looks them up here regardless).
+//
+// Phase 10 of AvaLang_Plan_Sistema_de_Tipos.md ("Validación de retornos")
+// extends this same pre-pass to also fill `out_returns`, keyed by the same
+// function name, with the resolved Type of FuncDef::return_type (Phase 8)
+// -- Type::Unknown for no annotation or an unrecognized type name, same
+// convention as `out`'s per-parameter Type::Unknown. Consumed by
+// InferExprType's CallExpr case, not by CheckReturnType (which only cares
+// about the CURRENTLY-COMPILING function's own return_type, tracked
+// separately via current_return_type_ -- this map is for inferring the
+// type of a *call expression*, e.g. `y = add(1, 2)`).
+// Phase 13 of AvaLang_Plan_Sistema_de_Tipos.md (\"Clases y objetos\").
+// Free-function counterpart to Compiler::ResolveTypeName -- exists as its
+// own static function (instead of just calling the member function)
+// because CollectFuncSignatures below is itself a static free function,
+// called before any Compiler instance-specific work happens for a chunk,
+// so it only gets handed the one map (compiled_classes) it actually
+// needs rather than a whole Compiler&. Compiler::ResolveTypeName
+// (compiler.h) delegates to this for the exact same logic.
+static TypeRef ResolveTypeNameAgainst(const std::string& name,
+                                       const std::unordered_map<std::string, ClassObj*>& compiled_classes) {
+    Type prim = TypeFromName(name);
+    if (prim != Type::Unknown) return TypeRef{prim, "", nullptr, nullptr};
+    if (compiled_classes.count(name)) return TypeRef{Type::Object, name, nullptr, nullptr};
+    return TypeRef{Type::Unknown, "", nullptr, nullptr};
+}
+
+// Phase 13: out_returns is now TypeRef-keyed (was plain Type) since a
+// free function's declared return type can itself be a class name
+// (`func make() as User ... end`) -- see known_func_returns_'s comment
+// in compiler.h. `compiled_classes` is threaded through so this static
+// function can resolve those class-typed return annotations the same
+// way Compiler::ResolveTypeName does, without needing a full Compiler
+// instance. Parameter types (`out`) are deliberately left as plain Type,
+// unchanged -- see class_method_params_'s comment in compiler.h for why
+// parameter class-awareness isn't extended by this phase.
+static void CollectFuncSignatures(
+        const std::vector<std::shared_ptr<StmtNode>>& stmts,
+        std::unordered_map<std::string, std::vector<std::pair<std::string, Type>>>& out,
+        std::unordered_map<std::string, TypeRef>& out_returns,
+        const std::unordered_map<std::string, ClassObj*>& compiled_classes) {
+    for (auto& stmt : stmts) {
+        auto* f = dynamic_cast<FuncDef*>(stmt.get());
+        if (!f) continue;
+        std::vector<std::pair<std::string, Type>> sig;
+        sig.reserve(f->params.size());
+        for (size_t i = 0; i < f->params.size(); ++i) {
+            Type t = (i < f->param_types.size()) ? TypeFromName(f->param_types[i]) : Type::Unknown;
+            sig.push_back({f->params[i].first, t});
+        }
+        out[f->name] = std::move(sig);
+        out_returns[f->name] = ResolveTypeNameAgainst(f->return_type, compiled_classes);
+    }
+}
+
+// Phase 6 of AvaLang_Plan_Sistema_de_Tipos.md ("Validacion de anotaciones").
+// Called from both AssignStmt paths (CompileStmt and its CompileExprToReg
+// mirror) right after resolving `declared_type`/`inferred_type` for a
+// statement that carries an explicit `as Type` (explicit_type non-empty).
+// A no-op when there's no annotation at all -- ordinary `x = expr` is never
+// touched by this. Two things can go wrong:
+//   1. `explicit_type` doesn't name a real primitive (e.g. a typo, `age as
+//      itn`) -- TypeFromName already returned Type::Unknown for it, which
+//      is reported here as "unknown type" rather than silently doing
+//      nothing (that would leave a typo'd annotation with no effect at
+//      all, which is worse than an error).
+//   2. Both types resolved to something real and they don't match (e.g.
+//      `age as int = "hello"`). `inferred_type == Type::Unknown` (the
+//      value has no initializer yet, per Phase 4/7, or its expression form
+//      InferExprType doesn't resolve -- calls, indexing, collections, etc,
+//      Phases 8/12/13/14/15) is NOT an error: there's nothing to compare
+//      against yet, so the annotation is taken on faith until a later
+//      phase can actually check it.
+// Deliberately exact-match only: an int value against a `float`
+// annotation is also flagged, since numeric coercion is explicitly left
+// as an open decision (plan, section 24) rather than assumed safe here.
+// Phase 13 of AvaLang_Plan_Sistema_de_Tipos.md ("Clases y objetos"). Error-
+// message spelling for a TypeRef: the class name when it's an Object,
+// TypeName() otherwise. Used by ValidateTypeAnnotation/ValidateReassignment/
+// CheckReturnType below instead of the plain TypeName() so a mismatch
+// against a class-typed annotation names the actual class ("expected class
+// User") rather than the generic "object" TypeName() falls back to when it
+// has no class name available.
+// Phase 15 of AvaLang_Plan_Sistema_de_Tipos.md ("Colecciones"): extended
+// with List/Dict cases, recursing into element_type/key_type when they're
+// resolved (nullptr -- "unknown element type", see TypeRef's comment in
+// type.h -- falls back to the bare "list"/"dict" TypeName()). E.g. `list
+// of int`, `dict of string to bool`, or a bare `list` for `[]` / a
+// mixed-element literal.
+static std::string DisplayType(const TypeRef& t) {
+    if (t.type == Type::Object) return "class " + t.class_name;
+    if (t.type == Type::List) {
+        return t.element_type ? ("list of " + DisplayType(*t.element_type)) : "list";
+    }
+    if (t.type == Type::Dict) {
+        if (!t.key_type && !t.element_type) return "dict";
+        std::string key = t.key_type ? DisplayType(*t.key_type) : "unknown";
+        std::string val = t.element_type ? DisplayType(*t.element_type) : "unknown";
+        return "dict of " + key + " to " + val;
+    }
+    return std::string(TypeName(t.type));
+}
+
+static void ValidateTypeAnnotation(const std::string& explicit_type, const TypeRef& declared_type,
+                                    const TypeRef& inferred_type, int line, int col,
+                                    const std::string& source_name) {
+    if (explicit_type.empty()) return;
+    if (declared_type.type == Type::Unknown) {
+        throw AvaError("unknown type '" + explicit_type + "' in annotation", line, col, source_name);
+    }
+    if (inferred_type.type == Type::Unknown) return;
+    // Phase 15: mismatch computed via TypeRefEquals (type.h) instead of a
+    // hand-rolled Object-only comparison, so a declared List/Dict
+    // annotation (once a later phase gives them declaration syntax, plan
+    // section 19) also gets its element/key type cross-checked the same
+    // way a class annotation's name already was -- see TypeRefEquals'
+    // comment for exactly when it does/doesn't flag a mismatch.
+    if (!TypeRefEquals(declared_type, inferred_type)) {
+        std::string msg = "type mismatch: expected " + DisplayType(declared_type) +
+                           ", received " + DisplayType(inferred_type);
+        throw AvaError(msg, line, col, source_name);
+    }
+}
+
+// Phase 7 of AvaLang_Plan_Sistema_de_Tipos.md ("Asignaciones posteriores"),
+// plan section 11, point 2: a plain `identifier = expr` with no `as` on
+// this line, where `identifier` already has a symbol recorded in this
+// scope, is a *reassignment* -- its value must be compatible with the type
+// already fixed for that name (its `effectiveType`: whichever of
+// declaredType/inferredType is authoritative, see symbol.h), not treated
+// as a brand-new inferred declaration. Same shape/message as
+// ValidateTypeAnnotation, just keyed off a pre-existing Symbol instead of
+// an `as Type` written on this line.
+//
+// `existing` is nullptr when the name has no prior symbol at all (first
+// assignment ever -- ordinary inference applies, nothing to check) or when
+// its effectiveType is still Type::Unknown (nothing resolved yet either).
+// `inferred_type == Type::Unknown` (this value's expression form isn't
+// resolved by InferExprType yet) also skips the check, same reasoning as
+// ValidateTypeAnnotation: no false positives on something the type system
+// can't evaluate. Callers skip calling this entirely for `local`
+// declarations (AssignStmt::is_local) and for lines that carry their own
+// `as Type` (ValidateTypeAnnotation covers those against THIS line's
+// annotation instead -- whether that annotation is itself allowed to
+// override a different previously-fixed type for the same name is left
+// open, same as the "conflict between two explicit annotations" note on
+// DeclareSymbol).
+// Phase 13: `inferred_type` is now a TypeRef (was plain Type), so a
+// reassignment to a class-typed name (`user = OtherClass(...)`) is caught
+// the same way a primitive mismatch already was -- same DisplayType
+// spelling ValidateTypeAnnotation/CheckReturnType use, so the error names
+// the actual class instead of falling back to Type::Object's generic
+// "object" TypeName().
+static void ValidateReassignment(const Symbol* existing, const TypeRef& inferred_type,
+                                  int line, int col, const std::string& source_name) {
+    if (!existing || existing->effectiveType == Type::Unknown) return;
+    if (inferred_type.type == Type::Unknown) return;
+    // Phase 15: existing_ref now also carries effectiveElementType/
+    // effectiveKeyType (symbol.h), so reassigning a name that was first
+    // inferred as `list of int` (e.g. `items = [1, 2, 3]`) to `list of
+    // string` later (`items = ["a", "b"]`) is caught the same way a
+    // primitive/class mismatch already was -- see TypeRefEquals in type.h.
+    TypeRef existing_ref{existing->effectiveType, existing->effectiveClassName,
+                          existing->effectiveElementType, existing->effectiveKeyType};
+    if (!TypeRefEquals(existing_ref, inferred_type)) {
+        std::string msg = "type mismatch: expected " + DisplayType(existing_ref) +
+                           ", received " + DisplayType(inferred_type);
+        throw AvaError(msg, line, col, source_name);
+    }
+}
+
+// Phase 11 of AvaLang_Plan_Sistema_de_Tipos.md ("Operadores"). Canonical
+// source-level spelling of each BinOp/UnOp, purely for error messages --
+// matches the exact tokens ParseBinOp (below, in the f-string mini-parser)
+// accepts, which in turn match the grammar's operator tokens.
+static const char* BinOpSymbol(BinOp op) {
+    switch (op) {
+        case BinOp::Add: return "+";
+        case BinOp::Sub: return "-";
+        case BinOp::Mul: return "*";
+        case BinOp::Div: return "/";
+        case BinOp::IDiv: return "//";
+        case BinOp::Mod: return "%";
+        case BinOp::Pow: return "**";
+        case BinOp::Eq:  return "==";
+        case BinOp::Ne:  return "!=";
+        case BinOp::Lt:  return "<";
+        case BinOp::Le:  return "<=";
+        case BinOp::Gt:  return ">";
+        case BinOp::Ge:  return ">=";
+        case BinOp::And: return "and";
+        case BinOp::Or:  return "or";
+    }
+    return "?";
+}
+
+static const char* UnOpSymbol(UnOp op) {
+    switch (op) {
+        case UnOp::Neg: return "-";
+        case UnOp::Not: return "not";
+        case UnOp::Inc: return "++";
+        case UnOp::Dec: return "--";
+    }
+    return "?";
+}
+
+// Phase 11 of AvaLang_Plan_Sistema_de_Tipos.md ("Operadores"). Plan section
+// 15 asks for "una tabla de compatibilidad" for the operators, with an
+// illustrative table -- but that same section is explicit that "la tabla
+// definitiva debe coincidir con la semántica real de AvaLang", so this
+// table is built from what the VM (runtime/avalang/src/vm/vm_arith.cpp,
+// vm_compare.cpp) actually does with each operator, not from the plan's
+// example rows verbatim. Two consequences worth calling out up front,
+// since both diverge from a literal reading of the plan:
+//
+//   1. Plan section 22 lists `true + "hello"` as an example "operación
+//      incompatible" that should error. At runtime it does NOT error --
+//      vm_arith.cpp's OpAdd special-cases '+' so that if EITHER operand is
+//      a String, it concatenates (stringifying the other side) instead of
+//      doing numeric addition, so `true + "hello"` evaluates to the string
+//      "truehello". Flagging that as a compile error would be a false
+//      positive against real, working AvaLang code. What DOES throw at
+//      runtime for '+' is `true + 5` or `true + true` -- neither operand is
+//      a String, so OpAdd falls through to CoerceToNumber(bool), which
+//      always throws (vm_helpers.cpp). That's the case this table flags.
+//   2. `==`/`!=`/`and`/`or` are NOT validated at all here, even though the
+//      plan's table lists `==` needing "tipos compatibles". vm_compare.cpp's
+//      OpEq/OpNe never throw for any type combination -- matching types
+//      compare structurally, mismatched types fall through to a
+//      well-defined `false`/`true` (pointer-identity) result. `and`/`or`
+//      compile to a truthiness test against the constant 0 (see
+//      CompileExpr's short-circuit branch) which likewise never throws for
+//      any ValueType. Since nothing here can actually fail at runtime,
+//      this system's established rule (every other phase: only flag what
+//      would genuinely break) says don't invent an error for it.
+//
+// Only the four primitive Types this system tracks (Int, Float, Bool,
+// String) are relevant -- Type::Unknown (an expression form InferExprType
+// doesn't resolve yet, e.g. a call, an index, a collection) always skips
+// the check, same "no false positives on what we can't evaluate" rule as
+// ValidateTypeAnnotation/CheckCallArgs/CheckReturnType.
+//
+// Arithmetic (+, -, *, /, //, %, **): vm_arith.cpp routes every operand
+// that isn't handled by '+'s String-concat/List-concat special cases
+// through CoerceToNumber (vm_helpers.cpp), which:
+//   - passes a Number through as-is;
+//   - parses a String if (and only if) its trimmed content looks like a
+//     number, otherwise throws;
+//   - always throws for Bool (Bool is neither Number nor String).
+// A String operand is deliberately NOT flagged here for -, *, /, //, %, **
+// (unlike '+', these have no concat exception) -- whether a given String
+// actually parses as a number is a fact about its runtime *value*
+// ("10" vs "hello"), and Type::String on its own carries no such value
+// information at this level (see InferExprType), so flagging it would risk
+// false positives on perfectly valid code like `"10" - 1`. A Bool operand,
+// on the other hand, ALWAYS throws regardless of value, so it's always
+// safe to flag.
+//
+// Comparisons (<, <=, >, >=): vm_compare.cpp compares lexicographically
+// when BOTH operands are String, and otherwise routes both operands through
+// the same CoerceToNumber as above. Bool can never take the String-String
+// branch (it isn't a String), so a Bool operand on either side always
+// throws here too, by the same reasoning as arithmetic above. A String
+// operand mixed with a non-String is left unchecked for the same
+// numeric-string-value-ambiguity reason as arithmetic.
+static void ValidateBinOpTypes(BinOp op, Type lt, Type rt, int line, int col,
+                                const std::string& source_name) {
+    if (lt == Type::Unknown || rt == Type::Unknown) return;
+
+    auto ThrowBoolMismatch = [&]() {
+        std::string msg = std::string("operator type mismatch: '") + BinOpSymbol(op) +
+                           "' does not support bool operands, received " +
+                           TypeName(lt) + " and " + TypeName(rt);
+        throw AvaError(msg, line, col, source_name);
+    };
+
+    switch (op) {
+        case BinOp::Add:
+            // '+' concatenates (never throws) whenever either side is a
+            // String, Bool included -- see point 1 in the comment above.
+            if (lt == Type::String || rt == Type::String) return;
+            if (lt == Type::Bool || rt == Type::Bool) ThrowBoolMismatch();
+            return;
+        case BinOp::Sub:
+        case BinOp::Mul:
+        case BinOp::Div:
+        case BinOp::IDiv:
+        case BinOp::Mod:
+        case BinOp::Pow:
+        case BinOp::Lt:
+        case BinOp::Le:
+        case BinOp::Gt:
+        case BinOp::Ge:
+            if (lt == Type::Bool || rt == Type::Bool) ThrowBoolMismatch();
+            return;
+        case BinOp::Eq:
+        case BinOp::Ne:
+        case BinOp::And:
+        case BinOp::Or:
+            // Deliberately not validated -- see point 2 in the comment above.
+            return;
+    }
+}
+
+// Phase 11 of AvaLang_Plan_Sistema_de_Tipos.md. Companion to
+// ValidateBinOpTypes above, for the three unary operators that touch a
+// value's type: vm_arith.cpp's OpNeg/OpInc/OpDec all route their single
+// operand through the exact same CoerceToNumber as the binary arithmetic
+// operators above, so the same "Bool always throws, String is
+// value-ambiguous so left unchecked" reasoning applies here verbatim.
+// `not` (OpNot) is excluded on purpose: it calls Value::IsTruthy(), which
+// is defined for every ValueType and never throws, so `not` is universally
+// valid at runtime regardless of the operand's type -- same "don't flag
+// what can't actually fail" rule as Eq/Ne/And/Or above.
+static void ValidateUnOpTypes(UnOp op, Type operand_type, int line, int col,
+                               const std::string& source_name) {
+    if (operand_type == Type::Unknown) return;
+    switch (op) {
+        case UnOp::Neg:
+        case UnOp::Inc:
+        case UnOp::Dec:
+            if (operand_type == Type::Bool) {
+                std::string msg = std::string("operator type mismatch: '") + UnOpSymbol(op) +
+                                   "' does not support a bool operand, received bool";
+                throw AvaError(msg, line, col, source_name);
+            }
+            return;
+        case UnOp::Not:
+            return;
+    }
+}
+
 uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
     if (auto* n = dynamic_cast<NumberExpr*>(expr.get())) {
         auto reg = AllocReg();
@@ -256,6 +608,12 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
     }
 
     if (auto* b = dynamic_cast<BinOpExpr*>(expr.get())) {
+        // Phase 11 of AvaLang_Plan_Sistema_de_Tipos.md ("Operadores"). Runs
+        // before any bytecode for this BinOpExpr is emitted -- same "check
+        // first, compile after" pattern as CheckCallArgs (Phase 9). No-op
+        // for every combination this phase doesn't flag; see CheckBinOpTypes/
+        // ValidateBinOpTypes below for the actual table.
+        CheckBinOpTypes(b);
         if (IsShortCircuit(b->op)) {
             auto zero_idx = AddConstant(Value::Number(0));
             if (b->op == BinOp::And) {
@@ -299,6 +657,9 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
     }
 
     if (auto* u = dynamic_cast<UnOpExpr*>(expr.get())) {
+        // Phase 11 of AvaLang_Plan_Sistema_de_Tipos.md ("Operadores"). Same
+        // "check first" placement as the BinOpExpr case above.
+        CheckUnOpTypes(u);
         auto reg = CompileExpr(u->operand);
         if (u->op == UnOp::Neg) {
             auto result = AllocReg();
@@ -350,6 +711,13 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
     }
 
     if (auto* c = dynamic_cast<CallExpr*>(expr.get())) {
+        if (auto* callee_name = dynamic_cast<NameExpr*>(c->callee.get())) {
+            CheckCallArgs(callee_name->name, c);
+        } else if (auto* callee_attr = dynamic_cast<AttrExpr*>(c->callee.get())) {
+            // Phase 13 of AvaLang_Plan_Sistema_de_Tipos.md: obj.method(...)
+            // now gets its arguments checked too -- see CheckMethodCallArgs.
+            CheckMethodCallArgs(callee_attr, c);
+        }
         auto callee_val_reg = CompileExpr(c->callee);
         // CompileExpr(c->callee) may return a "borrowed" register -- e.g. a
         // local variable's own storage slot (NameExpr for a local returns
@@ -502,6 +870,18 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
         sub.proto_->debug_name = l->name;
         sub.proto_->num_params = static_cast<uint8_t>(l->defaults.size());
         sub.proto_->is_vararg = l->is_vararg;
+        // Phase 14 of AvaLang_Plan_Sistema_de_Tipos.md ("Lambdas y
+        // funciones como valores"): copied down exactly like CompileFunc
+        // does (Phase 13) -- without this, ResolveTypeName below (and any
+        // class-typed reference inside the lambda's own body) would see
+        // empty maps, since a brand-new `Compiler sub` otherwise starts
+        // with none of the enclosing scope's compiled-class knowledge. A
+        // plain copy, never written back into by the lambda, same
+        // reasoning as CompileFunc's copy.
+        sub.compiled_classes_ = compiled_classes_;
+        sub.class_field_types_ = class_field_types_;
+        sub.class_method_returns_ = class_method_returns_;
+        sub.class_method_params_ = class_method_params_;
 
         sub.next_reg_ = 1;
         sub.max_reg_ = sub.next_reg_;
@@ -519,6 +899,15 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
         }
 
         sub.EmitDefaultsPrologue(l->defaults, 1);
+
+        // Phase 14: resolve this lambda's own `as Type` return annotation
+        // (LambdaExpr::return_type, Phase 14's addition to the AST) once,
+        // before compiling its body, exactly like CompileFunc does with
+        // FuncDef::return_type -- so every ReturnStmt inside is checked by
+        // CheckReturnType. Type::Unknown (no annotation -- including the
+        // bare `x => expr` form, which has no return-type syntax at all)
+        // makes that check a no-op, same convention as everywhere else.
+        sub.current_return_type_ = ResolveTypeName(l->return_type);
 
         sub.CompileChunk(l->body);
         // Same convention as named functions (see CompileFunctionDecl):
@@ -606,6 +995,572 @@ void Compiler::StampLine(const std::shared_ptr<StmtNode>& stmt) {
     if (stmt->line > 0) { current_line_ = stmt->line; current_col_ = stmt->col; }
 }
 
+// Phase 13: declared.class_name/inferred.class_name, parallel to Symbol's
+// own declaredClassName/inferredClassName (symbol.h), only meaningful when
+// the corresponding TypeRef.type is Type::Object. A class name is only
+// ever written into the symbol when its Type actually changes (same
+// "Type::Unknown never downgrades an already-known value" rule this
+// function already followed for declaredType/inferredType) -- see the two
+// `if` blocks below, each now sets its Type, class name, element type, and
+// key type together so none of them drift out of sync with each other.
+// Phase 15: declared/inferred were plain (Type, class_name) pairs before
+// this phase; now full TypeRef, so element_type/key_type (meaningful only
+// for Type::List/Type::Dict) move alongside type/class_name under the same
+// "only when this call's type isn't Unknown" rule.
+void Compiler::DeclareSymbol(const std::string& name, const TypeRef& declared, const TypeRef& inferred) {
+    auto it = symbols_.find(name);
+    if (it == symbols_.end()) {
+        Symbol sym;
+        sym.name = name;
+        sym.declaredType = declared.type;
+        sym.inferredType = inferred.type;
+        sym.declaredClassName = declared.class_name;
+        sym.inferredClassName = inferred.class_name;
+        sym.declaredElementType = declared.element_type;
+        sym.inferredElementType = inferred.element_type;
+        sym.declaredKeyType = declared.key_type;
+        sym.inferredKeyType = inferred.key_type;
+        sym.RefreshEffectiveType();
+        symbols_[name] = sym;
+        return;
+    }
+    if (declared.type != Type::Unknown) {
+        it->second.declaredType = declared.type;
+        it->second.declaredClassName = declared.class_name;
+        it->second.declaredElementType = declared.element_type;
+        it->second.declaredKeyType = declared.key_type;
+    }
+    if (inferred.type != Type::Unknown) {
+        it->second.inferredType = inferred.type;
+        it->second.inferredClassName = inferred.class_name;
+        it->second.inferredElementType = inferred.element_type;
+        it->second.inferredKeyType = inferred.key_type;
+    }
+    it->second.RefreshEffectiveType();
+}
+
+Type Compiler::InferExprType(const std::shared_ptr<ExprNode>& expr) {
+    if (!expr) return Type::Unknown;
+
+    if (auto* num = dynamic_cast<NumberExpr*>(expr.get())) {
+        return num->is_float ? Type::Float : Type::Int;
+    }
+    if (dynamic_cast<StringExpr*>(expr.get()) || dynamic_cast<FStringExpr*>(expr.get())) {
+        return Type::String;
+    }
+    if (dynamic_cast<BoolExpr*>(expr.get())) {
+        return Type::Bool;
+    }
+    if (auto* n = dynamic_cast<NameExpr*>(expr.get())) {
+        // Scoped to this Compiler's own symbols_ only, same as DeclareSymbol
+        // -- a name that lives in an enclosing function's scope (upvalue)
+        // isn't looked up here yet, it just infers Unknown for now.
+        auto it = symbols_.find(n->name);
+        return it != symbols_.end() ? it->second.effectiveType : Type::Unknown;
+    }
+    if (auto* u = dynamic_cast<UnOpExpr*>(expr.get())) {
+        switch (u->op) {
+            case UnOp::Not:
+                return Type::Bool;
+            case UnOp::Neg:
+            case UnOp::Inc:
+            case UnOp::Dec:
+                return InferExprType(u->operand);
+        }
+        return Type::Unknown;
+    }
+    if (auto* b = dynamic_cast<BinOpExpr*>(expr.get())) {
+        switch (b->op) {
+            case BinOp::Eq: case BinOp::Ne:
+            case BinOp::Lt: case BinOp::Le:
+            case BinOp::Gt: case BinOp::Ge:
+            case BinOp::And: case BinOp::Or:
+                // Whether the operand types are actually compatible with
+                // each other for this operator is Phase 11's job; AvaLang's
+                // own semantics say these always yield a bool.
+                return Type::Bool;
+            case BinOp::Add: {
+                // Phase 12 of AvaLang_Plan_Sistema_de_Tipos.md
+                // ("Compatibilidad con expresiones compuestas"). '+' is
+                // special-cased ahead of the generic numeric-promotion
+                // logic below because vm_arith.cpp's OpAdd is: if EITHER
+                // operand is a String, concatenate (the other side gets
+                // stringified, whatever its type) -- see the identical
+                // reasoning already spelled out for ValidateBinOpTypes in
+                // Phase 11. That means the result is String as soon as one
+                // side is *known* to be String, regardless of whether the
+                // OTHER side resolves at all -- e.g. `"Total: " +
+                // items[0]` is String even though `items[0]` itself infers
+                // Unknown (IndexExpr, still unresolved -- see the bottom of
+                // this function). Checking this before the shared
+                // Unknown-short-circuit below (which the other arithmetic
+                // ops still rely on) is what lets a composed expression
+                // like `greeting = "Hi " + name` correctly propagate
+                // greeting -> String into the symbol table, so a later
+                // `greeting = 5` is caught by Phase 7's reassignment check
+                // -- the concrete "composición de expresiones" improvement
+                // this phase asks for.
+                Type lt = InferExprType(b->left);
+                Type rt = InferExprType(b->right);
+                if (lt == Type::String || rt == Type::String) return Type::String;
+                if (lt == Type::Unknown || rt == Type::Unknown) return Type::Unknown;
+                if (lt == rt) return lt;
+                if ((lt == Type::Int && rt == Type::Float) || (lt == Type::Float && rt == Type::Int)) {
+                    return Type::Float;
+                }
+                return Type::Unknown;
+            }
+            default:
+                break;
+        }
+        Type lt = InferExprType(b->left);
+        Type rt = InferExprType(b->right);
+        if (lt == Type::Unknown || rt == Type::Unknown) return Type::Unknown;
+        if (lt == rt) return lt;
+        if ((lt == Type::Int && rt == Type::Float) || (lt == Type::Float && rt == Type::Int)) {
+            return Type::Float;
+        }
+        // Anything else (e.g. int + string) is a mismatch for Phase 11 to
+        // flag -- this function only infers, it never reports errors.
+        return Type::Unknown;
+    }
+
+    // Phase 10 of AvaLang_Plan_Sistema_de_Tipos.md ("Validación de
+    // retornos"): a call whose callee is a plain NameExpr with a known
+    // signature in this chunk (known_func_returns_, filled by
+    // CollectFuncSignatures) now infers as that function's declared
+    // return_type -- e.g. `y = add(1, 2)` infers y -> int when `add`
+    // declares `as int`. Type::Unknown either way (callee not a NameExpr,
+    // not found in this chunk, or found with no return annotation) falls
+    // through with the same "can't evaluate yet" meaning as everything
+    // else in this function. This does NOT re-run CheckCallArgs or
+    // otherwise validate the call itself -- that already happened at the
+    // call's own CompileExpr site (Compiler::CheckCallArgs), independent
+    // of whether anything here reads the result.
+    if (auto* c = dynamic_cast<CallExpr*>(expr.get())) {
+        if (auto* callee_name = dynamic_cast<NameExpr*>(c->callee.get())) {
+            // Phase 13: known_func_returns_ is now TypeRef-keyed (a
+            // function's return can itself be a class); this function only
+            // ever hands back a plain Type, so an Object-typed return still
+            // infers as Type::Object here (correct as far as it goes -- just
+            // without WHICH class) -- callers that need the class name use
+            // InferExprTypeRef instead. Class instantiation (`User(...)`,
+            // callee_name naming a compiled class rather than a known free
+            // function) also resolves here as Type::Object for the same
+            // reason -- see InferExprTypeRef for the class-aware version.
+            auto it = known_func_returns_.find(callee_name->name);
+            if (it != known_func_returns_.end()) return it->second.type;
+            if (compiled_classes_.count(callee_name->name)) return Type::Object;
+        }
+        return Type::Unknown;
+    }
+
+    // Phase 15 of AvaLang_Plan_Sistema_de_Tipos.md ("Colecciones") closes
+    // the two gaps the Phase 12 audit comment (below) explicitly left for
+    // this phase: ListExpr/DictExpr literals now infer as Type::List/
+    // Type::Dict (regardless of whether their elements agree on one type
+    // -- it's unambiguously a list/dict either way; WHICH element type, if
+    // any, is InferExprTypeRef's job, not this plain-Type function's), and
+    // IndexExpr/SliceExpr now delegate to InferExprTypeRef to read the
+    // element/value type back off whatever the indexed/sliced expression
+    // resolves to (Unknown if that isn't itself a resolved List/Dict, same
+    // "can't evaluate yet" fallback as always). Delegating to
+    // InferExprTypeRef here -- instead of duplicating its ListExpr/DictExpr/
+    // IndexExpr/SliceExpr logic -- is safe: those four cases are handled
+    // directly there (see its own comment) before it ever falls back to
+    // wrapping InferExprType, so there's no risk of infinite recursion.
+    if (dynamic_cast<ListExpr*>(expr.get())) return Type::List;
+    if (dynamic_cast<DictExpr*>(expr.get())) return Type::Dict;
+    if (dynamic_cast<IndexExpr*>(expr.get())) return InferExprTypeRef(expr).type;
+    if (dynamic_cast<SliceExpr*>(expr.get())) return InferExprTypeRef(expr).type;
+
+    // Phase 12 of AvaLang_Plan_Sistema_de_Tipos.md ("Compatibilidad con
+    // expresiones compuestas") audited every remaining ExprNode kind --
+    // IndexExpr (`items[0]`), SliceExpr (`items[1:5]`), AttrExpr
+    // (`object.property`), ListExpr (`[1, 2, 3]`), DictExpr, LambdaExpr,
+    // BaseExpr, AwaitExpr, YieldExpr, NilExpr -- against every caller of
+    // InferExprType (this function's own recursion for BinOpExpr/UnOpExpr
+    // operands above, CheckCallArgs's per-argument loop, CheckReturnType,
+    // ValidateTypeAnnotation/CheckReassignment via their call sites in
+    // CompileStmt/CompileExprToReg). Of that list, IndexExpr/SliceExpr/
+    // ListExpr/DictExpr are now handled above (Phase 15, see that comment);
+    // AttrExpr (`object.property`) is UNCHANGED by this phase on purpose --
+    // it needs class/instance member types (Phase 13's InferExprTypeRef
+    // AttrExpr branch already resolves this for callers that use THAT
+    // function, but this plain-Type InferExprType still doesn't reach for
+    // it, matching Phase 12's original scope decision, not a new gap this
+    // phase introduced). LambdaExpr/BaseExpr/AwaitExpr/YieldExpr/NilExpr
+    // still fall through to Type::Unknown below, same as before. Every
+    // consumer of this function already treats Type::Unknown as "nothing
+    // to check, don't emit a false positive" (that convention dates back
+    // to Phase 6), which is what still makes `result = items[0].value +
+    // 10` safe: `.value` (AttrExpr) infers Unknown, so the outer `+`
+    // (Phase 11's ValidateBinOpTypes, and this function's own BinOp::Add
+    // case above) silently skips validation instead of guessing, even
+    // though `items[0]` itself (IndexExpr) now resolves correctly.
+    return Type::Unknown;
+}
+
+TypeRef Compiler::ResolveTypeName(const std::string& name) {
+    return ResolveTypeNameAgainst(name, compiled_classes_);
+}
+
+// Phase 13 of AvaLang_Plan_Sistema_de_Tipos.md ("Clases y objetos").
+// TypeRef-returning sibling of InferExprType above -- same walk, but only
+// three ExprNode kinds actually need their OWN branch here, because those
+// are the only forms that can resolve to Type::Object with a specific
+// class attached:
+//   - NameExpr: reads effectiveClassName alongside effectiveType from
+//     symbols_ (InferExprType's NameExpr branch only reads effectiveType).
+//   - CallExpr: either instantiating a compiled class directly
+//     (`User(...)` -- AvaLang has no `new`, see class_method_params_'s
+//     comment in compiler.h for why), calling a known free function whose
+//     declared return type is a class (known_func_returns_, Phase 10,
+//     made TypeRef-aware this phase), or calling a method on an
+//     already-resolved object (`obj.method()` -- recurses into this same
+//     function for `obj`, then looks the method's return type up in
+//     class_method_returns_).
+//   - AttrExpr: a field read (`obj.field`) on an already-resolved object,
+//     looked up in class_field_types_.
+// Phase 15 of AvaLang_Plan_Sistema_de_Tipos.md ("Colecciones") adds four
+// more branches below for the same reason: ListExpr/DictExpr (literals)
+// and IndexExpr/SliceExpr (reading an element/value back out) are the
+// forms that can resolve to a List/Dict WITH its element/key type
+// attached, which -- like Object's class_name -- InferExprType's plain
+// Type can't carry.
+// Every other expression form (literals, unary/binary operators, lambdas,
+// base/await/yield, nil) can never itself evaluate to an instance of a
+// user-defined class or a list/dict with element-type information -- see
+// InferExprType's own Phase 12/15 audit comments for why those forms don't
+// carry that identity even in principle -- so they're delegated to
+// InferExprType and wrapped with an empty class_name, which is meaningless
+// for anything other than Type::Object (see TypeRef's comment in type.h)
+// and therefore harmless here regardless of what Type comes back.
+TypeRef Compiler::InferExprTypeRef(const std::shared_ptr<ExprNode>& expr) {
+    if (!expr) return TypeRef{};
+
+    if (auto* n = dynamic_cast<NameExpr*>(expr.get())) {
+        // Same scoping caveat as InferExprType's own NameExpr branch: this
+        // Compiler's own symbols_ only, no upvalue/parent lookup.
+        auto it = symbols_.find(n->name);
+        if (it == symbols_.end()) return TypeRef{};
+        return TypeRef{it->second.effectiveType, it->second.effectiveClassName, nullptr, nullptr};
+    }
+
+    if (auto* c = dynamic_cast<CallExpr*>(expr.get())) {
+        if (auto* callee_name = dynamic_cast<NameExpr*>(c->callee.get())) {
+            auto cit = compiled_classes_.find(callee_name->name);
+            if (cit != compiled_classes_.end()) {
+                return TypeRef{Type::Object, callee_name->name, nullptr, nullptr};
+            }
+            auto rit = known_func_returns_.find(callee_name->name);
+            if (rit != known_func_returns_.end()) return rit->second;
+            return TypeRef{};
+        }
+        if (auto* callee_attr = dynamic_cast<AttrExpr*>(c->callee.get())) {
+            // Phase 16 of AvaLang_Plan_Sistema_de_Tipos.md ("extern").
+            // Same "matched directly against the alias name, not via
+            // InferExprTypeRef" reasoning as CheckMethodCallArgs's own
+            // extern branch above -- checked first, same order.
+            if (auto* obj_name = dynamic_cast<NameExpr*>(callee_attr->obj.get())) {
+                auto eit = extern_func_returns_.find(obj_name->name);
+                if (eit != extern_func_returns_.end()) {
+                    auto fit = eit->second.find(callee_attr->attr);
+                    if (fit != eit->second.end()) return fit->second;
+                    return TypeRef{};
+                }
+            }
+            TypeRef obj_type = InferExprTypeRef(callee_attr->obj);
+            if (obj_type.type != Type::Object || obj_type.class_name.empty()) return TypeRef{};
+            auto cit = class_method_returns_.find(obj_type.class_name);
+            if (cit == class_method_returns_.end()) return TypeRef{};
+            auto mit = cit->second.find(callee_attr->attr);
+            if (mit == cit->second.end()) return TypeRef{};
+            return mit->second;
+        }
+        return TypeRef{};
+    }
+
+    if (auto* a = dynamic_cast<AttrExpr*>(expr.get())) {
+        TypeRef obj_type = InferExprTypeRef(a->obj);
+        if (obj_type.type != Type::Object || obj_type.class_name.empty()) return TypeRef{};
+        auto cit = class_field_types_.find(obj_type.class_name);
+        if (cit == class_field_types_.end()) return TypeRef{};
+        auto fit = cit->second.find(a->attr);
+        if (fit == cit->second.end()) return TypeRef{};
+        return fit->second;
+    }
+
+    // Phase 15 of AvaLang_Plan_Sistema_de_Tipos.md ("Colecciones").
+    //   - ListExpr (`[1, 2, 3]`): Type::List, with element_type set to the
+    //     first item's own TypeRef IF every item agrees with it
+    //     (TypeRefEquals, type.h) -- an empty list or one with mixed
+    //     element types still resolves as Type::List, just with a null
+    //     element_type ("it's a list, element type not resolved" -- see
+    //     TypeRef's comment in type.h for why that's different from
+    //     Type::Unknown). Recursing through InferExprTypeRef (not
+    //     InferExprType) for each item is what lets a list of objects
+    //     (`[user1, user2]`) or a list of lists work: element_type itself
+    //     ends up carrying a class_name or a nested element_type.
+    //   - DictExpr: same shape, Type::Dict, with element_type as the value
+    //     type (same agreement rule as ListExpr's items) and key_type
+    //     always `{Type::String, ""}` when there's at least one entry --
+    //     DictExpr::entries (ast.h) stores each key as a plain source-level
+    //     std::string (`{name: "Ada"}`), never a general expression, so the
+    //     key's type isn't actually ambiguous the way a list's elements or
+    //     a dict's values are; there's nothing to disagree about.
+    if (auto* le = dynamic_cast<ListExpr*>(expr.get())) {
+        TypeRef result;
+        result.type = Type::List;
+        if (!le->items.empty()) {
+            TypeRef first = InferExprTypeRef(le->items[0]);
+            bool uniform = first.type != Type::Unknown;
+            for (size_t idx = 1; uniform && idx < le->items.size(); ++idx) {
+                if (!TypeRefEquals(first, InferExprTypeRef(le->items[idx]))) uniform = false;
+            }
+            if (uniform) result.element_type = std::make_shared<TypeRef>(first);
+        }
+        return result;
+    }
+    if (auto* de = dynamic_cast<DictExpr*>(expr.get())) {
+        TypeRef result;
+        result.type = Type::Dict;
+        if (!de->entries.empty()) {
+            result.key_type = std::make_shared<TypeRef>(TypeRef{Type::String, "", nullptr, nullptr});
+            TypeRef first = InferExprTypeRef(de->entries[0].second);
+            bool uniform = first.type != Type::Unknown;
+            for (size_t idx = 1; uniform && idx < de->entries.size(); ++idx) {
+                if (!TypeRefEquals(first, InferExprTypeRef(de->entries[idx].second))) uniform = false;
+            }
+            if (uniform) result.element_type = std::make_shared<TypeRef>(first);
+        }
+        return result;
+    }
+
+    // IndexExpr (`items[0]`, `d["key"]`): reads the element/value type back
+    // off whatever `obj` itself resolves to -- List's element_type or
+    // Dict's element_type (the value type; see the field's own comment in
+    // type.h for why List/Dict share that member). A null element_type
+    // (unresolved, see above) or an `obj` that isn't a List/Dict at all
+    // both fall through to TypeRef{} ("not resolved"), same meaning as
+    // everywhere else in this function.
+    if (auto* idx = dynamic_cast<IndexExpr*>(expr.get())) {
+        TypeRef obj_type = InferExprTypeRef(idx->obj);
+        if ((obj_type.type == Type::List || obj_type.type == Type::Dict) && obj_type.element_type) {
+            return *obj_type.element_type;
+        }
+        return TypeRef{};
+    }
+    // SliceExpr (`items[1:5]`): slicing a list yields another list of the
+    // SAME element type -- `obj_type` itself is already the right answer
+    // when it's a List (dicts aren't sliceable in AvaLang's grammar, so
+    // that case is left as "not resolved" rather than guessed at).
+    if (auto* sl = dynamic_cast<SliceExpr*>(expr.get())) {
+        TypeRef obj_type = InferExprTypeRef(sl->obj);
+        if (obj_type.type == Type::List) return obj_type;
+        return TypeRef{};
+    }
+
+    return TypeRef{InferExprType(expr), "", nullptr, nullptr};
+}
+
+// Phase 9 of AvaLang_Plan_Sistema_de_Tipos.md ("Validación de parámetros
+// en llamadas"). Called from CompileExpr's CallExpr case, before any
+// bytecode for the call is emitted, only when c->callee is a plain
+// NameExpr (a->attr(...), a lambda stored in a variable, etc. have no
+// static signature to check against -- out of scope here). No-op if
+// `func_name` isn't in known_funcs_ (unknown callee -- could be a global
+// builtin, an imported name, or simply a typo the runtime will catch;
+// none of that is this phase's job) -- see known_funcs_'s comment in
+// compiler.h for the scoping this lookup is limited to.
+// For each argument position present in BOTH the call and the recorded
+// signature: skipped when the parameter has no annotation (Type::Unknown)
+// or when InferExprType(arg) can't resolve the argument's own type
+// (Type::Unknown) -- same "no false positives on what the type system
+// can't evaluate yet" rule as ValidateTypeAnnotation/ValidateReassignment.
+// Otherwise mismatched types throw AvaError, naming the function,
+// parameter, and both types.
+// Deliberately NOT checked here, left open for a later pass:
+//   - argument count vs. parameter count (too few/many arguments) --
+//     interacts with default values and `*args` varargs, which need their
+//     own pass rather than falling out of a type check as a side effect;
+//   - the call's own return value (Phase 10, see InferExprType above).
+// Shared per-argument loop between CheckCallArgs (free functions AND, as
+// of Phase 13, class instantiation) and CheckMethodCallArgs
+// (obj.method(...)) below -- `label` is only used for the error message,
+// so each caller supplies its own wording (quoted function name, "class
+// 'X' constructor", "method 'X.y'") without this loop needing to know
+// which kind of callable it's checking.
+void Compiler::CheckCallArgsAgainst(const std::vector<std::pair<std::string, Type>>& params,
+                                     const std::string& label, const CallExpr* c) {
+    size_t n = std::min(params.size(), c->args.size());
+    for (size_t i = 0; i < n; ++i) {
+        Type expected = params[i].second;
+        if (expected == Type::Unknown) continue;
+        Type actual = InferExprType(c->args[i]);
+        if (actual == Type::Unknown) continue;
+        if (actual != expected) {
+            std::string msg = "argument type mismatch: " + label + " parameter '" +
+                               params[i].first + "' expects " + TypeName(expected) +
+                               ", received " + TypeName(actual);
+            throw AvaError(msg, current_line_, current_col_, source_name_);
+        }
+    }
+}
+
+void Compiler::CheckCallArgs(const std::string& func_name, const CallExpr* c) {
+    auto it = known_funcs_.find(func_name);
+    if (it != known_funcs_.end()) {
+        CheckCallArgsAgainst(it->second, "'" + func_name + "'", c);
+        return;
+    }
+    // Phase 13 of AvaLang_Plan_Sistema_de_Tipos.md ("Clases y objetos"). A
+    // NameExpr callee that isn't a known free function might instead be a
+    // class being instantiated (`User(...)` -- AvaLang's grammar has no
+    // `new`, see class_method_params_'s comment in compiler.h for why
+    // instantiation is a plain call on the class name). Check its
+    // constructor's declared parameters ("__init__", same key class_obj-
+    // >methods already uses) the same way a free function's would be.
+    if (!compiled_classes_.count(func_name)) return;
+    auto cit = class_method_params_.find(func_name);
+    if (cit == class_method_params_.end()) return;
+    auto init_it = cit->second.find("__init__");
+    if (init_it == cit->second.end()) return;
+    CheckCallArgsAgainst(init_it->second, "class '" + func_name + "' constructor", c);
+}
+
+// Phase 13 of AvaLang_Plan_Sistema_de_Tipos.md ("Clases y objetos"). The
+// obj.method(...) companion to CheckCallArgs above -- closes the gap
+// Phase 9's own comment documented (\"Callees que no son NameExpr\": an
+// AttrExpr callee was never checked at all). Resolves `callee->obj`'s
+// class via InferExprTypeRef (so this only fires when the receiver itself
+// is a known class instance -- an unresolved receiver, e.g. a parameter
+// with no `as Type`, silently skips the check, same \"no false positives
+// on what we can't evaluate\" rule as everywhere else in this file) and
+// looks the method up in class_method_params_.
+void Compiler::CheckMethodCallArgs(const AttrExpr* callee, const CallExpr* c) {
+    // Phase 16 of AvaLang_Plan_Sistema_de_Tipos.md ("extern"). Checked
+    // BEFORE the class-instance path below: `Alias.Func(...)`'s `Alias`
+    // is a plain module alias (a NameExpr matched directly against
+    // extern_func_params_'s keys), never something InferExprTypeRef
+    // resolves to a TypeRef -- AvaLang's type system has no "module" case
+    // in Type/TypeRef (see type.h), so this can't reuse that resolution
+    // path the way obj.method() does. `return`s either way (found or
+    // not) once obj is a known alias, same "an extern alias is never
+    // also a class name" assumption CompileExtern's SETGLOBAL/
+    // compiled_classes_ split already relies on elsewhere in this file.
+    if (auto* obj_name = dynamic_cast<NameExpr*>(callee->obj.get())) {
+        auto eit = extern_func_params_.find(obj_name->name);
+        if (eit != extern_func_params_.end()) {
+            auto fit = eit->second.find(callee->attr);
+            if (fit != eit->second.end()) {
+                CheckCallArgsAgainst(fit->second, "extern '" + obj_name->name + "." + callee->attr + "'", c);
+            }
+            return;
+        }
+    }
+
+    TypeRef obj_type = InferExprTypeRef(callee->obj);
+    if (obj_type.type != Type::Object || obj_type.class_name.empty()) return;
+    auto cit = class_method_params_.find(obj_type.class_name);
+    if (cit == class_method_params_.end()) return;
+    auto mit = cit->second.find(callee->attr);
+    if (mit == cit->second.end()) return;
+    CheckCallArgsAgainst(mit->second, "method '" + obj_type.class_name + "." + callee->attr + "'", c);
+}
+
+// Phase 10 of AvaLang_Plan_Sistema_de_Tipos.md ("Validación de retornos").
+// Called from both ReturnStmt sites (CompileStmt and its CompileExprToReg
+// mirror) before any bytecode for the return is emitted. No-op whenever
+// current_return_type_ is Type::Unknown -- the currently-compiling function
+// (if any) has no `as Type` after its parameter list, same "nothing to
+// check" convention as CheckCallArgs/ValidateTypeAnnotation for an
+// unannotated parameter/variable.
+//
+// Two things can go wrong once current_return_type_ IS known:
+//   1. `return` with no value at all (r->value == nullptr) inside a
+//      function that declares a non-empty return type. The plan (section
+//      14) leaves this open ("También debe decidirse cómo se comportan los
+//      `return` vacíos..."); decided now, in the same spirit as Phase 9's
+//      strictness and consistent with `null`/optional types being an
+//      explicitly UNRESOLVED feature (plan section 24) -- there is no
+//      default/null value this phase is allowed to invent to satisfy a
+//      declared `as int` return type, so this is an error, not a silent
+//      zero-value/nil. Same reasoning C#'s non-nullable-by-default typing
+//      uses, as opposed to Go's zero values.
+//   2. `return expr` where InferExprType(expr) resolves to something other
+//      than current_return_type_. Same "skip if inferred is Unknown" rule
+//      as CheckCallArgs/ValidateTypeAnnotation -- no false positives on an
+//      expression form this phase can't evaluate yet (calls to other
+//      functions, indexing, collections, ...).
+//
+// Deliberately NOT checked here, left open for a later pass (same
+// enumeration style as CheckCallArgs):
+//   - a function whose body never hits an explicit `return` at all but
+//     falls through to the end. AvaLang implicitly returns the last
+//     expression statement's value in that case (see CompileFunc's
+//     trailing RETURN using sub.result_reg_) -- whether THAT implicit
+//     value must also match current_return_type_ is a full "does every
+//     path return the declared type" analysis (definite-return checking),
+//     a bigger feature than a single ReturnStmt check and not what the
+//     plan's section 14 examples ask for;
+//   - an unrecognized return type name (`as itn`) is silently treated as
+//     "no annotation" (TypeFromName returns Type::Unknown for it, exactly
+//     like Phase 9 currently treats an unrecognized PARAMETER type name --
+//     see CollectFuncSignatures/CheckCallArgs's own note on this).
+void Compiler::CheckReturnType(const ReturnStmt* r) {
+    // Phase 13: current_return_type_ is now a TypeRef (was plain Type), so
+    // a method/function declared `as SomeClass` gets its returns checked
+    // the same way a primitive-typed one already was -- DisplayType names
+    // the actual class in the error instead of falling back to
+    // Type::Object's generic "object" TypeName().
+    if (current_return_type_.type == Type::Unknown) return;
+    if (!r->value) {
+        std::string msg = "return type mismatch: '" + proto_->debug_name + "' expects " +
+                           DisplayType(current_return_type_) + ", received nothing (empty 'return')";
+        throw AvaError(msg, current_line_, current_col_, source_name_);
+    }
+    TypeRef actual = InferExprTypeRef(r->value);
+    if (actual.type == Type::Unknown) return;
+    // Phase 15: TypeRefEquals (type.h) replaces the Object-only comparison
+    // this used before, so a return type declared as a list/dict (once a
+    // later phase gives that a declaration syntax) would also get its
+    // element/key type checked -- see TypeRefEquals' own comment.
+    if (!TypeRefEquals(actual, current_return_type_)) {
+        std::string msg = "return type mismatch: '" + proto_->debug_name + "' expects " +
+                           DisplayType(current_return_type_) + ", received " + DisplayType(actual);
+        throw AvaError(msg, current_line_, current_col_, source_name_);
+    }
+}
+
+// Phase 11 of AvaLang_Plan_Sistema_de_Tipos.md ("Operadores"). Called from
+// CompileExpr's BinOpExpr case, before any bytecode for the operator (or
+// its operands) is emitted -- same "check first" placement as
+// CheckCallArgs (Phase 9). Just gathers both operands' InferExprType and
+// defers to the static ValidateBinOpTypes table above; see that function's
+// comment for the actual compatibility rules and why they diverge from a
+// literal reading of the plan's illustrative table.
+void Compiler::CheckBinOpTypes(const BinOpExpr* b) {
+    Type lt = InferExprType(b->left);
+    Type rt = InferExprType(b->right);
+    ValidateBinOpTypes(b->op, lt, rt, current_line_, current_col_, source_name_);
+}
+
+// Phase 11 of AvaLang_Plan_Sistema_de_Tipos.md. Companion to
+// CheckBinOpTypes above, for UnOpExpr (Neg/Not/Inc/Dec). Same placement
+// (CompileExpr, before compiling the operand) and same delegation pattern.
+void Compiler::CheckUnOpTypes(const UnOpExpr* u) {
+    Type operand_type = InferExprType(u->operand);
+    ValidateUnOpTypes(u->op, operand_type, current_line_, current_col_, source_name_);
+}
+
+void Compiler::CheckReassignment(const AssignStmt* a, const std::string& name, const TypeRef& inferred) {
+    if (!a->explicit_type.empty() || a->is_local) return;
+    auto it = symbols_.find(name);
+    ValidateReassignment(it != symbols_.end() ? &it->second : nullptr, inferred,
+                          a->line, a->col, source_name_);
+}
+
 void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
     StampLine(stmt);
 
@@ -623,6 +1578,26 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
             FreeRegs(1);
             return;
         }
+        // Phase 4 of AvaLang_Plan_Sistema_de_Tipos.md: a type declaration
+        // without an initializer (`age as int`, AssignStmt::value ==
+        // nullptr, see ast.h Phase 3) has no value to generate code for --
+        // what happens before the first real assignment (error vs. a
+        // zero value) is an open question left to Phase 7. For now, just
+        // record the declared type in the symbol table and emit nothing.
+        if (!a->value) {
+            // Phase 13: ResolveTypeName (primitive-or-known-class) replaces
+            // the plain TypeFromName here, so `user as User` (no
+            // initializer) also records the right declared class.
+            TypeRef declared_type = ResolveTypeName(a->explicit_type);
+            ValidateTypeAnnotation(a->explicit_type, declared_type, TypeRef{}, a->line, a->col, source_name_);
+            if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
+                DeclareSymbol(n->name, declared_type, TypeRef{});
+            }
+            return;
+        }
+        TypeRef declared_type = ResolveTypeName(a->explicit_type);
+        TypeRef inferred_type = InferExprTypeRef(a->value);
+        ValidateTypeAnnotation(a->explicit_type, declared_type, inferred_type, a->line, a->col, source_name_);
         if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
             bool in_method = locals_.find("this") != locals_.end();
             bool has_local = locals_.find(n->name) != locals_.end();
@@ -643,6 +1618,8 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
                     uint16_t local_reg = locals_.at(n->name);
                     auto val_reg = CompileExpr(a->value);
                     Emit(OpCode::MOVE, local_reg, val_reg);
+                    CheckReassignment(a, n->name, inferred_type);
+                    DeclareSymbol(n->name, declared_type, inferred_type);
                     FreeRegs(next_reg_ - regs_before);
                     return;
                 }
@@ -659,6 +1636,8 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
                 auto val_reg = CompileExpr(a->value);
                 Emit(OpCode::MOVE, local_reg, val_reg);
                 locals_[n->name] = local_reg;
+                CheckReassignment(a, n->name, inferred_type);
+                DeclareSymbol(n->name, declared_type, inferred_type);
                 FreeRegs(next_reg_ - (local_reg + 1));
                 return;
             }
@@ -666,6 +1645,8 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
             auto val_reg = CompileExpr(a->value);
             auto idx = AddConstant(MakeString(n->name));
             Emit(OpCode::SETGLOBAL, val_reg, idx);
+            CheckReassignment(a, n->name, inferred_type);
+            DeclareSymbol(n->name, declared_type, inferred_type);
             FreeRegs(next_reg_ - regs_before);
             return;
         }
@@ -761,6 +1742,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
     }
 
     if (auto* r = dynamic_cast<ReturnStmt*>(stmt.get())) {
+        CheckReturnType(r);
         if (r->value) {
             uint16_t regs_before = next_reg_;
             auto reg = CompileExpr(r->value);
@@ -1693,6 +2675,22 @@ void Compiler::CompileFunc(const FuncDef* func) {
     sub.proto_->debug_name = func->name;
     sub.proto_->num_params = static_cast<uint8_t>(func->params.size());
     sub.proto_->is_vararg = func->is_vararg;
+    // Phase 13 of AvaLang_Plan_Sistema_de_Tipos.md ("Clases y objetos"):
+    // copied down from the enclosing Compiler (instead of the fresh, empty
+    // maps a brand-new `Compiler sub` would otherwise start with) so this
+    // function's body can resolve/check class-typed annotations, calls,
+    // and returns (`func make() as User ... end`, `user.getName()`, a
+    // parameter later used as `user.name`) against every class already
+    // compiled by the time this func is reached -- same "must be defined
+    // earlier in the file" ordering CompileClass already enforces for base
+    // classes. A plain copy (not a reference/pointer) is fine here: these
+    // maps are only ever read during this func's own body compilation,
+    // never written back into by it, and classes are cheap to copy at this
+    // scale.
+    sub.compiled_classes_ = compiled_classes_;
+    sub.class_field_types_ = class_field_types_;
+    sub.class_method_returns_ = class_method_returns_;
+    sub.class_method_params_ = class_method_params_;
 
     sub.next_reg_ = 1;
     sub.max_reg_ = sub.next_reg_;
@@ -1722,6 +2720,18 @@ void Compiler::CompileFunc(const FuncDef* func) {
 
     sub.EmitDefaultsPrologue(func->params, 1);
 
+    // Phase 10 of AvaLang_Plan_Sistema_de_Tipos.md: resolve this function's
+    // own `as Type` (Phase 8's return_type string) once, before compiling
+    // its body, so every ReturnStmt inside -- including ones nested in
+    // if/while/for blocks, which share this same `sub` instance -- can be
+    // checked by CheckReturnType. Type::Unknown (no annotation) makes that
+    // check a no-op, same convention as everywhere else in this file.
+    // Phase 13: ResolveTypeName (via `this`, so it resolves against
+    // classes already compiled at this point) replaces TypeFromName here,
+    // so `func make() as User ... end` sets current_return_type_ to
+    // {Object, "User"} instead of leaving the class name unresolved.
+    sub.current_return_type_ = ResolveTypeName(func->return_type);
+
     sub.CompileChunk(func->body);
     uint8_t ret_a = sub.result_reg_ > 0 ? static_cast<uint8_t>(sub.result_reg_) : 0;
     uint8_t ret_b = sub.result_reg_ > 0 ? 1 : 0;
@@ -1740,6 +2750,7 @@ void Compiler::CompileFunc(const FuncDef* func) {
 
 void Compiler::CompileChunk(const std::vector<std::shared_ptr<StmtNode>>& stmts) {
     RejectDuplicateFuncDefs(stmts, source_name_);
+    CollectFuncSignatures(stmts, known_funcs_, known_func_returns_, compiled_classes_);
     for (size_t i = 0; i < stmts.size(); i++) {
         if (i == stmts.size() - 1) {
             result_reg_ = CompileExprToReg(stmts[i]);
@@ -1780,6 +2791,21 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
             FreeRegs(1);
             return 0;
         }
+        // Phase 4 of AvaLang_Plan_Sistema_de_Tipos.md -- see the matching
+        // comment in CompileStmt above; same rationale applies here since
+        // this is the "last statement of a chunk" mirror of that code path.
+        if (!a->value) {
+            // Phase 13 -- see the matching comment in CompileStmt above.
+            TypeRef declared_type = ResolveTypeName(a->explicit_type);
+            ValidateTypeAnnotation(a->explicit_type, declared_type, TypeRef{}, a->line, a->col, source_name_);
+            if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
+                DeclareSymbol(n->name, declared_type, TypeRef{});
+            }
+            return 0;
+        }
+        TypeRef declared_type = ResolveTypeName(a->explicit_type);
+        TypeRef inferred_type = InferExprTypeRef(a->value);
+        ValidateTypeAnnotation(a->explicit_type, declared_type, inferred_type, a->line, a->col, source_name_);
         if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
             bool in_method = locals_.find("this") != locals_.end();
             bool has_local = locals_.find(n->name) != locals_.end();
@@ -1800,6 +2826,8 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
                     uint16_t local_reg = locals_.at(n->name);
                     auto val_reg = CompileExpr(a->value);
                     Emit(OpCode::MOVE, local_reg, val_reg);
+                    CheckReassignment(a, n->name, inferred_type);
+                    DeclareSymbol(n->name, declared_type, inferred_type);
                     FreeRegs(next_reg_ - regs_before);
                     return 0;
                 }
@@ -1816,6 +2844,8 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
                 auto val_reg = CompileExpr(a->value);
                 Emit(OpCode::MOVE, local_reg, val_reg);
                 locals_[n->name] = local_reg;
+                CheckReassignment(a, n->name, inferred_type);
+                DeclareSymbol(n->name, declared_type, inferred_type);
                 FreeRegs(next_reg_ - (local_reg + 1));
                 return 0;
             }
@@ -1823,6 +2853,8 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
             auto val_reg = CompileExpr(a->value);
             auto idx = AddConstant(MakeString(n->name));
             Emit(OpCode::SETGLOBAL, val_reg, idx);
+            CheckReassignment(a, n->name, inferred_type);
+            DeclareSymbol(n->name, declared_type, inferred_type);
             FreeRegs(next_reg_ - regs_before);
             return 0;
         }
@@ -1917,6 +2949,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
         return 0;
     }
     if (auto* r = dynamic_cast<ReturnStmt*>(stmt.get())) {
+        CheckReturnType(r);
         if (r->value) {
             uint16_t regs_before = next_reg_;
             auto reg = CompileExpr(r->value);
@@ -2068,6 +3101,19 @@ void Compiler::CompileClass(const ClassDef* cls) {
         }
     }
 
+    // Phase 13 of AvaLang_Plan_Sistema_de_Tipos.md ("Clases y objetos").
+    // Inherited field types merge the same way instance_defaults/
+    // private_members did above -- copied from the base class's own
+    // already-resolved class_field_types_ entry (compiled earlier in the
+    // file, same ordering rule the base-class lookup above already
+    // enforces), before this class's own fields (below) can override them.
+    if (cls->base_class) {
+        auto bit = class_field_types_.find(base_class->name);
+        if (bit != class_field_types_.end()) {
+            class_field_types_[cls->name] = bit->second;
+        }
+    }
+
     for (auto& stmt : cls->body) {
         if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
             if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
@@ -2092,8 +3138,65 @@ void Compiler::CompileClass(const ClassDef* cls) {
                 if (a->is_private) {
                     class_obj->private_members.insert(n->name);
                 }
+
+                // Phase 13: record this field's resolved type -- from its
+                // own `as Type` annotation when it has one (ResolveTypeName,
+                // primitive-or-known-class), else from InferExprType on its
+                // literal default (the same literal kinds the attr_val
+                // switch above already recognizes; a default that isn't one
+                // of those -- e.g. a call expression -- infers Unknown here
+                // exactly like attr_val itself falls back to Value::Nil()
+                // for it). Overwrites any inherited entry for the same
+                // name, same "subclass wins" rule instance_defaults/
+                // private_members already follow above.
+                TypeRef field_type = !a->explicit_type.empty()
+                    ? ResolveTypeName(a->explicit_type)
+                    : TypeRef{InferExprType(a->value), "", nullptr, nullptr};
+                class_field_types_[cls->name][n->name] = field_type;
             }
         }
+    }
+
+    // Phase 13: pre-populate class_method_returns_/class_method_params_
+    // for THIS class before compiling any of its method bodies below --
+    // otherwise a method calling a sibling method declared later in the
+    // same class body (or `this.attr` on a field declared earlier, via
+    // class_field_types_ above) would see an incomplete signature table.
+    // Inherited signatures merge first (same "__init__ is never copied
+    // from a base class" rule the `methods` merge above already follows),
+    // then this class's own methods overwrite/add to them.
+    if (cls->base_class) {
+        auto rit = class_method_returns_.find(base_class->name);
+        if (rit != class_method_returns_.end()) {
+            for (auto& [mname, mret] : rit->second) {
+                if (mname != "__init__") class_method_returns_[cls->name][mname] = mret;
+            }
+        }
+        auto pit = class_method_params_.find(base_class->name);
+        if (pit != class_method_params_.end()) {
+            for (auto& [mname, mparams] : pit->second) {
+                if (mname != "__init__") class_method_params_[cls->name][mname] = mparams;
+            }
+        }
+    }
+    for (auto& stmt : cls->body) {
+        auto* f = dynamic_cast<FuncDef*>(stmt.get());
+        if (!f) continue;
+        bool is_ctor = f->name == cls->name;
+        std::string method_name = is_ctor ? "__init__" : f->name;
+        // Same "'this' as an explicit first parameter is skipped when
+        // computing the real parameter list" rule the method-compiling
+        // loop below applies -- kept in sync deliberately rather than
+        // shared, matching this file's existing style (e.g. CompileStmt/
+        // CompileExprToReg's identical AssignStmt handling).
+        bool explicit_self_param = !f->params.empty() && f->params[0].first == "this";
+        std::vector<std::pair<std::string, Type>> sig;
+        for (size_t i = explicit_self_param ? 1 : 0; i < f->params.size(); ++i) {
+            Type t = (i < f->param_types.size()) ? TypeFromName(f->param_types[i]) : Type::Unknown;
+            sig.push_back({f->params[i].first, t});
+        }
+        class_method_params_[cls->name][method_name] = std::move(sig);
+        class_method_returns_[cls->name][method_name] = ResolveTypeName(f->return_type);
     }
 
     for (auto& stmt : cls->body) {
@@ -2107,6 +3210,17 @@ void Compiler::CompileClass(const ClassDef* cls) {
             sub.proto_->source_name = source_name_;
             sub.proto_->debug_name = cls->name + "." + f->name;
             sub.current_base_class_ = base_class;
+            // Phase 13 of AvaLang_Plan_Sistema_de_Tipos.md ("Clases y
+            // objetos") -- see the identical copy in CompileFunc for why:
+            // a method's own body needs to resolve/check class-typed
+            // annotations, field access, and calls just like a free
+            // function's body does, including this class's OWN just-
+            // populated field/method maps above (so `this.attr`/
+            // `this.other()` resolve inside its own methods).
+            sub.compiled_classes_ = compiled_classes_;
+            sub.class_field_types_ = class_field_types_;
+            sub.class_method_returns_ = class_method_returns_;
+            sub.class_method_params_ = class_method_params_;
 
             // AvaLang's canonical method convention binds `this` a
             // register 0 IMPLICITLY (ver libraries/mysql/index.ava: `func
@@ -2138,6 +3252,28 @@ void Compiler::CompileClass(const ClassDef* cls) {
 
             if (!f->is_static) {
                 sub.locals_["this"] = 0;
+                // Phase 13 of AvaLang_Plan_Sistema_de_Tipos.md ("Clases y
+                // objetos"): gives `this` a real symbol-table entry, the
+                // same way any other class-typed variable would get one
+                // via DeclareSymbol -- this is what lets
+                // InferExprTypeRef's NameExpr branch resolve `this` to
+                // {Object, cls->name} inside a method body, which in turn
+                // is what makes `this.attr`/`this.method(...)` resolvable
+                // (InferExprTypeRef's AttrExpr/CallExpr branches both
+                // start by recursing into their `obj`/`callee->obj`).
+                // Declared AND inferred are both set to the class itself
+                // (not just one) since `this` is never actually assigned
+                // to inside a method -- there's no separate "declared via
+                // annotation" vs "inferred from a value" moment for it the
+                // way a normal `x as Type = expr` has.
+                Symbol this_sym;
+                this_sym.name = "this";
+                this_sym.declaredType = Type::Object;
+                this_sym.declaredClassName = cls->name;
+                this_sym.inferredType = Type::Object;
+                this_sym.inferredClassName = cls->name;
+                this_sym.RefreshEffectiveType();
+                sub.symbols_["this"] = this_sym;
             }
 
             for (auto& [attr_name, attr_val] : class_obj->instance_defaults) {
@@ -2152,6 +3288,17 @@ void Compiler::CompileClass(const ClassDef* cls) {
             }
 
             sub.EmitDefaultsPrologue(real_params, 1);
+
+            // Phase 10/13 of AvaLang_Plan_Sistema_de_Tipos.md: same
+            // treatment as CompileFunc for free functions -- see that
+            // function's comment. Applies uniformly to every method
+            // including the constructor (f->name == cls->name); AvaLang's
+            // grammar doesn't forbid a constructor from carrying `as
+            // Type`, and this phase isn't the place to start special-
+            // casing that. ResolveTypeName (via `this`, the class-
+            // compiling Compiler, not `sub`) so `as SomeClass` resolves
+            // the same way it does for a free function's return type.
+            sub.current_return_type_ = ResolveTypeName(f->return_type);
 
             sub.CompileChunk(f->body);
             sub.Emit(OpCode::RETURN);
@@ -2219,6 +3366,23 @@ void Compiler::CompileExtern(const ExternStmt* stmt) {
     mod->library = stmt->library;
 
     for (auto& fn : stmt->functions) {
+        // Phase 16 of AvaLang_Plan_Sistema_de_Tipos.md ("extern"). Same
+        // per-signature loop CompileClass's method-compiling loop already
+        // runs for class_method_params_/class_method_returns_ (see that
+        // function), just keyed by (stmt->alias, fn.name) instead of
+        // (cls->name, method_name) -- there is no "this" parameter to skip
+        // here (extern functions are plain, never methods on an
+        // instance), so unlike CompileClass's loop every entry in
+        // fn.params/fn.param_types is used as-is.
+        std::vector<std::pair<std::string, Type>> sig;
+        sig.reserve(fn.params.size());
+        for (size_t i = 0; i < fn.params.size(); ++i) {
+            Type t = (i < fn.param_types.size()) ? TypeFromName(fn.param_types[i]) : Type::Unknown;
+            sig.push_back({fn.params[i], t});
+        }
+        extern_func_params_[stmt->alias][fn.name] = std::move(sig);
+        extern_func_returns_[stmt->alias][fn.name] = ResolveTypeName(fn.return_type);
+
         auto* meta = new ExternFuncMeta();
         meta->library = stmt->library;
         meta->alias = stmt->alias;

@@ -59,6 +59,70 @@
     ],
     "description": "func ... end"
   },
+  "async-func": {
+    "prefix": "asyncfunc",
+    "body": [
+      "async func ${1:name}(${2:params})",
+      "\t$0",
+      "end"
+    ],
+    "description": "async func ... end (AvaLang.g4: asyncFuncDeclaration)"
+  },
+  "await-expr": {
+    "prefix": "await",
+    "body": [
+      "await ${0:expr}"
+    ],
+    "description": "await expr -- solo valido dentro de un async func (awaitAtom)"
+  },
+  "static-func": {
+    "prefix": "staticfunc",
+    "body": [
+      "static func ${1:name}(${2:params})",
+      "\t$0",
+      "end"
+    ],
+    "description": "static func ... end (modifiedFuncDeclaration)"
+  },
+  "private-func": {
+    "prefix": "privatefunc",
+    "body": [
+      "private func ${1:name}(${2:params})",
+      "\t$0",
+      "end"
+    ],
+    "description": "private func ... end (modifiedFuncDeclaration)"
+  },
+  "func-typed": {
+    "prefix": "functyped",
+    "body": [
+      "func ${1:name}(${2:a as int}) as ${3:int}",
+      "\t$0",
+      "end"
+    ],
+    "description": "func name(param as Type) as ReturnType ... end (AvaLang_Plan_Sistema_de_Tipos.md)"
+  },
+  "var-typed": {
+    "prefix": "astype",
+    "body": [
+      "${1:name} as ${2:int} = ${0:value}"
+    ],
+    "description": "name as Type = value -- anotacion de tipo explicita"
+  },
+  "var-typed-decl": {
+    "prefix": "astypedecl",
+    "body": [
+      "${1:name} as ${2:int}"
+    ],
+    "description": "name as Type -- declaracion sin inicializar"
+  },
+  "local-typed": {
+    "prefix": "localtyped",
+    "body": [
+      "local ${1:name} as ${2:int} = ${0:value}"
+    ],
+    "description": "local name as Type = value -- fuerza declaracion nueva (shadow) en el scope actual"
+  },
   "class": {
     "prefix": "class",
     "body": [
@@ -101,6 +165,18 @@
     ],
     "description": "try ... catch (err) ... finally ... end"
   },
+  "select-case": {
+    "prefix": "select",
+    "body": [
+      "select ${1:expr}",
+      "\tcase ${2:value} then",
+      "\t\t$0",
+      "\telse",
+      "\t\t",
+      "end"
+    ],
+    "description": "select ... case ... then ... else ... end (VB6-style switch)"
+  },
   "extern": {
     "prefix": "extern",
     "body": [
@@ -110,12 +186,28 @@
     ],
     "description": "extern \"lib\" as Alias ... end"
   },
+  "extern-typed": {
+    "prefix": "externtyped",
+    "body": [
+      "extern \"${1:libname}\" as ${2:Alias}",
+      "\tfunc ${0:name}(${3:a as int}) as ${4:int}",
+      "end"
+    ],
+    "description": "extern \"lib\" as Alias func name(param as Type) as ReturnType ... end (AvaLang_Plan_Sistema_de_Tipos.md, Fase 16)"
+  },
   "lambda": {
     "prefix": "lambda",
     "body": [
       "(${1:params}) => $0"
     ],
     "description": "short lambda expression"
+  },
+  "lambda-typed": {
+    "prefix": "lambdatyped",
+    "body": [
+      "(${1:x as int}) as ${2:int} => $0"
+    ],
+    "description": "(param as Type) as ReturnType => expr -- lambda con tipos (AvaLang_Plan_Sistema_de_Tipos.md, Fase 14)"
   },
   "fstring": {
     "prefix": "fstring",
