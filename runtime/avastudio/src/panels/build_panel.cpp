@@ -626,22 +626,19 @@ BuildPanelResult DrawBuildPanel(BuildPanelState& state, StudioSettings& settings
         {
             std::lock_guard<std::mutex> vcpkg_lock(state.vcpkg_mutex);
 
+            // This panel is config-only (see comment below) -- FlushLogToOutput forwards the
+            // vcpkg install log to the Output panel, which is the ONLY place it's shown. No
+            // "vcpkg ready"/"vcpkg failed" text is drawn here anymore; that was a second,
+            // redundant echo of the exact one-line result Output already gets right below via
+            // log_bridge.Log(...). Auto-filling build_vcpkg_root on success is real config
+            // behavior (not a log), so that part stays.
             FlushLogToOutput(state.vcpkg_log, state.vcpkg_log_forwarded_upto, state.vcpkg_has_result,
                               "[vcpkg]   ", log_bridge);
             if (state.vcpkg_has_result) {
-                if (state.vcpkg_last_success) {
-                    const std::string vcpkg_ready = TrFormat("build.vcpkg_ready", state.vcpkg_installed_dir);
-                    ImGui::TextColored(palette::FromHex(palette::kSuccess), "%s", vcpkg_ready.c_str());
-                    if (settings.build_vcpkg_root.empty()) {
-
-                        settings.build_vcpkg_root = state.vcpkg_installed_dir;
-                        result.settings_dirty = true;
-                    }
-                } else {
-                    ImGui::TextColored(palette::FromHex(palette::kError), "%s",
-                                        util::Tr("build.vcpkg_failed").c_str());
+                if (state.vcpkg_last_success && settings.build_vcpkg_root.empty()) {
+                    settings.build_vcpkg_root = state.vcpkg_installed_dir;
+                    result.settings_dirty = true;
                 }
-
                 if (!state.vcpkg_logged_to_output) {
                     log_bridge.Log(state.vcpkg_last_success ? "[vcpkg] install succeeded -> " +
                                                                    state.vcpkg_installed_dir
@@ -653,31 +650,13 @@ BuildPanelResult DrawBuildPanel(BuildPanelState& state, StudioSettings& settings
         ImGui::Unindent();
     }
 
-    // Fase: this panel only configures build paths/settings now -- actually starting a build
-    // (StartBuild, args resolution, setup-error checks) lives in TriggerBuild above, reachable
-    // from Run > Build / Ctrl+B / the Command Palette (main.cpp) instead of a button here.
-    // Progress/result still shows up here in case the panel happens to be open, but it's just
-    // a status readout, not something you interact with -- the Output panel is where build log
-    // and success/failure actually get reported (PollBuild, polled every frame regardless of
-    // whether this panel is open).
-    ImGui::Dummy(ImVec2(0.0f, 10.0f));
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0.0f, 8.0f));
-    if (state.building.load()) {
-        ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s",
-                            util::Tr("build.building_status").c_str());
-    } else {
-        std::lock_guard<std::mutex> lock(state.mutex);
-        if (state.has_result) {
-            if (state.last_success) {
-                const std::string succeeded = TrFormat("build.succeeded", state.result_path);
-                ImGui::TextColored(palette::FromHex(palette::kSuccess), "%s", succeeded.c_str());
-            } else {
-                ImGui::TextColored(palette::FromHex(palette::kError), "%s", util::Tr("build.failed").c_str());
-            }
-        }
-    }
-
+    // This panel only configures build paths/settings -- it doesn't show build progress,
+    // results, or any other log-like text. Starting a build (StartBuild, args resolution,
+    // setup-error checks) lives in TriggerBuild above, reachable from Run > Build / Ctrl+B /
+    // the Command Palette (main.cpp), not a button here. Everything about what a build actually
+    // did -- its full log, "succeeded -> path", "failed" -- goes ONLY to the Output panel
+    // (PollBuild, polled every frame regardless of whether this panel is open) so there's a
+    // single place to look, instead of this panel echoing a second copy of the same status.
     ImGui::End();
     return result;
 }

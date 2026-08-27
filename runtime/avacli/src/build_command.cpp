@@ -20,7 +20,7 @@
 #include "platform/interfaces/IProcessStream.h"
 
 #include "avalang.h"
-#include "payload_format.h" // Fase 9: footer/blob del payload apendeado a avapack_stub.exe
+#include "payload_format.h" // footer/blob del payload apendeado a avapack_stub.exe
 
 #if defined(_WIN32)
     #define AVACLI_EXE_SUFFIX ".exe"
@@ -82,6 +82,10 @@ struct BuildOptions {
     std::string compiler_path;
     std::optional<std::uint32_t> stack_size; 
     std::optional<std::uint32_t> bss_size; 
+    bool build_so = false; // --target barekernel: por defecto NO se recompila/relinkea
+                            // libavalang.so -- se reusa el que ya este junto al .exe de
+                            // salida. Pasar --force-so para reconstruirlo (primer build
+                            // limpio, o cambios que lo afecten).
 };
 
 void PrintBuildUsage() {
@@ -182,7 +186,14 @@ void PrintBuildUsage() {
         "                table (sum of SHT_NOBITS+SHF_ALLOC sections, see\n"
         "                elf32_bss.h), so it always matches what the binary actually\n"
         "                needs. Only pass this for edge cases where the auto-computed\n"
-        "                value is wrong for your program.\n";
+        "                value is wrong for your program.\n"
+        "  --force-so\n"
+        "                (--target barekernel only) build/relink libavalang.so too.\n"
+        "                By default this target only compiles and links the app\n"
+        "                executable, reusing whatever libavalang.so is already sitting\n"
+        "                next to --out. Pass this the first time you build into a\n"
+        "                clean output folder, or whenever avalang's cross-compiled .so\n"
+        "                needs to be refreshed.\n";
 }
 
 bool ParseBuildArgs(int argc, char** argv, BuildOptions& opts, std::string& error) {
@@ -255,6 +266,8 @@ bool ParseBuildArgs(int argc, char** argv, BuildOptions& opts, std::string& erro
             unsigned long parsed = std::strtoul(v, &end, 0);
             if (end == v || *end != '\0') { error = "invalid --bss-size"; return false; }
             opts.bss_size = static_cast<std::uint32_t>(parsed);
+        } else if (arg == "--force-so") {
+            opts.build_so = true;
         } else if (arg == "--help" || arg == "-h") {
             PrintBuildUsage();
             std::exit(0);
@@ -542,7 +555,7 @@ bool SignBinary(ava::platform::IProcess& process, const fs::path& exe_path,
     return RunTool(process, "signtool", args, "signtool sign");
 }
 
-// --- Fase 9: camino rapido sin repo/CMake -- ver runtime/avapack/README.md ---
+// --- Camino rapido sin repo/CMake -- ver runtime/avapack/README.md ---
 //
 // Antes de esto, `ava_cli build --target desktop` SIEMPRE recompilaba
 // avapack (main.cpp + embedded_project.cpp generado) desde fuente via CMake
@@ -588,8 +601,8 @@ bool TryFastPackWithPrebuiltStub(ava::platform::IProcess& process, const BuildOp
                                   const fs::path& repo_root, bool& ok) {
     if (opts.target != "desktop") return false;
     if (opts.zero_disk) {
-        // main_zerodisk.cpp (Fase 7) no esta wireado al stub todavia -- ver
-        // README.md, seccion Fase 9, "Pendiente". Cae al flujo con CMake.
+        // main_zerodisk.cpp no esta wireado al stub todavia -- ver
+        // README.md, seccion "Pendiente". Cae al flujo con CMake.
         return false;
     }
 
@@ -598,7 +611,7 @@ bool TryFastPackWithPrebuiltStub(ava::platform::IProcess& process, const BuildOp
     if (!FindPrebuiltPackTools(prebuilt_dir, stub_exe, gen_exe)) return false;
 
     std::cout << "ava_cli build: usando herramientas prebuilt (" << stub_exe.string() << " + "
-              << gen_exe.string() << ") -- sin CMake ni repo (Fase 9).\n";
+              << gen_exe.string() << ") -- sin CMake ni repo.\n";
 
     std::error_code ec;
     fs::path tmp_payload = fs::temp_directory_path(ec) /
@@ -627,7 +640,7 @@ bool TryFastPackWithPrebuiltStub(ava::platform::IProcess& process, const BuildOp
         gen_args.push_back(libraries_dir.string());
     }
 
-    if (!RunTool(process, gen_exe.string(), gen_args, "avapack_gen (payload, Fase 9)")) {
+    if (!RunTool(process, gen_exe.string(), gen_args, "avapack_gen (payload)")) {
         fs::remove(tmp_payload, ec);
         ok = false;
         return true; // el camino aplicaba -- no reintentar con CMake, el error ya es del proyecto
@@ -705,8 +718,7 @@ bool TryFastPackWithPrebuiltStub(ava::platform::IProcess& process, const BuildOp
         }
     }
 
-    std::cout << "ava_cli build: done -> " << out_path_abs.string()
-              << " (Fase 9 -- sin repo/CMake)\n";
+    std::cout << "ava_cli build: done -> " << out_path_abs.string() << "\n";
     ok = true;
     return true;
 }
@@ -894,11 +906,15 @@ int RunBuildBarekernelCommand(ava::platform::IProcess& process, const BuildOptio
     std::vector<std::string> cross_build_args = {
         "--build", cross_build_dir.string(),
         "--target", "avalang",
-        "--target", "avalang_barekernel_so",
         "--target", "avapack_barekernel_app",
         "--parallel",
     };
-    std::cout << "ava_cli build --target barekernel: compilando (cruzado, i686-elf) ...\n";
+    if (opts.build_so) {
+        cross_build_args.insert(cross_build_args.end() - 1, {"--target", "avalang_barekernel_so"});
+    }
+    std::cout << "ava_cli build --target barekernel: compilando (cruzado, i686-elf"
+              << (opts.build_so ? "" : ", libavalang.so omitido -- se reusa el existente")
+              << ") ...\n";
     if (!RunTool(process, "cmake", cross_build_args, "cmake --build (cruzado)")) {
         std::cerr << "error: el build cruzado fallo -- si es una pared de \"undefined reference\", "
                      "es CKM_CAP_LIBSTDCPP=0 (ver docs/kernel/binding-status.md), no necesariamente "
@@ -1052,21 +1068,31 @@ int RunBuildBarekernelCommand(ava::platform::IProcess& process, const BuildOptio
         return 1;
     }
 
-    fs::path cross_so = cross_build_dir / "libavalang.so";
-    if (fs::exists(cross_so, ec)) {
+    if (!opts.build_so) {
         fs::path so_dest = out_path_abs.parent_path() / "libavalang.so";
-        fs::copy_file(cross_so, so_dest, fs::copy_options::overwrite_existing, ec);
-        if (!ec) {
-            std::cout << "[info] libavalang.so (cruzado) copiada a " << so_dest.string()
-                      << " -- va en /system/lib/ del disco del kernel (Fase B3), no al lado del "
-                         ".exe en /apps/.\n";
+        std::cout << "ava_cli build --target barekernel: libavalang.so no reconstruido -- se deja "
+                  << so_dest.string() << " sin tocar (se asume ya presente; pasa --force-so "
+                     "para reconstruirlo).\n";
+        if (!fs::exists(so_dest, ec)) {
+            std::cerr << "warning: no se encontro " << so_dest.string()
+                      << " y no se paso --force-so -- el .exe no va a poder cargar "
+                         "libavalang.so en runtime.\n";
+        }
+    } else {
+        fs::path cross_so = cross_build_dir / "libavalang.so";
+        if (fs::exists(cross_so, ec)) {
+            fs::path so_dest = out_path_abs.parent_path() / "libavalang.so";
+            fs::copy_file(cross_so, so_dest, fs::copy_options::overwrite_existing, ec);
+            if (!ec) {
+                std::cout << "[info] libavalang.so (cruzado) copiada a " << so_dest.string()
+                          << " -- va en /system/lib/ del disco del kernel, no al lado del "
+                             ".exe en /apps/.\n";
+            }
         }
     }
 
     std::cout << "ava_cli build --target barekernel: listo -> " << out_path_abs.string() << "\n";
-    std::cout << "  (NO validado contra litekernel real/QEMU en este build -- eso es Fase B3. "
-                 "Este comando corrio herramientas reales con argumentos reales; si algo de esto "
-                 "fallo, el mensaje de arriba es sobre esa herramienta real, no un mock.)\n";
+    std::cout << "  (nota: no validado contra litekernel real/QEMU en este build)\n";
     return 0;
 }
 
@@ -1106,7 +1132,7 @@ int RunBuildCommand(int argc, char** argv) {
 #endif
     }
 
-    // Fase 9: repo_root se calcula igual que siempre, pero la validacion de
+    // repo_root se calcula igual que siempre, pero la validacion de
     // "esto es un checkout de AvaLang" (CMakeLists.txt/runtime/avapack/) se
     // movio mas abajo -- el camino rapido (avapack_stub.exe + avapack_gen.exe
     // prebuilt junto a ava_cli.exe, ver TryFastPackWithPrebuiltStub) no
@@ -1180,12 +1206,12 @@ int RunBuildCommand(int argc, char** argv) {
         return RunBuildBarekernelCommand(process, opts, repo_root, project_dir_abs, out_path_abs);
     }
 
-    // Fase 9: camino rapido sin repo/CMake. Si avapack_stub.exe/avapack_gen.exe
+    // Camino rapido sin repo/CMake. Si avapack_stub.exe/avapack_gen.exe
     // estan prebuilt junto a ava_cli.exe (ver scripts/build_pack_tools.bat),
     // esto empaqueta el proyecto SIN necesitar el repo de AvaLang al lado
-    // (ver TryFastPackWithPrebuiltStub arriba y runtime/avapack/README.md,
-    // seccion Fase 9). Si el camino no aplica (--zero-disk, o no hay
-    // herramientas prebuilt), cae al flujo de siempre con CMake mas abajo.
+    // (ver TryFastPackWithPrebuiltStub arriba y runtime/avapack/README.md).
+    // Si el camino no aplica (--zero-disk, o no hay herramientas prebuilt),
+    // cae al flujo de siempre con CMake mas abajo.
     {
         bool fast_ok = false;
         if (TryFastPackWithPrebuiltStub(process, opts, project_dir_abs, key_file_abs,
