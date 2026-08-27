@@ -14,6 +14,7 @@
 #include "plugins/plugin_host.h"
 #include "util/i18n.h"
 #include "util/settings.h"
+#include "util/ui_widgets.h"
 
 namespace studio {
 
@@ -122,16 +123,20 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
         }
     }
 
+    // Each menu button is sized to its own translated label (util::AutoButtonSize)
+    // instead of a single fixed width tuned for English -- otherwise longer
+    // translations (e.g. Spanish) get clipped/overflow past the button box.
     const float kMenuBtnMinWidth = 44.0f;
-    const ImVec2 menu_btn_size(kMenuBtnMinWidth, ImGui::GetFrameHeight());
+    const float menu_btn_height = ImGui::GetFrameHeight();
 
-    ImGui::SetCursorPos(ImVec2(kIconLeftPad + kIconSize + 20.0f, (height - menu_btn_size.y) * 0.5f));
+    ImGui::SetCursorPos(ImVec2(kIconLeftPad + kIconSize + 20.0f, (height - menu_btn_height) * 0.5f));
     ImGui::PushStyleColor(ImGuiCol_PopupBg, palette::FromHex(palette::kSurface));
     ImGui::PushStyleColor(ImGuiCol_Button, palette::FromHex(palette::kCard));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, palette::FromHex(palette::kBorder));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, palette::FromHex(palette::kBorder));
 
-    if (ImGui::Button(util::Tr("menu.file").c_str(), menu_btn_size)) {
+    const std::string file_label = util::Tr("menu.file");
+    if (ImGui::Button(file_label.c_str(), util::AutoButtonSize(file_label.c_str(), kMenuBtnMinWidth))) {
         ImGui::OpenPopup("##FileMenu");
     }
     result.file_menu_rect = ItemScreenRect();
@@ -196,7 +201,8 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
     }
 
     ImGui::SameLine(0.0f, 4.0f);
-    if (ImGui::Button(util::Tr("menu.edit").c_str(), menu_btn_size)) {
+    const std::string edit_label = util::Tr("menu.edit");
+    if (ImGui::Button(edit_label.c_str(), util::AutoButtonSize(edit_label.c_str(), kMenuBtnMinWidth))) {
         ImGui::OpenPopup("##EditMenu");
     }
     result.edit_menu_rect = ItemScreenRect();
@@ -213,7 +219,8 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
     }
 
     ImGui::SameLine(0.0f, 4.0f);
-    if (ImGui::Button(util::Tr("menu.view").c_str(), menu_btn_size)) {
+    const std::string view_label = util::Tr("menu.view");
+    if (ImGui::Button(view_label.c_str(), util::AutoButtonSize(view_label.c_str(), kMenuBtnMinWidth))) {
         ImGui::OpenPopup("##ViewMenu");
     }
     result.view_menu_rect = ItemScreenRect();
@@ -227,7 +234,8 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
     }
 
     ImGui::SameLine(0.0f, 4.0f);
-    if (ImGui::Button(util::Tr("menu.run").c_str(), menu_btn_size)) {
+    const std::string run_label = util::Tr("menu.run");
+    if (ImGui::Button(run_label.c_str(), util::AutoButtonSize(run_label.c_str(), kMenuBtnMinWidth))) {
         ImGui::OpenPopup("##RunMenu");
     }
     result.run_menu_rect = ItemScreenRect();
@@ -252,7 +260,8 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
 
     ImGui::SameLine(0.0f, 4.0f);
     static bool open_about_modal = false;
-    if (ImGui::Button(util::Tr("menu.about").c_str(), menu_btn_size)) {
+    const std::string about_label = util::Tr("menu.about");
+    if (ImGui::Button(about_label.c_str(), util::AutoButtonSize(about_label.c_str(), kMenuBtnMinWidth))) {
         open_about_modal = true;
     }
     result.about_rect = ItemScreenRect();

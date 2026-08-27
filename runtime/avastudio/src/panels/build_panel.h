@@ -46,12 +46,12 @@ enum class BuildBrowseField {
     kNone,
     kProjectDir,
     kOutputDir,
-    kRepoRoot,
     kAvaCliPath,
     kKeyFile,
     kEntryFile,
     kVcpkgRoot,
-    kToolchainDir,
+    kCompilerPathDesktop,
+    kCompilerPathBarekernel,
 };
 
 struct BuildPanelResult {
@@ -64,6 +64,26 @@ struct BuildPanelResult {
 BuildPanelResult DrawBuildPanel(BuildPanelState& state, StudioSettings& settings,
                                  const std::string& explorer_root_dir, BuildBrowseField browsed_field,
                                  const std::string& browsed_value, LogBridge& log_bridge, bool* p_open = nullptr);
+
+// Same "which folder is the project" resolution the panel and Run Project/Check already agree
+// on: settings.build_project_dir if the user pinned one under the panel's Project section,
+// otherwise whatever's currently open in the editor (explorer_root_dir). Exposed so the Run
+// menu's Build action (main.cpp) can resolve the same default without duplicating the ternary.
+std::string ResolveBuildProjectDir(const StudioSettings& settings, const std::string& explorer_root_dir);
+
+// Kicks off an actual build using the paths currently configured in `settings` (+ the usual
+// auto-detection fallbacks for ava_cli/repo-root/entry file), the same request the panel's old
+// in-panel Build button used to send. No-op if a build is already running. Now the only way to
+// start a build -- called from the Run menu / Ctrl+B / Command Palette in main.cpp -- so setup
+// errors (missing ava_cli, repo root not found, etc.) are logged straight to `log_bridge`
+// instead of waiting for the panel to be open to surface them.
+void TriggerBuild(BuildPanelState& state, const StudioSettings& settings, const std::string& explorer_root_dir,
+                   LogBridge& log_bridge);
+
+// Frame-polled unconditionally (main.cpp's loop, alongside PollScriptRun) so a build's log and
+// success/failure line always reach the Output panel even while the Build panel itself is
+// closed -- the panel no longer owns any of the "did it work" reporting.
+void PollBuild(BuildPanelState& state, LogBridge& log_bridge);
 
 // Resolves the same "where should vcpkg live" default the Install vcpkg
 // button already computed inline (settings.build_vcpkg_root, falling back to

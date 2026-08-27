@@ -25,7 +25,13 @@ struct StudioSettings {
 
     std::string build_target;
 
-    std::string build_toolchain_dir;
+    // Two separate paths -- one per target -- so switching the Target combo
+    // automatically uses the right one instead of overwriting a single
+    // shared field. ava_cli build itself still only takes one
+    // --compiler-path per invocation (see build_command.cpp); the panel
+    // picks which of these two to send based on build_target.
+    std::string build_compiler_path_desktop;
+    std::string build_compiler_path_barekernel;
 
     bool build_obfuscate = false;
     bool build_obfuscate_strings = false;

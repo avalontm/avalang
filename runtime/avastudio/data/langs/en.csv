@@ -133,6 +133,9 @@ build.target_desktop,Desktop
 build.target_barekernel,BareKernel
 build.toolchain_dir_label,Cross-toolchain folder
 build.toolchain_dir_hint,"(i686-elf-gcc/g++/ld/objcopy/nm)"
+build.compiler_path_label,Compiler path
+build.compiler_path_hint_desktop,"(optional -- folder with cmake/ninja/gcc/g++/cl.exe, prepended to PATH for this build)"
+build.compiler_path_hint_barekernel,"(i686-elf-gcc/g++/ld/objcopy/nm)"
 build.barekernel_note,"Encryption, obfuscation, zero-disk, and code signing are desktop-only and don't apply to BareKernel -- that section is hidden below."
 build.error_toolchain_dir_missing,"could not find the cross-toolchain folder -- set it above."
 build.section_project,Project

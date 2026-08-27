@@ -407,6 +407,106 @@ entre ellos más allá de que `AVAPACK_ZERO_DISK` elige qué archivo `.cpp` se c
   carpeta) resuelve igual bajo `--zero-disk` que bajo el flujo por defecto — la lógica de
   `ModuleResolver` no cambió, pero no se corrió contra el `MemoryFileSystem` real.
 
+## Fase 9 — build sin depender del repo (stub precompilado + payload apendeado)
+
+**El problema:** hasta Fase 8, `ava_cli build --target desktop` recompilaba avapack entero
+(`main.cpp` + un `embedded_project.cpp` generado con el proyecto embebido como constantes
+C++) vía CMake, en `build_pack/`, en **todos los casos**. Aunque `avalang.dll`/`avalang_ui.dll`
+estuvieran prebuilt junto a `ava_cli.exe` (`AVA_PACK_USE_PREBUILT_AVALANG`), seguía haciendo
+falta un checkout completo de AvaLang al lado (`runtime/avapack/CMakeLists.txt`,
+`third_party/tiny-aes-c`, `checksum/`, un compilador C++) solo para volver a traducir el
+mismo código de `main.cpp` una y otra vez, cambiando únicamente el array de bytes cifrados
+embebido. Eso hacía imposible distribuir `ava_cli` como herramienta standalone para empacar
+proyectos de terceros.
+
+**La solución:** separar "el código que corre el proyecto empacado" (que no cambia de un
+empacado a otro) de "los datos del proyecto empacado" (que sí cambian), y unirlos en runtime
+en vez de en tiempo de compilación:
+
+1. `avapack_stub.exe` — un binario genérico, prebuilt una sola vez (`scripts/build_pack_tools.bat`),
+   **sin ningún proyecto embebido**. Es `stub_main.cpp` compilado: al arrancar, ubica su propio
+   ejecutable en disco, lee los últimos `kFooterSize` bytes (`PayloadFooter`,
+   `src/payload_format.h`) para encontrar el offset/tamaño de un blob apendeado más atrás en el
+   mismo archivo, decodifica ese blob (`DecodePayloadBlob`) a un `avapack::PayloadBlob`, arma la
+   vista `EmbeddedFile[]` equivalente a la que antes generaba `embedded_project.cpp`
+   (`BuildEmbeddedFilesView`) y llama a `RunPackagedProgram` (ver más abajo) — mismo camino de
+   ejecución que `main.cpp` de Fases 1-8, solo que los datos vienen de un blob leído en runtime en
+   vez de constantes compiladas.
+2. `avapack_gen --payload-out <ruta.bin>` (`src/generator/main.cpp`) — el mismo generador de
+   siempre (compila/lee el proyecto, cifra con AES-256-CTR, calcula el HMAC-SHA256, ver Fase 3/5),
+   pero en vez de emitir un `.cpp` para compilar, serializa un `PayloadBlob` con
+   `EncodePayloadBlob` a un archivo binario suelto. `--out <ruta.cpp>` (el camino viejo, para el
+   flujo con CMake) y `--payload-out` son independientes — se puede pedir uno, el otro, o ambos.
+3. `ava_cli build --target desktop` (`TryFastPackWithPrebuiltStub`, `runtime/avacli/src/build_command.cpp`):
+   si encuentra `avapack_stub.exe` + `avapack_gen.exe` prebuilt junto a `ava_cli.exe` (mismo
+   directorio, vía `FindPrebuiltPackTools`) **y** las DLL de avalang (`avalang.dll`/
+   `avalang_ui.dll`, que el stub necesita para arrancar), corre `avapack_gen --payload-out` a un
+   archivo temporal, copia `avapack_stub.exe` a `--out`, le apendea el blob y por último el
+   `PayloadFooter` (offset/tamaño fijo, `EncodeFooter`) — sin invocar CMake ni necesitar
+   `runtime/avapack/CMakeLists.txt` (ni ningún otro archivo del repo) para nada más que
+   `--extra-modules-dir` opcional (`libraries/`, si existe al lado). Firma con `--sign-pfx` y
+   copia de DLL/librerías nativas externas funcionan igual que en el flujo viejo.
+
+### Refactor que lo hizo posible: `packaged_runtime.h/.cpp`
+
+Antes, toda la lógica de "ya tengo el proyecto descifrado en memoria, ahora corré esto" vivía
+inline en `main()` de `main.cpp` (temp dir, hooks de Fase 4, verificación de integridad,
+descifrado de cada archivo, bytecode vs. fuente de Fase 6). Se extrajo tal cual a
+`RunPackagedProgram(const PackagedManifest&)` en `packaged_runtime.h/.cpp`, parametrizada por
+un `PackagedManifest` (equivalente a lo que antes eran las constantes globales que generaba
+`embedded_project.cpp`). `main.cpp` (Fases 1-8, sigue existiendo para el flujo con CMake) quedó
+como un wrapper delgado que arma el `PackagedManifest` desde las constantes compiladas de
+siempre y llama a `RunPackagedProgram` — mismo comportamiento bit a bit que antes de esta fase.
+`stub_main.cpp` arma el mismo `PackagedManifest`, pero desde el blob leído en runtime. Ningún
+cambio en `embedded_crypto.h`/`embedded_project.h` originales — se agregaron variantes
+parametrizadas (`DecryptWith`/`VerifyIntegrityWith`/`BuildFileMapFrom`/`GetKeyFromFragments`)
+sin tocar las funciones que ya usaba `main.cpp`, para no arriesgar Fases 1-8.
+
+### Formato del blob apendeado (`src/payload_format.h`)
+
+Apendeado al final de una copia de `avapack_stub.exe`: `[.exe stub][blob][PayloadFooter (32
+bytes fijos)]`. El footer siempre son los últimos 32 bytes del archivo (`magic` de 8 bytes
+`"AVAPKFT1"`, `version`, `flags` reservado, `blob_offset`, `blob_size` — todo little-endian, sin
+padding implícito de struct). `stub_main.cpp` lee esos últimos 32 bytes del propio ejecutable
+para encontrar el blob sin tener que parsear el formato PE/ELF del `.exe` en sí. El blob en sí
+serializa lo mismo que antes codificaba `embedded_project.cpp` como constantes C++: semilla +
+fragmentos de clave, MAC de integridad, flags de bytecode/ofuscación, y la lista de
+`EmbeddedFile` (ruta, nonce, contenido cifrado) — ver `PayloadBlob`/`EncodePayloadBlob`/
+`DecodePayloadBlob` para el detalle campo por campo.
+
+### Alcance real / qué NO cubre todavía
+
+- **`--zero-disk` (Fase 7) no está wireado al stub.** `TryFastPackWithPrebuiltStub` lo detecta
+  (`opts.zero_disk`) y devuelve `false` sin intentar nada, así que `ava_cli build --zero-disk`
+  cae automáticamente al flujo viejo con CMake (que sí lo soporta, vía `main_zerodisk.cpp`) — no
+  rompe nada, simplemente no es "rápido" para ese caso todavía. Pendiente: un
+  `stub_main_zerodisk.cpp` análogo, o unificar ambos stubs con un flag en el footer.
+- **`--target barekernel` tampoco pasa por este camino** — sigue siendo exclusivamente
+  CMake + toolchain cruzado i686-elf (`RunBuildBarekernelCommand`), sin relación con
+  `avapack_stub.exe`. No tendría sentido unificarlo: barekernel no corre sobre un SO que pueda
+  ejecutar un `.exe` genérico con un blob apendeado.
+- El flujo con CMake (`build_pack/`, target `avapack_build`) sigue existiendo tal cual y es el
+  fallback automático cuando `avapack_stub.exe`/`avapack_gen.exe` no están prebuilt junto a
+  `ava_cli.exe` — `ava_cli build` ahora solo exige un checkout completo de AvaLang
+  (`runtime/avapack/CMakeLists.txt` presente en `--repo-root`) en ese caso, no siempre.
+
+### Pendiente de tu lado (requiere compilar — no lo pude ejercitar sin el toolchain de Windows)
+
+- Compilar con `scripts/build_pack_tools.bat` y confirmar que genera `avapack_gen.exe` +
+  `avapack_stub.exe` junto a `avalang.dll`/`avalang_ui.dll`.
+- Correr `ava_cli build --project <dir> --entry <archivo.ava> --out packed.exe` con esos
+  binarios prebuilt junto a `ava_cli.exe` **sin** `runtime/avapack/CMakeLists.txt` al lado (por
+  ejemplo, copiando solo `ava_cli.exe` + `avapack_stub.exe` + `avapack_gen.exe` + las DLL a una
+  carpeta vacía) y confirmar que arma y corre `packed.exe` igual que el flujo con CMake.
+- Confirmar que, si `avapack_stub.exe`/`avapack_gen.exe` NO están prebuilt, `ava_cli build` sigue
+  funcionando exactamente igual que antes de esta fase (fallback a CMake) cuando SÍ hay un
+  checkout completo al lado, y falla con el mensaje de error nuevo (no el genérico de CMake)
+  cuando no hay ninguna de las dos cosas.
+- Confirmar `--sign-pfx`, `--obfuscate` (incluyendo que el `.avmap` se copia y el temporal se
+  borra) y `--extra-modules-dir`/`libraries/` de punta a punta por este camino nuevo.
+- `--zero-disk` por este camino queda explícitamente fuera de alcance por ahora (ver arriba) —
+  no hace falta probarlo, solo confirmar que cae al flujo viejo sin error.
+
 ## Estado
 
 - [x] Fase 0 — decisiones de diseño (este documento).
@@ -429,3 +529,10 @@ entre ellos más allá de que `AVAPACK_ZERO_DISK` elige qué archivo `.cpp` se c
 - [ ] Fase 6 — bytecode en vez de fuente (roadmap largo plazo).
 - [ ] Fase 7 — filesystem virtual en memoria (roadmap largo plazo).
 - [ ] Fase 8 — multiplataforma (bloqueada por trabajo externo).
+- [~] Fase 9 — build sin depender del repo (stub precompilado + payload
+      apendeado, ver sección de arriba). Código listo (`payload_format.h`,
+      `packaged_runtime.h/.cpp`, `stub_main.cpp`, `avapack_gen --payload-out`,
+      `TryFastPackWithPrebuiltStub` ya conectado en `RunBuildCommand`); falta
+      compilar `scripts/build_pack_tools.bat` y correr las pruebas manuales
+      de tu lado. `--zero-disk` explícitamente no soportado todavía por este
+      camino (cae a CMake, ver "Alcance real" arriba).

@@ -66,6 +66,7 @@ extern "C" {
 }
 
 #include "../checksum/sha256.h" // Fase 5: HMAC-SHA256 propio, ver checksum/sha256.h
+#include "../payload_format.h" // Fase 9: --payload-out, blob binario en vez de .cpp
 #include "avalang.h" // Fase 6: --obfuscate, SOLO API publica (ver comentario de arriba)
 
 namespace fs = std::filesystem;
@@ -75,7 +76,8 @@ namespace {
 struct Options {
     fs::path project_dir;
     std::string entry_file; // relativo a project_dir, separadores '/'
-    fs::path out_cpp;
+    fs::path out_cpp;       // --out: embedded_project.cpp (flujo con-repo, Fases 1-8)
+    fs::path payload_out;   // --payload-out: blob binario (Fase 9, flujo sin-repo)
     fs::path key_file; // opcional: 32 bytes crudos con la clave AES-256 a usar
     bool debug_unencrypted = false; // Fase 5: --debug, no cifra el contenido embebido
     std::vector<fs::path> extra_modules_dirs;
@@ -109,6 +111,10 @@ bool ParseArgs(int argc, char** argv, Options& opts, std::string& error) {
             const char* v = next_value("--out");
             if (!v) return false;
             opts.out_cpp = v;
+        } else if (arg == "--payload-out") {
+            const char* v = next_value("--payload-out");
+            if (!v) return false;
+            opts.payload_out = v;
         } else if (arg == "--key-file") {
             const char* v = next_value("--key-file");
             if (!v) return false;
@@ -133,7 +139,10 @@ bool ParseArgs(int argc, char** argv, Options& opts, std::string& error) {
     }
     if (opts.project_dir.empty()) { error = "falta --project"; return false; }
     if (opts.entry_file.empty()) { error = "falta --entry"; return false; }
-    if (opts.out_cpp.empty()) { error = "falta --out"; return false; }
+    if (opts.out_cpp.empty() && opts.payload_out.empty()) {
+        error = "falta --out y/o --payload-out (al menos uno de los dos)";
+        return false;
+    }
     if ((opts.obfuscate_strings || opts.flatten_control_flow) && !opts.obfuscate) {
         error = "--obfuscate-strings/--flatten-control-flow requieren --obfuscate";
         return false;
@@ -321,9 +330,13 @@ int main(int argc, char** argv) {
     std::string err;
     if (!ParseArgs(argc, argv, opts, err)) {
         std::cerr << "avapack_gen: " << err << "\n";
-        std::cerr << "uso: avapack_gen --project <dir> --entry <archivo.ava> --out <ruta.cpp> "
+        std::cerr << "uso: avapack_gen --project <dir> --entry <archivo.ava> "
+                     "(--out <ruta.cpp> | --payload-out <ruta.bin>) "
                      "[--key-file <ruta>] [--debug] [--extra-modules-dir <dir>]... "
-                     "[--obfuscate [--obfuscate-strings] [--flatten-control-flow]]\n";
+                     "[--obfuscate [--obfuscate-strings] [--flatten-control-flow]]\n"
+                     "  --out          embedded_project.cpp (flujo con-repo, via CMake)\n"
+                     "  --payload-out  blob binario (Fase 9 -- apendear a avapack_stub.exe, "
+                     "sin CMake ni repo)\n";
         return 1;
     }
 
@@ -535,57 +548,103 @@ int main(int argc, char** argv) {
                          mac_input.size(), integrity_mac);
     std::fill(mac_input.begin(), mac_input.end(), 0); // no dejar el buffer de firma en claro
 
-    fs::create_directories(opts.out_cpp.parent_path(), ec);
-    std::ofstream out(opts.out_cpp, std::ios::binary);
-    if (!out) {
-        std::cerr << "avapack_gen: no se pudo escribir " << opts.out_cpp.string() << "\n";
-        return 1;
-    }
+    if (!opts.out_cpp.empty()) {
+        fs::create_directories(opts.out_cpp.parent_path(), ec);
+        std::ofstream out(opts.out_cpp, std::ios::binary);
+        if (!out) {
+            std::cerr << "avapack_gen: no se pudo escribir " << opts.out_cpp.string() << "\n";
+            return 1;
+        }
 
-    out << "// Generado por avapack_gen -- NO EDITAR A MANO.\n";
-    out << "// Fuente: " << opts.project_dir.string() << " (entry: " << entry_rel << ")\n";
-    out << "// Contenido cifrado con AES-256-CTR; ver embedded_project.h y\n";
-    out << "// runtime/avapack/third_party/tiny-aes-c/VENDOR.md.\n";
-    out << "#include \"embedded_project.h\"\n\n";
-    out << "namespace avapack {\n\n";
-    out << "namespace {\n";
+        out << "// Generado por avapack_gen -- NO EDITAR A MANO.\n";
+        out << "// Fuente: " << opts.project_dir.string() << " (entry: " << entry_rel << ")\n";
+        out << "// Contenido cifrado con AES-256-CTR; ver embedded_project.h y\n";
+        out << "// runtime/avapack/third_party/tiny-aes-c/VENDOR.md.\n";
+        out << "#include \"embedded_project.h\"\n\n";
+        out << "namespace avapack {\n\n";
+        out << "namespace {\n";
 
-    for (size_t i = 0; i < encrypted.size(); ++i) {
-        WriteByteArray(out, "kFileCipher" + std::to_string(i), encrypted[i].cipher.data(),
-                        encrypted[i].cipher.size(), /*is_static=*/true);
-        WriteByteArray(out, "kFileNonce" + std::to_string(i), encrypted[i].nonce, 16,
-                        /*is_static=*/true);
+        for (size_t i = 0; i < encrypted.size(); ++i) {
+            WriteByteArray(out, "kFileCipher" + std::to_string(i), encrypted[i].cipher.data(),
+                            encrypted[i].cipher.size(), /*is_static=*/true);
+            WriteByteArray(out, "kFileNonce" + std::to_string(i), encrypted[i].nonce, 16,
+                            /*is_static=*/true);
+            out << "\n";
+        }
+
+        out << "} // namespace\n\n";
+
+        out << "const EmbeddedFile kEmbeddedFiles[] = {\n";
+        for (size_t i = 0; i < encrypted.size(); ++i) {
+            out << "    { \"" << encrypted[i].rel_path << "\", kFileCipher" << i << ", "
+                << encrypted[i].cipher.size() << "u, kFileNonce" << i << " },\n";
+        }
+        out << "};\n\n";
+        out << "const std::size_t kEmbeddedFileCount = sizeof(kEmbeddedFiles) / sizeof(kEmbeddedFiles[0]);\n";
+        out << "const char* const kEntryFile = \"" << entry_rel << "\";\n\n";
+
+        out << "const std::uint32_t kKeySeed = " << key_seed << "u;\n";
+        WriteByteArray(out, "kKeyFragmentA", key_fragment_a, 16, /*is_static=*/false);
+        WriteByteArray(out, "kKeyFragmentB", key_fragment_b, 16, /*is_static=*/false);
+
         out << "\n";
+        WriteByteArray(out, "kIntegrityMac", integrity_mac, 32, /*is_static=*/false);
+        out << "const bool kDebugBuild = " << (opts.debug_unencrypted ? "true" : "false") << ";\n";
+
+        out << "\n// Fase 6:\n";
+        out << "const bool kEntryIsBytecode = " << (entry_is_bytecode ? "true" : "false") << ";\n";
+        out << "const bool kEntryStringsObfuscated = " << (entry_strings_obfuscated ? "true" : "false") << ";\n";
+        out << "const std::uint64_t kEntryObfuscateSeed = " << entry_obfuscate_seed << "ull;\n";
+
+        out << "\n} // namespace avapack\n";
+
+        std::cout << "avapack_gen: " << files.size() << " archivo(s) embebido(s) y cifrado(s), entry="
+                  << entry_rel << " -> " << opts.out_cpp.string() << "\n";
     }
 
-    out << "} // namespace\n\n";
+    if (!opts.payload_out.empty()) {
+        // Fase 9: mismo contenido de arriba (cifrado, clave ofuscada, HMAC,
+        // flags de Fase 6), como blob binario en vez de C++ -- ver
+        // payload_format.h. `ava_cli build` apendea este archivo (mas un
+        // footer de tamaño fijo) al final de una copia de avapack_stub.exe
+        // en vez de compilar embedded_project.cpp via CMake.
+        avapack::PayloadBlob blob;
+        blob.key_seed = key_seed;
+        std::memcpy(blob.key_fragment_a, key_fragment_a, 16);
+        std::memcpy(blob.key_fragment_b, key_fragment_b, 16);
+        std::memcpy(blob.integrity_mac, integrity_mac, 32);
+        blob.debug_build = opts.debug_unencrypted;
+        blob.entry_is_bytecode = entry_is_bytecode;
+        blob.entry_strings_obfuscated = entry_strings_obfuscated;
+        blob.entry_obfuscate_seed = entry_obfuscate_seed;
+        blob.entry_file = entry_rel;
+        blob.files.reserve(encrypted.size());
+        for (const auto& e : encrypted) {
+            avapack::PayloadFileEntry entry;
+            entry.path = e.rel_path;
+            std::memcpy(entry.nonce, e.nonce, 16);
+            entry.cipher = e.cipher;
+            blob.files.push_back(std::move(entry));
+        }
 
-    out << "const EmbeddedFile kEmbeddedFiles[] = {\n";
-    for (size_t i = 0; i < encrypted.size(); ++i) {
-        out << "    { \"" << encrypted[i].rel_path << "\", kFileCipher" << i << ", "
-            << encrypted[i].cipher.size() << "u, kFileNonce" << i << " },\n";
+        std::vector<unsigned char> encoded = avapack::EncodePayloadBlob(blob);
+
+        fs::create_directories(opts.payload_out.parent_path(), ec);
+        std::ofstream payload_out(opts.payload_out, std::ios::binary);
+        if (!payload_out) {
+            std::cerr << "avapack_gen: no se pudo escribir " << opts.payload_out.string() << "\n";
+            return 1;
+        }
+        payload_out.write(reinterpret_cast<const char*>(encoded.data()),
+                           static_cast<std::streamsize>(encoded.size()));
+        if (!payload_out) {
+            std::cerr << "avapack_gen: error escribiendo " << opts.payload_out.string() << "\n";
+            return 1;
+        }
+        std::cout << "avapack_gen: " << files.size() << " archivo(s) embebido(s) y cifrado(s), entry="
+                  << entry_rel << " -> " << opts.payload_out.string()
+                  << " (payload binario, " << encoded.size() << " bytes, Fase 9)\n";
     }
-    out << "};\n\n";
-    out << "const std::size_t kEmbeddedFileCount = sizeof(kEmbeddedFiles) / sizeof(kEmbeddedFiles[0]);\n";
-    out << "const char* const kEntryFile = \"" << entry_rel << "\";\n\n";
-
-    out << "const std::uint32_t kKeySeed = " << key_seed << "u;\n";
-    WriteByteArray(out, "kKeyFragmentA", key_fragment_a, 16, /*is_static=*/false);
-    WriteByteArray(out, "kKeyFragmentB", key_fragment_b, 16, /*is_static=*/false);
-
-    out << "\n";
-    WriteByteArray(out, "kIntegrityMac", integrity_mac, 32, /*is_static=*/false);
-    out << "const bool kDebugBuild = " << (opts.debug_unencrypted ? "true" : "false") << ";\n";
-
-    out << "\n// Fase 6:\n";
-    out << "const bool kEntryIsBytecode = " << (entry_is_bytecode ? "true" : "false") << ";\n";
-    out << "const bool kEntryStringsObfuscated = " << (entry_strings_obfuscated ? "true" : "false") << ";\n";
-    out << "const std::uint64_t kEntryObfuscateSeed = " << entry_obfuscate_seed << "ull;\n";
-
-    out << "\n} // namespace avapack\n";
-
-    std::cout << "avapack_gen: " << files.size() << " archivo(s) embebido(s) y cifrado(s), entry="
-              << entry_rel << " -> " << opts.out_cpp.string() << "\n";
     if (opts.key_file.empty()) {
         std::cout << "avapack_gen: clave AES-256 generada al azar para este build "
                      "(usa --key-file para fijar una).\n";

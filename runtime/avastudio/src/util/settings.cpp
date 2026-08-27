@@ -82,8 +82,12 @@ StudioSettings LoadSettings() {
             settings.build_vcpkg_root = value;
         } else if (key == "build_target") {
             settings.build_target = value;
-        } else if (key == "build_toolchain_dir") {
-            settings.build_toolchain_dir = value;
+        } else if (key == "build_compiler_path_desktop") {
+            settings.build_compiler_path_desktop = value;
+        } else if (key == "build_toolchain_dir" || key == "build_compiler_path" ||
+                   key == "build_compiler_path_barekernel") {
+
+            settings.build_compiler_path_barekernel = value;
         } else if (key == "build_obfuscate") {
             settings.build_obfuscate = (value == "1");
         } else if (key == "build_obfuscate_strings") {
@@ -124,7 +128,8 @@ void SaveSettings(const StudioSettings& settings) {
     file << "build_key_file=" << settings.build_key_file << "\n";
     file << "build_vcpkg_root=" << settings.build_vcpkg_root << "\n";
     file << "build_target=" << settings.build_target << "\n";
-    file << "build_toolchain_dir=" << settings.build_toolchain_dir << "\n";
+    file << "build_compiler_path_desktop=" << settings.build_compiler_path_desktop << "\n";
+    file << "build_compiler_path_barekernel=" << settings.build_compiler_path_barekernel << "\n";
     file << "build_obfuscate=" << (settings.build_obfuscate ? "1" : "0") << "\n";
     file << "build_obfuscate_strings=" << (settings.build_obfuscate_strings ? "1" : "0") << "\n";
     file << "build_flatten_control_flow=" << (settings.build_flatten_control_flow ? "1" : "0") << "\n";

@@ -74,7 +74,11 @@ struct EditorState {
     // the end of the frame alongside the rest of this group.
     bool save_as_requested = false;
     bool open_settings_panel_requested = false;
-    bool open_build_panel_requested = false;
+
+    // Used to just open the Build panel; now (paths-only panel, build kicks off from the Run
+    // menu) this fires an actual build -- same shape as run_project_requested/check_requested
+    // above, handled alongside them in main.cpp instead of near open_settings_panel_requested.
+    bool build_requested = false;
 
     // Fase 4 (Quick Open): same shape as find_in_project_requested above --
     // lets the Command Palette's "Edit: Quick Open" entry trigger it without

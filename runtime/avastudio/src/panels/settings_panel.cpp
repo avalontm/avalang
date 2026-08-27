@@ -7,6 +7,7 @@
 #include "palette.h"
 #include "plugins/plugin_ui_bridge.h"
 #include "util/i18n.h"
+#include "util/ui_widgets.h"
 
 namespace studio {
 
@@ -73,16 +74,19 @@ void DrawGeneralSection(StudioSettings& settings, bool& out_settings_dirty, bool
     ImGui::TextWrapped("%s", util::Tr("settings.modules_folder_description").c_str());
     ImGui::Dummy(ImVec2(0.0f, 6.0f));
 
-    ImGui::SetNextItemWidth(-90.0f);
+    const std::string browse_label = util::Tr("common.browse");
+    const ImVec2 browse_size = util::AutoButtonSize(browse_label.c_str(), 80.0f);
+    ImGui::SetNextItemWidth(-(browse_size.x + ImGui::GetStyle().ItemSpacing.x));
     ImGui::InputTextWithHint("##ModulesPathInput", util::Tr("settings.modules_folder_hint").c_str(),
                               modules_path_buf, sizeof(modules_path_buf));
     ImGui::SameLine();
-    if (ImGui::Button(util::Tr("common.browse").c_str(), ImVec2(80.0f, 0.0f))) {
+    if (ImGui::Button(browse_label.c_str(), browse_size)) {
         out_browse_requested = true;
     }
 
     ImGui::Dummy(ImVec2(0.0f, 6.0f));
-    if (ImGui::Button(util::Tr("menu.file.save").c_str(), ImVec2(90.0f, 0.0f))) {
+    const std::string save_label = util::Tr("menu.file.save");
+    if (ImGui::Button(save_label.c_str(), util::AutoButtonSize(save_label.c_str(), 90.0f))) {
         settings.modules_path = modules_path_buf;
         out_settings_dirty = true;
     }

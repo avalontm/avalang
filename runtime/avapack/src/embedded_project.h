@@ -136,14 +136,25 @@ extern const std::uint32_t kKeySeed;
 extern const unsigned char kKeyFragmentA[16]; // bytes 0..15 de la clave real, XOReados
 extern const unsigned char kKeyFragmentB[16]; // bytes 16..31 de la clave real, XOReados
 
+// Fase 9: misma reconstruccion de arriba, pero parametrizada -- GetEmbeddedKey
+// (compile-time, via los symbols kKeySeed/kKeyFragmentA/B de un
+// embedded_project.cpp generado) sigue igual y ahora delega aca. El stub
+// precompilado (runtime/avapack/src/stub_main.cpp) no tiene esos symbols
+// compilados adentro -- los lee del payload apendeado en runtime, asi que
+// necesita la misma formula pero recibiendo seed/fragmentos como
+// parametros en vez de como constantes del binario. Ver payload_format.h.
+inline void GetKeyFromFragments(std::uint32_t seed, const unsigned char frag_a[16],
+                                 const unsigned char frag_b[16], unsigned char out_key[32]) {
+    for (int i = 0; i < 16; ++i) {
+        out_key[i] = static_cast<unsigned char>(frag_a[i] ^ KeyMaskByte(seed, i));
+    }
+    for (int i = 0; i < 16; ++i) {
+        out_key[16 + i] = static_cast<unsigned char>(frag_b[i] ^ KeyMaskByte(seed, 16 + i));
+    }
+}
+
 inline void GetEmbeddedKey(unsigned char out_key[32]) {
-    for (int i = 0; i < 16; ++i) {
-        out_key[i] = static_cast<unsigned char>(kKeyFragmentA[i] ^ KeyMaskByte(kKeySeed, i));
-    }
-    for (int i = 0; i < 16; ++i) {
-        out_key[16 + i] =
-            static_cast<unsigned char>(kKeyFragmentB[i] ^ KeyMaskByte(kKeySeed, 16 + i));
-    }
+    GetKeyFromFragments(kKeySeed, kKeyFragmentA, kKeyFragmentB, out_key);
 }
 
 } // namespace avapack

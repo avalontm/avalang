@@ -429,6 +429,7 @@ int main() {
         plugin_host.PumpMainThreadWork();
 
         studio::PollScriptRun(terminal_state, engine);
+        studio::PollBuild(build_panel_state, log_bridge);
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -460,10 +461,6 @@ int main() {
 
         if (titlebar_result.open_settings_requested || editor_state.open_settings_panel_requested) {
             open_panel_focused("Settings###settings");
-        }
-
-        if (titlebar_result.build_requested || editor_state.open_build_panel_requested) {
-            open_panel_focused("Build###build");
         }
 
         if (titlebar_result.minimize_clicked) {
@@ -527,7 +524,11 @@ int main() {
         ImGui::Begin("AvaStudioDockHost", nullptr, host_flags);
         ImGui::PopStyleVar(3);
 
-        ImGuiID dockspace_id = ImGui::GetID("AvaStudioDockspace");
+        // Bumped from "AvaStudioDockspace" so users upgrading from a build
+        // that predates the "Build" panel (or any other default-layout fix)
+        // get a fresh, fully-docked layout instead of inheriting a saved
+        // imgui.ini where that panel has no dock slot and opens floating.
+        ImGuiID dockspace_id = ImGui::GetID("AvaStudioDockspace_v2");
 
         if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr) {
             ImGui::DockBuilderRemoveNode(dockspace_id);
@@ -548,6 +549,7 @@ int main() {
             ImGui::DockBuilderDockWindow("Settings###settings", dock_right);
             ImGui::DockBuilderDockWindow("Preview###preview", dock_bottom);
             ImGui::DockBuilderDockWindow("Terminal###terminal", dock_bottom);
+            ImGui::DockBuilderDockWindow("Build###build", dock_bottom);
             ImGui::DockBuilderDockWindow("Logs###logs", dock_bottom);
             ImGui::DockBuilderDockWindow("Problems###problems", dock_bottom);
             ImGui::DockBuilderDockWindow("Find in Project###find_in_project", dock_bottom);
@@ -821,8 +823,13 @@ int main() {
             }
         }
 
-        if (want_build) {
-            open_panel_focused("Build###build");
+        if (titlebar_result.build_requested || editor_state.build_requested || want_build) {
+            // Build panel only configures paths now (Target/Project/Advanced) -- this is the
+            // one place a build actually starts, same shape as run_project_requested/
+            // check_requested just above: resolve_project_entry's project_dir default (the
+            // folder currently open in the editor) is exactly what TriggerBuild falls back to
+            // via ResolveBuildProjectDir when Build's own Project Folder override is empty.
+            studio::TriggerBuild(build_panel_state, settings, explorer_state.root_dir, log_bridge);
         }
 
         if (editor_state.find_in_project_requested || want_find_in_project) {
@@ -923,7 +930,7 @@ int main() {
         editor_state.new_tab_requested = false;
         editor_state.save_as_requested = false;
         editor_state.open_settings_panel_requested = false;
-        editor_state.open_build_panel_requested = false;
+        editor_state.build_requested = false;
         editor_state.quick_open_requested = false;
         editor_state.new_project_requested = false;
 
@@ -1012,14 +1019,14 @@ int main() {
                     case studio::BuildBrowseField::kOutputDir:
                         picked = studio::titlebar::OpenFolderDialog(window, path, settings.build_out_dir);
                         break;
-                    case studio::BuildBrowseField::kRepoRoot:
-                        picked = studio::titlebar::OpenFolderDialog(window, path, settings.build_repo_root);
-                        break;
                     case studio::BuildBrowseField::kVcpkgRoot:
                         picked = studio::titlebar::OpenFolderDialog(window, path, settings.build_vcpkg_root);
                         break;
-                    case studio::BuildBrowseField::kToolchainDir:
-                        picked = studio::titlebar::OpenFolderDialog(window, path, settings.build_toolchain_dir);
+                    case studio::BuildBrowseField::kCompilerPathDesktop:
+                        picked = studio::titlebar::OpenFolderDialog(window, path, settings.build_compiler_path_desktop);
+                        break;
+                    case studio::BuildBrowseField::kCompilerPathBarekernel:
+                        picked = studio::titlebar::OpenFolderDialog(window, path, settings.build_compiler_path_barekernel);
                         break;
                     case studio::BuildBrowseField::kEntryFile:
                         picked = studio::titlebar::OpenFileDialog(
@@ -1027,10 +1034,19 @@ int main() {
                             settings.build_project_dir.empty() ? explorer_state.root_dir : settings.build_project_dir);
                         break;
                     case studio::BuildBrowseField::kAvaCliPath:
-                        picked = studio::titlebar::OpenFileDialog(window, path, settings.build_ava_cli_path);
+                        // ava_cli(.exe) is an executable, not a .ava script -- the default
+                        // OpenFileDialog filter (AvaLang Scripts) hid it from this picker
+                        // entirely, which is what looked like "opens to search for a .ava
+                        // instead of the file I actually need".
+                        picked = studio::titlebar::OpenFileDialog(
+                            window, path, settings.build_ava_cli_path,
+                            "Executables (*.exe)\0*.exe\0All Files (*.*)\0*.*\0");
                         break;
                     case studio::BuildBrowseField::kKeyFile:
-                        picked = studio::titlebar::OpenFileDialog(window, path, explorer_state.root_dir);
+                        // The AES key is 32 raw bytes with no fixed extension -- same
+                        // "hidden behind the .ava filter" problem as ava_cli path above.
+                        picked = studio::titlebar::OpenFileDialog(window, path, explorer_state.root_dir,
+                                                                   "All Files (*.*)\0*.*\0");
                         break;
                     case studio::BuildBrowseField::kNone:
                         break;
@@ -1141,7 +1157,7 @@ int main() {
             add(category_run, "menu.run.run_script", "F5", [&] { editor_state.run_requested = true; });
             add(category_run, "menu.run.run_project", "Shift+F5", [&] { editor_state.run_project_requested = true; });
             add(category_run, "menu.run.check", "Ctrl+Shift+B", [&] { editor_state.check_requested = true; });
-            add(category_run, "menu.run.build", "Ctrl+B", [&] { editor_state.open_build_panel_requested = true; });
+            add(category_run, "menu.run.build", "Ctrl+B", [&] { editor_state.build_requested = true; });
 
             add(category_preferences, "menu.file.settings", "Ctrl+,",
                 [&] { editor_state.open_settings_panel_requested = true; });

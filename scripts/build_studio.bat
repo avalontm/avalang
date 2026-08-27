@@ -19,6 +19,13 @@ REM ava_studio or they silently don't get built). Uses its own build
 REM directory (build_studio\) so it never touches or reconfigures your
 REM regular build\ from build.bat.
 REM
+REM Also builds avapack_gen.exe/avapack_stub.exe (AVA_BUILD_PACK=ON, ver
+REM runtime/avapack/README.md, Fase 9) right next to ava_cli.exe -- eso
+REM es justo lo que ava_studio.exe necesita encontrado ahi para que
+REM "ava_cli build" corrido DESDE ADENTRO de Ava Studio (Build panel) use
+REM el camino rapido sin CMake/sin repo, en vez de recompilar avalang
+REM entero en build_pack\ cada vez que apretas Build.
+REM
 REM Usage:
 REM   build_studio.bat                build Release with the default generator
 REM   build_studio.bat debug           build Debug instead
@@ -98,7 +105,17 @@ if "%CLEAN%"=="1" (
 
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
-set "CMAKE_CONFIGURE_ARGS=-DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DAVA_BUILD_STUDIO=ON"
+REM AVA_BUILD_PACK=ON agrega avapack_gen/avapack_stub al grafo de CMake
+REM de build_studio (Fase 9, ver runtime/avapack/README.md) -- sin esto,
+REM "ava_cli build" corrido desde dentro de Ava Studio nunca encuentra
+REM avapack_stub.exe/avapack_gen.exe prebuilt junto a ava_cli.exe y
+REM SIEMPRE cae al flujo lento con CMake (recompila avalang/avalang_ui/
+REM avapack_gen/avapack_build desde cero en build_pack\ en cada build).
+REM No agrega costo de build real: solo pide los targets avapack_gen/
+REM avapack_stub mas abajo, nunca el target avapack_testproj (el .exe de
+REM ejemplo que tambien se configura bajo AVA_BUILD_PACK), asi que no se
+REM empaqueta ningun proyecto de muestra de mas en cada build_studio.
+set "CMAKE_CONFIGURE_ARGS=-DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DAVA_BUILD_STUDIO=ON -DAVA_BUILD_PACK=ON"
 
 if defined VCPKG_ROOT (
     echo Using vcpkg toolchain: %VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake
@@ -169,7 +186,19 @@ REM exe, o el panel del agente de IA (ai_agent.dll) simplemente no
 REM aparece -- ni error ni warning, Ava Studio arranca igual sin esa
 REM pestaña (ver PLUGIN_SYSTEM_FASE0.md, "Si el .dll no esta en
 REM plugins/ ... arranca igual, sin esa pestaña").
-cmake --build "%BUILD_DIR%" --config %BUILD_TYPE% --target ava_studio --target ai_agent_plugin --target hello_world_plugin --parallel
+REM ava_cli/avapack_gen/avapack_stub se piden explicitos por el mismo
+REM motivo que ai_agent_plugin/hello_world_plugin arriba -- estar
+REM configurados (AVA_BUILD_CLI/AVA_BUILD_PACK=ON) no alcanza, CMake solo
+REM compila lo que se pide como --target. Los tres quedan en la MISMA
+REM carpeta que avalang.dll/avalang_ui.dll (ver RUNTIME_OUTPUT_DIRECTORY
+REM en runtime/avacli/CMakeLists.txt y runtime/avapack/CMakeLists.txt --
+REM todos apuntan a "%BUILD_DIR%\runtime\avalang"), que es exactamente
+REM donde ava_studio.exe ya busca ava_cli.exe (ver DetectAvaCliPath en
+REM runtime/avastudio/src/util/ava_cli_locator.cpp) y donde ava_cli
+REM (FindPrebuiltPackTools, runtime/avacli/src/build_command.cpp) busca
+REM avapack_stub.exe/avapack_gen.exe -- asi que no hace falta copiar nada
+REM a mano, ya quedan todos juntos.
+cmake --build "%BUILD_DIR%" --config %BUILD_TYPE% --target ava_studio --target ai_agent_plugin --target hello_world_plugin --target ava_cli --target avapack_gen --target avapack_stub --parallel
 if errorlevel 1 (
     echo [ERROR] Build failed. See output above.
     exit /b 1
@@ -224,6 +253,22 @@ if exist "%LIBRARIES_DIR%" (
     robocopy "%LIBRARIES_DIR%" "%MODULES_DIR%" /MIR /NFL /NDL /NJH /NJS >nul
 )
 
+REM ava_cli.exe/avapack_gen.exe/avapack_stub.exe (pedidos como --target
+REM arriba, junto con AVA_BUILD_PACK=ON) quedan en esta carpeta porque
+REM ambos CMakeLists.txt (runtime/avacli, runtime/avapack) fijan
+REM RUNTIME_OUTPUT_DIRECTORY a "%BUILD_DIR%\runtime\avalang" explicito --
+REM la misma carpeta donde avalang.dll/avalang_ui.dll ya caen por
+REM defecto. Es EXACTAMENTE la carpeta donde DetectAvaCliPath()
+REM (runtime/avastudio/src/util/ava_cli_locator.cpp) busca ava_cli.exe
+REM cuando ava_studio.exe corre desde %STUDIO_EXE_DIR%, y donde
+REM FindPrebuiltPackTools (runtime/avacli/src/build_command.cpp) busca
+REM avapack_stub.exe/avapack_gen.exe -- asi que Ava Studio detecta
+REM ava_cli.exe solo, y "ava_cli build" corrido desde adentro de Ava
+REM Studio usa el camino rapido de Fase 9 (sin CMake, sin el repo) sin
+REM ninguna configuracion manual.
+set "AVA_CLI_TOOLS_DIR=%BUILD_DIR%\runtime\avalang\%BUILD_TYPE%"
+if not exist "%AVA_CLI_TOOLS_DIR%\ava_cli.exe" set "AVA_CLI_TOOLS_DIR=%BUILD_DIR%\runtime\avalang"
+
 echo.
 echo =====================================================================
 echo Build succeeded.
@@ -233,6 +278,8 @@ echo                 %STUDIO_EXE_DIR%avalang_ui.dll
 echo plugins:        %PLUGINS_DIR%\ai_agent.dll
 echo                 %PLUGINS_DIR%\hello_world.dll
 echo modules:        %MODULES_DIR%
+echo ava_cli.exe / avapack_gen.exe / avapack_stub.exe (Fase 9, deteccion automatica):
+echo                 %AVA_CLI_TOOLS_DIR%\ava_cli.exe
 echo =====================================================================
 
 if "%RUN_AFTER%"=="1" (

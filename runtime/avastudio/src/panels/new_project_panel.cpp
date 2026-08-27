@@ -8,6 +8,7 @@
 #include "imgui_stdlib.h"
 #include "palette.h"
 #include "util/i18n.h"
+#include "util/ui_widgets.h"
 #include "util/scaffold_templates.h"
 
 namespace studio {
@@ -85,7 +86,8 @@ NewProjectDrawResult DrawNewProjectDialog(NewProjectState& state) {
     ImGui::SetNextItemWidth(-70.0f);
     ImGui::InputText("##new_project_destination", &state.destination);
     ImGui::SameLine();
-    if (ImGui::Button(util::Tr("common.browse").c_str(), ImVec2(60.0f, 0.0f))) {
+    const std::string browse_label = util::Tr("common.browse");
+    if (ImGui::Button(browse_label.c_str(), util::AutoButtonSize(browse_label.c_str(), 60.0f))) {
         result.browse_destination_requested = true;
     }
 

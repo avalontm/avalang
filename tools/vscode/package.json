@@ -73,6 +73,11 @@
         "command": "avalang.runFile",
         "title": "AvaLang: Run File",
         "icon": "$(play)"
+      },
+      {
+        "command": "avalang.buildExecutable",
+        "title": "AvaLang: Build Executable...",
+        "icon": "$(package)"
       }
     ],
     "menus": {
@@ -81,11 +86,20 @@
           "command": "avalang.runFile",
           "when": "resourceLangId == avalang",
           "group": "navigation@1"
+        },
+        {
+          "command": "avalang.buildExecutable",
+          "when": "resourceLangId == avalang",
+          "group": "navigation@2"
         }
       ],
       "commandPalette": [
         {
           "command": "avalang.runFile",
+          "when": "resourceLangId == avalang"
+        },
+        {
+          "command": "avalang.buildExecutable",
           "when": "resourceLangId == avalang"
         }
       ]
@@ -130,6 +144,36 @@
           "default": true,
           "scope": "resource",
           "description": "Clear the AvaLang terminal before each run with F5 / the play button."
+        },
+        "avalang.build.repoRoot": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Root of the AvaLang repo (equivalent to ava_cli build --repo-root). Empty = auto-detect by walking up from the workspace folder looking for CMakeLists.txt + runtime/avapack/CMakeLists.txt."
+        },
+        "avalang.build.outDir": {
+          "type": "string",
+          "default": "${workspaceFolder}/dist",
+          "scope": "resource",
+          "description": "Output folder for \"AvaLang: Build Executable...\" (ava_cli build --out). Supports ${workspaceFolder}, ${fileDirname}."
+        },
+        "avalang.build.compilerPathDesktop": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "ava_cli build --compiler-path used when the 'desktop' target is picked: a folder with cmake/ninja/gcc/g++/cl.exe, prepended to PATH for that build. Empty = rely on the system PATH."
+        },
+        "avalang.build.compilerPathBarekernel": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "ava_cli build --compiler-path used when the 'barekernel' target is picked: the i686-elf toolchain root (i686-elf-gcc/g++/ld/objcopy/nm), searched recursively. Required for that target."
+        },
+        "avalang.build.keyFile": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Optional path to a 32-byte AES-256 key file (ava_cli build --key-file, desktop target only). Empty = a random key is generated per build."
         }
       }
     }

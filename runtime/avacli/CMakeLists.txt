@@ -26,6 +26,12 @@ target_include_directories(ava_cli PRIVATE
     ${CMAKE_SOURCE_DIR}/runtime/avalang/api/src
     ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
     ${CMAKE_SOURCE_DIR}/runtime/avalang
+    # Fase 9 (ver runtime/avapack/README.md): build_command.cpp incluye
+    # payload_format.h para armar el footer al apendear el payload de
+    # avapack_gen --payload-out al final de avapack_stub.exe -- SOLO ese
+    # header (formato de datos puro, sin depender de avalang ni de nada mas
+    # de avapack), no arrastra ningun otro symbol/target de avapack.
+    ${CMAKE_SOURCE_DIR}/runtime/avapack/src
 )
 
 # En Windows no hay RPATH: ava_cli.exe necesita avalang.dll en su misma

@@ -52,6 +52,12 @@ void DrawCommandPalette(CommandPaletteState& state, const std::vector<Command>& 
         return;
     }
 
+    // Captured before focus_query_field gets consumed/cleared below -- true
+    // only on the single frame the palette just opened (OpenCommandPalette
+    // arms it), used further down to decide whether the selected row should
+    // force-scroll into view this frame.
+    const bool just_opened = state.focus_query_field;
+
     if (state.focus_query_field) {
         ImGui::SetKeyboardFocusHere();
         state.focus_query_field = false;
@@ -70,6 +76,12 @@ void DrawCommandPalette(CommandPaletteState& state, const std::vector<Command>& 
         }
     }
 
+    // Snapshot before clamping/arrow-key handling below, so we can tell
+    // afterwards whether the selection actually moved this frame (as
+    // opposed to just staying on the same row while the mouse scrolls the
+    // list manually -- see selection_moved / SetScrollHereY below).
+    const int index_at_frame_start = state.selected_index;
+
     if (filtered.empty()) {
         state.selected_index = 0;
     } else if (state.selected_index >= static_cast<int>(filtered.size())) {
@@ -87,6 +99,17 @@ void DrawCommandPalette(CommandPaletteState& state, const std::vector<Command>& 
         }
     }
 
+    // Only force-scroll to the selected row on frames where the selection
+    // actually changed (arrow keys, the filtered list reshuffling under
+    // typing, or the palette just opening) -- NOT on every single frame the
+    // row happens to still be selected. Calling SetScrollHereY every frame
+    // regardless (the previous behavior) fights any manual scroll: as soon
+    // as the user scrolls the list with the mouse wheel or drags the
+    // scrollbar, the very next frame snaps back to the selected row (which
+    // sits near the top right after opening), making the list feel stuck
+    // and impossible to scroll down through.
+    const bool selection_moved = just_opened || (state.selected_index != index_at_frame_start);
+
     const bool run_selected =
         !filtered.empty() && (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter));
     const bool cancel = ImGui::IsKeyPressed(ImGuiKey_Escape);
@@ -102,7 +125,7 @@ void DrawCommandPalette(CommandPaletteState& state, const std::vector<Command>& 
             ImGui::PushID(row);
 
             const bool is_selected = row == state.selected_index;
-            if (is_selected) {
+            if (is_selected && selection_moved) {
                 ImGui::SetScrollHereY(0.35f);
             }
             if (ImGui::Selectable(cmd.label.c_str(), is_selected, ImGuiSelectableFlags_None)) {

@@ -73,6 +73,57 @@ inline FileMap BuildFileMap() {
     return map;
 }
 
+// --- Fase 9: variantes parametrizadas, para el stub precompilado ---
+//
+// stub_main.cpp (runtime/avapack/src/stub_main.cpp) no tiene un
+// embedded_project.cpp compilado adentro -- lee kEmbeddedFiles/kIntegrityMac/
+// kDebugBuild equivalentes desde el payload apendeado al final del propio
+// .exe en tiempo de ejecucion (ver payload_format.h). Las funciones de
+// arriba (Decrypt/VerifyIntegrity/BuildFileMap) siguen intactas, sin tocar
+// su firma, para no arriesgar romper src/main.cpp / src/main_zerodisk.cpp
+// (Fases 1-7, ya probadas) -- estas de aca abajo son un espejo que recibe
+// todo por parametro en vez de leerlo de los symbols extern del namespace.
+
+inline std::vector<unsigned char> DecryptWith(const EmbeddedFile& f, const unsigned char key[32],
+                                               bool debug_build) {
+    std::vector<unsigned char> plaintext(f.content_len);
+    if (f.content_len > 0) {
+        std::memcpy(plaintext.data(), f.cipher, f.content_len);
+        if (!debug_build) {
+            struct AES_ctx ctx;
+            AES_init_ctx_iv(&ctx, key, f.nonce);
+            AES_CTR_xcrypt_buffer(&ctx, plaintext.data(), plaintext.size());
+        }
+    }
+    return plaintext;
+}
+
+inline bool VerifyIntegrityWith(const EmbeddedFile* files, std::size_t file_count,
+                                 const unsigned char expected_mac[32],
+                                 const unsigned char key[32]) {
+    std::vector<unsigned char> mac_input;
+    for (std::size_t i = 0; i < file_count; ++i) {
+        const EmbeddedFile& f = files[i];
+        std::size_t path_len = std::strlen(f.path);
+        mac_input.insert(mac_input.end(), f.path, f.path + path_len);
+        mac_input.insert(mac_input.end(), f.cipher, f.cipher + f.content_len);
+        mac_input.insert(mac_input.end(), f.nonce, f.nonce + 16);
+    }
+    unsigned char computed_mac[32];
+    HmacSha256(key, 32, mac_input.empty() ? nullptr : mac_input.data(), mac_input.size(),
+               computed_mac);
+    std::fill(mac_input.begin(), mac_input.end(), 0);
+    return ConstantTimeEquals(computed_mac, expected_mac, 32);
+}
+
+inline FileMap BuildFileMapFrom(const EmbeddedFile* files, std::size_t file_count) {
+    FileMap map;
+    for (std::size_t i = 0; i < file_count; ++i) {
+        map[files[i].path] = &files[i];
+    }
+    return map;
+}
+
 } // namespace avapack
 
 #endif // AVAPACK_EMBEDDED_CRYPTO_H

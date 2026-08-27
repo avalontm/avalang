@@ -87,6 +87,33 @@ option(AVAPACK_ZERO_DISK
     "Fase 7: usa MemoryFileSystem (cero disco) en vez del esquema de temp dir + hooks de Fase 4"
     OFF)
 
+# --- Fase 9: avapack_stub -- binario generico, SIN proyecto embebido ---
+#
+# A diferencia de ${AVAPACK_OUT_NAME} (mas abajo), este target no depende de
+# AVAPACK_PROJECT_DIR/AVAPACK_ENTRY_FILE ni corre avapack_gen -- se compila
+# UNA sola vez, se distribuye prebuilt (junto a avalang.dll/avalang_ui.dll/
+# ava_cli.exe/avapack_gen.exe -- ver AVA_PACK_USE_PREBUILT_AVALANG mas abajo
+# y runtime/avacli/src/build_command.cpp), y `ava_cli build` le apendea el
+# payload (avapack_gen --payload-out) al final en runtime -- ver
+# src/stub_main.cpp y src/payload_format.h. Sin esto, empacar un proyecto
+# SIEMPRE requeria el repo completo + CMake al lado (ver README.md, Fase 9).
+add_executable(avapack_stub src/stub_main.cpp src/packaged_runtime.cpp
+    "${AVAPACK_TINY_AES_SRC}" "${AVAPACK_CHECKSUM_SRC}")
+target_link_libraries(avapack_stub PRIVATE avalang)
+target_include_directories(avapack_stub PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${AVAPACK_TINY_AES_DIR}
+    ${CMAKE_SOURCE_DIR}/runtime/avalang
+    ${CMAKE_SOURCE_DIR}/runtime/avalang/src
+    ${CMAKE_SOURCE_DIR}/runtime/avalang/api/src
+    ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
+)
+target_compile_definitions(avapack_stub PRIVATE ${AVAPACK_TINY_AES_DEFS})
+set_target_properties(avapack_stub PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runtime/avalang"
+)
+ava_apply_optimization_options(avapack_stub)
+
 # --- proyecto de prueba a empacar (override con -DAVAPACK_PROJECT_DIR=...) ---
 set(AVAPACK_PROJECT_DIR "${CMAKE_SOURCE_DIR}/samples/web/testproj" CACHE PATH
     "Carpeta del proyecto AvaLang a empacar (Fase 2 la fija dinamicamente via ava_cli build)")
@@ -244,5 +271,11 @@ if(AVA_PACK_USE_PREBUILT_AVALANG)
                 $<TARGET_FILE:avalang> $<TARGET_FILE:avalang_ui>
                 $<TARGET_FILE_DIR:${AVAPACK_OUT_NAME}>
         COMMENT "avapack: copiando avalang.dll/avalang_ui.dll (prebuilt) junto al ejecutable empacado"
+    )
+    add_custom_command(TARGET avapack_stub POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:avalang> $<TARGET_FILE:avalang_ui>
+                $<TARGET_FILE_DIR:avapack_stub>
+        COMMENT "avapack: copiando avalang.dll/avalang_ui.dll (prebuilt) junto a avapack_stub.exe"
     )
 endif()

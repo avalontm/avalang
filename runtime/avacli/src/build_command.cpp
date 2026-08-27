@@ -20,6 +20,7 @@
 #include "platform/interfaces/IProcessStream.h"
 
 #include "avalang.h"
+#include "payload_format.h" // Fase 9: footer/blob del payload apendeado a avapack_stub.exe
 
 #if defined(_WIN32)
     #define AVACLI_EXE_SUFFIX ".exe"
@@ -78,6 +79,7 @@ struct BuildOptions {
     std::string sign_timestamp_url;
     std::string target = "desktop";
     std::string toolchain_dir;            
+    std::string compiler_path;
     std::optional<std::uint32_t> stack_size; 
     std::optional<std::uint32_t> bss_size; 
 };
@@ -144,6 +146,20 @@ void PrintBuildUsage() {
         "                timestamp, the signature becomes invalid once the\n"
         "                certificate expires, even if the binary hasn't changed.\n"
         "\n"
+        "  --compiler-path <dir>\n"
+        "                Folder containing the real compiler/toolchain to use --\n"
+        "                same flag for BOTH targets, just point it at a path:\n"
+        "                  * --target desktop: prepended to PATH before invoking\n"
+        "                    cmake, so it can pick up a portable cmake.exe/ninja.exe\n"
+        "                    or a host gcc/g++/cl.exe placed there instead of\n"
+        "                    whatever is already on the system PATH.\n"
+        "                  * --target barekernel: used as the i686-elf toolchain\n"
+        "                    root (same thing --toolchain-dir does) if\n"
+        "                    --toolchain-dir isn't also given -- searched\n"
+        "                    recursively for i686-elf-gcc/g++/ld/objcopy/nm.\n"
+        "                --toolchain-dir still works on its own for barekernel if\n"
+        "                you'd rather keep them separate; --compiler-path is just\n"
+        "                the one-flag-for-both shortcut.\n"
         "  --target <desktop|barekernel>\n"
         "                Default 'desktop' (everything above). 'barekernel'\n"
         "                switches to Fase B2 of plan_avapack_barekernel.md: packages\n"
@@ -224,6 +240,9 @@ bool ParseBuildArgs(int argc, char** argv, BuildOptions& opts, std::string& erro
         } else if (arg == "--toolchain-dir") {
             const char* v = next_value("--toolchain-dir"); if (!v) return false;
             opts.toolchain_dir = v;
+        } else if (arg == "--compiler-path") {
+            const char* v = next_value("--compiler-path"); if (!v) return false;
+            opts.compiler_path = v;
         } else if (arg == "--stack-size") {
             const char* v = next_value("--stack-size"); if (!v) return false;
             char* end = nullptr;
@@ -253,9 +272,14 @@ bool ParseBuildArgs(int argc, char** argv, BuildOptions& opts, std::string& erro
         error = "--target must be 'desktop' or 'barekernel' (got '" + opts.target + "')";
         return false;
     }
-    if (opts.target == "barekernel" && opts.toolchain_dir.empty()) {
-        error = "--target barekernel requires --toolchain-dir <folder with i686-elf-gcc/g++/ld/objcopy/nm>";
+    if (opts.target == "barekernel" && opts.toolchain_dir.empty() && opts.compiler_path.empty()) {
+        error = "--target barekernel requires --toolchain-dir or --compiler-path "
+                "<folder with i686-elf-gcc/g++/ld/objcopy/nm>";
         return false;
+    }
+    if (opts.target == "barekernel" && opts.toolchain_dir.empty()) {
+
+        opts.toolchain_dir = opts.compiler_path;
     }
     if (!opts.sign_pfx.empty() && opts.sign_pfx.substr(0, 2) == "--") {
         error = "--sign-pfx seems to be missing its value (got '" + opts.sign_pfx + "')";
@@ -516,6 +540,175 @@ bool SignBinary(ava::platform::IProcess& process, const fs::path& exe_path,
 
     std::cout << "ava_cli build: signing " << exe_path.string() << " with signtool ...\n";
     return RunTool(process, "signtool", args, "signtool sign");
+}
+
+// --- Fase 9: camino rapido sin repo/CMake -- ver runtime/avapack/README.md ---
+//
+// Antes de esto, `ava_cli build --target desktop` SIEMPRE recompilaba
+// avapack (main.cpp + embedded_project.cpp generado) desde fuente via CMake
+// en build_pack/ -- eso significa que, aunque avalang.dll/avalang_ui.dll
+// estuvieran prebuilt junto a ava_cli.exe (AVA_PACK_USE_PREBUILT_AVALANG),
+// `ava_cli build` seguia necesitando el repo COMPLETO al lado (CMakeLists.txt
+// de runtime/avapack/, tiny-aes-c, checksum/, un toolchain C++) para poder
+// empacar CUALQUIER proyecto -- ver la conversacion que motivo esta fase.
+//
+// Este camino evita todo eso: si avapack_stub.exe (un binario generico, sin
+// ningun proyecto embebido -- ver src/stub_main.cpp) y avapack_gen.exe estan
+// prebuilt junto a ava_cli.exe (ver scripts/build_pack_tools.bat), alcanza
+// con correr avapack_gen.exe --payload-out para generar el blob cifrado y
+// apendearlo (mas un footer de tamaño fijo, ver payload_format.h) al final
+// de una copia de avapack_stub.exe. Sin cmake, sin compilar nada, sin
+// necesitar el repo para nada mas que --extra-modules-dir (libraries/, si
+// existe -- opcional, no bloquea el camino rapido si no esta).
+bool FindPrebuiltPackTools(const fs::path& dir, fs::path& out_stub_exe, fs::path& out_gen_exe) {
+    if (dir.empty()) return false;
+    fs::path stub = dir / ("avapack_stub" + std::string(AVACLI_EXE_SUFFIX));
+    fs::path gen = dir / ("avapack_gen" + std::string(AVACLI_EXE_SUFFIX));
+    std::error_code ec;
+    if (!fs::exists(stub, ec) || !fs::exists(gen, ec)) return false;
+    if (!fs::exists(dir / "avalang.dll", ec) || !fs::exists(dir / "avalang_ui.dll", ec)) {
+        // avapack_stub.exe necesita las mismas DLL que ava_cli para arrancar
+        // -- sin ellas el .exe empacado tampoco va a poder correr, asi que
+        // no vale la pena intentar este camino.
+        return false;
+    }
+    out_stub_exe = stub;
+    out_gen_exe = gen;
+    return true;
+}
+
+// Devuelve true si el build se completo por este camino (exito o error ya
+// reportado por stderr -- el llamador no debe reintentar con CMake en
+// ninguno de los dos casos). Devuelve false solo cuando este camino ni
+// siquiera aplica (target != desktop, --zero-disk, o no hay herramientas
+// prebuilt) -- ahi si el llamador debe caer al flujo con CMake de siempre.
+bool TryFastPackWithPrebuiltStub(ava::platform::IProcess& process, const BuildOptions& opts,
+                                  const fs::path& project_dir_abs, const fs::path& key_file_abs,
+                                  const fs::path& sign_pfx_abs, const fs::path& out_path_abs,
+                                  const fs::path& repo_root, bool& ok) {
+    if (opts.target != "desktop") return false;
+    if (opts.zero_disk) {
+        // main_zerodisk.cpp (Fase 7) no esta wireado al stub todavia -- ver
+        // README.md, seccion Fase 9, "Pendiente". Cae al flujo con CMake.
+        return false;
+    }
+
+    fs::path prebuilt_dir = GetSelfExecutableDir();
+    fs::path stub_exe, gen_exe;
+    if (!FindPrebuiltPackTools(prebuilt_dir, stub_exe, gen_exe)) return false;
+
+    std::cout << "ava_cli build: usando herramientas prebuilt (" << stub_exe.string() << " + "
+              << gen_exe.string() << ") -- sin CMake ni repo (Fase 9).\n";
+
+    std::error_code ec;
+    fs::path tmp_payload = fs::temp_directory_path(ec) /
+        fs::path("avapack_payload_" +
+                  std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                  ".bin");
+
+    std::vector<std::string> gen_args = {
+        "--project", project_dir_abs.string(),
+        "--entry", opts.entry_file,
+        "--payload-out", tmp_payload.string(),
+    };
+    if (!key_file_abs.empty()) {
+        gen_args.push_back("--key-file");
+        gen_args.push_back(key_file_abs.string());
+    }
+    if (opts.debug_unencrypted) gen_args.push_back("--debug");
+    if (opts.obfuscate) {
+        gen_args.push_back("--obfuscate");
+        if (opts.obfuscate_strings) gen_args.push_back("--obfuscate-strings");
+        if (opts.flatten_control_flow) gen_args.push_back("--flatten-control-flow");
+    }
+    fs::path libraries_dir = repo_root / "libraries";
+    if (fs::exists(libraries_dir, ec) && fs::is_directory(libraries_dir, ec)) {
+        gen_args.push_back("--extra-modules-dir");
+        gen_args.push_back(libraries_dir.string());
+    }
+
+    if (!RunTool(process, gen_exe.string(), gen_args, "avapack_gen (payload, Fase 9)")) {
+        fs::remove(tmp_payload, ec);
+        ok = false;
+        return true; // el camino aplicaba -- no reintentar con CMake, el error ya es del proyecto
+    }
+
+    std::ifstream stub_in(stub_exe, std::ios::binary);
+    std::ifstream payload_in(tmp_payload, std::ios::binary);
+    if (!stub_in || !payload_in) {
+        std::cerr << "error: no se pudo leer avapack_stub.exe o el payload generado\n";
+        fs::remove(tmp_payload, ec);
+        ok = false;
+        return true;
+    }
+
+    std::uint64_t stub_size = static_cast<std::uint64_t>(fs::file_size(stub_exe, ec));
+    std::uint64_t payload_size = static_cast<std::uint64_t>(fs::file_size(tmp_payload, ec));
+
+    {
+        std::ofstream out_file(out_path_abs, std::ios::binary | std::ios::trunc);
+        if (!out_file) {
+            std::cerr << "error: could not write " << out_path_abs.string() << "\n";
+            fs::remove(tmp_payload, ec);
+            ok = false;
+            return true;
+        }
+        out_file << stub_in.rdbuf();
+        out_file << payload_in.rdbuf();
+
+        avapack::PayloadFooter footer;
+        std::memcpy(footer.magic, avapack::kFooterMagic, 8);
+        footer.version = avapack::kFooterVersion;
+        footer.flags = 0;
+        footer.blob_offset = stub_size;
+        footer.blob_size = payload_size;
+        std::vector<unsigned char> footer_bytes = avapack::EncodeFooter(footer);
+        out_file.write(reinterpret_cast<const char*>(footer_bytes.data()),
+                        static_cast<std::streamsize>(footer_bytes.size()));
+        if (!out_file) {
+            std::cerr << "error: fallo al escribir " << out_path_abs.string() << "\n";
+            fs::remove(tmp_payload, ec);
+            ok = false;
+            return true;
+        }
+    }
+
+    fs::remove(tmp_payload, ec);
+
+    fs::path out_dir = out_path_abs.parent_path();
+    CopyRuntimeDllIfPresent(prebuilt_dir, out_dir, "avalang.dll");
+    CopyRuntimeDllIfPresent(prebuilt_dir, out_dir, "avalang_ui.dll");
+    if (fs::exists(libraries_dir, ec) && fs::is_directory(libraries_dir, ec)) {
+        CopyExternNativeLibraries(project_dir_abs, libraries_dir, out_dir);
+    }
+
+    if (opts.obfuscate) {
+        fs::path avmap_src = tmp_payload;
+        avmap_src.replace_extension(".avmap");
+        if (fs::exists(avmap_src, ec)) {
+            fs::path avmap_dst = out_path_abs;
+            avmap_dst.replace_extension(".avmap");
+            fs::copy_file(avmap_src, avmap_dst, fs::copy_options::overwrite_existing, ec);
+            if (!ec) {
+                std::cout << "[info] SymbolMap saved to " << avmap_dst.string()
+                          << " -- do NOT distribute it alongside the .exe.\n";
+            }
+            fs::remove(avmap_src, ec);
+        }
+    }
+
+    if (!sign_pfx_abs.empty()) {
+        if (!SignBinary(process, out_path_abs, sign_pfx_abs.string(), opts.sign_password_env,
+                         opts.sign_timestamp_url)) {
+            std::cerr << "warning: code signing failed -- " << out_path_abs.string()
+                      << " remains unsigned (the rest of the build succeeded).\n";
+        }
+    }
+
+    std::cout << "ava_cli build: done -> " << out_path_abs.string()
+              << " (Fase 9 -- sin repo/CMake)\n";
+    ok = true;
+    return true;
 }
 
 std::optional<fs::path> FindI686ElfTool(const fs::path& toolchain_dir, const std::string& basename) {
@@ -913,19 +1106,15 @@ int RunBuildCommand(int argc, char** argv) {
 #endif
     }
 
+    // Fase 9: repo_root se calcula igual que siempre, pero la validacion de
+    // "esto es un checkout de AvaLang" (CMakeLists.txt/runtime/avapack/) se
+    // movio mas abajo -- el camino rapido (avapack_stub.exe + avapack_gen.exe
+    // prebuilt junto a ava_cli.exe, ver TryFastPackWithPrebuiltStub) no
+    // necesita el repo para nada salvo --extra-modules-dir (opcional), asi
+    // que ya no tiene sentido exigirlo aca antes de siquiera intentarlo.
     fs::path repo_root = opts.repo_root.empty() ? fs::current_path() : fs::path(opts.repo_root);
     std::error_code ec;
     repo_root = fs::absolute(repo_root, ec);
-
-    if (!fs::exists(repo_root / "CMakeLists.txt") ||
-        !fs::exists(repo_root / "runtime" / "avapack" / "CMakeLists.txt")) {
-        std::cerr << "error: '" << repo_root.string()
-                  << "' does not look like the root of the AvaLang repo "
-                     "(missing CMakeLists.txt or runtime/avapack/).\n"
-                  << "       Run 'ava_cli build' from the repo root, or pass "
-                     "--repo-root <path>.\n";
-        return 1;
-    }
 
     fs::path project_dir_abs = fs::absolute(fs::path(opts.project_dir), ec);
     if (!fs::exists(project_dir_abs) || !fs::is_directory(project_dir_abs)) {
@@ -965,8 +1154,60 @@ int RunBuildCommand(int argc, char** argv) {
     auto platform = ava::platform::Platform::Create();
     ava::platform::IProcess& process = platform->Process();
 
+    if (!opts.compiler_path.empty()) {
+        fs::path compiler_path_abs = fs::absolute(fs::path(opts.compiler_path), ec);
+        if (!fs::exists(compiler_path_abs, ec)) {
+            std::cerr << "error: --compiler-path does not exist: " << opts.compiler_path << "\n";
+            return 1;
+        }
+#if defined(_WIN32)
+        const char path_sep = ';';
+#else
+        const char path_sep = ':';
+#endif
+        auto& environment = platform->Environment();
+        std::string current_path;
+        environment.GetEnvVar("PATH", current_path);
+        const std::string new_path = compiler_path_abs.string() +
+            (current_path.empty() ? std::string() : (path_sep + current_path));
+        environment.SetEnvVar("PATH", new_path);
+        std::cout << "[info] --compiler-path: prepended '" << compiler_path_abs.string()
+                  << "' to PATH for this build (cmake and any compiler/tool found there "
+                     "take priority over the rest of PATH).\n";
+    }
+
     if (opts.target == "barekernel") {
         return RunBuildBarekernelCommand(process, opts, repo_root, project_dir_abs, out_path_abs);
+    }
+
+    // Fase 9: camino rapido sin repo/CMake. Si avapack_stub.exe/avapack_gen.exe
+    // estan prebuilt junto a ava_cli.exe (ver scripts/build_pack_tools.bat),
+    // esto empaqueta el proyecto SIN necesitar el repo de AvaLang al lado
+    // (ver TryFastPackWithPrebuiltStub arriba y runtime/avapack/README.md,
+    // seccion Fase 9). Si el camino no aplica (--zero-disk, o no hay
+    // herramientas prebuilt), cae al flujo de siempre con CMake mas abajo.
+    {
+        bool fast_ok = false;
+        if (TryFastPackWithPrebuiltStub(process, opts, project_dir_abs, key_file_abs,
+                                         sign_pfx_abs, out_path_abs, repo_root, fast_ok)) {
+            return fast_ok ? 0 : 1;
+        }
+    }
+
+    // A partir de aca SI hace falta un checkout completo de AvaLang (el
+    // camino rapido de arriba no aplico) -- ahora es donde vale la pena
+    // validar "esto es un repo de AvaLang", en vez de dejar que CMake
+    // falle mas abajo con un error generico.
+    fs::path avapack_cmake_lists = repo_root / "runtime" / "avapack" / "CMakeLists.txt";
+    if (!fs::exists(avapack_cmake_lists, ec)) {
+        std::cerr << "error: no se encontraron avapack_stub.exe/avapack_gen.exe prebuilt junto a "
+                  << "ava_cli.exe (generalos con scripts/build_pack_tools.bat) y tampoco hay un "
+                  << "checkout completo de AvaLang en " << repo_root.string() << " (falta "
+                  << avapack_cmake_lists.string() << ").\n"
+                  << "       Usa --repo-root para apuntar a un checkout de AvaLang, o coloca "
+                  << "avapack_stub.exe/avapack_gen.exe junto a ava_cli.exe para empacar sin "
+                  << "necesitar el repo.\n";
+        return 1;
     }
 
     fs::path build_dir = repo_root / "build_pack";

@@ -159,12 +159,12 @@ void OpenUrl(const char* url) {
     ShellExecuteA(nullptr, "open", url, nullptr, nullptr, SW_SHOWNORMAL);
 }
 
-bool OpenFileDialog(GLFWwindow* window, std::string& out_path, const std::string& initial_dir) {
+bool OpenFileDialog(GLFWwindow* window, std::string& out_path, const std::string& initial_dir, const char* filter) {
     char buf[MAX_PATH] = "";
     OPENFILENAMEA ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = window ? glfwGetWin32Window(window) : nullptr;
-    ofn.lpstrFilter = "AvaLang Scripts (*.ava)\0*.ava\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFilter = filter ? filter : "AvaLang Scripts (*.ava)\0*.ava\0All Files (*.*)\0*.*\0";
     ofn.lpstrFile = buf;
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrInitialDir = initial_dir.empty() ? nullptr : initial_dir.c_str();
@@ -273,7 +273,7 @@ void Install(GLFWwindow*) {}
 void UpdateHitRegions(int, Rect, Rect, Rect, const Rect*, int) {}
 bool IsWindowMaximizedNow(GLFWwindow*) { return false; }
 void OpenUrl(const char*) {}
-bool OpenFileDialog(GLFWwindow*, std::string&, const std::string&) { return false; }
+bool OpenFileDialog(GLFWwindow*, std::string&, const std::string&, const char*) { return false; }
 bool SaveFileDialog(GLFWwindow*, std::string&, const std::string&) { return false; }
 bool OpenFolderDialog(GLFWwindow*, std::string&, const std::string&) { return false; }
 void RevealInFileExplorer(const std::string&) {}
