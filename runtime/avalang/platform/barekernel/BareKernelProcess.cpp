@@ -42,7 +42,9 @@ bool BareKernelProcess::Execute(const avastd::string& command,
 bool BareKernelProcess::ExecuteStreaming(const avastd::string& command,
                                           const avastd::vector<avastd::string>& args,
                                           const avastd::function<void(const avastd::string&)>& on_output,
-                                          int& out_exit_code) {
+                                          int& out_exit_code,
+                                          const avastd::function<void(avastd::shared_ptr<IStdinWriter>)>& on_started) {
+    (void)on_started;  // no stdin pipe on this backend -- see the header comment
     ProcessResult r;
     bool ok = Execute(command, args, r);
     if (ok && !r.stdout_output.empty()) on_output(r.stdout_output);

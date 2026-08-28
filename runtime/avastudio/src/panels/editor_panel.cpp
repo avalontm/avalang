@@ -4,6 +4,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 
 #include "branding/logo_texture.h"
@@ -64,15 +65,37 @@ void RebuildAutocompleteTrie(EditorTab& tab) {
 }
 
 void RebuildIndexAndTrie(EditorTab& tab) {
-    tab.function_index.Rebuild(tab.GetText(), DirOf(tab.file_path));
+    ImportFileCache import_cache;
+    const std::string dir = DirOf(tab.file_path);
+    tab.function_index.Rebuild(tab.GetText(), dir, &import_cache);
+    tab.class_index.Rebuild(tab.GetText(), dir, &import_cache);
 
-    tab.class_index.Rebuild(tab.GetText(), DirOf(tab.file_path));
-    tab.variable_type_index.Rebuild(tab.GetText(), tab.class_index);
+    tab.variable_type_index.Rebuild(tab.GetText(), tab.class_index, tab.function_index);
+    tab.fold_index.Rebuild(tab.GetText());
+    for (auto it = tab.folded_lines.begin(); it != tab.folded_lines.end();) {
+        it = tab.fold_index.RangeStartingAt(*it) ? std::next(it) : tab.folded_lines.erase(it);
+    }
     RebuildAutocompleteTrie(tab);
+    tab.index_dirty = false;
+}
+
+constexpr double kIndexRebuildDebounceSeconds = 0.2;
+
+void MaybeRebuildIndex(EditorTab& tab) {
+    if (!tab.index_dirty) return;
+    if (ImGui::GetTime() - tab.last_edit_time < kIndexRebuildDebounceSeconds) return;
+    RebuildIndexAndTrie(tab);
 }
 
 std::string TextBeforeCursor(EditorTab& tab, const TextEditor::CursorPosition& pos) {
     return tab.editor.GetSectionText(pos.line, 0, pos.line, pos.column);
+}
+
+constexpr int kParamHintMaxLookbackLines = 30;
+
+std::string ParamHintTextBeforeCursor(EditorTab& tab, const TextEditor::CursorPosition& pos) {
+    const int start_line = std::max(0, pos.line - kParamHintMaxLookbackLines);
+    return tab.editor.GetSectionText(start_line, 0, pos.line, pos.column);
 }
 
 bool ResolveVisibleMembers(EditorTab& tab, int cursor_line, const std::string& before,
@@ -98,6 +121,13 @@ std::string MemberSuggestionLabel(const ClassMember& member) {
     return member.is_method && member.signature ? member.signature->display : member.name;
 }
 
+std::string ToLowerAscii(const std::string& text) {
+    std::string result = text;
+    std::transform(result.begin(), result.end(), result.begin(),
+                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return result;
+}
+
 bool PopulateMemberSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& ac_state) {
     TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
     std::string before = TextBeforeCursor(tab, pos);
@@ -106,15 +136,19 @@ bool PopulateMemberSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& ac
     std::vector<ClassMember> members;
     if (!ResolveVisibleMembers(tab, pos.line, before, ctx, members)) return false;
 
-    ac_state.suggestions.clear();
-    for (const auto& member : members) {
+    const std::string search_term_lower = ToLowerAscii(ac_state.searchTerm);
 
-        if (!ac_state.searchTerm.empty() &&
-            member.name.compare(0, ac_state.searchTerm.size(), ac_state.searchTerm) != 0) {
-            continue;
+    std::vector<std::string> suggestions;
+    for (const auto& member : members) {
+        if (!search_term_lower.empty()) {
+            const std::string name_lower = ToLowerAscii(member.name);
+            if (name_lower.compare(0, search_term_lower.size(), search_term_lower) != 0) continue;
         }
-        ac_state.suggestions.push_back(MemberSuggestionLabel(member));
+        suggestions.push_back(MemberSuggestionLabel(member));
     }
+
+    if (suggestions.empty()) return false;
+    ac_state.suggestions = std::move(suggestions);
     return true;
 }
 
@@ -198,7 +232,7 @@ void DrawHintCodeBox(const std::string& text, ImU32 border_color) {
 
 bool DrawParameterHint(EditorTab& tab) {
     TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
-    std::string before = TextBeforeCursor(tab, pos);
+    std::string before = ParamHintTextBeforeCursor(tab, pos);
 
     CallContext ctx;
     if (!FindEnclosingCall(before, ctx)) return false;
@@ -435,7 +469,8 @@ void InitTab(EditorTab& tab) {
     tab.editor.SetChangeCallback([&tab] {
         tab.dirty = true;
         tab.editor.ClearMarkers();
-        RebuildIndexAndTrie(tab);
+        tab.index_dirty = true;
+        tab.last_edit_time = ImGui::GetTime();
     }, 0);
 
     tab.autocomplete_config.callback = [&tab](TextEditor::AutoCompleteState& ac_state) {
@@ -573,6 +608,8 @@ EditorTab& OpenWelcomeTab(EditorState& state) {
 void SaveTab(EditorTab& tab) {
     if (tab.file_path.empty()) return;
 
+    if (tab.index_dirty) RebuildIndexAndTrie(tab);
+
     if (tab.is_avaui) {
         if (tab.view_mode == TabViewMode::Code) {
 
@@ -648,6 +685,24 @@ void ToggleTabViewMode(EditorTab& tab) {
         }
         tab.avaui_load_error = parse_error;
     }
+}
+
+void ToggleFold(EditorTab& tab, int start_line) {
+    if (!tab.fold_index.RangeStartingAt(start_line)) return;
+    if (!tab.folded_lines.insert(start_line).second) tab.folded_lines.erase(start_line);
+}
+
+bool IsLineFolded(const EditorTab& tab, int start_line) {
+    return tab.folded_lines.count(start_line) != 0;
+}
+
+void FoldAll(EditorTab& tab) {
+    tab.folded_lines.clear();
+    for (const auto& range : tab.fold_index.Ranges()) tab.folded_lines.insert(range.start_line);
+}
+
+void UnfoldAll(EditorTab& tab) {
+    tab.folded_lines.clear();
 }
 
 namespace {
@@ -895,6 +950,8 @@ void DrawEditorPanel(EditorState& state) {
                 tab_open = false;
             }
             if (selected) {
+                MaybeRebuildIndex(tab);
+
                 if (tab.is_welcome) {
                     DrawWelcomeTab(state);
                 } else if (tab.is_avaui && tab.view_mode == TabViewMode::Design) {

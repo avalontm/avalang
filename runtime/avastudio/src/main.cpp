@@ -428,7 +428,7 @@ int main() {
 
         plugin_host.PumpMainThreadWork();
 
-        studio::PollScriptRun(terminal_state, engine);
+        studio::PollScriptRun(terminal_state, engine, editor_state);
         studio::PollBuild(build_panel_state, log_bridge);
 
         ImGui_ImplOpenGL3_NewFrame();
@@ -829,7 +829,22 @@ int main() {
             // check_requested just above: resolve_project_entry's project_dir default (the
             // folder currently open in the editor) is exactly what TriggerBuild falls back to
             // via ResolveBuildProjectDir when Build's own Project Folder override is empty.
-            studio::TriggerBuild(build_panel_state, settings, explorer_state.root_dir, log_bridge);
+            const studio::TriggerBuildOutcome build_outcome =
+                studio::TriggerBuild(build_panel_state, settings, explorer_state.root_dir, log_bridge);
+
+            // The configured/detected entry .ava doesn't exist on disk (typically a stale
+            // build_entry_file left over from a different project folder, see the "es cierto
+            // el archivo no estaba" thread above). Rather than making the person go dig it out
+            // by hand in the Build panel, offer the same picker Browse uses right here, then
+            // retry the build immediately with whatever they picked.
+            if (build_outcome.entry_file_missing) {
+                std::string path;
+                if (studio::titlebar::OpenFileDialog(window, path, build_outcome.project_dir)) {
+                    settings.build_entry_file = studio::NormalizeEntryFilePath(build_outcome.project_dir, path);
+                    studio::SaveSettings(settings);
+                    studio::TriggerBuild(build_panel_state, settings, explorer_state.root_dir, log_bridge);
+                }
+            }
         }
 
         if (editor_state.find_in_project_requested || want_find_in_project) {

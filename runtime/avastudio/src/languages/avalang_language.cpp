@@ -51,10 +51,13 @@ const TextEditor::Language* AvaLang() {
             "while", "for", "in",
             "func", "class", "base",
             "return", "break", "continue", "pass",
-            "import", "as", "local",
+            "import", "as", "local", "extern",
             "raise", "try", "catch", "finally",
             "yield",
             "or", "and", "not",
+            "static", "private",
+            "async", "await",
+            "select", "case", "to", "is",
         };
 
         lang.declarations = {"true", "false", "nil"};

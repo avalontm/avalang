@@ -29,8 +29,14 @@ enum class OpCode : avastd::uint8_t {
     IDIV,        // A, B, C  R[A] = floor(R[B] / R[C]) (integer division)
     MOD,         // A, B, C  R[A] = R[B] % R[C]
     POW,         // A, B, C  R[A] = R[B] ** R[C]
+    BAND,        // A, B, C  R[A] = R[B] & R[C]  (bitwise AND, int-truncated)
+    BOR,         // A, B, C  R[A] = R[B] | R[C]  (bitwise OR, int-truncated)
+    BXOR,        // A, B, C  R[A] = R[B] ^ R[C]  (bitwise XOR, int-truncated)
+    SHL,         // A, B, C  R[A] = R[B] << R[C] (bitwise shift left, int-truncated)
+    SHR,         // A, B, C  R[A] = R[B] >> R[C] (bitwise shift right, int-truncated)
     NEG,         // A, B     R[A] = -R[B]
     NOT,         // A, B     R[A] = !truthy(R[B])
+    BNOT,        // A, B     R[A] = ~R[B]        (bitwise complement, int-truncated)
     INC,         // A, B     R[A] = R[B] + 1
     DEC,         // A, B     R[A] = R[B] - 1
     EQ,          // A, B, C  R[A] = R[B] == R[C]

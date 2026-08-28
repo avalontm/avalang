@@ -70,7 +70,10 @@ void EngineBridge::SetModulesPath(const std::string& path) {
 RunResult EngineBridge::RunScript(const std::string& source, const std::string& source_name) {
     RunResult result;
 
-    console_.push_back({ConsoleLine::Kind::Info, "Run " + (source_name.empty() ? std::string("<script>") : source_name)});
+    ++run_count_;
+    console_.push_back({ConsoleLine::Kind::Info,
+        "Run #" + std::to_string(run_count_) + " " +
+        (source_name.empty() ? std::string("<script>") : source_name)});
 
     ava_vm_set_current_dir(vm_, DirOf(source_name).c_str());
 

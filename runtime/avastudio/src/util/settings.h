@@ -38,6 +38,16 @@ struct StudioSettings {
     bool build_flatten_control_flow = false;
     bool build_zero_disk = false;
     bool build_debug_unencrypted = false;
+
+    // --target barekernel only (see BAREKERNEL_PLATFORM_LAYER.md): force a
+    // rebuild of the cached generic pieces (avalang/libavalang.so and the
+    // avapack_barekernel_runtime .a) instead of reusing what's already
+    // sitting next to --out / in build_pack_barekernel/. Persisted like the
+    // other checkboxes above, so remember to turn these back off after the
+    // build that needed them -- left on, every subsequent build force-
+    // rebuilds those pieces again and loses the caching speedup.
+    bool build_force_so = false;
+    bool build_force_runtime = false;
 };
 
 StudioSettings LoadSettings();

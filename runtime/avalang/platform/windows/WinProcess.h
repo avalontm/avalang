@@ -18,10 +18,13 @@ public:
 
     // See IProcessStream.h. Live-output twin of Execute() above -- same
     // child process setup, but reads/forwards stdout+stderr as they
-    // arrive instead of only after the process exits.
+    // arrive instead of only after the process exits. Also wires up a
+    // stdin pipe (unlike Execute()/the plain child-inherits-our-console
+    // setup) so `on_started` can hand the caller a way to write to it.
     bool ExecuteStreaming(const std::string& command, const std::vector<std::string>& args,
                           const std::function<void(const std::string&)>& on_output,
-                          int& out_exit_code) override;
+                          int& out_exit_code,
+                          const std::function<void(avastd::shared_ptr<IStdinWriter>)>& on_started) override;
 };
 
 } // namespace windows

@@ -1,8 +1,10 @@
 #include "compiler.h"
 #include "../vm/vm_extern.h"
 #include "../common/ava_error.h"
+#include "../builtins/builtin_names.h"
 #include <stdexcept>
 #include <cstdio>
+#include <unordered_set>
 
 namespace ava {
 
@@ -24,6 +26,7 @@ void Compiler::Reset() {
     pending_finally_stack_.clear();
     parent_locals_.clear();
     parent_ = nullptr;
+    loop_depth_ = 0;
 }
 
 uint16_t Compiler::AllocReg() {
@@ -96,6 +99,12 @@ OpCode Compiler::BinOpToOpcode(BinOp op) {
         case BinOp::Le:  return OpCode::LE;
         case BinOp::Gt:  return OpCode::GT;
         case BinOp::Ge:  return OpCode::GE;
+        // Fase 2 del plan break/continue/operadores.
+        case BinOp::BAnd: return OpCode::BAND;
+        case BinOp::BOr:  return OpCode::BOR;
+        case BinOp::BXor: return OpCode::BXOR;
+        case BinOp::Shl:  return OpCode::SHL;
+        case BinOp::Shr:  return OpCode::SHR;
         default: break;
     }
     throw std::runtime_error("BinOpToOpcode: and/or not handled here");
@@ -219,6 +228,158 @@ static void CollectFuncSignatures(
         }
         out[f->name] = std::move(sig);
         out_returns[f->name] = ResolveTypeNameAgainst(f->return_type, compiled_classes);
+    }
+}
+
+// Fase 3 de PLAN_VALIDACION_ESTATICA.md. Ver class_dynamic_attrs_'s
+// comentario en compiler.h para el porqué: AvaLang permite atributos
+// dinámicos (`this.attr = valor` crea/sobrescribe un atributo de
+// instancia sin necesidad de una declaración `var attr = ...` previa en
+// el cuerpo de la clase -- ver AssignStmt's AttrExpr-target branch en
+// CompileStmt, que emite SETATTR para cualquier nombre). Un chequeo de
+// "obj.metodo() existe" que solo mirara class_method_params_/
+// class_field_types_ marcaría como error un patrón perfectamente válido
+// como guardar un callback en un atributo dentro del constructor y
+// invocarlo después. Este grupo de funciones recorre el AST de un
+// método (statements + expresiones, incluidas lambdas anidadas, que
+// heredan `this` como upvalue) buscando cualquier asignación cuyo target
+// sea `this.<attr>`, sin importar cuán anidada esté dentro de if/while/
+// for/try. No es un análisis de flujo (no le importa si esa asignación
+// realmente se ejecuta antes de la llamada) -- mismo espíritu "si no
+// puedo estar seguro de que NO existe, no lo marco como error" que el
+// resto de este archivo ya sigue.
+static void CollectDynamicThisAttrs(const std::vector<std::shared_ptr<StmtNode>>& stmts,
+                                     std::unordered_set<std::string>& out);
+
+static void RecordIfThisAttrTarget(const std::shared_ptr<ExprNode>& target,
+                                    std::unordered_set<std::string>& out) {
+    auto* a = dynamic_cast<AttrExpr*>(target.get());
+    if (!a) return;
+    auto* obj_name = dynamic_cast<NameExpr*>(a->obj.get());
+    if (obj_name && obj_name->name == "this") out.insert(a->attr);
+}
+
+static void WalkExprForLambdas(const std::shared_ptr<ExprNode>& expr,
+                                std::unordered_set<std::string>& out) {
+    if (!expr) return;
+    // Cualquier lambda encontrada en cualquier posición de una expresión
+    // (valor asignado, argumento de llamada, elemento de lista, etc.)
+    // hereda `this` de su método contenedor -- su cuerpo se recorre igual
+    // que el de un método real.
+    if (auto* l = dynamic_cast<LambdaExpr*>(expr.get())) {
+        CollectDynamicThisAttrs(l->body, out);
+        for (auto& [pname, pdefault] : l->defaults) WalkExprForLambdas(pdefault, out);
+        return;
+    }
+    if (auto* b = dynamic_cast<BinOpExpr*>(expr.get())) {
+        WalkExprForLambdas(b->left, out);
+        WalkExprForLambdas(b->right, out);
+        return;
+    }
+    if (auto* u = dynamic_cast<UnOpExpr*>(expr.get())) {
+        WalkExprForLambdas(u->operand, out);
+        return;
+    }
+    if (auto* t = dynamic_cast<TernaryExpr*>(expr.get())) {
+        WalkExprForLambdas(t->condition, out);
+        WalkExprForLambdas(t->then_expr, out);
+        WalkExprForLambdas(t->else_expr, out);
+        return;
+    }
+    if (auto* c = dynamic_cast<CallExpr*>(expr.get())) {
+        WalkExprForLambdas(c->callee, out);
+        for (auto& arg : c->args) WalkExprForLambdas(arg, out);
+        return;
+    }
+    if (auto* ba = dynamic_cast<BaseExpr*>(expr.get())) {
+        for (auto& arg : ba->args) WalkExprForLambdas(arg, out);
+        return;
+    }
+    if (auto* ix = dynamic_cast<IndexExpr*>(expr.get())) {
+        WalkExprForLambdas(ix->obj, out);
+        WalkExprForLambdas(ix->index, out);
+        return;
+    }
+    if (auto* sl = dynamic_cast<SliceExpr*>(expr.get())) {
+        WalkExprForLambdas(sl->obj, out);
+        WalkExprForLambdas(sl->start, out);
+        WalkExprForLambdas(sl->end, out);
+        WalkExprForLambdas(sl->step, out);
+        return;
+    }
+    if (auto* at = dynamic_cast<AttrExpr*>(expr.get())) {
+        WalkExprForLambdas(at->obj, out);
+        return;
+    }
+    if (auto* li = dynamic_cast<ListExpr*>(expr.get())) {
+        for (auto& item : li->items) WalkExprForLambdas(item, out);
+        return;
+    }
+    if (auto* di = dynamic_cast<DictExpr*>(expr.get())) {
+        for (auto& [k, v] : di->entries) WalkExprForLambdas(v, out);
+        return;
+    }
+    if (auto* y = dynamic_cast<YieldExpr*>(expr.get())) {
+        for (auto& v : y->values) WalkExprForLambdas(v, out);
+        return;
+    }
+    if (auto* aw = dynamic_cast<AwaitExpr*>(expr.get())) {
+        WalkExprForLambdas(aw->value, out);
+        return;
+    }
+    // Literales (Number/String/FString/Bool/Nil/Name): sin hijos que
+    // recorrer.
+}
+
+static void CollectDynamicThisAttrs(const std::vector<std::shared_ptr<StmtNode>>& stmts,
+                                     std::unordered_set<std::string>& out) {
+    for (auto& stmt : stmts) {
+        if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
+            RecordIfThisAttrTarget(a->target, out);
+            WalkExprForLambdas(a->value, out);
+        } else if (auto* aug = dynamic_cast<AugAssignStmt*>(stmt.get())) {
+            RecordIfThisAttrTarget(aug->target, out);
+            WalkExprForLambdas(aug->value, out);
+        } else if (auto* ma = dynamic_cast<MultiAssignStmt*>(stmt.get())) {
+            for (auto& tgt : ma->targets) RecordIfThisAttrTarget(tgt, out);
+            for (auto& v : ma->values) WalkExprForLambdas(v, out);
+        } else if (auto* es = dynamic_cast<ExprStmt*>(stmt.get())) {
+            WalkExprForLambdas(es->expr, out);
+        } else if (auto* rs = dynamic_cast<ReturnStmt*>(stmt.get())) {
+            WalkExprForLambdas(rs->value, out);
+        } else if (auto* rz = dynamic_cast<RaiseStmt*>(stmt.get())) {
+            WalkExprForLambdas(rz->value, out);
+        } else if (auto* id = dynamic_cast<IncDecStmt*>(stmt.get())) {
+            WalkExprForLambdas(id->target, out);
+        } else if (auto* iff = dynamic_cast<IfStmt*>(stmt.get())) {
+            WalkExprForLambdas(iff->condition, out);
+            CollectDynamicThisAttrs(iff->then_body, out);
+            for (auto& [cond, body] : iff->elif_clauses) {
+                WalkExprForLambdas(cond, out);
+                CollectDynamicThisAttrs(body, out);
+            }
+            CollectDynamicThisAttrs(iff->else_body, out);
+        } else if (auto* w = dynamic_cast<WhileStmt*>(stmt.get())) {
+            WalkExprForLambdas(w->condition, out);
+            CollectDynamicThisAttrs(w->body, out);
+        } else if (auto* f = dynamic_cast<ForStmt*>(stmt.get())) {
+            WalkExprForLambdas(f->iterable, out);
+            CollectDynamicThisAttrs(f->body, out);
+        } else if (auto* fr = dynamic_cast<ForRangeStmt*>(stmt.get())) {
+            WalkExprForLambdas(fr->start, out);
+            WalkExprForLambdas(fr->stop, out);
+            WalkExprForLambdas(fr->step, out);
+            CollectDynamicThisAttrs(fr->body, out);
+        } else if (auto* ts = dynamic_cast<TryStmt*>(stmt.get())) {
+            CollectDynamicThisAttrs(ts->try_body, out);
+            for (auto& eb : ts->except_bodies) CollectDynamicThisAttrs(eb, out);
+            for (auto& ee : ts->except_exprs) WalkExprForLambdas(ee, out);
+            CollectDynamicThisAttrs(ts->finally_body, out);
+        }
+        // FuncDef/ClassDef anidados no existen dentro de un cuerpo de
+        // método en AvaLang (solo a nivel de clase/chunk), así que no hay
+        // rama para ellos acá -- ver CollectFuncSignatures' propio
+        // alcance (solo statements de nivel superior) por la misma razón.
     }
 }
 
@@ -359,6 +520,11 @@ static const char* BinOpSymbol(BinOp op) {
         case BinOp::Ge:  return ">=";
         case BinOp::And: return "and";
         case BinOp::Or:  return "or";
+        case BinOp::BAnd: return "&";
+        case BinOp::BOr:  return "|";
+        case BinOp::BXor: return "^";
+        case BinOp::Shl:  return "<<";
+        case BinOp::Shr:  return ">>";
     }
     return "?";
 }
@@ -369,6 +535,7 @@ static const char* UnOpSymbol(UnOp op) {
         case UnOp::Not: return "not";
         case UnOp::Inc: return "++";
         case UnOp::Dec: return "--";
+        case UnOp::BNot: return "~";
     }
     return "?";
 }
@@ -468,6 +635,25 @@ static void ValidateBinOpTypes(BinOp op, Type lt, Type rt, int line, int col,
         case BinOp::Or:
             // Deliberately not validated -- see point 2 in the comment above.
             return;
+        // Fase 2 del plan break/continue/operadores: a diferencia de la
+        // aritmetica de arriba, los bitwise NO pasan por CoerceToNumber en
+        // runtime (ver vm_arith.cpp RequireIntOperand) -- exigen Number
+        // explicito, asi que aca SI se puede flaggear un operando String
+        // (no es ambiguo por valor: ningun String, sea cual sea su
+        // contenido, es valido en runtime para estos operadores).
+        case BinOp::BAnd:
+        case BinOp::BOr:
+        case BinOp::BXor:
+        case BinOp::Shl:
+        case BinOp::Shr:
+            if ((lt != Type::Int && lt != Type::Float) ||
+                (rt != Type::Int && rt != Type::Float)) {
+                std::string msg = std::string("operator type mismatch: '") + BinOpSymbol(op) +
+                                   "' requires number operands, received " +
+                                   TypeName(lt) + " and " + TypeName(rt);
+                throw AvaError(msg, line, col, source_name);
+            }
+            return;
     }
 }
 
@@ -495,6 +681,17 @@ static void ValidateUnOpTypes(UnOp op, Type operand_type, int line, int col,
             }
             return;
         case UnOp::Not:
+            return;
+        // Fase 2: `~` exige Number explicito en runtime (ver
+        // vm_arith.cpp RequireIntOperand), mismo criterio que los
+        // bitwise binarios arriba -- String tambien se flaggea aca.
+        case UnOp::BNot:
+            if (operand_type != Type::Int && operand_type != Type::Float) {
+                std::string msg = std::string("operator type mismatch: '") + UnOpSymbol(op) +
+                                   "' requires a number operand, received " +
+                                   TypeName(operand_type);
+                throw AvaError(msg, line, col, source_name);
+            }
             return;
     }
 }
@@ -705,9 +902,47 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
             Emit(OpCode::DEC, result, reg);
             return result;
         }
+        if (u->op == UnOp::BNot) {
+            auto result = AllocReg();
+            Emit(OpCode::BNOT, result, reg);
+            return result;
+        }
         auto result = AllocReg();
         Emit(OpCode::NOT, result, reg);
         return result;
+    }
+
+    // Fase 3 del plan break/continue/operadores: `cond ? then : else`.
+    // Mismo patron TEST+JMP que CompileIf, sin opcode nuevo -- azucar
+    // sintactico compilado a un valor unico via MOVE a un registro comun
+    // desde cada rama (a diferencia de CompileIf, que compila statements,
+    // esto compila expresiones y necesita devolver un registro).
+    if (auto* t = dynamic_cast<TernaryExpr*>(expr.get())) {
+        uint16_t regs_before = next_reg_;
+        auto cond_reg = CompileExpr(t->condition);
+        Emit(OpCode::TEST, cond_reg, 1);
+        size_t jmp_to_else = proto_->instructions.size();
+        Emit(OpCode::JMP, 0);
+        FreeRegs(next_reg_ - regs_before);
+
+        auto result_reg = AllocReg();
+
+        auto then_reg = CompileExpr(t->then_expr);
+        Emit(OpCode::MOVE, result_reg, then_reg);
+        FreeRegs(next_reg_ - (result_reg + 1));
+
+        size_t jmp_end = proto_->instructions.size();
+        Emit(OpCode::JMP, 0);
+
+        PatchJump(jmp_to_else);
+
+        auto else_reg = CompileExpr(t->else_expr);
+        Emit(OpCode::MOVE, result_reg, else_reg);
+        FreeRegs(next_reg_ - (result_reg + 1));
+
+        PatchJump(jmp_end);
+
+        return result_reg;
     }
 
     if (auto* c = dynamic_cast<CallExpr*>(expr.get())) {
@@ -880,8 +1115,25 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
         // reasoning as CompileFunc's copy.
         sub.compiled_classes_ = compiled_classes_;
         sub.class_field_types_ = class_field_types_;
+        sub.class_dynamic_attrs_ = class_dynamic_attrs_;
         sub.class_method_returns_ = class_method_returns_;
         sub.class_method_params_ = class_method_params_;
+        // Fase 2 de PLAN_VALIDACION_ESTATICA.md: mismo motivo que las 4
+        // copias de arriba, pero para funciones/extern en vez de clases.
+        // Sin esto, CheckCallArgs (Fase 2's nuevo chequeo de "función no
+        // definida") tiraría un falso positivo apenas esta lambda llame a
+        // CUALQUIER función libre del scope que la contiene -- known_funcs_
+        // de un `Compiler sub` nuevo arranca vacío, así que sin copiarlo
+        // acá una llamada perfectamente válida a una función hermana se
+        // vería igual que un typo real. Copia plana, nunca se escribe de
+        // vuelta al padre, misma lógica que compiled_classes_ arriba.
+        sub.known_funcs_ = known_funcs_;
+        sub.known_func_returns_ = known_func_returns_;
+        sub.extern_func_params_ = extern_func_params_;
+        sub.extern_func_returns_ = extern_func_returns_;
+        // Fase 4 de PLAN_VALIDACION_ESTATICA.md: mismo motivo que
+        // known_funcs_ arriba -- ver has_wildcard_import_ en compiler.h.
+        sub.has_wildcard_import_ = has_wildcard_import_;
 
         sub.next_reg_ = 1;
         sub.max_reg_ = sub.next_reg_;
@@ -1066,6 +1318,10 @@ Type Compiler::InferExprType(const std::shared_ptr<ExprNode>& expr) {
             case UnOp::Inc:
             case UnOp::Dec:
                 return InferExprType(u->operand);
+            case UnOp::BNot:
+                // Fase 2 del plan break/continue/operadores: siempre entero
+                // (RequireIntOperand exige Int/Float truncado o lanza).
+                return Type::Int;
         }
         return Type::Unknown;
     }
@@ -1079,6 +1335,11 @@ Type Compiler::InferExprType(const std::shared_ptr<ExprNode>& expr) {
                 // each other for this operator is Phase 11's job; AvaLang's
                 // own semantics say these always yield a bool.
                 return Type::Bool;
+            case BinOp::BAnd: case BinOp::BOr: case BinOp::BXor:
+            case BinOp::Shl: case BinOp::Shr:
+                // Fase 2 del plan break/continue/operadores: siempre entero
+                // (RequireIntOperand exige Int/Float truncado o lanza).
+                return Type::Int;
             case BinOp::Add: {
                 // Phase 12 of AvaLang_Plan_Sistema_de_Tipos.md
                 // ("Compatibilidad con expresiones compuestas"). '+' is
@@ -1408,6 +1669,38 @@ void Compiler::CheckCallArgsAgainst(const std::vector<std::pair<std::string, Typ
     }
 }
 
+// Fase 2 de PLAN_VALIDACION_ESTATICA.md. Consulta AVA_BUILTIN_GLOBALS
+// (builtin_names.h, Fase 1) -- la misma lista que RegisterBuiltinGlobals
+// usa para registrar estos nombres en la VM -- para saber si `name` es un
+// builtin bare válido (`str`, `print`, `sorted`, etc.). Estos nunca pasan
+// por known_funcs_/compiled_classes_ porque no son AST: viven solo como
+// nativos registrados en runtime, así que sin esta consulta CheckCallArgs
+// los marcaría como "no definidos" por error.
+static bool IsBuiltinGlobal(const std::string& name) {
+    static const std::unordered_set<std::string> kBuiltinGlobals = {
+#define AVA_BUILTIN_NAME_ONLY(bname, fn) #bname,
+        AVA_BUILTIN_GLOBALS(AVA_BUILTIN_NAME_ONLY)
+#undef AVA_BUILTIN_NAME_ONLY
+    };
+    return kBuiltinGlobals.count(name) != 0;
+}
+
+bool Compiler::NameShadowsGlobalCallable(const std::string& name) const {
+    if (locals_.count(name)) return true;
+    if (name == "this" && locals_.count("this")) return true;
+    for (size_t upval_idx = 0; upval_idx < proto_->upvalue_descs.size(); ++upval_idx) {
+        auto& uvd = proto_->upvalue_descs[upval_idx];
+        if (uvd.from_parent_local) {
+            for (auto& [pname, preg] : parent_locals_) {
+                if (pname == name && preg == uvd.index) return true;
+            }
+        }
+    }
+    bool in_method = locals_.count("this") != 0;
+    if (in_method && instance_attrs_.count(name)) return true;
+    return false;
+}
+
 void Compiler::CheckCallArgs(const std::string& func_name, const CallExpr* c) {
     auto it = known_funcs_.find(func_name);
     if (it != known_funcs_.end()) {
@@ -1421,7 +1714,38 @@ void Compiler::CheckCallArgs(const std::string& func_name, const CallExpr* c) {
     // instantiation is a plain call on the class name). Check its
     // constructor's declared parameters ("__init__", same key class_obj-
     // >methods already uses) the same way a free function's would be.
-    if (!compiled_classes_.count(func_name)) return;
+    if (!compiled_classes_.count(func_name)) {
+        // Fase 2 de PLAN_VALIDACION_ESTATICA.md: `func_name` no es ni una
+        // función conocida (known_funcs_, recién copiado hacia abajo a
+        // cada `Compiler sub` -- ver esos 3 sitios -- así que esto ya
+        // incluye funciones hermanas de nivel superior, no solo las del
+        // chunk actual) ni una clase compilada. Antes esto simplemente
+        // retornaba sin avisar nada, y una llamada a una función
+        // inexistente (typo, función borrada) compilaba sin error y
+        // recién fallaba en runtime como "not callable" genérico
+        // (GETGLOBAL nil + CALL, ver MakeNonCallableError en vm.cpp). El
+        // único nombre que puede llegar acá sin ser realmente un error es
+        // un builtin bare (`str`, `print`, ...), que nunca pasa por
+        // known_funcs_/compiled_classes_ porque no es AST -- de ahí el
+        // chequeo de IsBuiltinGlobal antes de tirar el error.
+        if (IsBuiltinGlobal(func_name)) return;
+        // Un nombre que resuelve a un local/parámetro/upvalue/this.attr
+        // (una lambda guardada en una variable, por ejemplo) nunca pasa
+        // por known_funcs_/compiled_classes_ tampoco -- mismo "no false
+        // positive" que el resto de este archivo. Ver
+        // NameShadowsGlobalCallable arriba.
+        if (NameShadowsGlobalCallable(func_name)) return;
+        // Fase 4 de PLAN_VALIDACION_ESTATICA.md: un `import mod` (sin
+        // alias, un solo segmento) en este chunk puede haber volcado
+        // `func_name` al scope global en runtime sin que este Compiler
+        // tenga forma de saberlo -- ver has_wildcard_import_ en
+        // compiler.h. No se puede afirmar "no existe" con esa duda
+        // presente, así que se deja pasar, igual que el resto de los
+        // casos "no puedo resolverlo" de esta función.
+        if (has_wildcard_import_) return;
+        throw AvaError("function '" + func_name + "' is not defined",
+                        current_line_, current_col_, source_name_);
+    }
     auto cit = class_method_params_.find(func_name);
     if (cit == class_method_params_.end()) return;
     auto init_it = cit->second.find("__init__");
@@ -1463,10 +1787,39 @@ void Compiler::CheckMethodCallArgs(const AttrExpr* callee, const CallExpr* c) {
     TypeRef obj_type = InferExprTypeRef(callee->obj);
     if (obj_type.type != Type::Object || obj_type.class_name.empty()) return;
     auto cit = class_method_params_.find(obj_type.class_name);
-    if (cit == class_method_params_.end()) return;
-    auto mit = cit->second.find(callee->attr);
-    if (mit == cit->second.end()) return;
-    CheckCallArgsAgainst(mit->second, "method '" + obj_type.class_name + "." + callee->attr + "'", c);
+    if (cit != class_method_params_.end()) {
+        auto mit = cit->second.find(callee->attr);
+        if (mit != cit->second.end()) {
+            CheckCallArgsAgainst(mit->second, "method '" + obj_type.class_name + "." + callee->attr + "'", c);
+            return;
+        }
+    }
+    // Fase 3 de PLAN_VALIDACION_ESTATICA.md: `obj_type.class_name` es una
+    // clase conocida (compiled_classes_) pero `callee->attr` no aparece
+    // en class_method_params_ (ni propio ni heredado -- ese mapa ya viene
+    // aplanado, ver el merge antes del loop de FuncDef en esta misma
+    // función). Antes de reportarlo como error hay que descartar dos
+    // formas legítimas de que igual exista en runtime:
+    //   1. Un campo DECLARADO (`var attr = ...` en el cuerpo de la
+    //      clase) que guarda una lambda -- class_field_types_ ya
+    //      registra el nombre sin importar el tipo del default (una
+    //      lambda por default queda con TypeRef Unknown, pero la
+    //      PRESENCIA de la clave alcanza para esta comprobación de
+    //      existencia).
+    //   2. Un atributo asignado dinámicamente en algún método
+    //      (`this.attr = ...`, nunca declarado en el cuerpo de la
+    //      clase) -- class_dynamic_attrs_ (Fase 3, ver su comentario en
+    //      compiler.h) cubre este caso, que class_field_types_ no ve.
+    // Si ninguna de las dos lo reconoce, es un método que realmente no
+    // existe en esa clase -- mismo "not defined" que CheckCallArgs (Fase
+    // 2) ya reporta para funciones libres.
+    auto fit = class_field_types_.find(obj_type.class_name);
+    if (fit != class_field_types_.end() && fit->second.count(callee->attr)) return;
+    auto dit = class_dynamic_attrs_.find(obj_type.class_name);
+    if (dit != class_dynamic_attrs_.end() && dit->second.count(callee->attr)) return;
+    throw AvaError("method '" + callee->attr + "' is not defined on class '" +
+                        obj_type.class_name + "'",
+                    current_line_, current_col_, source_name_);
 }
 
 // Phase 10 of AvaLang_Plan_Sistema_de_Tipos.md ("Validación de retornos").
@@ -1756,6 +2109,9 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
 
     if (auto* b = dynamic_cast<BreakStmt*>(stmt.get())) {
         (void)b;
+        if (loop_depth_ == 0) {
+            throw AvaError("'break' outside loop", current_line_, current_col_, source_name_);
+        }
         pending_breaks_.push_back({proto_->instructions.size()});
         Emit(OpCode::JMP, 0);
         return;
@@ -1763,6 +2119,9 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
 
     if (auto* c = dynamic_cast<ContinueStmt*>(stmt.get())) {
         (void)c;
+        if (loop_depth_ == 0) {
+            throw AvaError("'continue' outside loop", current_line_, current_col_, source_name_);
+        }
         pending_continues_.push_back({proto_->instructions.size()});
         Emit(OpCode::JMP, 0);
         return;
@@ -1784,6 +2143,11 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
 
     if (auto* f = dynamic_cast<ForStmt*>(stmt.get())) {
         CompileFor(f);
+        return;
+    }
+
+    if (auto* fr = dynamic_cast<ForRangeStmt*>(stmt.get())) {
+        CompileForRange(fr);
         return;
     }
 
@@ -1884,7 +2248,9 @@ void Compiler::CompileWhile(const WhileStmt* stmt) {
     Emit(OpCode::JMP, 0);
     FreeRegs(next_reg_ - regs_before);
 
+    loop_depth_++;
     CompileChunk(stmt->body);
+    loop_depth_--;
 
     size_t jmp_back = proto_->instructions.size();
     int32_t offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(jmp_back) - 1;
@@ -1911,18 +2277,245 @@ void Compiler::CompileFor(const ForStmt* stmt) {
     CompileForIterator(stmt);
 }
 
+// Fase 4 del plan break/continue/operadores: `for i = start to stop
+// [step s] then ... end`. No se desazucara a range() (ver comentario en
+// ast.h) para poder evaluar un `step` de signo negativo en runtime.
+// Misma estructura save/clear/restore de pending_breaks_/pending_continues_
+// y loop_depth_ que ya usan CompileWhile/CompileForIterator (Fase 1), y
+// mismo patron dual top-level(globals)/local(registros) que CompileForList
+// usa para su variable de iteracion.
+void Compiler::CompileForRange(const ForRangeStmt* stmt) {
+    auto saved_breaks = std::move(pending_breaks_);
+    auto saved_continues = std::move(pending_continues_);
+    pending_breaks_.clear();
+    pending_continues_.clear();
+
+    uint32_t depth = for_depth_++;
+    loop_depth_++;
+
+    const auto& var_name = stmt->var_name;
+    bool use_locals = !is_top_level_;
+
+    // Signo del step conocido en tiempo de compilacion cuando `step` es un
+    // literal numerico (o no esta presente -> paso 1, positivo). Si es una
+    // expresion cualquiera, el signo se resuelve en runtime, una vez por
+    // iteracion, con un chequeo LT contra cero (ver mas abajo).
+    enum class StepSign { Positive, Negative, Runtime };
+    StepSign sign = StepSign::Positive;
+    if (stmt->step) {
+        if (auto* n = dynamic_cast<NumberExpr*>(stmt->step.get())) {
+            sign = (n->value < 0) ? StepSign::Negative : StepSign::Positive;
+        } else {
+            sign = StepSign::Runtime;
+        }
+    }
+
+    if (!use_locals) {
+        std::string d = std::to_string(depth);
+        auto idx_var = AddConstant(MakeString(var_name));
+        auto stop_var = AddConstant(MakeString("__for_range_stop_" + d));
+        auto step_var = AddConstant(MakeString("__for_range_step_" + d));
+
+        auto start_reg = CompileExpr(stmt->start);
+        Emit(OpCode::SETGLOBAL, start_reg, idx_var);
+        FreeRegs(1);
+
+        auto stop_reg = CompileExpr(stmt->stop);
+        Emit(OpCode::SETGLOBAL, stop_reg, stop_var);
+        FreeRegs(1);
+
+        if (stmt->step) {
+            auto step_reg = CompileExpr(stmt->step);
+            Emit(OpCode::SETGLOBAL, step_reg, step_var);
+            FreeRegs(1);
+        } else {
+            auto one_reg = AllocReg();
+            Emit(OpCode::LOADK, one_reg, AddConstant(Value::Number(1)));
+            Emit(OpCode::SETGLOBAL, one_reg, step_var);
+            FreeRegs(1);
+        }
+
+        size_t loop_start = proto_->instructions.size();
+
+        uint16_t regs_before = next_reg_;
+        auto idx_reg = AllocReg();
+        auto stop_reg2 = AllocReg();
+        auto cond_reg = AllocReg();
+        Emit(OpCode::GETGLOBAL, idx_reg, idx_var);
+        Emit(OpCode::GETGLOBAL, stop_reg2, stop_var);
+
+        if (sign == StepSign::Positive) {
+            Emit(OpCode::LE, cond_reg, idx_reg, stop_reg2);
+        } else if (sign == StepSign::Negative) {
+            Emit(OpCode::GE, cond_reg, idx_reg, stop_reg2);
+        } else {
+            auto step_reg = AllocReg();
+            auto zero_reg = AllocReg();
+            auto is_nonneg_reg = AllocReg();
+            Emit(OpCode::GETGLOBAL, step_reg, step_var);
+            Emit(OpCode::LOADK, zero_reg, AddConstant(Value::Number(0)));
+            // truthy -> fallthrough (ver nota en TEST/Emit sobre por que
+            // se testea "no-negativo" y no "negativo" para caer en la
+            // rama correcta por fallthrough).
+            Emit(OpCode::GE, is_nonneg_reg, step_reg, zero_reg);
+            Emit(OpCode::TEST, is_nonneg_reg, 1);
+            size_t jmp_to_negative = proto_->instructions.size();
+            Emit(OpCode::JMP, 0);
+            Emit(OpCode::LE, cond_reg, idx_reg, stop_reg2);
+            size_t jmp_after_cmp = proto_->instructions.size();
+            Emit(OpCode::JMP, 0);
+            PatchJump(jmp_to_negative);
+            Emit(OpCode::GE, cond_reg, idx_reg, stop_reg2);
+            PatchJump(jmp_after_cmp);
+        }
+
+        Emit(OpCode::TEST, cond_reg, 0);
+        size_t jmp_out = proto_->instructions.size();
+        Emit(OpCode::JMP, 0);
+        FreeRegs(next_reg_ - regs_before);
+
+        CompileChunk(stmt->body);
+
+        size_t continue_target = proto_->instructions.size();
+
+        regs_before = next_reg_;
+        auto idx_get = AllocReg();
+        auto step_get = AllocReg();
+        auto add_reg = AllocReg();
+        Emit(OpCode::GETGLOBAL, idx_get, idx_var);
+        Emit(OpCode::GETGLOBAL, step_get, step_var);
+        Emit(OpCode::ADD, add_reg, idx_get, step_get);
+        Emit(OpCode::SETGLOBAL, add_reg, idx_var);
+        FreeRegs(next_reg_ - regs_before);
+
+        int32_t back_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(proto_->instructions.size()) - 1;
+        Emit(OpCode::JMP);
+        proto_->instructions.back().bx32 = back_offset;
+
+        PatchJump(jmp_out);
+
+        for (auto& patch : pending_breaks_) {
+            PatchJump(patch.instr_idx);
+        }
+        pending_breaks_.clear();
+
+        for (auto& patch : pending_continues_) {
+            PatchContinueJump(patch.instr_idx, continue_target);
+        }
+        pending_continues_.clear();
+
+        pending_breaks_ = std::move(saved_breaks);
+        pending_continues_ = std::move(saved_continues);
+        loop_depth_--;
+        for_depth_--;
+        return;
+    }
+
+    // --- variante local (dentro de una funcion) ---
+
+    bool has_local_idx = locals_.find(var_name) != locals_.end();
+    uint16_t idx_reg_local = has_local_idx ? locals_.at(var_name) : AllocReg();
+    if (!has_local_idx) {
+        locals_[var_name] = idx_reg_local;
+    }
+    auto start_reg = CompileExpr(stmt->start);
+    Emit(OpCode::MOVE, idx_reg_local, start_reg);
+    FreeRegs(next_reg_ - (idx_reg_local + 1));
+
+    uint16_t stop_reg_local = AllocReg();
+    auto stop_val = CompileExpr(stmt->stop);
+    Emit(OpCode::MOVE, stop_reg_local, stop_val);
+    FreeRegs(next_reg_ - (stop_reg_local + 1));
+
+    uint16_t step_reg_local = AllocReg();
+    if (stmt->step) {
+        auto step_val = CompileExpr(stmt->step);
+        Emit(OpCode::MOVE, step_reg_local, step_val);
+    } else {
+        auto one_reg = AllocReg();
+        Emit(OpCode::LOADK, one_reg, AddConstant(Value::Number(1)));
+        Emit(OpCode::MOVE, step_reg_local, one_reg);
+    }
+    FreeRegs(next_reg_ - (step_reg_local + 1));
+
+    size_t loop_start = proto_->instructions.size();
+
+    uint16_t regs_before = next_reg_;
+    auto cond_reg = AllocReg();
+    if (sign == StepSign::Positive) {
+        Emit(OpCode::LE, cond_reg, idx_reg_local, stop_reg_local);
+    } else if (sign == StepSign::Negative) {
+        Emit(OpCode::GE, cond_reg, idx_reg_local, stop_reg_local);
+    } else {
+        auto zero_reg = AllocReg();
+        auto is_nonneg_reg = AllocReg();
+        Emit(OpCode::LOADK, zero_reg, AddConstant(Value::Number(0)));
+        Emit(OpCode::GE, is_nonneg_reg, step_reg_local, zero_reg);
+        Emit(OpCode::TEST, is_nonneg_reg, 1);
+        size_t jmp_to_negative = proto_->instructions.size();
+        Emit(OpCode::JMP, 0);
+        Emit(OpCode::LE, cond_reg, idx_reg_local, stop_reg_local);
+        size_t jmp_after_cmp = proto_->instructions.size();
+        Emit(OpCode::JMP, 0);
+        PatchJump(jmp_to_negative);
+        Emit(OpCode::GE, cond_reg, idx_reg_local, stop_reg_local);
+        PatchJump(jmp_after_cmp);
+    }
+    Emit(OpCode::TEST, cond_reg, 0);
+    FreeRegs(next_reg_ - regs_before);
+
+    size_t jmp_out = proto_->instructions.size();
+    Emit(OpCode::JMP, 0);
+
+    CompileChunk(stmt->body);
+
+    size_t continue_target = proto_->instructions.size();
+
+    regs_before = next_reg_;
+    auto add_reg = AllocReg();
+    Emit(OpCode::ADD, add_reg, idx_reg_local, step_reg_local);
+    Emit(OpCode::MOVE, idx_reg_local, add_reg);
+    FreeRegs(next_reg_ - regs_before);
+
+    int32_t back_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(proto_->instructions.size()) - 1;
+    Emit(OpCode::JMP);
+    proto_->instructions.back().bx32 = back_offset;
+
+    PatchJump(jmp_out);
+
+    for (auto& patch : pending_breaks_) {
+        PatchJump(patch.instr_idx);
+    }
+    pending_breaks_.clear();
+
+    for (auto& patch : pending_continues_) {
+        PatchContinueJump(patch.instr_idx, continue_target);
+    }
+    pending_continues_.clear();
+
+    pending_breaks_ = std::move(saved_breaks);
+    pending_continues_ = std::move(saved_continues);
+    loop_depth_--;
+    for_depth_--;
+}
+
 void Compiler::CompileForIterator(const ForStmt* stmt) {
     uint32_t my_depth = for_depth_++;
+    // Fase 1 del plan break/continue: un solo punto para las 4 variantes
+    // de `for...in` (coroutine/dict/list/dynamic), todas pasan por aca.
+    loop_depth_++;
     IteratorKind kind = DetectIteratorKind(stmt->iterable);
 
     if (kind == IteratorKind::Coroutine) {
         CompileForCoroutine(stmt, my_depth);
         for_depth_--;
+        loop_depth_--;
         return;
     }
     if (dynamic_cast<DictExpr*>(stmt->iterable.get())) {
         CompileForDict(stmt, my_depth);
         for_depth_--;
+        loop_depth_--;
         return;
     }
     if (dynamic_cast<ListExpr*>(stmt->iterable.get()) ||
@@ -1930,11 +2523,13 @@ void Compiler::CompileForIterator(const ForStmt* stmt) {
         dynamic_cast<CallExpr*>(stmt->iterable.get())) {
         CompileForList(stmt, my_depth);
         for_depth_--;
+        loop_depth_--;
         return;
     }
 
     CompileForDynamic(stmt, my_depth);
     for_depth_--;
+    loop_depth_--;
 }
 
 Compiler::IteratorKind Compiler::DetectIteratorKind(const std::shared_ptr<ExprNode>& iterable) {
@@ -2335,8 +2930,6 @@ void Compiler::CompileForDynamic(const ForStmt* stmt, uint32_t depth) {
     size_t jmp_to_list_loop = proto_->instructions.size();
     Emit(OpCode::JMP, 0);
 
-    size_t continue_target = proto_->instructions.size();
-
     std::vector<size_t> coro_exit_jmps;
 
     {
@@ -2392,6 +2985,19 @@ void Compiler::CompileForDynamic(const ForStmt* stmt, uint32_t depth) {
     PatchJump(jmp_to_body_from_coro);
 
     CompileChunk(stmt->body);
+
+    // continue debe caer exactamente aca: es el mismo punto donde el
+    // body cae de forma natural al terminar sin continue. Desde aca el
+    // TEST is_coro_reg de abajo rutea correctamente a cada branch:
+    // list-loop (incrementa idx_var y despues vuelve a loop_start) o
+    // corutina (vuelve directo a loop_start, que resume() la corutina).
+    // Un continue NO puede saltar directo a loop_start: en el branch
+    // list-loop eso releería iter[idx] con el mismo idx sin incrementar
+    // -> loop infinito. Tampoco puede saltar al bloque de resume de
+    // corutina (como hacia el continue_target viejo): en el branch
+    // list-loop resume_var nunca se setea ahi -> "'__for_resume_N' is
+    // not defined" en runtime.
+    size_t continue_target = proto_->instructions.size();
 
     Emit(OpCode::TEST, is_coro_reg, 0);
     size_t jmp_to_list_inc = proto_->instructions.size();
@@ -2689,8 +3295,25 @@ void Compiler::CompileFunc(const FuncDef* func) {
     // scale.
     sub.compiled_classes_ = compiled_classes_;
     sub.class_field_types_ = class_field_types_;
+    sub.class_dynamic_attrs_ = class_dynamic_attrs_;
     sub.class_method_returns_ = class_method_returns_;
     sub.class_method_params_ = class_method_params_;
+    // Fase 2 de PLAN_VALIDACION_ESTATICA.md: mismo motivo que las 4
+    // copias de arriba, pero para funciones/extern en vez de clases. Sin
+    // esto, el nuevo chequeo de "función no definida" de CheckCallArgs
+    // tiraría un falso positivo en CUALQUIER llamada de este func a una
+    // función hermana de nivel superior -- known_funcs_ de un `Compiler
+    // sub` nuevo arranca vacío (ver el comentario de known_funcs_ en
+    // compiler.h, "known gap" que este chequeo obliga a cerrar). Copia
+    // plana, nunca se escribe de vuelta al padre, misma lógica que
+    // compiled_classes_ arriba.
+    sub.known_funcs_ = known_funcs_;
+    sub.known_func_returns_ = known_func_returns_;
+    sub.extern_func_params_ = extern_func_params_;
+    sub.extern_func_returns_ = extern_func_returns_;
+    // Fase 4 de PLAN_VALIDACION_ESTATICA.md: mismo motivo que
+    // known_funcs_ arriba -- ver has_wildcard_import_ en compiler.h.
+    sub.has_wildcard_import_ = has_wildcard_import_;
 
     sub.next_reg_ = 1;
     sub.max_reg_ = sub.next_reg_;
@@ -2979,12 +3602,18 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
     }
     if (auto* b = dynamic_cast<BreakStmt*>(stmt.get())) {
         (void)b;
+        if (loop_depth_ == 0) {
+            throw AvaError("'break' outside loop", current_line_, current_col_, source_name_);
+        }
         pending_breaks_.push_back({proto_->instructions.size()});
         Emit(OpCode::JMP, 0);
         return 0;
     }
     if (auto* c = dynamic_cast<ContinueStmt*>(stmt.get())) {
         (void)c;
+        if (loop_depth_ == 0) {
+            throw AvaError("'continue' outside loop", current_line_, current_col_, source_name_);
+        }
         pending_continues_.push_back({proto_->instructions.size()});
         Emit(OpCode::JMP, 0);
         return 0;
@@ -2999,6 +3628,10 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
     }
     if (auto* for_stmt = dynamic_cast<ForStmt*>(stmt.get())) {
         CompileFor(for_stmt);
+        return 0;
+    }
+    if (auto* for_range_stmt = dynamic_cast<ForRangeStmt*>(stmt.get())) {
+        CompileForRange(for_range_stmt);
         return 0;
     }
     if (auto* func_def = dynamic_cast<FuncDef*>(stmt.get())) {
@@ -3114,6 +3747,27 @@ void Compiler::CompileClass(const ClassDef* cls) {
         }
     }
 
+    // Fase 3 de PLAN_VALIDACION_ESTATICA.md. Mismo merge de herencia que
+    // class_field_types_ arriba, para los atributos asignados
+    // dinámicamente (`this.attr = ...`) que la clase base ya haya
+    // recolectado -- una subclase que llama a un método heredado que a su
+    // vez asigna `this.cb = ...` debe seguir viendo `cb` como válido.
+    if (cls->base_class) {
+        auto dit = class_dynamic_attrs_.find(base_class->name);
+        if (dit != class_dynamic_attrs_.end()) {
+            class_dynamic_attrs_[cls->name] = dit->second;
+        }
+    }
+    {
+        std::unordered_set<std::string> own_dynamic_attrs;
+        for (auto& stmt : cls->body) {
+            auto* f = dynamic_cast<FuncDef*>(stmt.get());
+            if (!f) continue;
+            CollectDynamicThisAttrs(f->body, own_dynamic_attrs);
+        }
+        for (auto& name : own_dynamic_attrs) class_dynamic_attrs_[cls->name].insert(name);
+    }
+
     for (auto& stmt : cls->body) {
         if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
             if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
@@ -3219,8 +3873,23 @@ void Compiler::CompileClass(const ClassDef* cls) {
             // `this.other()` resolve inside its own methods).
             sub.compiled_classes_ = compiled_classes_;
             sub.class_field_types_ = class_field_types_;
+            sub.class_dynamic_attrs_ = class_dynamic_attrs_;
             sub.class_method_returns_ = class_method_returns_;
             sub.class_method_params_ = class_method_params_;
+            // Fase 2 de PLAN_VALIDACION_ESTATICA.md: mismo motivo que las
+            // 4 copias de arriba, pero para funciones/extern en vez de
+            // clases -- un método que llama a una función libre de nivel
+            // superior (no otro método de esta clase) necesita verla en
+            // known_funcs_ para que el nuevo chequeo de "función no
+            // definida" no la marque como inexistente.
+            sub.known_funcs_ = known_funcs_;
+            sub.known_func_returns_ = known_func_returns_;
+            sub.extern_func_params_ = extern_func_params_;
+            sub.extern_func_returns_ = extern_func_returns_;
+            // Fase 4 de PLAN_VALIDACION_ESTATICA.md: mismo motivo que
+            // known_funcs_ arriba -- ver has_wildcard_import_ en
+            // compiler.h.
+            sub.has_wildcard_import_ = has_wildcard_import_;
 
             // AvaLang's canonical method convention binds `this` a
             // register 0 IMPLICITLY (ver libraries/mysql/index.ava: `func
@@ -3337,6 +4006,17 @@ void Compiler::CompileClass(const ClassDef* cls) {
 }
 
 void Compiler::CompileImport(const ImportStmt* stmt) {
+    // Fase 4 de PLAN_VALIDACION_ESTATICA.md: mismo criterio que
+    // PlaceModuleInScope (vm_import.cpp) usa en runtime para decidir si
+    // vuelca los globals del módulo directo al scope de quien importa --
+    // sin `as alias` Y un solo segmento en module_path (`import mod`, no
+    // `import a.b` ni `import mod as m`). Ver el comentario de
+    // has_wildcard_import_ en compiler.h para por qué esto tiene que
+    // desactivar el chequeo de existencia de CheckCallArgs.
+    if (stmt->alias.empty() && stmt->module_path.size() == 1) {
+        has_wildcard_import_ = true;
+    }
+
     std::string full_path;
     for (size_t i = 0; i < stmt->module_path.size(); ++i) {
         if (i > 0) full_path += ".";

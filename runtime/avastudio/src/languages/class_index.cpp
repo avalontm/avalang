@@ -2,17 +2,12 @@
 
 #include <cctype>
 #include <filesystem>
-#include <fstream>
-#include <sstream>
+
+#include "languages/block_scanner.h"
 
 namespace studio {
 
 namespace {
-
-bool IsBlockKeyword(const std::string& word) {
-    return word == "try" || word == "if" || word == "while" || word == "for" ||
-           word == "func" || word == "class";
-}
 
 bool IsIdentStart(char c) { return std::isalpha(static_cast<unsigned char>(c)) || c == '_'; }
 bool IsIdentChar(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
@@ -110,56 +105,100 @@ void ApplyDocBlock(FunctionSignature& sig, const std::vector<std::string>& pendi
     sig.doc = doc;
 }
 
-bool FindMatchingEnd(const std::string& text, size_t& i, size_t& body_end) {
-    size_t start = i;
-    int depth = 1;
-    while (i < text.size()) {
-        char c = text[i];
-        if (c == '#') {
-            while (i < text.size() && text[i] != '\n') ++i;
-            continue;
-        }
+std::string ParseReturnTypeAnnotation(const std::string& text, size_t& i, size_t end) {
+    size_t save = i;
+    SkipInlineWhitespace(text, i);
+    if (i >= end || !IsIdentStart(text[i])) { i = save; return ""; }
+    size_t as_save = i;
+    std::string maybe_as = ReadIdent(text, i);
+    if (maybe_as != "as") { i = as_save; return ""; }
+    SkipInlineWhitespace(text, i);
+    if (i >= end || !IsIdentStart(text[i])) { i = as_save; return ""; }
+    return ReadIdent(text, i);
+}
+
+std::string InferReturnTypeFromBody(const std::string& body, size_t body_start, size_t body_end) {
+    std::unordered_map<std::string, std::string> local_types;
+
+    size_t i = body_start;
+    while (i < body_end) {
+        char c = body[i];
+        if (c == '#') { while (i < body_end && body[i] != '\n') ++i; continue; }
         if (c == '\'' || c == '"') {
             char quote = c;
             ++i;
-            while (i < text.size() && text[i] != quote) {
-                if (text[i] == '\\' && i + 1 < text.size()) i += 2; else ++i;
+            while (i < body_end && body[i] != quote) {
+                if (body[i] == '\\' && i + 1 < body_end) i += 2; else ++i;
             }
-            if (i < text.size()) ++i;
+            if (i < body_end) ++i;
             continue;
         }
         if (IsIdentStart(c)) {
-            size_t word_start = i;
-            std::string word = ReadIdent(text, i);
-            if (word == "end") {
-                --depth;
-                if (depth == 0) { body_end = word_start; return true; }
+            std::string word = ReadIdent(body, i);
+
+            if (word == "return") {
+                SkipInlineWhitespace(body, i);
+                if (i < body_end && IsIdentStart(body[i])) {
+                    std::string candidate = ReadIdent(body, i);
+                    size_t after_ident = i;
+                    SkipInlineWhitespace(body, i);
+                    if (i < body_end && body[i] == '(') return candidate;
+                    auto local_it = local_types.find(candidate);
+                    if (local_it != local_types.end()) return local_it->second;
+                    i = after_ident;
+                }
                 continue;
             }
-            if (IsBlockKeyword(word)) ++depth;
+
+            size_t save = i;
+            SkipInlineWhitespace(body, i);
+            bool is_plain_assign = i < body_end && body[i] == '=' && (i + 1 >= body_end || body[i + 1] != '=');
+            if (!is_plain_assign) { i = save; continue; }
+
+            ++i;
+            SkipInlineWhitespace(body, i);
+            if (i < body_end && IsIdentStart(body[i])) {
+                std::string rhs_name = ReadIdent(body, i);
+                size_t after_rhs = i;
+                SkipInlineWhitespace(body, i);
+                if (i < body_end && body[i] == '(') {
+                    local_types[word] = rhs_name;
+                } else {
+                    local_types.erase(word);
+                    i = after_rhs;
+                }
+            } else {
+                local_types.erase(word);
+            }
             continue;
         }
         ++i;
     }
-    i = start;
-    return false;
+    return "";
 }
 
 }
 
-void ClassIndex::Rebuild(const std::string& text, const std::string& current_file_dir) {
+void ClassIndex::Rebuild(const std::string& text, const std::string& current_file_dir,
+                          ImportFileCache* shared_cache) {
     classes_.clear();
     ScanText(text, "");
+
+    ImportFileCache local_cache;
+    ImportFileCache& cache = shared_cache ? *shared_cache : local_cache;
+
     std::unordered_set<std::string> visited;
-    ScanImports(text, current_file_dir, visited);
+    ScanImports(text, current_file_dir, visited, cache);
 }
 
 namespace {
 
-void RecordAttribute(ClassInfo& info, const std::string& attr_name, bool is_static, bool is_private) {
+void RecordAttribute(ClassInfo& info, const std::string& attr_name, bool is_static, bool is_private,
+                      const std::string& declared_type = "") {
     auto& attr = info.attributes[attr_name];
     attr.is_static = attr.is_static || is_static;
     attr.is_private = attr.is_private || is_private;
+    if (!declared_type.empty()) attr.declared_type = declared_type;
 }
 
 void ConsumeModifiers(const std::string& body, size_t& i, bool& is_static, bool& is_private) {
@@ -180,6 +219,7 @@ void ConsumeModifiers(const std::string& body, size_t& i, bool& is_static, bool&
 
 void ScanClassBody(const std::string& body, ClassInfo& info) {
     size_t i = 0;
+    int body_depth = 0;
     std::vector<std::string> pending_doc;
 
     while (i < body.size()) {
@@ -210,6 +250,18 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
 
         if (IsIdentStart(c)) {
             std::string word = ReadIdent(body, i);
+
+            if (word == "end") {
+                if (body_depth > 0) --body_depth;
+                pending_doc.clear();
+                continue;
+            }
+
+            if (word != "func" && word != "this" && IsBlockKeyword(word)) {
+                ++body_depth;
+                pending_doc.clear();
+                continue;
+            }
 
             if (word == "static" || word == "private") {
                 bool is_static = (word == "static");
@@ -252,10 +304,23 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                                     if (!pending_doc.empty()) ApplyDocBlock(method_info.signature, pending_doc);
                                     pending_doc.clear();
 
+                                    size_t after_params = j + 1;
+                                    method_info.signature.declared_return_type =
+                                        ParseReturnTypeAnnotation(body, after_params, body.size());
+
+                                    size_t scan_pos = after_params;
+                                    size_t method_body_end = 0;
+                                    bool has_body = FindMatchingEnd(body, scan_pos, method_body_end);
+                                    if (has_body && method_info.signature.declared_return_type.empty()) {
+                                        method_info.signature.inferred_return_type =
+                                            InferReturnTypeFromBody(body, after_params, method_body_end);
+                                    }
+
                                     if (info.methods.find(name) == info.methods.end())
                                         info.methods[name] = std::move(method_info);
 
-                                    i = j + 1;
+                                    if (has_body) ++body_depth;
+                                    i = after_params;
                                     continue;
                                 }
                             }
@@ -263,7 +328,24 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
 
                     } else {
 
-                        size_t m = k;
+                        size_t type_check = k;
+                        std::string declared_type;
+                        if (type_check < body.size() && IsIdentStart(body[type_check])) {
+                            size_t as_save = type_check;
+                            std::string maybe_as = ReadIdent(body, type_check);
+                            if (maybe_as == "as") {
+                                SkipInlineWhitespace(body, type_check);
+                                if (type_check < body.size() && IsIdentStart(body[type_check])) {
+                                    declared_type = ReadIdent(body, type_check);
+                                } else {
+                                    type_check = as_save;
+                                }
+                            } else {
+                                type_check = as_save;
+                            }
+                        }
+
+                        size_t m = type_check;
                         SkipInlineWhitespace(body, m);
                         bool is_assignment = false;
                         if (m < body.size() && body[m] == '=') {
@@ -274,9 +356,9 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                             is_assignment = true;
                         }
 
-                        if (is_assignment) {
-                            RecordAttribute(info, next_word, is_static, is_private);
-                            i = k;
+                        if (is_assignment || !declared_type.empty()) {
+                            RecordAttribute(info, next_word, is_static, is_private, declared_type);
+                            i = is_assignment ? m : type_check;
                             pending_doc.clear();
                             continue;
                         }
@@ -319,10 +401,23 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                 if (!pending_doc.empty()) ApplyDocBlock(method_info.signature, pending_doc);
                 pending_doc.clear();
 
+                size_t after_params = j + 1;
+                method_info.signature.declared_return_type =
+                    ParseReturnTypeAnnotation(body, after_params, body.size());
+
+                size_t scan_pos = after_params;
+                size_t method_body_end = 0;
+                bool has_body = FindMatchingEnd(body, scan_pos, method_body_end);
+                if (has_body && method_info.signature.declared_return_type.empty()) {
+                    method_info.signature.inferred_return_type =
+                        InferReturnTypeFromBody(body, after_params, method_body_end);
+                }
+
                 if (info.methods.find(name) == info.methods.end())
                     info.methods[name] = std::move(method_info);
 
-                i = j + 1;
+                if (has_body) ++body_depth;
+                i = after_params;
                 continue;
             }
 
@@ -352,6 +447,44 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                         pending_doc.clear();
                         continue;
                     }
+                }
+            }
+
+            if (body_depth == 0) {
+                size_t type_check = i;
+                SkipInlineWhitespace(body, type_check);
+                std::string declared_type;
+                if (type_check < body.size() && IsIdentStart(body[type_check])) {
+                    size_t as_save = type_check;
+                    std::string maybe_as = ReadIdent(body, type_check);
+                    if (maybe_as == "as") {
+                        SkipInlineWhitespace(body, type_check);
+                        if (type_check < body.size() && IsIdentStart(body[type_check])) {
+                            declared_type = ReadIdent(body, type_check);
+                        } else {
+                            type_check = as_save;
+                        }
+                    } else {
+                        type_check = as_save;
+                    }
+                }
+
+                size_t m = type_check;
+                SkipInlineWhitespace(body, m);
+                bool is_assignment = false;
+                if (m < body.size() && body[m] == '=') {
+                    is_assignment = (m + 1 >= body.size() || body[m + 1] != '=');
+                } else if (m + 1 < body.size() &&
+                           (body[m] == '+' || body[m] == '-' || body[m] == '*' || body[m] == '/') &&
+                           body[m + 1] == '=') {
+                    is_assignment = true;
+                }
+
+                if (is_assignment || !declared_type.empty()) {
+                    RecordAttribute(info, word, false, false, declared_type);
+                    i = is_assignment ? m : type_check;
+                    pending_doc.clear();
+                    continue;
                 }
             }
 
@@ -432,7 +565,7 @@ void ClassIndex::ScanText(const std::string& text, const std::string& source_fil
 }
 
 void ClassIndex::ScanImports(const std::string& text, const std::string& current_file_dir,
-                              std::unordered_set<std::string>& visited) {
+                              std::unordered_set<std::string>& visited, ImportFileCache& cache) {
     size_t i = 0;
     while (i < text.size()) {
         char c = text[i];
@@ -462,17 +595,12 @@ void ClassIndex::ScanImports(const std::string& text, const std::string& current
                 if (!module_path.empty()) {
                     std::string path = ResolveImportPath(module_path, current_file_dir);
                     if (!path.empty() && visited.insert(path).second) {
-                        std::ifstream file(path, std::ios::binary);
-                        if (file) {
-                            std::ostringstream ss;
-                            ss << file.rdbuf();
-                            std::string imported_text = ss.str();
-
-                            ScanText(imported_text, path);
+                        if (const std::string* imported_text = cache.Load(path)) {
+                            ScanText(*imported_text, path);
 
                             namespace fs = std::filesystem;
                             std::string imported_dir = fs::path(path).parent_path().string();
-                            ScanImports(imported_text, imported_dir, visited);
+                            ScanImports(*imported_text, imported_dir, visited, cache);
                         }
                     }
                 }
@@ -538,6 +666,7 @@ std::vector<ClassMember> ClassIndex::FlattenedMembers(const std::string& class_n
                 member.is_private = attr_info.is_private;
                 member.signature = nullptr;
                 member.declared_in = info->name;
+                member.declared_type = attr_info.declared_type;
                 result.push_back(std::move(member));
             }
         }

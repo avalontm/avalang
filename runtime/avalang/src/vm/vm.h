@@ -5,6 +5,7 @@
 
 #include "value.h"
 #include "proto.h"
+#include "../common/ava_error.h"
 #include "closure.h"
 #include "module.h"
 #include "coroutine.h"
@@ -56,6 +57,18 @@ public:
     // seguro de llamar desde un path de error. Devuelve el module_path
     // (p.ej. "system") o "" si ningun modulo nativo expone ese nombre.
     avastd::string FindNativeModuleExporting(const avastd::string& symbol) const;
+
+    // Builds an AvaError stamped with the line/column/source of whatever
+    // instruction is currently executing in the topmost frame (mirrors
+    // MakeFrameError in vm_errors.cpp, but public so builtins/*.cpp --
+    // native C functions that only get an opaque AvaVM* -- can report a
+    // properly-located runtime error too, instead of throwing a bare
+    // AvaError(msg) with line=0/column=0 that leaves the user with no way
+    // to find which line caused it. Safe to call from inside a native's
+    // AvaNativeFn body: at that point frames_ always has at least the
+    // frame that issued the CALL/BASECALL, with pc already past it (same
+    // indexing MakeFrameError relies on).
+    AvaError MakeCurrentError(const avastd::string& message) const;
 
     Value Run(const avastd::shared_ptr<Proto>& main);
     Value RunFile(const avastd::string& file_path);

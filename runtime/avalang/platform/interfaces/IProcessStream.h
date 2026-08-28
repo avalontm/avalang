@@ -34,9 +34,41 @@ class IProcessStream {
 public:
     virtual ~IProcessStream() = default;
 
+    // Lets a caller feed a running child's stdin -- e.g. Ava Studio's
+    // Terminal panel forwarding whatever the user types into its console
+    // input box while a script (ava_cli) is blocked inside an `input()`
+    // call. Handed to the caller via ExecuteStreaming's `on_started`
+    // below once the child is actually running.
+    class IStdinWriter {
+    public:
+        virtual ~IStdinWriter() = default;
+
+        // Writes `line` + '\n' to the child's stdin. Unlike `on_output`
+        // above, this is meant to be called from a DIFFERENT thread than
+        // the one blocked inside ExecuteStreaming (typically the UI
+        // thread, in response to the user pressing Enter) -- 
+        // implementations must make that safe on their own (e.g. the
+        // write handle/fd is independent of the ones the reader threads
+        // use, so no shared state needs locking beyond guarding against a
+        // write racing the child's exit). Returns false if the write
+        // failed (most commonly: the child already exited and closed its
+        // end) -- callers should treat that as "nobody is listening"
+        // rather than surface it as an error.
+        virtual bool WriteLine(const avastd::string& line) = 0;
+    };
+
+    // `on_started`, if non-null, is invoked once (synchronously, from
+    // ExecuteStreaming's own thread) right after the child process has
+    // launched, with a stdin writer the caller can stash and call later
+    // -- from any thread -- for as long as the child may still be
+    // reading its stdin. Pass nullptr (the default) when the caller has
+    // no interactive input to send; implementations that can't offer a
+    // stdin pipe for some reason may also call it with nullptr, which
+    // callers must treat the same as "not offered" rather than a bug.
     virtual bool ExecuteStreaming(const avastd::string& command, const avastd::vector<avastd::string>& args,
                                    const avastd::function<void(const avastd::string&)>& on_output,
-                                   int& out_exit_code) = 0;
+                                   int& out_exit_code,
+                                   const avastd::function<void(avastd::shared_ptr<IStdinWriter>)>& on_started = nullptr) = 0;
 };
 
 } // namespace platform

@@ -22,10 +22,15 @@ public:
                  ProcessResult& out_result) override;
 
 #if CKM_CAP_PROCESS_EXEC
+    // No stdin pipe on this backend yet (BareKernel's Execute() below is
+    // already a synchronous run-to-completion call with no live I/O of
+    // any kind) -- `on_started`, if given, is simply never invoked, same
+    // as IProcessStream.h documents for a backend that can't offer one.
     bool ExecuteStreaming(const avastd::string& command,
                           const avastd::vector<avastd::string>& args,
                           const avastd::function<void(const avastd::string&)>& on_output,
-                          int& out_exit_code) override;
+                          int& out_exit_code,
+                          const avastd::function<void(avastd::shared_ptr<IStdinWriter>)>& on_started) override;
 #endif
 };
 

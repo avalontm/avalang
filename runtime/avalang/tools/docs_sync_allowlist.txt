@@ -1,0 +1,76 @@
+# Allowlist de check_docs_sync.cpp.
+#
+# Un nombre por linea. '#' inicia comentario. Cualquier nombre listado
+# aca no hace fallar el chequeo aunque el tool detecte que falta su fila
+# en keyword_docs.csv / builtin_signatures.csv (o le sobra una fila que
+# ya no existe en el codigo).
+#
+# IMPORTANTE: esto NO es "ya esta resuelto". Es "ya sabemos que falta,
+# esta agregado a proposito para no romper CI retroactivamente, y falta
+# una decision de producto sobre si documentarlo o dejarlo afuera para
+# siempre". Ver PLAN_FASES_IMPLEMENTACION.md, Fase 4, punto 8.
+#
+# Regla practica: si agregas un nombre nuevo a la gramatica o un
+# RegisterNative(...) nuevo, NO lo agregues aca -- agrega la fila al CSV
+# correspondiente. La allowlist es para la deuda que ya existia el dia
+# que se escribio esta herramienta, no para nuevas features.
+
+## --- keywords: control de flujo, sin documentar (DECISION PENDIENTE) ---
+# Estos son los que ya se habian detectado a mano antes de escribir la
+# herramienta -- candidatos claros a documentar, misma prioridad que el
+# resto de keyword_docs.csv.
+async
+await
+case
+extern
+is
+select
+to
+
+## --- keywords: encontrados recien por la herramienta automatizada,
+## no estaban en la comparacion manual anterior (DECISION PENDIENTE) ---
+private
+static
+
+## --- keywords: literales de valor (true/false/nil) y encabezado de
+## modulo (ava). Documentables como "keyword" en el sentido amplio que
+## ya usa el tooltip del editor, pero son un caso distinto a los
+## keywords de control de flujo -- vale la pena decidir si entran en
+## esta misma tabla o en otra seccion (DECISION PENDIENTE) ---
+true
+false
+nil
+ava
+
+## --- builtins: async runtime, ya detectados a mano (DECISION PENDIENTE) ---
+coroutine
+resume
+set_timeout
+sleep_async
+clear_timeout
+delay
+
+## --- builtins: encontrados recien por la herramienta automatizada
+## (DECISION PENDIENTE) ---
+input
+setglobal
+slice
+
+## --- builtins: memoria cruda para interop con `extern` (mysql_error(),
+## MYSQL_ROW, etc. -- ver comentario en builtin_init.cpp). Candidato a
+## quedar afuera de este CSV para siempre por ser una API de bajo nivel,
+## no algo que se recomiende a un usuario tipeando en el editor -- pero
+## la decision de "para siempre" le corresponde a quien prioriza el
+## roadmap, no a esta herramienta (DECISION PENDIENTE) ---
+mem_is_null
+mem_peek_ptr
+mem_peek_string
+
+## --- builtins: __import__ es la implementacion interna de la
+## sentencia `import` (ver comentario en builtin_init.cpp: "Required by
+## every `import` statement"), no algo que un usuario llame directamente
+## -- candidato fuerte a exclusion PERMANENTE en vez de pendiente, pero
+## se deja en la allowlist en vez de en el codigo de la herramienta por
+## la misma razon que el resto: que sea una linea visible y editable,
+## no una excepcion hardcodeada.
+__import__

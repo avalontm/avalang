@@ -241,9 +241,17 @@ whileStatement
     | 'while' expr block 'end'
     ;
 
+// La tercera alternativa (Fase 4 del plan break/continue/operadores) es
+// el bucle numerico estilo VB6 `for i = a to b step s`. Deliberadamente
+// SIN alt labels (igual que las dos alternativas ya existentes) -- las
+// tres comparten un mismo ForStatementContext y se distinguen en
+// AstBuilder::visitForStatement por `ctx->targetList() == nullptr`
+// (unica de las tres que no pasa por targetList/exprList/'in', asi que
+// no hay ambiguedad: se distingue en el segundo token, '=' vs 'in').
 forStatement
     : 'for' targetList 'in' exprList 'then' block 'end'
     | 'for' targetList 'in' '(' exprList ')' 'then' block 'end'
+    | 'for' NAME '=' expr 'to' expr ('step' expr)? 'then' block 'end'
     ;
 
 // `returnType` (`as Type` after the parameter list, before the body) is
@@ -336,7 +344,17 @@ expr
     : shortLambdaExpr                           # shortLambdaExprAlt
     | singleParamLambdaExpr                     # singleParamLambdaExprAlt
     | lambdaExpr                                # lambdaExprAlt
-    | orExpr                                    # orExprAlt
+    | ternaryExpr                                # orExprAlt
+    ;
+
+// Fase 3 del plan break/continue/operadores: `cond ? then : else`.
+// Asociativo a la derecha (permite anidado `a ? b : c ? d : e`) porque
+// las ramas `then`/`else` son `expr` completo, que puede volver a matchear
+// otro ternaryExpr. Nivel de precedencia mas bajo que orExpr, mismo lugar
+// que ocupa en C/JS -- por eso reemplaza a `orExpr` como cuerpo del alt
+// `orExprAlt` en vez de agregarse como alternativa nueva de `expr`.
+ternaryExpr
+    : orExpr ('?' expr ':' expr)?
     ;
 
 // Phase 14 of AvaLang_Plan_Sistema_de_Tipos.md ("Lambdas y funciones como
@@ -385,11 +403,41 @@ notExpr
     ;
 
 comparison
-    : additive (compOp additive)*
+    : bitOr (compOp bitOr)*
     ;
 
 compOp
     : '==' | '!=' | '<' | '>' | '<=' | '>='
+    ;
+
+// --- bitwise operators ---------------------------------------------------
+//
+// Ver AvaLang_Plan_Break_Continue_Operadores.md, Fase 2. Insertados entre
+// `comparison` y `additive`, jerarquia estandar estilo C/Python/JS: los
+// bitwise quedan por debajo de comparacion (`a & b == c` es raro pero se
+// parsea como `a & (b == c)`... no -- al reves: comparison llama a bitOr,
+// asi que `a & b == c` se parsea como `(a & b) == c`, igual que en la
+// mayoria de esos lenguajes salvo C, donde es al reves; se eligio el
+// orden mas intuitivo) y por encima de additive (`a + b & c` es
+// `(a + b) & c`, igual que C/Python). AND/XOR/OR bitwise son tres niveles
+// separados (misma jerarquia que esos lenguajes: `&` mas fuerte que `^`,
+// `^` mas fuerte que `|`). `~` (complemento) se agrega a `unary`, junto a
+// `-`/`not`. Solo operan sobre Number (truncados a entero en runtime,
+// mismo criterio que IDIV) -- ver vm_arith.cpp OpBand/OpBor/etc.
+bitOr
+    : bitXor ('|' bitXor)*
+    ;
+
+bitXor
+    : bitAnd ('^' bitAnd)*
+    ;
+
+bitAnd
+    : shift ('&' shift)*
+    ;
+
+shift
+    : additive (('<<' | '>>') additive)*
     ;
 
 additive
@@ -401,7 +449,7 @@ multiplicative
     ;
 
 unary
-    : ( '-' | 'not' | INC | DEC ) unary
+    : ( '-' | 'not' | '~' | INC | DEC ) unary
     | power
     ;
 

@@ -60,7 +60,31 @@ Value VM::ExecuteFrame(size_t frame_idx) {
 
             case OpCode::GETGLOBAL: {
                 avastd::string name = avastd::string(static_cast<StringObj*>(K[in.b].obj)->data);
-                frames_[frame_idx].registers[in.a] = GetGlobal(name); 
+                // Antes esto era `frames_[frame_idx].registers[in.a] =
+                // GetGlobal(name);` sin chequear nada: un typo o un
+                // identificador nunca declarado (ni funcion, ni variable
+                // global) resolvia en silencio a Nil (ver
+                // VM::GetGlobal), tanto si se leia como valor suelto
+                // ("fdsf" solo, statement cuyo resultado se descarta)
+                // como si se usaba en cualquier expresion -- ni el
+                // compilador (CheckCallArgs solo mira callees de CallExpr,
+                // ver compiler.cpp) ni la VM avisaban nada, ni en tiempo
+                // de compilacion ni en runtime. Mismo mensaje/formato que
+                // MakeNonCallableError ya usa para "'x' is not callable"
+                // (incluyendo el hint de import si el nombre resulta ser
+                // un simbolo de un modulo nativo no importado), para que
+                // el usuario vea linea/columna reales en vez de un Nil
+                // silencioso propagandose river abajo.
+                if (!HasGlobal(name)) {
+                    avastd::string module_path = FindNativeModuleExporting(name);
+                    if (!module_path.empty()) {
+                        AVA_THROW(MakeFrameError(frames_[frame_idx],
+                            "'" + name + "' is not defined -- did you forget 'import " +
+                            module_path + "'?"));
+                    }
+                    AVA_THROW(MakeFrameError(frames_[frame_idx], "'" + name + "' is not defined"));
+                }
+                frames_[frame_idx].registers[in.a] = GetGlobal(name);
                 break;
             }
             case OpCode::SETGLOBAL: 
@@ -89,11 +113,29 @@ Value VM::ExecuteFrame(size_t frame_idx) {
             case OpCode::POW:
                 OpPow(frames_[frame_idx], in, K, *this);
                 break;
+            case OpCode::BAND:
+                OpBand(frames_[frame_idx], in, K, *this);
+                break;
+            case OpCode::BOR:
+                OpBor(frames_[frame_idx], in, K, *this);
+                break;
+            case OpCode::BXOR:
+                OpBxor(frames_[frame_idx], in, K, *this);
+                break;
+            case OpCode::SHL:
+                OpShl(frames_[frame_idx], in, K, *this);
+                break;
+            case OpCode::SHR:
+                OpShr(frames_[frame_idx], in, K, *this);
+                break;
             case OpCode::NEG:
                 OpNeg(frames_[frame_idx], in, K, *this);
                 break;
             case OpCode::NOT:
                 OpNot(frames_[frame_idx], in, K, *this);
+                break;
+            case OpCode::BNOT:
+                OpBnot(frames_[frame_idx], in, K, *this);
                 break;
             case OpCode::INC:
                 OpInc(frames_[frame_idx], in, K, *this);

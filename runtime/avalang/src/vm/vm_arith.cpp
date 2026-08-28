@@ -97,6 +97,56 @@ void OpPow(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM
         CoerceToNumber(frame.registers[in.c], "**")));
 }
 
+// Fase 2 de AvaLang_Plan_Break_Continue_Operadores.md: operadores bitwise.
+// A diferencia de CoerceToNumber (usado por +/-/*  etc., que coerciona
+// String -> Number implicitamente), los bitwise exigen Number explicito --
+// mismo criterio que documenta el plan ("operar bitwise sobre String/List/
+// etc. es error de runtime, igual que ADD hoy distingue tipos"). Truncados
+// a entero via cast directo (trunca hacia cero), mismo criterio que ya usa
+// IDIV para su propio truncamiento de resultado.
+static long long RequireIntOperand(const Value& v, const char* op) {
+    if (v.type != ValueType::Number) {
+        AVA_THROW(avastd::runtime_error(
+            avastd::string("bitwise operator '") + op + "' requires Number operands"));
+    }
+    return static_cast<long long>(v.n);
+}
+
+void OpBand(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
+    long long b = RequireIntOperand(frame.registers[in.b], "&");
+    long long c = RequireIntOperand(frame.registers[in.c], "&");
+    frame.registers[in.a] = Value::Number(static_cast<double>(b & c));
+}
+
+void OpBor(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
+    long long b = RequireIntOperand(frame.registers[in.b], "|");
+    long long c = RequireIntOperand(frame.registers[in.c], "|");
+    frame.registers[in.a] = Value::Number(static_cast<double>(b | c));
+}
+
+void OpBxor(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
+    long long b = RequireIntOperand(frame.registers[in.b], "^");
+    long long c = RequireIntOperand(frame.registers[in.c], "^");
+    frame.registers[in.a] = Value::Number(static_cast<double>(b ^ c));
+}
+
+void OpShl(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
+    long long b = RequireIntOperand(frame.registers[in.b], "<<");
+    long long c = RequireIntOperand(frame.registers[in.c], "<<");
+    frame.registers[in.a] = Value::Number(static_cast<double>(b << c));
+}
+
+void OpShr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
+    long long b = RequireIntOperand(frame.registers[in.b], ">>");
+    long long c = RequireIntOperand(frame.registers[in.c], ">>");
+    frame.registers[in.a] = Value::Number(static_cast<double>(b >> c));
+}
+
+void OpBnot(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
+    long long b = RequireIntOperand(frame.registers[in.b], "~");
+    frame.registers[in.a] = Value::Number(static_cast<double>(~b));
+}
+
 void OpNeg(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     frame.registers[in.a] = Value::Number(
         -CoerceToNumber(frame.registers[in.b], "-"));

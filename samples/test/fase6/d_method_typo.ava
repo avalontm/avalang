@@ -1,0 +1,14 @@
+class Persona
+    nombre = ""
+
+    func Persona(n)
+        this.nombre = n
+    end
+
+    func saludar()
+        print("hola, soy " + this.nombre)
+    end
+end
+
+p = Persona("Ada")
+p.saludar_typo()

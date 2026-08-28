@@ -155,6 +155,22 @@ private:
     // resolves to a real type wherever `object` itself resolves to a
     // known class.
     std::unordered_map<std::string, std::unordered_map<std::string, TypeRef>> class_field_types_;
+    // Fase 3 de PLAN_VALIDACION_ESTATICA.md. className -> nombres de
+    // atributo asignados como `this.<attr> = ...` en CUALQUIER método de
+    // la clase (recorriendo if/while/for/try y lambdas anidadas -- ver
+    // CollectDynamicThisAttrs en compiler.cpp), sin importar si ese
+    // nombre tiene también una declaración `var attr = ...` en el cuerpo
+    // de la clase. AvaLang permite atributos dinámicos (SETATTR sobre
+    // cualquier nombre, ver AssignStmt's AttrExpr-target branch en
+    // CompileStmt), así que class_field_types_ -- que solo ve campos
+    // declarados -- NO alcanza para saber si `obj.cb()` es una llamada a
+    // un método real o a un campo que guarda una lambda asignada
+    // dinámicamente (`this.cb = func() ... end`). CheckMethodCallArgs
+    // consulta este mapa, además de class_field_types_, antes de decidir
+    // que un `obj.attr(...)` sin método real es un error -- mismo
+    // "no false positive" que NameShadowsGlobalCallable aplica del lado
+    // de las llamadas libres. Heredado igual que class_field_types_.
+    std::unordered_map<std::string, std::unordered_set<std::string>> class_dynamic_attrs_;
     // className -> methodName -> resolved return TypeRef. Mirrors
     // known_func_returns_ but keyed by (class, method) instead of a bare
     // name, closing the gap CollectFuncSignatures' own comment documents
@@ -200,6 +216,36 @@ private:
     // InferExprTypeRef's CallExpr/AttrExpr-callee branch, the same site
     // that already reads class_method_returns_ for obj.method().
     std::unordered_map<std::string, std::unordered_map<std::string, TypeRef>> extern_func_returns_;
+    // Fase 4 de PLAN_VALIDACION_ESTATICA.md. `import mod` (un solo
+    // segmento, sin `as alias`) hace que VM::DoImport/PlaceModuleInScope
+    // (vm_import.cpp) vuelque TODOS los globals de nivel superior del
+    // módulo -- funciones incluidas -- directo al scope global de quien
+    // importa (mismo comportamiento que "from X import *"), en runtime,
+    // vía SetGlobal por cada entrada. El compiler no tiene forma de saber
+    // qué nombres son esos: un módulo nativo los arma en C++
+    // (builtin_names.h no los lista, porque no son builtins globales) y
+    // un módulo basado en archivo recién se compila cuando ava_run()
+    // ejecuta el import, no durante esta compilación. Sin este flag,
+    // CheckCallArgs (Fase 2) marcaría como "not defined" cualquier
+    // función legítima traída así -- un falso positivo real, no
+    // hipotético (ver samples/test/main.ava: `import system` seguido de
+    // `Console.WriteLine(...)`, aunque ese caso puntual ya es inofensivo
+    // porque Console se usa vía AttrExpr, no como llamada libre; el caso
+    // que sí rompe es un módulo de archivo que exporta una función usada
+    // como `greet()` en vez de `mod.greet()`). CompileImport lo enciende
+    // apenas ve un import con esa forma; de ahí en más, mismo "no false
+    // positive" que el resto del archivo: CheckCallArgs deja de poder
+    // afirmar que una función NO existe, así que dejar de intentarlo. No
+    // hace falta para CheckMethodCallArgs (Fase 3): un AttrExpr como
+    // `mod.func()` ya es seguro sin este flag, porque `mod`/el alias
+    // nunca queda en symbols_ (no hay `var mod = ...`), así que
+    // InferExprTypeRef ya lo resuelve como tipo desconocido y
+    // CheckMethodCallArgs ya hace `return` antes de poder tirar error.
+    // Heredado hacia cada `Compiler sub` en los mismos 3 sitios que ya
+    // copian known_funcs_ (lambda, CompileFunc, método de clase): un
+    // import de nivel superior debe seguir protegiendo llamadas dentro
+    // de funciones/métodos/lambdas anidados en el mismo chunk.
+    bool has_wildcard_import_ = false;
     ClassObj* current_base_class_ = nullptr;
     bool is_init_ = false;
     std::unordered_set<std::string> instance_attrs_;
@@ -219,6 +265,22 @@ private:
     std::vector<const std::vector<std::shared_ptr<StmtNode>>*> pending_finally_stack_;
 
     uint32_t for_depth_ = 0;
+
+    // Fase 1 del plan break/continue: cuantos bucles (while/for/for-range)
+    // envuelven el punto que se esta compilando ahora mismo, en este mismo
+    // Compiler instance (cada func/metodo/lambda compila en su propio
+    // `Compiler sub`, asi que esto nunca "atraviesa" un limite de funcion,
+    // igual que in_async_func_/is_top_level_ arriba). CompileWhile y
+    // CompileForIterator/CompileForRange lo incrementan antes de compilar
+    // su cuerpo y lo decrementan despues, en cada punto de salida --
+    // mismo patron que for_depth_ ya usa. BreakStmt/ContinueStmt (en
+    // CompileStmt y su espejo CompileExprToReg) lo consultan: si es 0,
+    // no hay bucle contenedor y se lanza un AvaError en vez de emitir un
+    // JMP que jamas se parchea (bug real: antes de esta fase, `break`/
+    // `continue` fuera de un bucle compilaba "bien" pero dejaba un salto
+    // sin destino real, un bug silencioso en vez de un error de
+    // compilacion).
+    int loop_depth_ = 0;
 
     void Reset();
 
@@ -345,6 +407,13 @@ private:
     // parámetros en llamadas"). See the definition in compiler.cpp for
     // what it does and does not check.
     void CheckCallArgs(const std::string& func_name, const CallExpr* c);
+    // Fase 2 de PLAN_VALIDACION_ESTATICA.md. true si `name` resuelve a
+    // algo que NO es un global (local, parámetro, upvalue, o this.attr en
+    // un método) -- espejo exacto de las condiciones que la rama NameExpr
+    // de CompileExpr ya chequea antes de emitir GETGLOBAL. CheckCallArgs
+    // lo consulta antes de reportar "function is not defined": un nombre
+    // así podría ser una lambda guardada en una variable, no un typo.
+    bool NameShadowsGlobalCallable(const std::string& name) const;
 
     // Phase 13. obj.method(...) companion to CheckCallArgs above -- see
     // class_method_params_'s comment. Shared argument-checking loop
@@ -381,6 +450,8 @@ private:
     void CompileIf(const IfStmt* stmt);
     void CompileWhile(const WhileStmt* stmt);
     void CompileFor(const ForStmt* stmt);
+    // Fase 4 del plan break/continue/operadores: `for i = a to b [step s]`.
+    void CompileForRange(const ForRangeStmt* stmt);
     void CompileFunc(const FuncDef* func);
     void EmitDefaultsPrologue(const std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>>& params,
                                uint16_t param_reg_base);

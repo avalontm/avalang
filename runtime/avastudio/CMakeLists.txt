@@ -123,6 +123,9 @@ set(STUDIO_SOURCES
     src/theme.cpp
     src/fonts/embedded_font.cpp
     src/languages/avalang_language.cpp
+    src/languages/import_file_cache.cpp
+    src/languages/block_scanner.cpp
+    src/languages/fold_index.cpp
     src/languages/function_index.cpp
     src/languages/class_index.cpp
     src/languages/member_access_resolver.cpp

@@ -33,16 +33,14 @@ void RegisterBuiltinMethods(AvaVM* vm) {
     raw_vm->RegisterBuiltinMethod("dict_length", builtin_dict_length, nullptr);
     raw_vm->RegisterBuiltinMethod("dict_containsKey", builtin_dict_containsKey, nullptr);
 
-    raw_vm->RegisterNative("coroutine", builtin_coroutine, nullptr);
-    raw_vm->RegisterNative("resume", builtin_resume, nullptr);
-
-    // Fase 5 (Async Runtime): dispatcher de delayed execution sobre ITimer.
-    raw_vm->RegisterNative("set_timeout", builtin_set_timeout, nullptr);
-    // Fase 5.3: resume real de coroutine ligado a timer.
-    raw_vm->RegisterNative("sleep_async", builtin_sleep_async, nullptr);
-    // Fase 5.4: cancelacion.
-    raw_vm->RegisterNative("clear_timeout", builtin_clear_timeout, nullptr);
-    raw_vm->RegisterNative("delay", builtin_delay, nullptr);
+    // coroutine/resume/set_timeout/sleep_async/clear_timeout/delay se
+    // registraban acá hasta la Fase 1 de PLAN_VALIDACION_ESTATICA.md.
+    // Son bare natives (coroutine(...), no obj.coroutine()), no métodos
+    // dotted como el resto de esta función — se movieron a
+    // RegisterBuiltinGlobals (builtin_init.cpp), que ahora es la única
+    // fuente de nombres bare (ver AVA_BUILTIN_GLOBALS en
+    // builtin_names.h). RegisterAll/c_api.cpp siguen llamando ambas
+    // funciones juntas, así que el orden de registro real no cambia.
 }
 
 }

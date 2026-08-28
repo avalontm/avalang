@@ -166,14 +166,40 @@ ava_value_t builtin_all(AvaVM*, const ava_value_t* args, size_t count, void*) {
     return ToC(Value::Bool(true));
 }
 
-ava_value_t builtin_len(AvaVM*, const ava_value_t* args, size_t count, void*) {
+ava_value_t builtin_len(AvaVM* vm, const ava_value_t* args, size_t count, void*) {
     if (count < 1) return ToC(Value::Number(0));
     Value v = FromC(args[0]);
     switch (v.type) {
         case ValueType::String: return ToC(Value::Number(static_cast<double>(static_cast<StringObj*>(v.obj)->data.size())));
         case ValueType::List:   return ToC(Value::Number(static_cast<double>(static_cast<ListObj*>(v.obj)->items.size())));
         case ValueType::Dict:   return ToC(Value::Number(static_cast<double>(static_cast<DictObj*>(v.obj)->entries.size())));
-        default:                return ToC(Value::Number(0));
+        default: {
+            // `default` solia devolver 0 para CUALQUIER otro tipo
+            // (Number, Bool, Nil, Function, ...) en vez de avisar que
+            // len() no tiene sentido ahi. Eso es exactamente lo que hace
+            // que `for n in 5 then ... end` (CompileForDynamic en
+            // compiler.cpp, que llama a este mismo `len` global para
+            // calcular cuantas iteraciones hacer sobre un iterable que no
+            // es lista/dict/string/coroutine ya resueltos aparte) corra
+            // en silencio con 0 vueltas en vez de fallar: ni el
+            // compilador puede saber en tiempo de compilacion si `n` va a
+            // valer un numero (el chequeo tendria que ser sobre el valor
+            // en runtime, no sobre la forma sintactica de la expresion),
+            // asi que el chequeo real solo puede vivir aca. AvaVM* trae
+            // acceso a VM::MakeCurrentError (vm.h), que arma el AvaError
+            // con linea/columna/archivo tomados del frame que esta
+            // ejecutando este CALL ahora mismo -- mismo mecanismo que
+            // MakeFrameError usa desde dentro de la VM, expuesto para que
+            // un nativo (funcion C, sin acceso directo a frames_) tambien
+            // pueda reportar un error bien ubicado en vez de uno con
+            // line=0/column=0.
+            ava::VM* raw_vm = reinterpret_cast<ava::VM*>(vm);
+            avastd::string msg = "len() is not supported for type '" + TypeName(v) + "'";
+            if (raw_vm) {
+                AVA_THROW(raw_vm->MakeCurrentError(msg));
+            }
+            AVA_THROW(AvaError(msg));
+        }
     }
 }
 
@@ -199,7 +225,16 @@ ava_value_t builtin_range(AvaVM*, const ava_value_t* args, size_t count, void*) 
     } else if (step < 0) {
         for (double i = start; i > end; i += step) list->items.push_back(Value::Number(i));
     }
-    return ToC(out);
+    // Bug preexistente (no relacionado al fix de continue): esto usaba
+    // ToC(out) en vez de ToCNew(out). ToC() es un cast plano que NO
+    // retiene -- `out` (Value RAII local) libera su unica referencia al
+    // ListObj recien creado (refcount 1->0, delete) apenas termina esta
+    // funcion, dejando el ava_value_t ya devuelto colgando de memoria
+    // liberada antes de que el caller lo reciba. builtin_sorted/
+    // builtin_reversed (mismo archivo) ya usan ToCNew() para este mismo
+    // patron -- range() se quedo afuera. Ver comentario de ToCNew() en
+    // builtin_shared.h para el detalle completo del ownership.
+    return ToCNew(out);
 }
 
 ava_value_t builtin_import(AvaVM* vm, const ava_value_t* args, size_t count, void*) {

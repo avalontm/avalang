@@ -27,8 +27,14 @@ void OpDiv(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM
 void OpIdiv(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 void OpMod(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 void OpPow(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+void OpBand(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+void OpBor(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+void OpBxor(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+void OpShl(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+void OpShr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 void OpNeg(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 void OpNot(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+void OpBnot(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 void OpInc(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 void OpDec(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 

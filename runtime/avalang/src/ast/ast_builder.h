@@ -61,9 +61,22 @@ public:
     std::any visitSingleParamLambdaExprAlt(AvaLangParser::SingleParamLambdaExprAltContext* ctx) override;
     std::any visitLambdaExprAlt(AvaLangParser::LambdaExprAltContext* ctx) override;
     std::any visitOrExprAlt(AvaLangParser::OrExprAltContext* ctx) override;
+    // Fase 3 del plan break/continue/operadores (ternario). visitOrExpr
+    // no tiene su propio labeled alt en la gramatica (orExpr sigue siendo
+    // referenciado directamente, ahora desde ternaryExpr en vez de desde
+    // el alt de expr) -- se agrega igual como metodo propio porque antes
+    // vivia inline dentro de visitOrExprAlt y ahora ternaryExpr necesita
+    // invocarlo por separado.
+    std::any visitOrExpr(AvaLangParser::OrExprContext* ctx) override;
+    std::any visitTernaryExpr(AvaLangParser::TernaryExprContext* ctx) override;
     std::any visitAndExpr(AvaLangParser::AndExprContext* ctx) override;
     std::any visitNotExpr(AvaLangParser::NotExprContext* ctx) override;
     std::any visitComparison(AvaLangParser::ComparisonContext* ctx) override;
+    // Fase 2 del plan break/continue/operadores (bitwise).
+    std::any visitBitOr(AvaLangParser::BitOrContext* ctx) override;
+    std::any visitBitXor(AvaLangParser::BitXorContext* ctx) override;
+    std::any visitBitAnd(AvaLangParser::BitAndContext* ctx) override;
+    std::any visitShift(AvaLangParser::ShiftContext* ctx) override;
     std::any visitAdditive(AvaLangParser::AdditiveContext* ctx) override;
     std::any visitMultiplicative(AvaLangParser::MultiplicativeContext* ctx) override;
     std::any visitUnary(AvaLangParser::UnaryContext* ctx) override;

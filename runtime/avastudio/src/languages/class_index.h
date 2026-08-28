@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "languages/function_index.h"
+#include "languages/import_file_cache.h"
 
 namespace studio {
 
@@ -18,6 +19,7 @@ struct ClassMethodInfo {
 struct ClassAttributeInfo {
     bool is_static = false;
     bool is_private = false;
+    std::string declared_type;
 };
 
 struct ClassInfo {
@@ -37,6 +39,7 @@ struct ClassMember {
     bool is_private = false;
     const FunctionSignature* signature = nullptr;
     std::string declared_in;
+    std::string declared_type;
 };
 
 enum class MemberAccessKind {
@@ -48,7 +51,8 @@ enum class MemberAccessKind {
 class ClassIndex {
 public:
 
-    void Rebuild(const std::string& text, const std::string& current_file_dir);
+    void Rebuild(const std::string& text, const std::string& current_file_dir,
+                 ImportFileCache* shared_cache = nullptr);
 
     const std::unordered_map<std::string, ClassInfo>& Classes() const { return classes_; }
 
@@ -69,7 +73,7 @@ private:
     void ScanText(const std::string& text, const std::string& source_file);
 
     void ScanImports(const std::string& text, const std::string& current_file_dir,
-                      std::unordered_set<std::string>& visited);
+                      std::unordered_set<std::string>& visited, ImportFileCache& cache);
 
     static std::string ResolveImportPath(const std::vector<std::string>& module_path,
                                           const std::string& current_file_dir);

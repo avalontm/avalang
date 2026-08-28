@@ -1,0 +1,4 @@
+import system
+
+print("antes de Console")
+Console.WriteLine("hola desde el modulo importado")

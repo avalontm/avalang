@@ -159,6 +159,64 @@ const std::unordered_map<std::string, KeywordDoc>& DefaultKeywordDocs() {
                  "Pauses the current function and hands value back to its caller, turning it "
                  "into a coroutine/generator that can be resumed later."));
 
+        add(Make("select",
+                 {"select expr\n    case value1, value2 then\n        ...\n    case a to b then\n        ...\n    "
+                  "case is compOp value then\n        ...\n    else\n        ...\nend"},
+                 "select grade\n    case 90 to 100 then\n        print(\"A\")\n    case is >= 80 then\n        "
+                 "print(\"B\")\n    else\n        print(\"F\")\nend",
+                 "Compares expr against each case in order and runs the first match. Closes "
+                 "with a single end (no end select, no case else -- use else like if)."));
+
+        add(Make("case",
+                 {"select expr\n    case item, item, ... then\n        ...\nend"},
+                 "select day\n    case \"sat\", \"sun\" then\n        print(\"weekend\")\nend",
+                 "One branch of a select. Each item can be a plain value (equality), \"a to "
+                 "b\" (inclusive range), or \"is <op> value\" (relational). Multiple items can "
+                 "be comma-separated; the branch runs if any of them match."));
+
+        add(Make("to",
+                 {"case a to b then ..."},
+                 "case 1 to 10 then\n    print(\"single digit\")",
+                 "Inside a select's case, matches when the select's value falls between a "
+                 "and b inclusive."));
+
+        add(Make("is",
+                 {"case is compOp value then ..."},
+                 "case is >= 60 then\n    print(\"passing\")",
+                 "Inside a select's case, compares the select's value against value using "
+                 "compOp (==, !=, <, <=, >, >=)."));
+
+        add(Make("static",
+                 {"static func name(...) ... end"},
+                 "class Counter\n    static func create()\n        return Counter()\n    end\nend",
+                 "Marks a class method as static, callable on the class itself rather than "
+                 "on an instance. Can combine with private (static private func ...)."));
+
+        add(Make("private",
+                 {"private func name(...) ... end"},
+                 "class Account\n    private func validate()\n        ...\n    end\nend",
+                 "Marks a class member as private, restricting access from outside the "
+                 "class. Can combine with static (static private func ...)."));
+
+        add(Make("async",
+                 {"async func name(...) ... end"},
+                 "async func fetch_data()\n    result = await http_get(url)\n    return result\nend",
+                 "Declares a function as asynchronous. Its body may use await to suspend "
+                 "until another async call finishes."));
+
+        add(Make("await",
+                 {"await expr"},
+                 "async func main()\n    data = await fetch_data()\nend",
+                 "Suspends the current async function until expr (typically a call to "
+                 "another async function) completes, then yields its result. Only valid "
+                 "inside an async func."));
+
+        add(Make("extern",
+                 {"extern \"lib\" as Alias\n    func Name(...)\n    ...\nend"},
+                 "extern \"mylib\" as Native\n    func Add(a, b)\nend",
+                 "Declares functions implemented by a native library, resolved at runtime "
+                 "against the given alias. Only declarations go inside -- no bodies."));
+
         add(Make("or", {"a or b"},
                  "if is_weekend or is_holiday then\n    print(\"no work today\")\nend",
                  "Logical OR: true if either side is true. Short-circuits -- b isn't "

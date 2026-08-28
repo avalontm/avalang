@@ -114,6 +114,11 @@ void HandleFrameError(VM& vm, size_t frame_idx, const avastd::exception& e) {
     (void)e;
 }
 
+AvaError VM::MakeCurrentError(const avastd::string& message) const {
+    if (frames_.empty()) return AvaError(message);
+    return MakeFrameError(frames_.back(), message);
+}
+
 AvaError MakeFrameError(const CallFrame& frame, const avastd::string& message) {
     int line = 0;
     int column = 0;

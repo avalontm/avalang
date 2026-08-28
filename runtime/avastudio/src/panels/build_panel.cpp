@@ -269,6 +269,13 @@ std::string ResolveBuildProjectDir(const StudioSettings& settings, const std::st
     return settings.build_project_dir.empty() ? explorer_root_dir : settings.build_project_dir;
 }
 
+std::string NormalizeEntryFilePath(const std::string& project_dir, const std::string& picked_path) {
+    std::error_code ec;
+    fs::path rel = fs::relative(fs::path(picked_path), fs::path(project_dir), ec);
+    return (!ec && !rel.empty() && rel.native().rfind(fs::path("..").native(), 0) != 0) ? rel.generic_string()
+                                                                                         : picked_path;
+}
+
 void PollBuild(BuildPanelState& state, LogBridge& log_bridge) {
     std::lock_guard<std::mutex> lock(state.mutex);
     FlushLogToOutput(state.log, state.log_forwarded_upto, state.has_result, "[build]   ", log_bridge);
@@ -278,11 +285,13 @@ void PollBuild(BuildPanelState& state, LogBridge& log_bridge) {
     }
 }
 
-void TriggerBuild(BuildPanelState& state, const StudioSettings& settings, const std::string& explorer_root_dir,
-                   LogBridge& log_bridge) {
-    if (state.building.load()) return;
+TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const StudioSettings& settings,
+                                  const std::string& explorer_root_dir, LogBridge& log_bridge) {
+    TriggerBuildOutcome outcome;
+    outcome.project_dir = ResolveBuildProjectDir(settings, explorer_root_dir);
+    if (state.building.load()) return outcome;
 
-    const fs::path project_dir(ResolveBuildProjectDir(settings, explorer_root_dir));
+    const fs::path project_dir(outcome.project_dir);
     const bool is_barekernel = (settings.build_target == "barekernel");
 
     fs::path ava_cli =
@@ -307,6 +316,15 @@ void TriggerBuild(BuildPanelState& state, const StudioSettings& settings, const 
         setup_error = util::Tr("build.error_project_dir_missing");
     } else if (entry.empty()) {
         setup_error = util::Tr("build.error_entry_file_missing");
+    } else if (!fs::exists(project_dir / entry, ec)) {
+        // The configured/detected entry doesn't exist on disk -- typically stale
+        // build_entry_file left over after switching to a different project folder
+        // (see comment on TriggerBuildOutcome in the header). Rather than handing this
+        // straight to ava_cli, which would only report it deep inside the subprocess log
+        // as a raw "--entry no existe: <path>", surface it here and let the caller offer a
+        // picker instead.
+        outcome.entry_file_missing = true;
+        setup_error = TrFormat("build.error_entry_file_not_found", (project_dir / entry).string());
     } else if (is_barekernel && (settings.build_compiler_path_barekernel.empty() ||
                                   !fs::exists(settings.build_compiler_path_barekernel, ec))) {
         setup_error = util::Tr("build.error_toolchain_dir_missing");
@@ -337,6 +355,10 @@ void TriggerBuild(BuildPanelState& state, const StudioSettings& settings, const 
         if (!active_compiler_path.empty()) {
             args.push_back("--compiler-path");
             args.push_back(active_compiler_path);
+        }
+        if (is_barekernel) {
+            if (settings.build_force_so) args.push_back("--force-so");
+            if (settings.build_force_runtime) args.push_back("--force-runtime");
         }
         if (!is_barekernel) {
             if (!settings.build_key_file.empty()) {
@@ -371,6 +393,8 @@ void TriggerBuild(BuildPanelState& state, const StudioSettings& settings, const 
         log_bridge.Log("[build] error: " + setup_error);
         state.logged_to_output = true;
     }
+
+    return outcome;
 }
 
 // TriggerBuild/PollBuild/ResolveBuildProjectDir above get external linkage the same way
@@ -428,16 +452,8 @@ BuildPanelResult DrawBuildPanel(BuildPanelState& state, StudioSettings& settings
             case BuildBrowseField::kCompilerPathBarekernel:
                 settings.build_compiler_path_barekernel = browsed_value; break;
             case BuildBrowseField::kEntryFile: {
-
-                const fs::path project_dir = settings.build_project_dir.empty()
-                                                  ? fs::path(explorer_root_dir)
-                                                  : fs::path(settings.build_project_dir);
-                std::error_code ec;
-                fs::path rel = fs::relative(fs::path(browsed_value), project_dir, ec);
                 settings.build_entry_file =
-                    (!ec && !rel.empty() && rel.native().rfind(fs::path("..").native(), 0) != 0)
-                        ? rel.generic_string()
-                        : browsed_value;
+                    NormalizeEntryFilePath(ResolveBuildProjectDir(settings, explorer_root_dir), browsed_value);
                 break;
             }
             case BuildBrowseField::kNone: break;
@@ -487,6 +503,26 @@ BuildPanelResult DrawBuildPanel(BuildPanelState& state, StudioSettings& settings
             result.settings_dirty = true;
         }
         ImGui::TextWrapped("%s", util::Tr("build.barekernel_note").c_str());
+
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        ImGui::TextColored(palette::FromHex(palette::kInfo), "%s", util::Tr("build.section_options").c_str());
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+
+        if (ImGui::Checkbox(util::Tr("build.force_so_label").c_str(), &settings.build_force_so))
+            result.settings_dirty = true;
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", util::Tr("build.force_so_tooltip").c_str());
+        }
+        if (ImGui::Checkbox(util::Tr("build.force_runtime_label").c_str(), &settings.build_force_runtime))
+            result.settings_dirty = true;
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", util::Tr("build.force_runtime_tooltip").c_str());
+        }
+        if (settings.build_force_so || settings.build_force_runtime) {
+            ImGui::TextColored(palette::FromHex(palette::kWarning), "%s",
+                                util::Tr("build.force_rebuild_warning").c_str());
+        }
     } else {
         if (DrawPathRow(util::Tr("build.compiler_path_label").c_str(),
                          util::Tr("build.compiler_path_hint_desktop").c_str(),

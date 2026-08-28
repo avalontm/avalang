@@ -2,10 +2,10 @@
 
 #include <cctype>
 #include <filesystem>
-#include <fstream>
-#include <sstream>
 
+#include "languages/block_scanner.h"
 #include "languages/builtin_signatures.h"
+#include "languages/import_file_cache.h"
 
 namespace studio {
 
@@ -117,8 +117,103 @@ std::string ParamBaseName(const std::string& raw_param) {
     if (!p.empty() && p[0] == '*') p = p.substr(1);
     size_t eq = p.find('=');
     if (eq != std::string::npos) p = p.substr(0, eq);
+    size_t as_pos = p.find(" as ");
+    if (as_pos != std::string::npos) p = p.substr(0, as_pos);
     size_t e = p.find_last_not_of(" \t");
     return e == std::string::npos ? "" : p.substr(0, e + 1);
+}
+
+std::string ParamBaseType(const std::string& raw_param) {
+    std::string p = raw_param;
+    size_t b = p.find_first_not_of(" \t");
+    if (b == std::string::npos) return "";
+    p = p.substr(b);
+    if (!p.empty() && p[0] == '*') p = p.substr(1);
+    size_t eq = p.find('=');
+    std::string core = eq == std::string::npos ? p : p.substr(0, eq);
+    size_t as_pos = core.find(" as ");
+    if (as_pos == std::string::npos) return "";
+    std::string type = core.substr(as_pos + 4);
+    size_t tb = type.find_first_not_of(" \t");
+    if (tb == std::string::npos) return "";
+    size_t te = type.find_last_not_of(" \t");
+    return type.substr(tb, te - tb + 1);
+}
+
+std::string ParseReturnTypeAnnotation(const std::string& text, size_t& i, size_t end) {
+    size_t save = i;
+    SkipInlineWhitespace(text, i);
+    if (i >= end || !IsIdentStart(text[i])) { i = save; return ""; }
+    size_t as_save = i;
+    std::string maybe_as = ReadIdent(text, i);
+    if (maybe_as != "as") { i = as_save; return ""; }
+    SkipInlineWhitespace(text, i);
+    if (i >= end || !IsIdentStart(text[i])) { i = as_save; return ""; }
+    return ReadIdent(text, i);
+}
+
+std::string InferReturnTypeFromBody(const std::string& text, size_t body_start) {
+    size_t scan_pos = body_start;
+    size_t body_end = 0;
+    if (!FindMatchingEnd(text, scan_pos, body_end)) return "";
+
+    std::unordered_map<std::string, std::string> local_types;
+
+    size_t i = body_start;
+    while (i < body_end) {
+        char c = text[i];
+        if (c == '#') { while (i < body_end && text[i] != '\n') ++i; continue; }
+        if (c == '\'' || c == '"') {
+            char quote = c;
+            ++i;
+            while (i < body_end && text[i] != quote) {
+                if (text[i] == '\\' && i + 1 < body_end) i += 2; else ++i;
+            }
+            if (i < body_end) ++i;
+            continue;
+        }
+        if (IsIdentStart(c)) {
+            std::string word = ReadIdent(text, i);
+
+            if (word == "return") {
+                SkipInlineWhitespace(text, i);
+                if (i < body_end && IsIdentStart(text[i])) {
+                    std::string candidate = ReadIdent(text, i);
+                    size_t after_ident = i;
+                    SkipInlineWhitespace(text, i);
+                    if (i < body_end && text[i] == '(') return candidate;
+                    auto local_it = local_types.find(candidate);
+                    if (local_it != local_types.end()) return local_it->second;
+                    i = after_ident;
+                }
+                continue;
+            }
+
+            size_t save = i;
+            SkipInlineWhitespace(text, i);
+            bool is_plain_assign = i < body_end && text[i] == '=' && (i + 1 >= body_end || text[i + 1] != '=');
+            if (!is_plain_assign) { i = save; continue; }
+
+            ++i;
+            SkipInlineWhitespace(text, i);
+            if (i < body_end && IsIdentStart(text[i])) {
+                std::string rhs_name = ReadIdent(text, i);
+                size_t after_rhs = i;
+                SkipInlineWhitespace(text, i);
+                if (i < body_end && text[i] == '(') {
+                    local_types[word] = rhs_name;
+                } else {
+                    local_types.erase(word);
+                    i = after_rhs;
+                }
+            } else {
+                local_types.erase(word);
+            }
+            continue;
+        }
+        ++i;
+    }
+    return "";
 }
 
 void FunctionIndex::ScanText(const std::string& text, const std::string& source_file) {
@@ -185,6 +280,12 @@ void FunctionIndex::ScanText(const std::string& text, const std::string& source_
             if (!pending_doc.empty()) ApplyDocBlock(sig, pending_doc);
             pending_doc.clear();
 
+            size_t after_params = j + 1;
+            sig.declared_return_type = ParseReturnTypeAnnotation(text, after_params, text.size());
+            if (sig.declared_return_type.empty()) {
+                sig.inferred_return_type = InferReturnTypeFromBody(text, after_params);
+            }
+
             if (signatures_.find(name) == signatures_.end()) {
                 signatures_[name] = std::move(sig);
             }
@@ -198,7 +299,7 @@ void FunctionIndex::ScanText(const std::string& text, const std::string& source_
 }
 
 void FunctionIndex::ScanImports(const std::string& text, const std::string& current_file_dir,
-                                 std::unordered_set<std::string>& visited) {
+                                 std::unordered_set<std::string>& visited, ImportFileCache& cache) {
     size_t i = 0;
     while (i < text.size()) {
         char c = text[i];
@@ -228,12 +329,12 @@ void FunctionIndex::ScanImports(const std::string& text, const std::string& curr
                 if (!module_path.empty()) {
                     std::string path = ResolveImportPath(module_path, current_file_dir);
                     if (!path.empty() && visited.insert(path).second) {
-                        std::ifstream file(path, std::ios::binary);
-                        if (file) {
-                            std::ostringstream ss;
-                            ss << file.rdbuf();
+                        if (const std::string* imported_text = cache.Load(path)) {
+                            ScanText(*imported_text, path);
 
-                            ScanText(ss.str(), path);
+                            namespace fs = std::filesystem;
+                            std::string imported_dir = fs::path(path).parent_path().string();
+                            ScanImports(*imported_text, imported_dir, visited, cache);
                         }
                     }
                 }
@@ -268,11 +369,16 @@ std::string FunctionIndex::ResolveImportPath(const std::vector<std::string>& mod
     return "";
 }
 
-void FunctionIndex::Rebuild(const std::string& text, const std::string& current_file_dir) {
+void FunctionIndex::Rebuild(const std::string& text, const std::string& current_file_dir,
+                             ImportFileCache* shared_cache) {
     signatures_.clear();
     ScanText(text, "");
+
+    ImportFileCache local_cache;
+    ImportFileCache& cache = shared_cache ? *shared_cache : local_cache;
+
     std::unordered_set<std::string> visited;
-    ScanImports(text, current_file_dir, visited);
+    ScanImports(text, current_file_dir, visited, cache);
 
     for (const auto& [name, sig] : BuiltinSignatures()) {
         signatures_.emplace(name, sig);

@@ -1,0 +1,3 @@
+func foo(
+    print("nunca deberia compilar")
+end

@@ -3,11 +3,13 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "TextEditor.h"
 #include "design/design_document.h"
 #include "languages/class_index.h"
+#include "languages/fold_index.h"
 #include "languages/function_index.h"
 #include "languages/member_access_resolver.h"
 #include "panels/properties_panel.h"
@@ -31,7 +33,13 @@ struct EditorTab {
 
     VariableTypeIndex variable_type_index;
 
+    FoldIndex fold_index;
+    std::unordered_set<int> folded_lines;
+
     bool dirty = false;
+
+    bool index_dirty = false;
+    double last_edit_time = 0.0;
 
     bool is_welcome = false;
 
@@ -151,6 +159,14 @@ void CloseTabForPath(EditorState& state, const std::string& path);
 void RenameTabPath(EditorState& state, const std::string& old_path, const std::string& new_path);
 
 void ToggleTabViewMode(EditorTab& tab);
+
+void ToggleFold(EditorTab& tab, int start_line);
+
+bool IsLineFolded(const EditorTab& tab, int start_line);
+
+void FoldAll(EditorTab& tab);
+
+void UnfoldAll(EditorTab& tab);
 
 void DrawEditorPanel(EditorState& state);
 

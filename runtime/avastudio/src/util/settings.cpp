@@ -98,6 +98,10 @@ StudioSettings LoadSettings() {
             settings.build_zero_disk = (value == "1");
         } else if (key == "build_debug_unencrypted") {
             settings.build_debug_unencrypted = (value == "1");
+        } else if (key == "build_force_so") {
+            settings.build_force_so = (value == "1");
+        } else if (key == "build_force_runtime") {
+            settings.build_force_runtime = (value == "1");
         }
     }
     return settings;
@@ -135,6 +139,8 @@ void SaveSettings(const StudioSettings& settings) {
     file << "build_flatten_control_flow=" << (settings.build_flatten_control_flow ? "1" : "0") << "\n";
     file << "build_zero_disk=" << (settings.build_zero_disk ? "1" : "0") << "\n";
     file << "build_debug_unencrypted=" << (settings.build_debug_unencrypted ? "1" : "0") << "\n";
+    file << "build_force_so=" << (settings.build_force_so ? "1" : "0") << "\n";
+    file << "build_force_runtime=" << (settings.build_force_runtime ? "1" : "0") << "\n";
 }
 
 }

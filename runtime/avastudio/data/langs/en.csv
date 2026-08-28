@@ -137,6 +137,11 @@ build.compiler_path_label,Compiler path
 build.compiler_path_hint_desktop,"(optional -- folder with cmake/ninja/gcc/g++/cl.exe, prepended to PATH for this build)"
 build.compiler_path_hint_barekernel,"(i686-elf-gcc/g++/ld/objcopy/nm)"
 build.barekernel_note,"Encryption, obfuscation, zero-disk, and code signing are desktop-only and don't apply to BareKernel -- that section is hidden below."
+build.force_so_label,"Force rebuild libavalang.so"
+build.force_so_tooltip,"Same as ava_cli build's --force-so: rebuilds/relinks libavalang.so (the AvaLang\nruntime, cross-compiled) instead of reusing the one already sitting next to\n--out. Needed the first time you build into a clean output folder, or after\nchanging runtime/avalang/."
+build.force_runtime_label,"Force rebuild generic runner"
+build.force_runtime_tooltip,"Same as ava_cli build's --force-runtime: rebuilds avapack_barekernel_runtime\n(main_barekernel.cpp) instead of reusing the cached .a in\nbuild_pack_barekernel/. Needed the first time you build into a clean repo\ncheckout, or after changing main_barekernel.cpp / app.ld."
+build.force_rebuild_warning,"Remember to turn this back off after your next build -- left on, every build force-rebuilds and loses the caching speedup."
 build.error_toolchain_dir_missing,"could not find the cross-toolchain folder -- set it above."
 build.section_project,Project
 build.section_options,Options
@@ -179,6 +184,7 @@ build.error_ava_cli_not_found,could not find ava_cli(.exe) -- set its path under
 build.error_repo_root_not_found,could not find the AvaLang repo root -- set it under Advanced.
 build.error_project_dir_missing,project folder does not exist.
 build.error_entry_file_missing,could not find an entry .ava file -- set 'Entry script' above.
+build.error_entry_file_not_found,"entry script does not exist: %s -- pick the right one."
 panel.settings.title,Settings
 settings.language_label,Language
 settings.section_general,General

@@ -11,11 +11,17 @@ namespace ava {
 enum class BinOp {
     Add, Sub, Mul, Div, IDiv, Mod, Pow,
     Eq, Ne, Lt, Le, Gt, Ge,
-    And, Or
+    And, Or,
+    // Fase 2 del plan break/continue/operadores: bitwise, operan sobre
+    // Number truncado a entero en runtime (ver vm_arith.cpp OpBand/
+    // OpBor/OpBxor/OpShl/OpShr).
+    BAnd, BOr, BXor, Shl, Shr
 };
 
 enum class UnOp {
-    Neg, Not, Inc, Dec
+    Neg, Not, Inc, Dec,
+    // Fase 2: complemento bitwise (`~x`), ver vm_arith.cpp OpBnot.
+    BNot
 };
 
 struct AstNode {
@@ -79,6 +85,17 @@ struct UnOpExpr : ExprNode {
     UnOp op;
     std::shared_ptr<ExprNode> operand;
     UnOpExpr(UnOp o, std::shared_ptr<ExprNode> e) : op(o), operand(std::move(e)) {}
+};
+
+// Fase 3 del plan break/continue/operadores: `cond ? then_expr : else_expr`.
+// Azucar sintactico -- Compiler::CompileExpr lo compila con el mismo
+// patron TEST+JMP que ya usa CompileIf, sin opcode nuevo en la VM.
+struct TernaryExpr : ExprNode {
+    std::shared_ptr<ExprNode> condition;
+    std::shared_ptr<ExprNode> then_expr;
+    std::shared_ptr<ExprNode> else_expr;
+    TernaryExpr(std::shared_ptr<ExprNode> c, std::shared_ptr<ExprNode> t, std::shared_ptr<ExprNode> e)
+        : condition(std::move(c)), then_expr(std::move(t)), else_expr(std::move(e)) {}
 };
 
 struct CallExpr : ExprNode {
@@ -248,6 +265,23 @@ struct ForStmt : StmtNode {
     std::vector<std::shared_ptr<StmtNode>> body;
     ForStmt(std::string v, std::shared_ptr<ExprNode> i, std::vector<std::shared_ptr<StmtNode>> b)
         : var_name(std::move(v)), iterable(std::move(i)), body(std::move(b)) {}
+};
+
+// Fase 4 del plan break/continue/operadores: `for i = start to stop
+// [step s] then ... end`, azucar estilo VB6. Deliberadamente un nodo AST
+// separado de ForStmt (no desazucarado a range() en AstBuilder) para que
+// `step` con signo negativo se pueda evaluar en runtime -- ver
+// Compiler::CompileForRange.
+struct ForRangeStmt : StmtNode {
+    std::string var_name;
+    std::shared_ptr<ExprNode> start;
+    std::shared_ptr<ExprNode> stop;
+    std::shared_ptr<ExprNode> step; // nullptr = sin 'step' explicito (paso 1)
+    std::vector<std::shared_ptr<StmtNode>> body;
+    ForRangeStmt(std::string v, std::shared_ptr<ExprNode> a, std::shared_ptr<ExprNode> b,
+                 std::shared_ptr<ExprNode> s, std::vector<std::shared_ptr<StmtNode>> bd)
+        : var_name(std::move(v)), start(std::move(a)), stop(std::move(b)),
+          step(std::move(s)), body(std::move(bd)) {}
 };
 
 struct FuncDef : StmtNode {

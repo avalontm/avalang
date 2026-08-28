@@ -62,6 +62,12 @@ static BinOp textToBinOp(const std::string& txt) {
     if (txt == "//") return BinOp::IDiv;
     if (txt == "%")  return BinOp::Mod;
     if (txt == "**") return BinOp::Pow;
+    // Fase 2 del plan break/continue/operadores.
+    if (txt == "&")  return BinOp::BAnd;
+    if (txt == "|")  return BinOp::BOr;
+    if (txt == "^")  return BinOp::BXor;
+    if (txt == "<<") return BinOp::Shl;
+    if (txt == ">>") return BinOp::Shr;
     throw std::runtime_error("unknown binop: " + txt);
 }
 
@@ -159,6 +165,9 @@ std::shared_ptr<ExprNode> AstBuilder::exprFromAny(const std::any& a) {
     if (a.type() == typeid(std::shared_ptr<AwaitExpr>)) {
         return std::any_cast<std::shared_ptr<AwaitExpr>>(a);
     }
+    if (a.type() == typeid(std::shared_ptr<TernaryExpr>)) {
+        return std::any_cast<std::shared_ptr<TernaryExpr>>(a);
+    }
     return nullptr;
 }
 
@@ -210,6 +219,10 @@ std::shared_ptr<StmtNode> AstBuilder::stmtFromAny(const std::any& a) {
     try {
         auto for_stmt = std::any_cast<std::shared_ptr<ForStmt>>(a);
         return for_stmt;
+    } catch (...) {}
+    try {
+        auto for_range_stmt = std::any_cast<std::shared_ptr<ForRangeStmt>>(a);
+        return for_range_stmt;
     } catch (...) {}
     try {
         auto func_def = std::any_cast<std::shared_ptr<FuncDef>>(a);
@@ -627,6 +640,22 @@ std::any AstBuilder::visitWhileStatement(AvaLangParser::WhileStatementContext* c
 }
 
 std::any AstBuilder::visitForStatement(AvaLangParser::ForStatementContext* ctx) {
+    // Fase 4 del plan break/continue/operadores: la tercera alternativa
+    // de forStatement (`for i = a to b step s`) es la unica de las tres
+    // que no pasa por targetList -- ver el comentario de la gramatica.
+    if (!ctx->targetList()) {
+        auto var_name = ctx->NAME()->getText();
+        auto branches = ctx->expr();
+        auto start_expr = exprFromAny(branches[0]->accept(this));
+        auto stop_expr = exprFromAny(branches[1]->accept(this));
+        std::shared_ptr<ExprNode> step_expr = nullptr;
+        if (branches.size() == 3) {
+            step_expr = exprFromAny(branches[2]->accept(this));
+        }
+        auto body = stmtsFromAny(visitBlock(ctx->block()));
+        return std::make_shared<ForRangeStmt>(var_name, start_expr, stop_expr, step_expr, body);
+    }
+
     auto* targets = ctx->targetList();
     auto var_name = targets->target(0)->NAME()->getText();
     auto iter_expr = exprFromAny(ctx->exprList()->expr(0)->accept(this));
@@ -860,9 +889,30 @@ std::any AstBuilder::visitLambdaExprAlt(AvaLangParser::LambdaExprAltContext* ctx
 
 std::any AstBuilder::visitOrExprAlt(AvaLangParser::OrExprAltContext* ctx) {
     if (!ctx) return nullptr;
+    return visitTernaryExpr(ctx->ternaryExpr());
+}
+
+// Fase 3 del plan break/continue/operadores: `cond ? then : else`. Sin
+// '?', se reduce a un simple pass-through al chain de orExpr (misma
+// forma que antes tenia visitOrExprAlt, movida aca porque ahora orExpr
+// se llega vía ternaryExpr en vez de directo desde el alt de expr).
+std::any AstBuilder::visitTernaryExpr(AvaLangParser::TernaryExprContext* ctx) {
+    if (!ctx) return nullptr;
     auto* orCtx = ctx->orExpr();
     if (!orCtx) return nullptr;
-    auto exprs = orCtx->andExpr();
+    auto cond = exprFromAny(visitOrExpr(orCtx));
+
+    auto branches = ctx->expr();
+    if (branches.size() == 2) {
+        auto then_e = exprFromAny(branches[0]->accept(this));
+        auto else_e = exprFromAny(branches[1]->accept(this));
+        return std::make_shared<TernaryExpr>(cond, then_e, else_e);
+    }
+    return cond;
+}
+
+std::any AstBuilder::visitOrExpr(AvaLangParser::OrExprContext* ctx) {
+    auto exprs = ctx->andExpr();
     if (exprs.size() == 1) return visitAndExpr(exprs[0]);
 
     auto left = exprFromAny(exprs[0]->accept(this));
@@ -894,7 +944,7 @@ std::any AstBuilder::visitNotExpr(AvaLangParser::NotExprContext* ctx) {
 }
 
 std::any AstBuilder::visitComparison(AvaLangParser::ComparisonContext* ctx) {
-    auto exprs = ctx->additive();
+    auto exprs = ctx->bitOr();
     auto ops = ctx->compOp();
 
     if (ops.empty()) return exprFromAny(exprs[0]->accept(this));
@@ -903,6 +953,66 @@ std::any AstBuilder::visitComparison(AvaLangParser::ComparisonContext* ctx) {
     for (size_t i = 0; i < ops.size(); ++i) {
         auto right = exprFromAny(exprs[i + 1]->accept(this));
         left = std::make_shared<BinOpExpr>(compOpToBinOp(ops[i]->getText()), left, right);
+    }
+    return left;
+}
+
+// Fase 2 del plan break/continue/operadores: bitwise OR/XOR/AND, un solo
+// operador por nivel (igual que visitAndExpr), y shift (`<<`/`>>`), que
+// como additive/multiplicative necesita buscar el token operador entre
+// los hijos porque hay dos posibles en ese nivel.
+std::any AstBuilder::visitBitOr(AvaLangParser::BitOrContext* ctx) {
+    auto exprs = ctx->bitXor();
+    if (exprs.size() == 1) return exprFromAny(exprs[0]->accept(this));
+
+    auto left = exprFromAny(exprs[0]->accept(this));
+    for (size_t i = 1; i < exprs.size(); ++i) {
+        auto right = exprFromAny(exprs[i]->accept(this));
+        left = std::make_shared<BinOpExpr>(BinOp::BOr, left, right);
+    }
+    return left;
+}
+
+std::any AstBuilder::visitBitXor(AvaLangParser::BitXorContext* ctx) {
+    auto exprs = ctx->bitAnd();
+    if (exprs.size() == 1) return exprFromAny(exprs[0]->accept(this));
+
+    auto left = exprFromAny(exprs[0]->accept(this));
+    for (size_t i = 1; i < exprs.size(); ++i) {
+        auto right = exprFromAny(exprs[i]->accept(this));
+        left = std::make_shared<BinOpExpr>(BinOp::BXor, left, right);
+    }
+    return left;
+}
+
+std::any AstBuilder::visitBitAnd(AvaLangParser::BitAndContext* ctx) {
+    auto exprs = ctx->shift();
+    if (exprs.size() == 1) return exprFromAny(exprs[0]->accept(this));
+
+    auto left = exprFromAny(exprs[0]->accept(this));
+    for (size_t i = 1; i < exprs.size(); ++i) {
+        auto right = exprFromAny(exprs[i]->accept(this));
+        left = std::make_shared<BinOpExpr>(BinOp::BAnd, left, right);
+    }
+    return left;
+}
+
+std::any AstBuilder::visitShift(AvaLangParser::ShiftContext* ctx) {
+    auto exprs = ctx->additive();
+    if (exprs.size() == 1) return exprFromAny(exprs[0]->accept(this));
+
+    auto left = exprFromAny(exprs[0]->accept(this));
+    std::vector<antlr4::tree::TerminalNode*> ops;
+    for (auto* child : ctx->children) {
+        if (auto* t = dynamic_cast<antlr4::tree::TerminalNode*>(child)) {
+            auto txt = t->getText();
+            if (txt == "<<" || txt == ">>") ops.push_back(t);
+        }
+    }
+
+    for (size_t i = 0; i < ops.size(); ++i) {
+        auto right = exprFromAny(exprs[i + 1]->accept(this));
+        left = std::make_shared<BinOpExpr>(textToBinOp(ops[i]->getText()), left, right);
     }
     return left;
 }
@@ -954,6 +1064,7 @@ std::any AstBuilder::visitUnary(AvaLangParser::UnaryContext* ctx) {
         if (txt == "-") return std::make_shared<UnOpExpr>(UnOp::Neg, operand);
         if (txt == "++") return std::make_shared<UnOpExpr>(UnOp::Inc, operand);
         if (txt == "--") return std::make_shared<UnOpExpr>(UnOp::Dec, operand);
+        if (txt == "~") return std::make_shared<UnOpExpr>(UnOp::BNot, operand);
         return std::make_shared<UnOpExpr>(UnOp::Not, operand);
     }
     return visitPower(ctx->power());

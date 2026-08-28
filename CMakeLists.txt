@@ -95,7 +95,7 @@ if(AVA_TARGET_BAREKERNEL)
     # ava_barekernel_runner. Vive bajo runtime/avapack/src/barekernel/
     # (no runtime/avabare/) porque conceptualmente es parte de
     # avapack_barekernel, no del bootstrap mínimo original -- ver el plan.
-    add_subdirectory(runtime/avapack/src/barekernel avapack_barekernel_app)
+    add_subdirectory(runtime/avapack/src/barekernel avapack_barekernel)
 endif()
 
 # ---------------------------------------------------------------------

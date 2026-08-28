@@ -86,6 +86,11 @@ struct BuildOptions {
                             // libavalang.so -- se reusa el que ya este junto al .exe de
                             // salida. Pasar --force-so para reconstruirlo (primer build
                             // limpio, o cambios que lo afecten).
+    bool build_runtime = false; // --target barekernel: por defecto NO se recompila el
+                                 // runner generico (main_barekernel.cpp) -- se reusa el
+                                 // .a cacheado en build_pack_barekernel/. Pasar
+                                 // --force-runtime si no hay cache todavia o si se toco
+                                 // main_barekernel.cpp / app.ld.
 };
 
 void PrintBuildUsage() {
@@ -193,7 +198,15 @@ void PrintBuildUsage() {
         "                executable, reusing whatever libavalang.so is already sitting\n"
         "                next to --out. Pass this the first time you build into a\n"
         "                clean output folder, or whenever avalang's cross-compiled .so\n"
-        "                needs to be refreshed.\n";
+        "                needs to be refreshed.\n"
+        "  --force-runtime\n"
+        "                (--target barekernel only) rebuild the generic runner\n"
+        "                (avapack_barekernel_runtime, from main_barekernel.cpp) instead\n"
+        "                of reusing the cached .a in build_pack_barekernel/. Pass this\n"
+        "                the first time you build into a clean repo checkout (no cache\n"
+        "                yet), or whenever main_barekernel.cpp / app.ld changes. Every\n"
+        "                other build only recompiles your .ava and links it against the\n"
+        "                cached runtime -- see BAREKERNEL_PLATFORM_LAYER.md.\n";
 }
 
 bool ParseBuildArgs(int argc, char** argv, BuildOptions& opts, std::string& error) {
@@ -268,6 +281,8 @@ bool ParseBuildArgs(int argc, char** argv, BuildOptions& opts, std::string& erro
             opts.bss_size = static_cast<std::uint32_t>(parsed);
         } else if (arg == "--force-so") {
             opts.build_so = true;
+        } else if (arg == "--force-runtime") {
+            opts.build_runtime = true;
         } else if (arg == "--help" || arg == "-h") {
             PrintBuildUsage();
             std::exit(0);
@@ -816,6 +831,13 @@ int RunBuildBarekernelCommand(ava::platform::IProcess& process, const BuildOptio
     fs::path embedded_cpp_path = work_dir / "embedded_avb.cpp";
     fs::path elf_path = work_dir / "app.elf";
     fs::path bin_path = work_dir / "app.bin";
+    // Cache persistente del runner generico (ver BAREKERNEL_PLATFORM_LAYER.md,
+    // tabla "Las cuatro piezas del build cruzado") -- NO depende de tu
+    // proyecto, asi que una vez compilado se reusa build tras build salvo
+    // --force-runtime. A diferencia de avb_path/embedded_cpp_path/elf_path/
+    // bin_path (que se regeneran siempre, son tu programa), este archivo
+    // sobrevive entre builds.
+    fs::path runtime_a_cache = work_dir / "avapack_barekernel_runtime.a";
 
     std::cout << "ava_cli build --target barekernel: compilando " << opts.entry_file
               << " a bytecode .avb ...\n";
@@ -882,6 +904,22 @@ int RunBuildBarekernelCommand(ava::platform::IProcess& process, const BuildOptio
         return 1;
     }
 
+    // La unica pieza que SIEMPRE hace falta recompilar sos vos (tu .ava,
+    // ya en embedded_cpp_path). El runner generico (avapack_barekernel_runtime,
+    // de main_barekernel.cpp) y "avalang" (solo necesario para relinkear
+    // libavalang.so) son candidatos a cache -- ver BAREKERNEL_PLATFORM_LAYER.md.
+    bool need_runtime_build = opts.build_runtime || !fs::exists(runtime_a_cache, ec);
+    bool need_avalang_target = opts.build_so; // avalang solo lo consume avalang_barekernel_so
+
+    if (opts.build_runtime) {
+        std::cout << "ava_cli build --target barekernel: --force-runtime -- se reconstruye "
+                     "avapack_barekernel_runtime (main_barekernel.cpp) ...\n";
+    } else if (need_runtime_build) {
+        std::cout << "ava_cli build --target barekernel: no hay cache en "
+                  << runtime_a_cache.string() << " todavia -- se construye una vez "
+                     "(builds siguientes la reusan salvo --force-runtime) ...\n";
+    }
+
     fs::path cross_build_dir = repo_root / "build_barekernel_pack";
     std::cout << "ava_cli build --target barekernel: configurando build cruzado ("
               << cross_build_dir.string() << ", toolchain " << opts.toolchain_dir << ") ...\n";
@@ -905,15 +943,21 @@ int RunBuildBarekernelCommand(ava::platform::IProcess& process, const BuildOptio
     }
     std::vector<std::string> cross_build_args = {
         "--build", cross_build_dir.string(),
-        "--target", "avalang",
         "--target", "avapack_barekernel_app",
         "--parallel",
     };
+    if (need_avalang_target) {
+        cross_build_args.insert(cross_build_args.end() - 1, {"--target", "avalang"});
+    }
+    if (need_runtime_build) {
+        cross_build_args.insert(cross_build_args.end() - 1, {"--target", "avapack_barekernel_runtime"});
+    }
     if (opts.build_so) {
         cross_build_args.insert(cross_build_args.end() - 1, {"--target", "avalang_barekernel_so"});
     }
     std::cout << "ava_cli build --target barekernel: compilando (cruzado, i686-elf"
               << (opts.build_so ? "" : ", libavalang.so omitido -- se reusa el existente")
+              << (need_runtime_build ? "" : ", runtime generico omitido -- se reusa el cache")
               << ") ...\n";
     if (!RunTool(process, "cmake", cross_build_args, "cmake --build (cruzado)")) {
         std::cerr << "error: el build cruzado fallo -- si es una pared de \"undefined reference\", "
@@ -922,10 +966,35 @@ int RunBuildBarekernelCommand(ava::platform::IProcess& process, const BuildOptio
         return 1;
     }
 
-    fs::path app_lib = cross_build_dir / "avapack_barekernel_app" / "libavapack_barekernel_app.a";
+    fs::path app_lib = cross_build_dir / "avapack_barekernel" / "libavapack_barekernel_app.a";
     if (!fs::exists(app_lib, ec)) {
         std::cerr << "error: no se encontro " << app_lib.string() << " tras el build cruzado.\n";
         return 1;
+    }
+
+    fs::path runtime_lib_to_link;
+    if (need_runtime_build) {
+        fs::path fresh_runtime_lib = cross_build_dir / "avapack_barekernel" / "libavapack_barekernel_runtime.a";
+        if (!fs::exists(fresh_runtime_lib, ec)) {
+            std::cerr << "error: no se encontro " << fresh_runtime_lib.string()
+                      << " tras el build cruzado.\n";
+            return 1;
+        }
+        fs::create_directories(work_dir, ec);
+        fs::copy_file(fresh_runtime_lib, runtime_a_cache, fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            std::cerr << "error: no se pudo cachear " << runtime_a_cache.string()
+                      << " (" << ec.message() << ")\n";
+            return 1;
+        }
+        std::cout << "ava_cli build --target barekernel: avapack_barekernel_runtime cacheado en "
+                  << runtime_a_cache.string() << "\n";
+        runtime_lib_to_link = runtime_a_cache;
+    } else {
+        runtime_lib_to_link = runtime_a_cache;
+        std::cout << "ava_cli build --target barekernel: main_barekernel.cpp no reconstruido -- se "
+                     "reusa " << runtime_a_cache.string() << " (pasa --force-runtime para "
+                     "reconstruirlo).\n";
     }
 
     auto ld_bin = FindI686ElfTool(opts.toolchain_dir, "i686-elf-ld");
@@ -943,14 +1012,15 @@ int RunBuildBarekernelCommand(ava::platform::IProcess& process, const BuildOptio
     std::vector<std::string> ld_args = {
         "-T", app_ld.string(),
         "-o", elf_path.string(),
-        // app_lib es el UNICO input de este link, asi que _start (y todo
-        // lo demas) solo va a entrar si ld decide extraer el miembro del
-        // .a -- normalmente ENTRY(_start) fuerza eso, pero algunas
-        // versiones de ld no lo garantizan cuando no hay ningun otro .o
-        // con una referencia pendiente. --whole-archive elimina la
-        // ambiguedad: mete TODOS los objetos del .a, sin depender de
-        // resolucion de simbolos.
+        // Dos inputs ahora (runtime generico cacheado + tu app), asi que
+        // _start (que vive en el runtime, no en tu .a) solo va a entrar si
+        // ld decide extraer el miembro del .a -- normalmente ENTRY(_start)
+        // fuerza eso, pero algunas versiones de ld no lo garantizan cuando
+        // no hay ningun otro .o con una referencia pendiente.
+        // --whole-archive elimina la ambiguedad: mete TODOS los objetos de
+        // ambos .a, sin depender de resolucion de simbolos.
         "--whole-archive",
+        runtime_lib_to_link.string(),
         app_lib.string(),
         "--no-whole-archive",
     };

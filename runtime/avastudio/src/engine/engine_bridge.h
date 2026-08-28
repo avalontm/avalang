@@ -94,6 +94,18 @@ private:
     std::string pending_stdout_line_;
 
     std::vector<std::string> input_queue_;
+
+    // Incrementado en cada RunScript(). Antes cada corrida imprimia una
+    // linea "Run <archivo>" identica a la anterior si el archivo/nombre no
+    // cambiaba -- clickear "Run" dos veces (doble click, atajo de teclado
+    // repetido, o cualquier otra via que dispare perform_run() mas de una
+    // vez) deja dos corridas reales, cada una con su propio compile+run+
+    // errores, pero en la consola se ven como un bloque duplicado
+    // indistinguible: no hay forma de saber, mirando el log, si eso fue
+    // una sola corrida rara o dos corridas identicas una atras de la otra.
+    // run_count_ se antepone al mensaje ("Run #2 <archivo>") para que la
+    // secuencia sea explicita.
+    int run_count_ = 0;
 };
 
 }

@@ -12,9 +12,15 @@ inline TextEditor::LanguageDefinition AvaLangLanguageDef() {
 
     static const char* const keywords[] = {
 
-        "if", "elif", "else", "while", "for", "then", "end",
+        "if", "elif", "else", "while", "for", "then", "end", "in",
 
         "func", "class", "return", "base",
+
+        "static", "private",
+
+        "async", "await",
+
+        "select", "case", "to", "is",
 
         "local",
 
@@ -22,7 +28,7 @@ inline TextEditor::LanguageDefinition AvaLangLanguageDef() {
 
         "try", "catch", "finally",
 
-        "import", "as",
+        "import", "as", "extern",
 
         "true", "false", "nil",
 

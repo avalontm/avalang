@@ -137,6 +137,11 @@ build.compiler_path_label,Ruta del compilador
 build.compiler_path_hint_desktop,"(opcional -- carpeta con cmake/ninja/gcc/g++/cl.exe, se antepone al PATH para este build)"
 build.compiler_path_hint_barekernel,"(i686-elf-gcc/g++/ld/objcopy/nm)"
 build.barekernel_note,"Cifrado, ofuscación, disco cero y firma de código son solo para desktop y no aplican a BareKernel -- esa sección se oculta abajo."
+build.force_so_label,"Forzar reconstrucción de libavalang.so"
+build.force_so_tooltip,"Igual que --force-so de ava_cli build: reconstruye/relinkea libavalang.so (el\nruntime de AvaLang, cross-compilado) en vez de reusar el que ya está junto a\n--out. Hace falta la primera vez que buildeás en una carpeta de salida\nlimpia, o después de tocar runtime/avalang/."
+build.force_runtime_label,"Forzar reconstrucción del runner genérico"
+build.force_runtime_tooltip,"Igual que --force-runtime de ava_cli build: reconstruye\navapack_barekernel_runtime (main_barekernel.cpp) en vez de reusar el .a\ncacheado en build_pack_barekernel/. Hace falta la primera vez que buildeás\nen un checkout limpio, o después de tocar main_barekernel.cpp / app.ld."
+build.force_rebuild_warning,"Acordate de desactivarlo después del próximo build -- si queda activado, cada build fuerza la reconstrucción y se pierde la ventaja del cache."
 build.error_toolchain_dir_missing,"no se encontró la carpeta del cross-toolchain -- configurala arriba."
 build.section_project,Proyecto
 build.section_options,Opciones
@@ -179,6 +184,7 @@ build.error_ava_cli_not_found,no se encontró ava_cli(.exe) -- configurá su rut
 build.error_repo_root_not_found,no se encontró la raíz del repo de AvaLang -- configurala en Avanzado.
 build.error_project_dir_missing,la carpeta del proyecto no existe.
 build.error_entry_file_missing,no se encontró un archivo .ava de entrada -- configurá 'Script de entrada' arriba.
+build.error_entry_file_not_found,"el script de entrada no existe: %s -- elegí el correcto."
 panel.settings.title,Configuración
 settings.language_label,Idioma
 settings.section_general,General
