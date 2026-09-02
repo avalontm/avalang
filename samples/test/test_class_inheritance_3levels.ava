@@ -1,0 +1,125 @@
+# test_class_inheritance_3levels.ava
+# Cubre el bug #14 (ver AvaLang_Bugs_Encontrados.md): herencia de 3+
+# niveles (Puppy : Dog : Animal) con base.__init__(...) encadenado en
+# cada nivel producia recursion infinita / stack overflow
+# (Segmentation fault), incluso en release sin ASan. 2 niveles
+# (Dog : Animal) no tenia este problema. El test de bug #13
+# (test_class_inheritance_refcount.ava) evita a proposito la herencia
+# de 3 niveles por este motivo -- este archivo es el repro dedicado.
+#
+# Causa raiz: OpBaseCall (vm_call_op.cpp) resolvia SIEMPRE
+# inst->attrs["__base__"] (cacheado una sola vez en la instancia,
+# fijo al padre inmediato de la clase mas derivada) en vez de la base
+# de la clase que esta corriendo el frame actual. Con 2 niveles
+# coincide por casualidad; con 3+, un segundo base.__init__() dentro
+# de Dog.__init__ volvia a resolver a Dog (no a Animal) y se
+# re-llamaba a si mismo sin fin.
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado " + str(expected) + ", obtuve " + str(actual))
+    end
+end
+
+class Animal
+    func Animal(name)
+        this.name = name
+        this.kind = "animal"
+    end
+    func describe()
+        return this.name + " is a " + this.kind
+    end
+end
+
+class Dog : Animal
+    func Dog(name, breed)
+        base.__init__(name)
+        this.kind = "dog"
+        this.breed = breed
+    end
+end
+
+class Puppy : Dog
+    func Puppy(name, breed, age)
+        base.__init__(name, breed)
+        this.kind = "puppy"
+        this.age = age
+    end
+end
+
+# Repro minimo original: instanciar 3 niveles con base.__init__
+# encadenado en cada uno. Antes del fix: Segmentation fault (stack
+# overflow) aca mismo, nunca llega a imprimir nada.
+p = Puppy("Rex", "Labrador", 1)
+check(1, "Rex", p.name)
+check(2, "Labrador", p.breed)
+check(3, 1, p.age)
+# this.kind fue pisado 3 veces (Animal->"animal", Dog->"dog",
+# Puppy->"puppy" al final) -- confirma que Animal.__init__ y
+# Dog.__init__ realmente corrieron (antes del fix la recursion
+# infinita significaba que ni Dog.__init__, mucho menos
+# Animal.__init__, se alcanzaban nunca).
+check(4, "puppy", p.kind)
+
+# 4 niveles, para confirmar que el fix generaliza y no funciona "por
+# casualidad" solo hasta 3.
+class Toy : Puppy
+    func Toy(name, breed, age, size)
+        base.__init__(name, breed, age)
+        this.kind = "toy-" + this.kind
+        this.size = size
+    end
+end
+t = Toy("Milo", "Chihuahua", 1, "tiny")
+check(5, "toy-puppy", t.kind)
+check(6, "tiny", t.size)
+check(7, "Milo", t.name)
+
+# Multiples instancias de la cadena de 3 niveles en un loop, para
+# descartar que el fix dependa de un unico frame vivo a la vez (mismo
+# tipo de chequeo que hizo el bug #13 sobre inst->attrs).
+i = 0
+count = 0
+while i < 50
+    pp = Puppy("N" + str(i), "Mixed", i)
+    if pp.kind == "puppy" then
+        count = count + 1
+    end
+    i = i + 1
+end
+check(8, 50, count)
+
+# Dos jerarquias de 3 niveles independientes, instanciadas
+# entrelazadas, para descartar interferencia entre ellas.
+class Vehicle
+    func Vehicle(name)
+        this.name = name
+        this.category = "vehicle"
+    end
+end
+class Car : Vehicle
+    func Car(name)
+        base.__init__(name)
+        this.category = "car"
+    end
+end
+class SportsCar : Car
+    func SportsCar(name, topSpeed)
+        base.__init__(name)
+        this.category = "sports-car"
+        this.topSpeed = topSpeed
+    end
+end
+
+a1 = Puppy("Buddy", "Beagle", 2)
+c1 = SportsCar("Veyron", 410)
+a2 = Puppy("Coco", "Poodle", 3)
+c2 = SportsCar("Enzo", 350)
+check(9, "puppy", a1.kind)
+check(10, "sports-car", c1.category)
+check(11, "puppy", a2.kind)
+check(12, "sports-car", c2.category)
+
+print("=== test_class_inheritance_3levels.ava terminado ===")

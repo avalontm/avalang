@@ -10,46 +10,80 @@ namespace ava {
 static void SetNestedNamespace(
     avastd::unordered_map<avastd::string, Value>& globals,
     const avastd::vector<avastd::string>& parts,
-    size_t part_idx,
-    // Sub-fase 3 (Fase 5 GC): `module_dict` llega POR VALOR -- la copia
-    // hecha al llamar a esta funcion ya Retiene (sub-fase 2, RAII), asi
-    // que este parametro ya es dueño de una referencia propia que su
-    // propio destructor libera solo al salir de la funcion. Todo el
-    // Retain/Release manual que habia antes sobre `module_dict` y
-    // `ns_val` duplicaba eso -- y en el caso de `it->second =
-    // module_dict` despues de un `Release(it->second)` manual, el
-    // Release() automatico del operator= volvia a liberar el mismo
-    // valor viejo por segunda vez (double-release real, no solo leak).
+    // Bug nuevo (encontrado en esta pasada -- ver la fila correspondiente
+    // en AvaLang_Bugs_Encontrados.md): esta función SIEMPRE ignoraba el
+    // nivel real de anidamiento y operaba sobre el mismo `globals` de
+    // nivel superior en cada llamada recursiva, tanto para crear el
+    // namespace intermedio como para el caso base (guardar
+    // `module_dict`) -- nunca descendía de verdad al `DictObj` recién
+    // creado/reusado para un segmento intermedio. Para `import pkg.sub`
+    // (2 segmentos) eso significaba: el namespace `pkg` se creaba bien
+    // como `globals["pkg"] = {}` (Dict vacío), pero el módulo `sub` en
+    // sí terminaba guardado en un SEGUNDO global de nivel superior,
+    // `globals["sub"]`, nunca dentro de `pkg`. Reescrita: ahora resuelve
+    // el primer segmento contra `globals` (nivel superior, único
+    // contenedor que no es un `DictObj`), y desde ahí camina/crea cada
+    // segmento intermedio como un `DictObj` anidado real, guardando
+    // `module_dict` en el último segmento del DictObj correspondiente
+    // (el namespace inmediato que lo contiene) -- no en `globals` de
+    // nuevo. `part_idx` se quita del contrato público (siempre arrancaba
+    // en 0 de todas formas, ver único call-site en PlaceModuleInScope);
+    // internamente sigue existiendo como índice de loop.
     Value module_dict) {
-    if (part_idx == parts.size() - 1) {
-        auto it = globals.find(parts[part_idx]);
-        if (it != globals.end()) {
-            it->second = module_dict;
-        } else {
-            globals.emplace(parts[part_idx], module_dict);
-        }
-    } else {
-        Value ns_val;
-        ns_val.type = ValueType::Dict;
-        ns_val.obj = new DictObj();
+    // parts.size() > 1 siempre (ver el único call-site, PlaceModuleInScope,
+    // que ya separa el caso de un solo segmento antes de llamar acá).
 
-        Value existing = globals.find(parts[part_idx]) != globals.end() 
-            ? globals.at(parts[part_idx]) : Value::Nil();
-        if (existing.type == ValueType::Dict) {
-            auto* existing_dict = static_cast<DictObj*>(existing.obj);
-            avastd::string next_key = parts[part_idx + 1];
-            auto next_it = existing_dict->index.find(next_key);
-            if (next_it != existing_dict->index.end()) {
-                existing_dict->entries[next_it->second].second = ns_val;
-            } else {
-                existing_dict->index[next_key] = existing_dict->entries.size();
-                existing_dict->entries.emplace_back(next_key, ns_val);
-            }
+    // Paso 1: resolver/crear el primer segmento contra `globals` --
+    // el único nivel que vive en el unordered_map plano de la VM en vez
+    // de en un DictObj anidado.
+    DictObj* current;
+    {
+        auto it = globals.find(parts[0]);
+        if (it != globals.end() && it->second.type == ValueType::Dict) {
+            current = static_cast<DictObj*>(it->second.obj);
         } else {
-            globals.emplace(parts[part_idx], ns_val);
+            Value ns_val;
+            ns_val.type = ValueType::Dict;
+            ns_val.obj = new DictObj();
+            if (it != globals.end()) {
+                it->second = ns_val;
+            } else {
+                globals.emplace(parts[0], ns_val);
+            }
+            current = static_cast<DictObj*>(ns_val.obj);
         }
-        
-        SetNestedNamespace(globals, parts, part_idx + 1, module_dict);
+    }
+
+    // Paso 2: caminar cada segmento intermedio (si hay 3+ segmentos,
+    // ej. "a.b.c") como un DictObj anidado real dentro del anterior --
+    // creando o reusando cada uno.
+    for (size_t i = 1; i + 1 < parts.size(); ++i) {
+        auto idx_it = current->index.find(parts[i]);
+        if (idx_it != current->index.end() && current->entries[idx_it->second].second.type == ValueType::Dict) {
+            current = static_cast<DictObj*>(current->entries[idx_it->second].second.obj);
+        } else {
+            Value ns_val;
+            ns_val.type = ValueType::Dict;
+            ns_val.obj = new DictObj();
+            if (idx_it != current->index.end()) {
+                current->entries[idx_it->second].second = ns_val;
+            } else {
+                current->index[parts[i]] = current->entries.size();
+                current->entries.emplace_back(parts[i], ns_val);
+            }
+            current = static_cast<DictObj*>(ns_val.obj);
+        }
+    }
+
+    // Paso 3: guardar `module_dict` en el último segmento, DENTRO del
+    // DictObj que lo contiene de verdad (no en `globals` de nuevo).
+    const avastd::string& leaf = parts.back();
+    auto leaf_it = current->index.find(leaf);
+    if (leaf_it != current->index.end()) {
+        current->entries[leaf_it->second].second = module_dict;
+    } else {
+        current->index[leaf] = current->entries.size();
+        current->entries.emplace_back(leaf, module_dict);
     }
 }
 
@@ -81,8 +115,7 @@ static void PlaceModuleInScope(VM& vm, const avastd::string& module_path,
     parts.push_back(temp);
 
     if (parts.size() > 1) {
-        avastd::vector<avastd::string> ns_parts(parts.begin(), parts.end() - 1);
-        SetNestedNamespace(vm.Globals(), ns_parts, 0, module_dict);
+        SetNestedNamespace(vm.Globals(), parts, module_dict);
     } else {
         auto* dict = static_cast<DictObj*>(module_dict.obj);
         for (auto& entry : dict->entries) {
@@ -210,6 +243,7 @@ Value VM::DoImport(const avastd::string& module_path, const avastd::string& alia
     
     ExecuteFrame(frames_.size() - 1);
     
+    CloseUpvalues(frames_.back());
     frames_.pop_back();
     
     // module_dict recien creado: ref_count arranca en 1, propiedad de

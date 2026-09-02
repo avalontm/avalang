@@ -1,6 +1,0 @@
-extern "kernel32" as K
-    func Sleep(ms as int)
-    func GetTickCount() as int
-end
-
-now as int = K.GetTickCount()

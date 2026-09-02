@@ -1,0 +1,112 @@
+# test_base_async_methods.ava
+# Repro y regresion para el bug #17: `base.metodo_async()` -- llamar a
+# un metodo async de la clase base via `base.xxx()` (no `obj.metodo()`
+# directo) -- nunca envolvia su valor de retorno en un Task, aunque el
+# bug #16 (obj.metodo() async) ya estaba arreglado. Ver la fila del
+# bug #17 en AvaLang_Bugs_Encontrados.md para la causa raiz y el fix
+# (VM::StartAsyncBoundCall recibe un base_lookup_class opcional,
+# vm_task.cpp/vm.h; OpBaseCall arma un BoundMethod sintetico y
+# despacha por ahi cuando el metodo resuelto es async, vm_call_op.cpp).
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+# --- 1. base.metodo_async() simple: el metodo externo Y el base deben
+#        devolver Task, no el valor resuelto en ningun nivel ---
+class Animal
+    async func hacerSonido()
+        return "..."
+    end
+end
+
+class Perro : Animal
+    async func hacerSonido()
+        r = base.hacerSonido()
+        return "Guau, base dijo: " + str(r)
+    end
+end
+
+p = Perro()
+t1 = p.hacerSonido()
+check(1, "<task: resolved: Guau, base dijo: <task: resolved: ...>>", str(t1))
+
+# --- 2. Cadena de 3 niveles: cada base.xxx() debe seguir avanzando un
+#        nivel real de la cadena de herencia (no quedarse pegado en el
+#        mismo, mismo mecanismo del bug #14) mientras sigue envolviendo
+#        cada resultado en su propio Task ---
+class PerroBebe : Perro
+    async func hacerSonido()
+        r = base.hacerSonido()
+        return "Guau bebe, base dijo: " + str(r)
+    end
+end
+
+pb = PerroBebe()
+t2 = pb.hacerSonido()
+check(2, "<task: resolved: Guau bebe, base dijo: <task: resolved: Guau, base dijo: <task: resolved: ...>>>", str(t2))
+
+# --- 3. base.metodo_async() con parametros -- OJO: devolver el Task
+#        de base.xxx() tal cual (`return r`, sin desenvolver) da un
+#        Task resuelto A OTRO Task -- no hay auto-flattening/unwrap
+#        implicito de Tasks anidados en este lenguaje (comportamiento
+#        existente, no parte del alcance de este bug; para desenvolver
+#        hay que usar `await`, ver el caso 5 mas abajo) ---
+class Calculadora
+    async func sumar(a, b)
+        return a + b
+    end
+end
+
+class CalculadoraConLog : Calculadora
+    async func sumar(a, b)
+        r = base.sumar(a, b)
+        return r
+    end
+end
+
+calc = CalculadoraConLog()
+t3 = calc.sumar(10, 5)
+check(3, "<task: resolved: <task: resolved: 15>>", str(t3))
+
+# --- 4. base.metodo_async() que hace raise -- debe dar Task rejected
+#        en el nivel base, sin propagar la excepcion de forma sincrona
+#        y sin frenar al metodo externo (que sigue envolviendo su
+#        propio resultado en un Task resuelto, aunque el string
+#        contenga la representacion de un Task rejected) ---
+class Bomba
+    async func explotar()
+        raise "boom"
+    end
+end
+
+class BombaGrande : Bomba
+    async func explotar()
+        r = base.explotar()
+        return "resultado base: " + str(r)
+    end
+end
+
+b = BombaGrande()
+t4 = b.explotar()
+check(4, "<task: resolved: resultado base: <task: rejected: boom>>", str(t4))
+
+# --- 5. await de un metodo cuyo cuerpo llama base.metodo_async() --
+#        confirma que el unwrap via await tambien funciona en este
+#        camino de llamada, igual que ya funcionaba para obj.metodo()
+#        directo (bug #16) y funciones libres ---
+resultados = {}
+
+async func consumir(x)
+    r = await x.hacerSonido()
+    resultados["r5"] = r
+end
+
+consumir(pb)
+check(5, "Guau bebe, base dijo: <task: resolved: Guau, base dijo: <task: resolved: ...>>", resultados["r5"])
+
+print("=== test_base_async_methods.ava terminado ===")

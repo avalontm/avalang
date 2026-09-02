@@ -18,6 +18,14 @@ namespace ava {
 struct Upvalue : Object {
     Value* location;
     Value value;
+    // Register index within the originating CallFrame this upvalue was
+    // opened against, -1 once closed (or if never open, e.g. deserialized).
+    // Used by CallFrame::open_upvalues to intern one Upvalue per (frame,
+    // register) -- so sibling closures created in the same frame that
+    // capture the same local share this exact object -- and by
+    // VM::CloseUpvalues to find which open upvalues belong to a frame
+    // that's about to be popped.
+    int reg_index = -1;
     Upvalue(Value* loc = nullptr) : Object(GcObjectKind::Upvalue), location(loc) {}
 };
 

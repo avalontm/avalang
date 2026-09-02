@@ -26,6 +26,12 @@ void RegisterBuiltinMethods(AvaVM* vm) {
     raw_vm->RegisterBuiltinMethod("list_removeAt", builtin_list_removeAt, nullptr);
     raw_vm->RegisterBuiltinMethod("list_length", builtin_list_length, nullptr);
     raw_vm->RegisterBuiltinMethod("list_contains", builtin_list_contains, nullptr);
+    raw_vm->RegisterBuiltinMethod("list_indexOf", builtin_list_indexOf, nullptr);
+    raw_vm->RegisterBuiltinMethod("list_sort", builtin_list_sort, nullptr);
+    raw_vm->RegisterBuiltinMethod("list_reverse", builtin_list_reverse, nullptr);
+    raw_vm->RegisterBuiltinMethod("list_clear", builtin_list_clear, nullptr);
+    raw_vm->RegisterBuiltinMethod("list_copy", builtin_list_copy, nullptr);
+    raw_vm->RegisterBuiltinMethod("list_join", builtin_list_join, nullptr);
     
     raw_vm->RegisterBuiltinMethod("dict_keys", builtin_dict_keys, nullptr);
     raw_vm->RegisterBuiltinMethod("dict_values", builtin_dict_values, nullptr);

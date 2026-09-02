@@ -79,6 +79,24 @@ void OpResume(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K,
     vm.saved_frames_.push_back(vm.frames_);
     vm.saved_exception_handlers_.push_back(avastd::move(vm.exception_handlers_));
     vm.exception_handlers_.clear();
+    // saved_frames_.push_back above made a COPY of vm.frames_ (the
+    // caller's frames) -- its CallFrame::registers buffers are fresh
+    // heap allocations, distinct from the ones still referenced by
+    // vm.frames_. The swap below parks the caller's ORIGINAL frames_
+    // buffers inside co->frames only temporarily: once the coroutine
+    // suspends or dies, `co->frames = vm.frames_;` further down
+    // overwrites co->frames with the coroutine's own frames, destroying
+    // that parked copy and dangling any Upvalue::location still pointing
+    // into it. Relocate those upvalues now to the copy in
+    // saved_frames_.back(), which is what vm.frames_ gets restored to
+    // (via std::move) once this resume call returns -- mirrors the
+    // pattern in vm_task.cpp's StartAsyncCall/StartAsyncBoundCall.
+    {
+        auto& saved_copy = vm.saved_frames_.back();
+        for (size_t i = 0; i < vm.frames_.size(); ++i) {
+            vm.RelocateUpvalues(vm.frames_[i], saved_copy[i]);
+        }
+    }
     avastd::swap(vm.frames_, co->frames);
     vm.current_coroutine_ = co;
 
@@ -90,11 +108,15 @@ void OpResume(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K,
         resume_frame.registers.resize(closure->proto->num_registers);
         vm.frames_.push_back(resume_frame);
     }
-    if (vm.frames_[0].registers.size() < args.size()) {
-        vm.frames_[0].registers.resize(args.size());
+    if (vm.frames_[0].registers.size() < args.size() + 1) {
+        vm.frames_[0].registers.resize(args.size() + 1);
     }
-    for (size_t i = 0; i < args.size() && i < vm.frames_[0].registers.size(); ++i) {
-        vm.frames_[0].registers[i] = args[i];
+    // Same +1 offset as vm_call.cpp's VM::Call (ValueType::Coroutine
+    // branch): register 0 is reserved by the compiler's calling
+    // convention (`this` for methods / unused slot for free functions),
+    // so real parameters start at register 1.
+    for (size_t i = 0; i < args.size() && i + 1 < vm.frames_[0].registers.size(); ++i) {
+        vm.frames_[0].registers[i + 1] = args[i];
     }
     vm.frames_[0].argc = static_cast<uint32_t>(args.size());
 
@@ -105,6 +127,20 @@ void OpResume(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K,
     vm.coroutine_resumers_.pop_back();
 
     co->frames = vm.frames_;
+    // `co->frames = vm.frames_;` above is a COPY -- co->frames now has
+    // its own fresh registers buffers, distinct from vm.frames_'s. Any
+    // upvalue opened by a closure captured *during this run of the
+    // coroutine* (e.g. one that will itself be called after a later
+    // resume) still points into vm.frames_'s buffer, which is about to
+    // be destroyed by the move-assignment below. Relocate those
+    // upvalues into the copy in co->frames first -- that copy is what
+    // gets swapped back into vm.frames_ the next time this coroutine is
+    // resumed, so the closure keeps sharing the real, live register.
+    if (vm.is_coroutine_suspended_) {
+        for (size_t i = 0; i < vm.frames_.size(); ++i) {
+            vm.RelocateUpvalues(vm.frames_[i], co->frames[i]);
+        }
+    }
     co->status = vm.is_coroutine_suspended_ ? CoStatus::Suspended : CoStatus::Dead;
     if (co->status == CoStatus::Dead) ReleaseDeadCoroutineState(*co);
     vm.frames_ = avastd::move(vm.saved_frames_.back());

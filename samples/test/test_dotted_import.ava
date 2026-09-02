@@ -1,0 +1,48 @@
+# test_dotted_import.ava
+# Repro y regresion para el bug #18: `import pkg.sub` (path de import
+# con 2+ segmentos separados por punto, sin `as`) rompia el namespace
+# anidado -- `pkg.sub.SUB_VAL` daba `nil` en silencio en vez del valor
+# real. Ver la fila del bug #18 en AvaLang_Bugs_Encontrados.md para la
+# causa raiz y el fix (VM::DoImport -> PlaceModuleInScope ->
+# SetNestedNamespace, vm_import.cpp). Los modulos importados por este
+# test viven en samples/test/fixtures_dotted_import/ (no son tests en
+# si mismos, son fixtures).
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+# --- 1-2. import de 2 segmentos (pkg.sub): el valor y la funcion del
+#          modulo hoja deben quedar accesibles anidados bajo "pkg",
+#          no perdidos ni esparcidos en un global "sub" suelto ---
+import fixtures_dotted_import.pkg.sub
+
+check(1, "en el paquete", fixtures_dotted_import.pkg.sub.SUB_VAL)
+check(2, "func de sub", fixtures_dotted_import.pkg.sub.subFunc())
+
+# --- 3. import de 3 segmentos (a.b.c) -- confirma que la cadena de
+#        namespaces intermedios (2 niveles: "a" y "a.b") se arma bien,
+#        no solo el caso de 1 nivel intermedio del caso 1-2 ---
+import fixtures_dotted_import.a.b.c
+
+check(3, "muy profundo", fixtures_dotted_import.a.b.c.DEEP_VAL)
+
+# --- 4. un segundo import bajo el MISMO namespace de nivel superior
+#        (pkg.other, hermano de pkg.sub) no debe pisar lo que ya habia
+#        -- "pkg" tiene que terminar con AMBOS "sub" y "other" ---
+import fixtures_dotted_import.pkg.other
+
+check(4, "hermano de sub", fixtures_dotted_import.pkg.other.OTHER_VAL)
+check(5, "en el paquete", fixtures_dotted_import.pkg.sub.SUB_VAL)
+
+# --- 6. reimportar el MISMO modulo dotted una segunda vez (cache hit
+#        de module_cache_) no rompe el namespace ya armado ---
+import fixtures_dotted_import.pkg.sub
+
+check(6, "en el paquete", fixtures_dotted_import.pkg.sub.SUB_VAL)
+
+print("=== test_dotted_import.ava terminado ===")

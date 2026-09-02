@@ -34,6 +34,23 @@ Value VM::StartAsyncCall(const Value& closure_val, const avastd::vector<Value>& 
     saved_frames_.push_back(frames_);
     saved_exception_handlers_.push_back(avastd::move(exception_handlers_));
     exception_handlers_.clear();
+    // Relocate (not close) upvalues before dropping the caller's frame
+    // stack: frames_ is COPIED into saved_frames_ above (registers get
+    // new heap buffers in the copy), so any Upvalue::location still
+    // pointing into the original frames_ would dangle the moment
+    // clear() below destroys it. Closing here would freeze a snapshot
+    // and silently disconnect any closure sharing that upvalue from the
+    // real register from this point on (bug #4). Instead, repoint each
+    // open upvalue at the matching register in the just-made copy
+    // (saved_frames_.back()), which is the buffer that actually survives
+    // and eventually becomes frames_ again -- so the closure keeps
+    // reading/writing the real, live value across the suspend.
+    {
+        auto& saved_copy = saved_frames_.back();
+        for (size_t i = 0; i < frames_.size(); ++i) {
+            RelocateUpvalues(frames_[i], saved_copy[i]);
+        }
+    }
     frames_.clear();
     frames_.push_back(entry_frame);
     current_coroutine_ = co;
@@ -87,7 +104,8 @@ Value VM::StartAsyncCall(const Value& closure_val, const avastd::vector<Value>& 
     return Value::Task(task);
 }
 
-Value VM::StartAsyncBoundCall(const Value& bound_val, const avastd::vector<Value>& args) {
+Value VM::StartAsyncBoundCall(const Value& bound_val, const avastd::vector<Value>& args,
+                               ClassObj* base_lookup_class) {
     auto* bound = static_cast<BoundMethod*>(bound_val.obj);
 
     auto* co = new Coroutine();
@@ -110,11 +128,27 @@ Value VM::StartAsyncBoundCall(const Value& bound_val, const avastd::vector<Value
         entry_frame.registers[i + 1] = args[i];
     }
     entry_frame.argc = static_cast<uint32_t>(args.size());
+    // Bug #17: propaga la clase dueña del método (ver comentario en
+    // vm.h) para que un base.xxx() DENTRO de este método async, si lo
+    // hay, siga resolviendo la cadena de herencia correctamente en vez
+    // de quedar pegado en el mismo nivel (mismo mecanismo del bug #14).
+    entry_frame.base_lookup_class = base_lookup_class;
 
     coroutine_resumers_.push_back(current_coroutine_);
     saved_frames_.push_back(frames_);
     saved_exception_handlers_.push_back(avastd::move(exception_handlers_));
     exception_handlers_.clear();
+    // See the matching comment in StartAsyncCall above: relocate (not
+    // close) so closures sharing an upvalue with a frame on the caller
+    // stack keep reading/writing the real, live register across the
+    // suspend instead of getting silently disconnected into a frozen
+    // snapshot (bug #4).
+    {
+        auto& saved_copy = saved_frames_.back();
+        for (size_t i = 0; i < frames_.size(); ++i) {
+            RelocateUpvalues(frames_[i], saved_copy[i]);
+        }
+    }
     frames_.clear();
     frames_.push_back(entry_frame);
     current_coroutine_ = co;

@@ -1,13 +1,9 @@
 #include "vm.h"
 #include "vm_internal.h"
+#include "vm_helpers.h"
 
 namespace ava {
 
-// Normalizes a possibly-negative user-supplied index (Python-style: -1 is
-// the last element) against a container's length, before it's handed to
-// ValidateIntegerIndex (which rejects negatives outright). Slicing
-// (builtin_slice) already does this; single-element indexing (x[i]) did
-// not, so `lst[-1]` used to fail while `lst[-3:]` worked fine.
 static double NormalizeIndex(double n, size_t len) {
     if (n < 0) {
         n += static_cast<double>(len);
@@ -41,25 +37,21 @@ void OpGetIndex(CallFrame& frame, const Instr& in, const avastd::vector<Value>& 
             return;
         }
         auto* list = static_cast<ListObj*>(obj.obj);
-        size_t pos = ValidateIntegerIndex(NormalizeIndex(idx.n, list->items.size()), "list index");
-        if (pos < list->items.size()) {
-            frame.registers[in.a] = list->items[pos];
-        } else {
-            frame.registers[in.a] = Value::Nil();
-        }
+        size_t pos = ValidateIntegerIndex(NormalizeIndex(idx.n, list->items.size()), list->items.size(), "list index");
+        frame.registers[in.a] = list->items[pos];
     } else if (obj.type == ValueType::Dict) {
-        auto* dict = static_cast<DictObj*>(obj.obj);
+        avastd::string key_str;
+        bool have_key = false;
         if (idx.type == ValueType::Number) {
-            size_t pos = ValidateIntegerIndex(NormalizeIndex(idx.n, dict->entries.size()), "dict index");
-            if (pos < dict->entries.size()) {
-                auto sv = Value(); sv.type = ValueType::String; sv.obj = new StringObj(dict->entries[pos].first);
-                frame.registers[in.a] = sv;
-            } else {
-                frame.registers[in.a] = Value::Nil();
-            }
+            key_str = NumberToString(idx.n);
+            have_key = true;
         } else if (idx.type == ValueType::String) {
-            auto* key = static_cast<StringObj*>(idx.obj);
-            auto it = dict->index.find(key->data);
+            key_str = static_cast<StringObj*>(idx.obj)->data;
+            have_key = true;
+        }
+        if (have_key) {
+            auto* dict = static_cast<DictObj*>(obj.obj);
+            auto it = dict->index.find(key_str);
             if (it != dict->index.end()) {
                 frame.registers[in.a] = dict->entries[it->second].second;
             } else {
@@ -71,13 +63,9 @@ void OpGetIndex(CallFrame& frame, const Instr& in, const avastd::vector<Value>& 
     } else if (obj.type == ValueType::String) {
         if (idx.type == ValueType::Number) {
             auto* str = static_cast<StringObj*>(obj.obj);
-            size_t pos = ValidateIntegerIndex(NormalizeIndex(idx.n, str->data.size()), "string index");
-            if (pos < str->data.size()) {
-                Value sv; sv.type = ValueType::String; sv.obj = new StringObj(avastd::string(1, str->data[pos]));
-                frame.registers[in.a] = sv;
-            } else {
-                frame.registers[in.a] = Value::Nil();
-            }
+            size_t pos = ValidateIntegerIndex(NormalizeIndex(idx.n, str->data.size()), str->data.size(), "string index");
+            Value sv; sv.type = ValueType::String; sv.obj = new StringObj(avastd::string(1, str->data[pos]));
+            frame.registers[in.a] = sv;
         } else {
             frame.registers[in.a] = Value::Nil();
         }
@@ -95,21 +83,28 @@ void OpSetIndex(CallFrame& frame, const Instr& in, const avastd::vector<Value>& 
             return;
         }
         auto* list = static_cast<ListObj*>(obj.obj);
-        size_t pos = ValidateIntegerIndex(NormalizeIndex(idx.n, list->items.size()), "list index");
-        if (pos < list->items.size()) {
-            list->items[pos] = val;
-        }
+        size_t pos = ValidateIntegerIndex(NormalizeIndex(idx.n, list->items.size()), list->items.size(), "list index");
+        list->items[pos] = val;
     } else if (obj.type == ValueType::Dict) {
-        auto* dict = static_cast<DictObj*>(obj.obj);
+
+        avastd::string key_str;
+        bool have_key = false;
         if (idx.type == ValueType::String) {
-            auto* key = static_cast<StringObj*>(idx.obj);
-            auto it = dict->index.find(key->data);
+            key_str = static_cast<StringObj*>(idx.obj)->data;
+            have_key = true;
+        } else if (idx.type == ValueType::Number) {
+            key_str = NumberToString(idx.n);
+            have_key = true;
+        }
+        if (have_key) {
+            auto* dict = static_cast<DictObj*>(obj.obj);
+            auto it = dict->index.find(key_str);
             if (it != dict->index.end()) {
                 dict->entries[it->second].second = val;
             } else {
                 size_t pos = dict->entries.size();
-                dict->entries.push_back({key->data, val});
-                dict->index[key->data] = pos;
+                dict->entries.push_back({key_str, val});
+                dict->index[key_str] = pos;
             }
         }
     }

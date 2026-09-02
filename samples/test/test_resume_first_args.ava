@@ -1,0 +1,83 @@
+# test_resume_first_args.ava
+# Cubre el bug documentado como "fuera de alcance" en la nota del bug #10
+# (AvaLang_Bugs_Encontrados.md): pasar argumentos en el PRIMER resume(co,
+# args) de una coroutine recien creada no los propagaba al parametro de
+# la funcion de entrada -- llegaba nil en vez del valor pasado.
+#
+# Causa raiz: en el branch "primer resume" de VM::Call (vm_call.cpp,
+# ValueType::Coroutine) y en el OpResume vestigial (coroutine.cpp), los
+# argumentos se copiaban a partir del registro 0 (`registers[i] =
+# args[i]`). Pero el registro 0 esta SIEMPRE reservado por la convencion
+# de llamada del compilador (`this` en metodos, un slot sin uso en
+# funciones libres -- Compiler::CompileFunc arranca `next_reg_ = 1` antes
+# de asignarle registro a cada parametro), asi que los parametros reales
+# empiezan en el registro 1. Cualquier otro camino de llamada (Function,
+# Bound) ya hacia `registers[i + 1] = args[i]`; el branch de "primer
+# resume" era el unico que no aplicaba ese +1.
+#
+# Fix: mismo offset +1 que ya usan los demas caminos de llamada, aplicado
+# en vm_call.cpp::VM::Call y (por consistencia) en
+# coroutine.cpp::OpResume.
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+# --- Repro minimo: un solo argumento en el primer resume ---
+func genOne(label)
+    yield label
+    return label
+end
+co1 = coroutine(genOne)
+r1 = resume(co1, "hola")
+check(1, "hola", r1[0])
+r2 = resume(co1)
+check(2, "hola", r2)
+
+# --- Multiples parametros, todos deben llegar en el primer resume ---
+func genTwo(a, b, c)
+    yield a
+    yield b
+    return c
+end
+# yield envuelve su valor en una List de 1 elemento (ver nota de
+# sintaxis en AvaLang_Bugs_Encontrados.md); return no lo envuelve.
+co2 = coroutine(genTwo)
+check(3, 10, resume(co2, 10, 20, 30)[0])
+check(4, 20, resume(co2)[0])
+check(5, 30, resume(co2))
+
+# --- Numero, no solo string, para no confundir con un caso especial de
+#     tipo ---
+func genNum(n)
+    return n * 2
+end
+co3 = coroutine(genNum)
+check(6, 84, resume(co3, 42))
+
+# --- Regresion: coroutine sin parametros en el primer resume no debe
+#     romperse por el offset nuevo ---
+func genNone()
+    yield 1
+    return 2
+end
+co4 = coroutine(genNone)
+check(7, 1, resume(co4)[0])
+check(8, 2, resume(co4))
+
+# --- Regresion: el valor que SI se pasa en un resume POSTERIOR (no el
+#     primero) sigue entregandose vía el registro de yield, sin tocar el
+#     branch arreglado ---
+func genEcho()
+    x = yield "listo"
+    return x
+end
+co5 = coroutine(genEcho)
+check(9, "listo", resume(co5)[0])
+check(10, "eco", resume(co5, "eco"))
+
+print("=== test_resume_first_args.ava terminado ===")

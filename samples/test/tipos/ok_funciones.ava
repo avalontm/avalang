@@ -1,5 +1,0 @@
-func add(a as int, b as int) as int
-    return a + b
-end
-
-result = add(10, 20)

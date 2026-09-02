@@ -1,4 +1,5 @@
 #include "builtin.h"
+#include "vm/vm_helpers.h"
 
 namespace {
 
@@ -104,14 +105,23 @@ ava_value_t builtin_dict_length(AvaVM* vm, const ava_value_t* args, size_t, void
 
 ava_value_t builtin_dict_containsKey(AvaVM* vm, const ava_value_t* args, size_t count, void*) {
     if (!args || count < 2 || args[0].type != AVA_DICT) return MakeNil();
-    
+
     if (args[1].type == AVA_STRING) {
         size_t key_len = 0;
         const char* key = ava_string_data(vm, args[1], &key_len);
         bool found = ava_dict_contains(vm, args[0], key, key_len);
         return MakeBool(found);
     }
-    
+
+    if (args[1].type == AVA_NUMBER) {
+        // Canonicalizar igual que OpGetIndex/OpSetIndex (vm_containers.cpp):
+        // las claves numéricas se guardan como su representación string vía
+        // NumberToString, así containsKey(d, 5) coincide con d[5]/d["5"].
+        avastd::string key_str = ava::NumberToString(args[1].as.n);
+        bool found = ava_dict_contains(vm, args[0], key_str.c_str(), key_str.size());
+        return MakeBool(found);
+    }
+
     return MakeBool(false);
 }
 

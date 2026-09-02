@@ -1,0 +1,116 @@
+# test_lists_dicts.ava
+# Cubre bugs #5, #7, #8 del historial:
+#   #5 dict.containsKey() con clave numerica
+#   #7 list.contains()/remove() con igualdad estructural (strings dinamicos)
+#   #8 politica de error dura y uniforme para indices fuera de rango
+
+fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+func checkThrows(n, fn)
+    threw = false
+    try
+        fn()
+    catch (err)
+        threw = true
+    end
+    if threw then
+        print("OK " + str(n) + " (lanzo excepcion como se esperaba)")
+    else
+        print("FAIL " + str(n) + ": se esperaba una excepcion y no se lanzo")
+    end
+end
+
+# --- Bug #5: dict.containsKey con clave numerica ---
+d = {}
+d[5] = 25
+check(1, true, d.containsKey(5))
+check(2, true, d.containsKey("5"))
+check(3, 25, d[5])
+
+# memoizacion por clave numerica (repro original del bug)
+func fibMemo(n, cache)
+    if cache.containsKey(n) then
+        return cache[n]
+    end
+    if n <= 1 then
+        return n
+    end
+    result = fibMemo(n - 1, cache) + fibMemo(n - 2, cache)
+    cache[n] = result
+    return result
+end
+check(4, 102334155, fibMemo(40, {}))
+
+# --- Bug #7: list.contains()/remove() con strings construidos en runtime ---
+prefix = "h"
+built = prefix + "ola"          # string construido en runtime, no literal
+lst = ["ola", "mundo", "avalang"]
+check(5, false, lst.contains(built))   # "hola" no esta en la lista
+
+lst2 = [built, "otro"]
+check(6, true, lst2.contains("hola"))  # comparacion estructural, no de puntero
+
+x = "o"
+concatenado = x + "b" + "j"     # "obj", construido dinamicamente
+lst3 = ["a", "obj", "c"]
+check(7, true, lst3.contains(concatenado))
+lst3.remove(concatenado)
+check(8, 2, len(lst3))
+check(9, false, lst3.contains("obj"))
+
+# contains/remove tambien con numeros e instancias de listas anidadas
+nums = [1, 2, 3, 4, 5]
+check(10, true, nums.contains(3))
+nums.remove(3)
+check(11, false, nums.contains(3))
+check(12, 4, len(nums))
+
+# --- Bug #8: indices fuera de rango -> excepcion dura y uniforme ---
+listaChica = [10, 20, 30]
+
+# lectura fuera de rango (antes: nil silencioso)
+checkThrows(13, func()
+    return listaChica[10]
+end)
+
+# escritura fuera de rango (antes: no-op silencioso, dato perdido)
+checkThrows(14, func()
+    listaChica[10] = 99
+end)
+
+# indice negativo fuera de rango (ya lanzaba antes, no debe regresionar)
+checkThrows(15, func()
+    return listaChica[-10]
+end)
+
+# indice no entero (ya lanzaba antes, no debe regresionar)
+checkThrows(16, func()
+    return listaChica[1.5]
+end)
+
+# string fuera de rango tambien debe ser excepcion dura
+s = "abc"
+checkThrows(17, func()
+    return s[10]
+end)
+
+# indices validos (negativos y slices) NO deben verse afectados por el fix
+check(18, 30, listaChica[-1])
+check(19, 10, listaChica[0])
+slice1 = listaChica[0:2]
+check(20, 2, len(slice1))
+check(21, 10, slice1[0])
+
+# lista sigue intacta tras los intentos fallidos de escritura fuera de rango
+check(22, 3, len(listaChica))
+check(23, 30, listaChica[2])
+
+print("=== test_lists_dicts.ava terminado ===")

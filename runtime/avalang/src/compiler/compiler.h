@@ -96,6 +96,32 @@ private:
     // ResolveTypeName. Populated alongside known_funcs_ above by the same
     // CollectFuncSignatures call, same per-Compiler-instance scoping.
     std::unordered_map<std::string, TypeRef> known_func_returns_;
+    // Bugfix (Aug 2026 build/test pass): companion to known_funcs_ above,
+    // same population site (CollectFuncSignatures) and same
+    // per-Compiler-instance/current-chunk scoping. Holds every bare NAME
+    // that is the target of a plain assignment (`f = ...`, `f as T = ...`,
+    // `local f = ...`, etc.) at the TOP LEVEL of the chunk being compiled
+    // (module top level, or any chunk CollectFuncSignatures is called on --
+    // same scope as known_funcs_, i.e. it does NOT recurse into
+    // if/while/for/try bodies, matching CollectFuncSignatures' own
+    // top-level-statements-only scan).
+    //
+    // Why this exists: a name assigned at top level (`f = (x) => x*2`)
+    // compiles to SETGLOBAL, never touching locals_ -- see the repeated
+    // `if (!is_top_level_ && ... locals_.find(...))` pattern throughout
+    // this file. Before this fix, NameShadowsGlobalCallable only checked
+    // locals_/upvalues/instance_attrs_, so calling such a name (`f(5)`),
+    // whether at top level or from inside a nested function/method that
+    // never declared `f` itself, produced a false "function 'f' is not
+    // defined" from CheckCallArgs -- even though at runtime GETGLOBAL
+    // would have found it just fine. Consulted by
+    // NameShadowsGlobalCallable exactly like known_funcs_ is consulted by
+    // CheckCallArgs, and copied to every `Compiler sub` at the same 3
+    // sites known_funcs_/known_func_returns_ are (CompileFunc,
+    // LambdaExpr's CompileExpr case, CompileClass's method loop) so a
+    // nested scope can see top-level assigned names the same way it
+    // already sees top-level function defs.
+    std::unordered_set<std::string> known_top_level_globals_;
     // Phase 10 of AvaLang_Plan_Sistema_de_Tipos.md. The CURRENT function
     // body's declared return type (Phase 8's FuncDef::return_type,
     // resolved via TypeFromName), set once per Compiler instance right

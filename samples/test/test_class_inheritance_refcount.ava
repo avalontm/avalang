@@ -1,0 +1,116 @@
+# test_class_inheritance_refcount.ava
+# Cubre el bug #13 (ver AvaLang_Bugs_Encontrados.md):
+#   Al compilar `class Dog : Animal`, CompileClass armaba una Value
+#   manual (`base_val.type = ...; base_val.obj = base_class;`) para
+#   guardar la clase base en `class_obj->attrs["__base__"]`. Como
+#   `base_class` es un ClassObj YA EXISTENTE (no uno recien creado con
+#   `new` en esa misma linea), esa Value manual no retenia nada, pero
+#   su destructor SI liberaba una referencia al salir de scope --
+#   cancelando en silencio el retain real que la asignacion de abajo
+#   ya habia hecho. Efecto neto: la clase base quedaba con una
+#   referencia de menos de la que le corresponde, lo cual solo se
+#   manifestaba como use-after-free/doble-free bajo AddressSanitizer,
+#   tipicamente al final del programa (destruccion de las constantes
+#   del Proto). El mismo patron exacto (Value manual envolviendo un
+#   ClassObj ya existente, en vez de copiar la Value que ya lo referencia)
+#   tambien aparecia por triplicado en runtime, al instanciar una clase
+#   (vm.cpp, vm_call_op.cpp y vm_classes.cpp::OpNewInstance guardando
+#   `inst->attrs["__class__"]`).
+#
+# Este script no puede observar el crash directamente (ocurre en el
+# shutdown de la VM bajo ASan), pero ejercita a fondo el camino que lo
+# dispara: herencia (2 niveles -- ver nota abajo), muchas instancias, y
+# acceso repetido a atributos/metodos heredados via __base__ -- la
+# verificacion real es correr este archivo bajo un binario compilado
+# con -fsanitize=address,undefined y confirmar 0 errores.
+#
+# NOTA: a proposito NO se prueba herencia de 3 niveles (class C : B,
+# class B : A) llamando base.__init__ encadenado -- eso dispara un bug
+# DISTINTO y ya documentado por separado (recursion infinita / stack
+# overflow en la resolucion de base.__init__ con 3+ niveles), fuera de
+# alcance de este bug (#13) segun la regla de "un bug a la vez".
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado " + str(expected) + ", obtuve " + str(actual))
+    end
+end
+
+class Animal
+    func __init__(this, name)
+        this.name = name
+        this.sound = "..."
+    end
+    func speak(this)
+        return this.name + " says " + this.sound
+    end
+end
+
+class Dog : Animal
+    func __init__(this, name)
+        base.__init__(name)
+        this.sound = "Woof"
+    end
+end
+
+# (Puppy : Dog, un tercer nivel, se probo aparte y dispara el bug de
+# recursion infinita en base.__init__ mencionado arriba -- no se usa
+# aca a proposito.)
+
+# Multiples instancias de cada nivel de la cadena de herencia -- cada
+# una lee this.name/this.sound (heredados via instance_defaults/attrs
+# mergeados en CompileClass) y llama speak() (heredado sin redefinir).
+a = Animal("Rex")
+check(1, "Rex says ...", a.speak())
+
+d1 = Dog("Fido")
+check(2, "Fido says Woof", d1.speak())
+
+d2 = Dog("Buddy")
+check(3, "Buddy says Woof", d2.speak())
+
+# Muchas instancias en un loop -- si la clase base quedara con un
+# refcount corrupto, aca es donde mas chance hay de que algo bajo ASan
+# ya se manifieste (aunque el crash tipico es recien al salir).
+i = 0
+count_ok = 0
+while i < 200
+    d = Dog("D" + str(i))
+    if d.speak() == ("D" + str(i) + " says Woof") then
+        count_ok = count_ok + 1
+    end
+    i = i + 1
+end
+check(4, 200, count_ok)
+
+# Segunda clase base independiente, para no depender de un solo arbol
+# de herencia (dos ramas separadas de subclases sobre distintas bases).
+class Vehicle
+    func __init__(this, wheels)
+        this.wheels = wheels
+    end
+    func describe(this)
+        return "vehicle with " + str(this.wheels) + " wheels"
+    end
+end
+
+class Car : Vehicle
+    func __init__(this)
+        base.__init__(4)
+    end
+end
+
+class Motorcycle : Vehicle
+    func __init__(this)
+        base.__init__(2)
+    end
+end
+
+c = Car()
+m = Motorcycle()
+check(5, "vehicle with 4 wheels", c.describe())
+check(6, "vehicle with 2 wheels", m.describe())
+
+print("=== test_class_inheritance_refcount.ava terminado ===")

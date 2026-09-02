@@ -4,6 +4,7 @@
 #include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 
 #include "value.h"
+#include "closure.h"
 
 namespace ava {
 
@@ -33,6 +34,28 @@ struct CallFrame {
     // the `await` sees it the same way it would see a synchronous raise.
     bool pending_await_error = false;
     Value pending_await_error_value;
+    // Upvalues opened against this frame's own registers (i.e. this frame
+    // is the parent whose locals got captured by a nested closure), keyed
+    // implicitly by Upvalue::reg_index. Interned here so that two sibling
+    // closures created in this same frame which capture the same local
+    // share one Upvalue -- see VM::FindOrCreateUpvalue -- and so they can
+    // all be closed (snapshotted, repointed to their own storage) via
+    // VM::CloseUpvalues right before this frame is destroyed.
+    avastd::vector<avastd::shared_ptr<Upvalue>> open_upvalues;
+    // Bug #14: clase (raw ptr, no ownership -- misma convención que el
+    // resto de los ClassObj* que ya circulan sueltos, ej. `cls`/`base_cls`
+    // en vm_call_op.cpp; su ciclo de vida lo maneja el refcounting de
+    // `Value`, no este frame) dueña del método que este frame está
+    // ejecutando. Set por el opcode CALL sobre una Class (constructor,
+    // `cls` = clase instanciada) y por OpBaseCall (`base_cls` = clase
+    // donde se encontró el método de `base.xxx()`). Deja que OpBaseCall
+    // resuelva `base.xxx()` respecto de la clase que está corriendo
+    // AHORA MISMO en vez de siempre respecto de `__base__` cacheado en la
+    // instancia -- eso es lo que permite que una cadena de 3+ niveles
+    // (`base.__init__()` dentro de `base.__init__()`) avance un nivel por
+    // llamada en vez de resolver siempre al mismo nivel. nullptr = frame
+    // no rastreado (ver fallback en OpBaseCall, vm_call_op.cpp).
+    ClassObj* base_lookup_class = nullptr;
 };
 
 enum class CoStatus { Suspended, Running, Dead };

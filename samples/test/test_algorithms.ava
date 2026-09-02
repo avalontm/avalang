@@ -1,0 +1,305 @@
+# test_algorithms.ava
+# Bateria de algoritmos "reales" para ejercitar el interprete de punta a
+# punta (closures, listas, dicts, clases, recursion pesada) despues de
+# los fixes de bugs #1-#8. No es una prueba de un bug puntual: busca
+# encontrar regresiones nuevas en combinaciones no probadas antes.
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+func listEquals(a, b)
+    if len(a) != len(b) then
+        return false
+    end
+    i = 0
+    while i < len(a)
+        if a[i] != b[i] then
+            return false
+        end
+        i++
+    end
+    return true
+end
+
+# --- Quicksort recursivo (slicing + recursion + concatenacion de listas) ---
+func quicksort(arr)
+    if len(arr) <= 1 then
+        return arr
+    end
+    pivot = arr[0]
+    rest = arr[1:len(arr)]
+    menores = []
+    mayores = []
+    i = 0
+    while i < len(rest)
+        if rest[i] < pivot then
+            menores.append(rest[i])
+        else
+            mayores.append(rest[i])
+        end
+        i++
+    end
+    return quicksort(menores) + [pivot] + quicksort(mayores)
+end
+
+desordenado = [5, 3, 8, 1, 9, 2, 7, 4, 6, 0]
+ordenado = quicksort(desordenado)
+check(1, true, listEquals(ordenado, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]))
+
+# --- Merge sort (para variar la estrategia de recursion) ---
+func merge(a, b)
+    out = []
+    i = 0
+    j = 0
+    while i < len(a) and j < len(b)
+        if a[i] <= b[j] then
+            out.append(a[i])
+            i++
+        else
+            out.append(b[j])
+            j++
+        end
+    end
+    while i < len(a)
+        out.append(a[i])
+        i++
+    end
+    while j < len(b)
+        out.append(b[j])
+        j++
+    end
+    return out
+end
+
+func mergesort(arr)
+    if len(arr) <= 1 then
+        return arr
+    end
+    mid = int(len(arr) / 2)
+    izq = mergesort(arr[0:mid])
+    der = mergesort(arr[mid:len(arr)])
+    return merge(izq, der)
+end
+
+check(2, true, listEquals(mergesort([9, 1, 8, 2, 7, 3, 6, 4, 5]), [1, 2, 3, 4, 5, 6, 7, 8, 9]))
+
+# --- Busqueda binaria sobre lista ya ordenada ---
+func binarySearch(arr, target)
+    lo = 0
+    hi = len(arr) - 1
+    while lo <= hi
+        mid = int((lo + hi) / 2)
+        if arr[mid] == target then
+            return mid
+        elif arr[mid] < target then
+            lo = mid + 1
+        else
+            hi = mid - 1
+        end
+    end
+    return -1
+end
+
+check(3, 7, binarySearch(ordenado, 7))
+check(4, -1, binarySearch(ordenado, 42))
+check(5, 0, binarySearch(ordenado, 0))
+
+# --- Fibonacci recursivo pesado (stress de la VM / call stack) ---
+func fibRec(n)
+    if n <= 1 then
+        return n
+    end
+    return fibRec(n - 1) + fibRec(n - 2)
+end
+check(6, 75025, fibRec(25))
+
+# --- map / filter / reduce puros con lambdas (closures + recursion) ---
+func map_(lst, fn)
+    out = []
+    i = 0
+    while i < len(lst)
+        out.append(fn(lst[i]))
+        i++
+    end
+    return out
+end
+
+func filter_(lst, fn)
+    out = []
+    i = 0
+    while i < len(lst)
+        if fn(lst[i]) then
+            out.append(lst[i])
+        end
+        i++
+    end
+    return out
+end
+
+func reduce_(lst, fn, initial)
+    acc = initial
+    i = 0
+    while i < len(lst)
+        acc = fn(acc, lst[i])
+        i++
+    end
+    return acc
+end
+
+nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+dobles = map_(nums, (x) => x * 2)
+check(7, true, listEquals(dobles, [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]))
+
+pares = filter_(nums, (x) => x % 2 == 0)
+check(8, true, listEquals(pares, [2, 4, 6, 8, 10]))
+
+suma = reduce_(nums, (acc, x) => acc + x, 0)
+check(9, 55, suma)
+
+# --- Currying / composicion de funciones (closures anidadas) ---
+func curry3(a)
+    return (b) => (c) => a + b + c
+end
+check(10, 60, curry3(10)(20)(30))
+
+func compose(f, g)
+    return (x) => f(g(x))
+end
+incrementar = (x) => x + 1
+duplicarC = (x) => x * 2
+incrementarLuegoDuplicar = compose(duplicarC, incrementar)
+check(11, 12, incrementarLuegoDuplicar(5))
+
+# --- Grafo (BFS/DFS) usando dict de adyacencia + listas ---
+grafo = {"A": ["B", "C"], "B": ["A", "D"], "C": ["A", "D"], "D": ["B", "C", "E"], "E": ["D"]}
+
+func bfs(grafo, inicio)
+    visitados = []
+    cola = [inicio]
+    while len(cola) > 0
+        actual = cola[0]
+        cola = cola[1:len(cola)]
+        if not visitados.contains(actual) then
+            visitados.append(actual)
+            vecinos = grafo[actual]
+            i = 0
+            while i < len(vecinos)
+                if not visitados.contains(vecinos[i]) then
+                    cola.append(vecinos[i])
+                end
+                i++
+            end
+        end
+    end
+    return visitados
+end
+
+ordenBfs = bfs(grafo, "A")
+check(12, 5, len(ordenBfs))
+check(13, "A", ordenBfs[0])
+check(14, true, ordenBfs.contains("E"))
+
+func dfs(grafo, actual, visitados)
+    if visitados.contains(actual) then
+        return visitados
+    end
+    visitados.append(actual)
+    vecinos = grafo[actual]
+    i = 0
+    while i < len(vecinos)
+        visitados = dfs(grafo, vecinos[i], visitados)
+        i++
+    end
+    return visitados
+end
+
+ordenDfs = dfs(grafo, "A", [])
+check(15, 5, len(ordenDfs))
+check(16, "A", ordenDfs[0])
+
+# --- try/catch/finally + excepciones propias ---
+func dividir(a, b)
+    if b == 0 then
+        raise "division por cero"
+    end
+    return a / b
+end
+
+resultadoDiv = nil
+mensajeError = nil
+finallyEjecutado = false
+try
+    resultadoDiv = dividir(10, 0)
+catch (err)
+    mensajeError = err
+finally
+    finallyEjecutado = true
+end
+check(17, nil, resultadoDiv)
+check(18, "division por cero", mensajeError)
+check(19, true, finallyEjecutado)
+
+check(20, 5, dividir(10, 2))
+
+# --- select/case ---
+func calificacion(nota)
+    select nota
+        case 90 to 100 then
+            return "A"
+        case 80, 85, 89 then
+            return "B"
+        case is >= 60 then
+            return "C"
+        else
+            return "F"
+    end
+end
+check(21, "A", calificacion(95))
+check(22, "B", calificacion(85))
+check(23, "C", calificacion(70))
+check(24, "F", calificacion(40))
+
+# --- Cola (queue) con clase + FIFO real ---
+class Queue
+    func __init__()
+        this.items = []
+    end
+    func enqueue(x)
+        this.items.append(x)
+    end
+    func dequeue()
+        if len(this.items) == 0 then
+            return nil
+        end
+        first = this.items[0]
+        this.items = this.items[1:len(this.items)]
+        return first
+    end
+end
+
+q = Queue()
+q.enqueue("a")
+q.enqueue("b")
+q.enqueue("c")
+check(25, "a", q.dequeue())
+check(26, "b", q.dequeue())
+q.enqueue("d")
+check(27, "c", q.dequeue())
+check(28, "d", q.dequeue())
+check(29, nil, q.dequeue())
+
+# --- Loop grande (stress de rendimiento basico) ---
+total = 0
+i = 0
+while i < 1000000
+    total = total + 1
+    i++
+end
+check(30, 1000000, total)
+
+print("=== test_algorithms.ava terminado ===")

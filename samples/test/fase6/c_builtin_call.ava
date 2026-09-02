@@ -1,4 +1,0 @@
-nums = [3, 1, 2]
-print(len(nums))
-print(sorted(nums))
-print(str(42))

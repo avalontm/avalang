@@ -1,0 +1,94 @@
+# test_resume_fresh_values.ava
+# Cubre un bug de memoria real (use-after-free) encontrado al escribir el
+# test del bug anterior (#11, argumentos del primer resume): concatenar
+# strings (u otra construccion de un objeto NUEVO -- string/list/dict/
+# instancia) dentro del cuerpo de una coroutine, en una statement que se
+# ejecuta DESPUES de reanudar un yield, y devolver/yieldear ese objeto
+# recien creado sin que quede otro dueno vivo en otro lado, corrompia
+# memoria (free(): invalid pointer / heap-use-after-free confirmado con
+# AddressSanitizer) en el siguiente uso de ese valor.
+#
+# Causa raiz: `builtin_resume` (builtin_coroutine.cpp) devolvia el
+# resultado de VM::Call con `ToC(result)` en vez de `ToCNew(result)`.
+# `ToC()` es un cast plano que NO retiene -- si `result` es la UNICA
+# referencia viva a un objeto recien creado (ej. un string armado con
+# `+` dentro de la coroutine), el destructor de `result` (un Value RAII)
+# libera esa referencia (refcount 1->0, delete) apenas termina la
+# funcion nativa, dejando el ava_value_t ya devuelto colgando de memoria
+# liberada antes de que el caller lo reciba -- mismo patron exacto (y
+# mismo fix) que ya se encontro y corrigio antes en `range()`
+# (builtin_natives.cpp) pero que se quedo afuera de esa auditoria en
+# `resume()`. No se detectaba en la bateria anterior porque ningun test
+# devolvia desde una coroutine un objeto fresco sin otro dueno vivo
+# (strings literales de la fuente ya estan retenidos en la tabla de
+# constantes K[]; los valores de multiples argumentos de yield se
+# envuelven en una List armada en vm_call.cpp, un camino distinto al de
+# este bug). Fix: `ToCNew(result)` en vez de `ToC(result)`.
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+# --- Repro minimo: concat de string DESPUES de reanudar el yield,
+#     devuelto directamente por `return` ---
+label = "hola"
+func genReturn()
+    yield label
+    return "done:" + label
+end
+co1 = coroutine(genReturn)
+r1a = resume(co1)
+check(1, "hola", r1a[0])
+r1b = resume(co1)
+check(2, "done:hola", r1b)
+
+# --- Mismo patron pero el valor fresco se YIELDEA (no se retorna) ---
+func genYield()
+    yield "before"
+    yield "after:" + label
+    return "final"
+end
+co2 = coroutine(genYield)
+resume(co2)
+r2 = resume(co2)
+check(3, "after:hola", r2[0])
+check(4, "final", resume(co2))
+
+# --- Mismo patron con una List fresca (no solo strings) ---
+func genList()
+    yield 0
+    lst = [1, 2, 3]
+    lst.append(4)
+    return lst
+end
+co3 = coroutine(genList)
+resume(co3)
+r3 = resume(co3)
+check(5, "[1, 2, 3, 4]", str(r3))
+
+# --- Mismo patron con un Dict fresco ---
+func genDict()
+    yield 0
+    d = {}
+    d["k"] = "v"
+    return d
+end
+co4 = coroutine(genDict)
+resume(co4)
+r4 = resume(co4)
+check(6, "v", r4["k"])
+
+# --- Regresion: usar el valor devuelto varias veces (si quedara colgando
+#     por otro camino, una segunda lectura ya mostraria basura) ---
+co5 = coroutine(genReturn)
+resume(co5)
+r5 = resume(co5)
+check(7, "done:hola", r5)
+check(8, "done:hola", r5)
+check(9, 9, len(r5))
+
+print("=== test_resume_fresh_values.ava terminado ===")

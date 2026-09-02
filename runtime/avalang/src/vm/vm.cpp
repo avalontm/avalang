@@ -5,6 +5,43 @@
 
 namespace ava {
 
+avastd::shared_ptr<Upvalue> VM::FindOrCreateUpvalue(CallFrame& frame, avastd::uint32_t reg_idx) {
+    for (auto& existing : frame.open_upvalues) {
+        if (existing->reg_index == static_cast<int>(reg_idx)) {
+            return existing;
+        }
+    }
+    auto upval = avastd::make_shared<Upvalue>();
+    upval->location = &frame.registers[reg_idx];
+    upval->reg_index = static_cast<int>(reg_idx);
+    frame.open_upvalues.push_back(upval);
+    return upval;
+}
+
+void VM::CloseUpvalues(CallFrame& frame) {
+    for (auto& upval : frame.open_upvalues) {
+        // Snapshot the live value before `location` (which points into
+        // frame.registers, about to be destroyed) goes dangling, then
+        // repoint at that snapshot so closures holding this Upvalue keep
+        // working with self-contained storage from here on.
+        upval->value = *upval->location;
+        upval->location = &upval->value;
+        upval->reg_index = -1;
+    }
+    frame.open_upvalues.clear();
+}
+
+void VM::RelocateUpvalues(CallFrame& from, CallFrame& to) {
+    for (auto& upval : from.open_upvalues) {
+        if (upval->reg_index >= 0 &&
+            static_cast<size_t>(upval->reg_index) < to.registers.size()) {
+            upval->location = &to.registers[static_cast<size_t>(upval->reg_index)];
+        }
+    }
+    to.open_upvalues = avastd::move(from.open_upvalues);
+    from.open_upvalues.clear();
+}
+
 Value VM::ExecuteFrame(size_t frame_idx) {
     auto& code = frames_[frame_idx].proto->instructions;
     auto& K = frames_[frame_idx].proto->constants;
@@ -27,6 +64,15 @@ Value VM::ExecuteFrame(size_t frame_idx) {
         }
         exception_handlers_.pop_back();
         if (frames_.size() > frame_idx + 1) {
+            // Close upvalues opened by every frame this exception is about
+            // to unwind past -- resize() below destroys their `registers`
+            // buffers directly (no per-frame pop_back/CloseUpvalues call),
+            // so any Upvalue still pointing into one would otherwise be
+            // left dangling if a closure escaped from inside the try block
+            // before the throw (e.g. stored into a list/global).
+            for (size_t i = frame_idx + 1; i < frames_.size(); ++i) {
+                CloseUpvalues(frames_[i]);
+            }
             frames_.resize(frame_idx + 1);
         }
         frames_[frame_idx].pc = handler.catch_pc;
@@ -216,6 +262,20 @@ Value VM::ExecuteFrame(size_t frame_idx) {
 
                 if (callee.type == ValueType::Bound) {
                     auto* bound = static_cast<BoundMethod*>(callee.obj);
+                    if (bound->proto->is_async) {
+                        // Bug #16: esta rama (CALL inline dentro de
+                        // ExecuteFrame) es el unico despachador de CALL
+                        // realmente usado en runtime -- OpCall en
+                        // vm_call_op.cpp tiene el mismo chequeo pero es
+                        // codigo muerto, nunca invocado. Sin este check,
+                        // un metodo `async func` (via BoundMethod) caia
+                        // siempre en la rama sincrona de abajo y devolvia
+                        // el valor ya resuelto en vez de envolverlo en un
+                        // Task, a diferencia de una funcion `async func`
+                        // libre (ValueType::Function, ver mas abajo) que
+                        // si pasaba por StartAsyncCall.
+                        frames_[frame_idx].registers[save_a] = StartAsyncBoundCall(callee, args);
+                    } else {
                     avastd::vector<Value> all_args;
                     all_args.push_back(bound->instance);
                     all_args.insert(all_args.end(), args.begin(), args.end());
@@ -234,17 +294,27 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                         return result;
                     }
                     
+                    CloseUpvalues(frames_.back());
                     frames_.pop_back();
                     frames_[frame_idx].registers[save_a] = result;
+                    }
                 } else if (callee.type == ValueType::Class) {
                     auto* cls = static_cast<ClassObj*>(callee.obj);
                     auto* inst = new InstanceObj();
                     inst->cls = cls;
                     inst->attrs = cls->instance_defaults;
                     
-                    Value cls_val;
-                    cls_val.type = ValueType::Class;
-                    cls_val.obj = cls;
+                    // Bug #13: `cls` es un objeto YA existente (viene de
+                    // `callee`, no de un `new` recien hecho aca), asi que
+                    // envolverlo con campos manuales (sin pasar por el
+                    // constructor de copia) no retiene nada -- el
+                    // ref_count=1 inicial de ClassObj ya esta "gastado" en
+                    // el dueno original de `callee`. Copiar `callee`
+                    // directamente retiene correctamente (Value::Value(const
+                    // Value&)), evitando el Release() de mas que el
+                    // destructor de una Value manual hubiera hecho al salir
+                    // de este bloque.
+                    Value cls_val = callee;
                     inst->attrs["__class__"] = cls_val;
                     
                     auto base_it = cls->attrs.find("__base__");
@@ -269,6 +339,16 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                         }
                         init_frame.argc = static_cast<uint32_t>(args.size());
                         init_frame.ret_slot = -1;
+                        // Bug #14: `cls` es la clase hoja que se está
+                        // instanciando (ej. Puppy en `Puppy()`), dueña de
+                        // este __init__ que va a correr. Sin esto,
+                        // `base.__init__()` dentro de este método no tenía
+                        // forma de saber desde qué nivel de la cadena
+                        // arrancar a buscar el siguiente `__base__` y
+                        // siempre usaba el de la instancia (fijo) -- ver
+                        // OpBaseCall en vm_call_op.cpp para el resto de la
+                        // cadena.
+                        init_frame.base_lookup_class = cls;
                         frames_.push_back(init_frame);
                         ExecuteFrame(frames_.size() - 1);
                         
@@ -276,6 +356,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                             return v;
                         }
                         
+                        CloseUpvalues(frames_.back());
                         frames_.pop_back();
                     }
                 } else if (callee.type == ValueType::Native) {
@@ -319,6 +400,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                             return result;
                         }
 
+                        CloseUpvalues(frames_.back());
                         frames_.pop_back();
                         frames_[frame_idx].registers[save_a] = result;
                     }
@@ -338,10 +420,39 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 for (size_t i = 0; i < child_proto->upvalue_descs.size(); ++i) {
                     auto& uvd = child_proto->upvalue_descs[i];
                     if (uvd.from_parent_local) {
-                        auto upval = avastd::make_shared<Upvalue>();
-                        upval->location = &frames_[frame_idx].registers[uvd.index];
-                        upval->value = frames_[frame_idx].registers[uvd.index];
-                        closure->upvalues.push_back(avastd::move(upval));
+                        // FindOrCreateUpvalue interns by register index, so a
+                        // sibling closure created earlier in this same frame
+                        // that captured this same local gets back that exact
+                        // Upvalue -- not a fresh, disconnected one -- which is
+                        // what lets two closures share mutations to it.
+                        closure->upvalues.push_back(FindOrCreateUpvalue(frames_[frame_idx], uvd.index));
+                    } else {
+                        // Bug #3 (captura de closures a 2+ niveles de
+                        // anidamiento): uvd.index acá NO es un registro de
+                        // este frame, sino un índice dentro de las propias
+                        // upvalues de la closure que está corriendo este
+                        // frame (this frame's own closure), es decir "upvalue
+                        // de upvalue" -- ver el nuevo loop de encadenamiento
+                        // en compiler.cpp (CompileLambda/CompileFunctionDecl).
+                        // Reusar el mismo shared_ptr<Upvalue> del padre (en
+                        // vez de crear uno nuevo) es lo que hace que la
+                        // closure hija comparta la MISMA caja que el padre
+                        // ya comparte con el abuelo -- funciona sin importar
+                        // si esa Upvalue del padre sigue abierta (todavía
+                        // apunta a un registro vivo más arriba en la pila) o
+                        // ya fue cerrada (snapshot autocontenido), porque en
+                        // ambos casos location/value ya están resueltos
+                        // correctamente dentro del propio Upvalue.
+                        auto* parent_closure = frames_[frame_idx].closure.get();
+                        if (parent_closure && uvd.index < parent_closure->upvalues.size()) {
+                            closure->upvalues.push_back(parent_closure->upvalues[uvd.index]);
+                        } else {
+                            // No debería pasar (el compilador solo emite
+                            // índices válidos), pero evita un puntero nulo /
+                            // out-of-bounds en vez de crashear si algún .avac
+                            // corrupto o desincronizado llega hasta acá.
+                            closure->upvalues.push_back(avastd::make_shared<Upvalue>());
+                        }
                     }
                 }
                 Value v; v.type = ValueType::Function; v.obj = closure;
@@ -352,7 +463,13 @@ Value VM::ExecuteFrame(size_t frame_idx) {
             case OpCode::GETUPVAL: {
                 auto* closure = frames_[frame_idx].closure.get();
                 if (closure && in.b < closure->upvalues.size()) {
-                    frames_[frame_idx].registers[in.a] = closure->upvalues[in.b]->value;
+                    // Read through `location`, not the `value` snapshot: while
+                    // the upvalue is open, `location` points at the live
+                    // register in the frame that created it, so this sees
+                    // writes made after the closure was created (including by
+                    // that frame's own code, e.g. a self-referential
+                    // `fib = (n) => ... fib(n-1) ...` reassignment).
+                    frames_[frame_idx].registers[in.a] = *closure->upvalues[in.b]->location;
                 } else {
                     frames_[frame_idx].registers[in.a] = Value::Nil();
                 }
@@ -362,8 +479,17 @@ Value VM::ExecuteFrame(size_t frame_idx) {
             case OpCode::SETUPVAL: {
                 auto* closure = frames_[frame_idx].closure.get();
                 if (closure && in.b < closure->upvalues.size()) {
-                    closure->upvalues[in.b]->value = frames_[frame_idx].registers[in.a];
-                    closure->upvalues[in.b]->location = &closure->upvalues[in.b]->value;
+                    // Write through `location` instead of overwriting it: the
+                    // old code pointed `location` at this Upvalue's own
+                    // `value` field on every write, which permanently
+                    // severed the shared box on the first assignment -- any
+                    // sibling closure (or the parent frame) still reading
+                    // through the original register, or through their own
+                    // copy of this Upvalue, would stop seeing further
+                    // changes. Leave `location` alone; it only gets
+                    // repointed once, in CloseUpvalues, when the owning
+                    // frame is popped.
+                    *closure->upvalues[in.b]->location = frames_[frame_idx].registers[in.a];
                 }
                 break;
             }

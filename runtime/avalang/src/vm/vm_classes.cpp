@@ -26,9 +26,11 @@ void OpNewInstance(CallFrame& frame, const Instr& in, const avastd::vector<Value
     inst->cls = cls;
     inst->attrs = cls->instance_defaults;
     
-    Value cls_val_copy;
-    cls_val_copy.type = ValueType::Class;
-    cls_val_copy.obj = cls;
+    // Bug #13: `cls` viene de `cls_val` (objeto YA existente en el
+    // registro), no de un `new` recien hecho -- copiar `cls_val` retiene
+    // correctamente en vez de armar una Value manual que Release() de mas
+    // al salir de scope (mismo patron que vm.cpp/vm_call_op.cpp).
+    Value cls_val_copy = cls_val;
     inst->attrs["__class__"] = cls_val_copy;
     
     auto base_it = cls->attrs.find("__base__");
@@ -112,15 +114,25 @@ void OpGetAttr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K
                 // `this.total` dentro de un método nunca encontraba un
                 // `static total = ...` declarado en la clase y devolvía
                 // Nil incluso cuando `Contador.total` sí funcionaba.
-                // NOTA (sin resolver): esto arregla el acceso directo
-                // (`Contador.total`, `c.total` desde fuera de un método),
-                // pero hay un bug distinto y aún abierto por el cual
-                // `this.total` DENTRO de un método no emite GETATTR en
-                // absoluto (confirmado con fprintf temporal en runtime:
-                // nunca se llega a este código para "total" cuando se
-                // invoca desde dentro de un método). El bug está en la
-                // fase de compilación (compiler.cpp, bloque de métodos en
-                // CompileClass, ~línea 2053), no acá. Ver PLAN_ASYNC_AWAIT.md.
+                // NOTA (corregida, ver bug #15 en AvaLang_Bugs_Encontrados.md):
+                // una nota anterior de esta misma línea decía que había un
+                // bug "distinto y aún abierto" con `this.total` DENTRO de
+                // un método -- primero se afirmó que GETATTR nunca se
+                // emitía para ese caso, y en una revisión posterior que el
+                // problema real era que el RETURN que sigue descartaba ese
+                // resultado. Ninguna de las dos resultó cierta: `this.total`
+                // (este mismo fallback) funciona correctamente cuando se
+                // accede DIRECTAMENTE dentro del cuerpo de un método -- no
+                // se pudo reproducir ningún caso donde fallara. El bug real
+                // (bug #15, ✅ corregido) era otro y más acotado: solo
+                // ocurría con `this.attr`/`this.metodo()`/`base.metodo()`
+                // dentro de un lambda o `func` anidado DEFINIDO DENTRO de
+                // un método (no en el método mismo) -- "this" se excluía a
+                // propósito de la captura de upvalues del compilador para
+                // esos casos. El fix está en compiler.cpp (`CompileExpr`,
+                // casos `LambdaExpr`/`BaseExpr`, y `CompileFunctionDecl`),
+                // no acá -- este código (el fallback de atributos static)
+                // nunca tuvo el bug.
                 auto* owner = FindClassOwningAttr(lookup_cls, attr_name->data);
                 if (owner) {
                     frame.registers[in.a] = owner->attrs.at(attr_name->data);

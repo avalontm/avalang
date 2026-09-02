@@ -1,0 +1,2 @@
+# Fixture para test_dotted_import.ava (bug #18). No es un test en si.
+DEEP_VAL = "muy profundo"

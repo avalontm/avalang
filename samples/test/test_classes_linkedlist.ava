@@ -1,0 +1,154 @@
+# test_classes_linkedlist.ava
+# Cubre bug #6 del historial: corrupcion de registros cuando un `if`
+# sin `else` termina en `this.attr = expr` o `lst[i] = expr` como
+# ULTIMA statement del bloque, pisando un parametro hermano no tocado
+# (ej. `b` en `setup(a, b)`). El repro clasico es una LinkedList donde
+# `cur.next = node` vive dentro de un `if` sin `else`.
+
+fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+# --- Repro minimo del bug #6 ---
+class MiniSetup
+    func __init__(a, b)
+        if 1 == 1 then
+            this.head = a
+        end
+        # antes del fix, "b" ya estaba corrupto aca abajo
+        this.tail = b
+    end
+end
+
+m = MiniSetup(111, 222)
+check(1, 111, m.head)
+check(2, 222, m.tail)   # antes del fix: nil o <native>
+
+# --- LinkedList completo (el repro que colgaba en loop infinito) ---
+class Node
+    func __init__(value)
+        this.value = value
+        this.next = nil
+    end
+end
+
+class LinkedList
+    func __init__()
+        this.head = nil
+        this.size = 0
+    end
+
+    func append(value)
+        node = Node(value)
+        if this.head == nil then
+            this.head = node
+        else
+            cur = this.head
+            while cur.next != nil
+                cur = cur.next
+            end
+            # asignacion de atributo dentro de un if/while, patron del bug
+            if 1 == 1 then
+                cur.next = node
+            end
+        end
+        this.size = this.size + 1
+    end
+
+    func toList()
+        out = []
+        cur = this.head
+        while cur != nil
+            out.append(cur.value)
+            cur = cur.next
+        end
+        return out
+    end
+
+    func length()
+        return this.size
+    end
+end
+
+list = LinkedList()
+list.append(1)
+list.append(2)
+list.append(3)
+list.append(4)
+check(3, 4, list.length())
+
+arr = list.toList()
+check(4, 4, len(arr))
+check(5, 1, arr[0])
+check(6, 2, arr[1])
+check(7, 3, arr[2])
+check(8, 4, arr[3])
+
+# --- Herencia + polimorfismo (no debe regresionar con el fix) ---
+class Animal
+    func __init__(name)
+        this.name = name
+    end
+    func speak()
+        return this.name + " hace un sonido"
+    end
+end
+
+class Dog: Animal
+    func __init__(name, breed)
+        base.__init__(name)
+        if 1 == 1 then
+            this.breed = breed
+        end
+        this.legs = 4
+    end
+    func speak()
+        return base.speak() + " (" + this.breed + ")"
+    end
+end
+
+d = Dog("Rex", "Labrador")
+check(9, "Rex", d.name)
+check(10, "Labrador", d.breed)
+check(11, 4, d.legs)
+check(12, "Rex hace un sonido (Labrador)", d.speak())
+
+# --- Pila (stack) implementada sobre lista, ejercitando indices/atributos ---
+class Stack
+    func __init__()
+        this.items = []
+    end
+    func push(x)
+        this.items.append(x)
+    end
+    func pop()
+        n = len(this.items)
+        if n == 0 then
+            return nil
+        end
+        top = this.items[n - 1]
+        this.items = this.items[0:n - 1]
+        return top
+    end
+    func isEmpty()
+        return len(this.items) == 0
+    end
+end
+
+st = Stack()
+st.push(1)
+st.push(2)
+st.push(3)
+check(13, 3, st.pop())
+check(14, 2, st.pop())
+check(15, false, st.isEmpty())
+check(16, 1, st.pop())
+check(17, true, st.isEmpty())
+
+print("=== test_classes_linkedlist.ava terminado ===")

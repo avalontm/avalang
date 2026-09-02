@@ -1,0 +1,177 @@
+# test_closures.ava
+# Cubre bugs #1-#4 del historial (AvaLang_Bugs_Encontrados.md):
+#   #1 nombre top-level asignado (f = (x) => ...) debe ser llamable
+#   #2 closures hermanas comparten el mismo upvalue (por referencia)
+#   #3 closures anidadas 2+ niveles resuelven variables del abuelo
+#   #4 closures dentro de async sobreviven a la suspension (await)
+#
+# Cada seccion imprime "OK <n>" si el resultado es el esperado, o
+# "FAIL <n>: esperado=X real=Y" si no.
+
+fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+# --- Bug #1: lambda asignada a nombre top-level debe ser llamable ---
+duplicar = (x) => x * 2
+check(1, 10, duplicar(5))
+
+# también debe funcionar llamada desde dentro de otra función
+func usaDuplicar(v)
+    return duplicar(v) + 1
+end
+check(2, 11, usaDuplicar(5))
+
+# auto-recursión vía nombre top-level reasignado (patrón fib = nil; fib = func...)
+fib = nil
+fib = func(n)
+    if n <= 1 then
+        return n
+    end
+    return fib(n - 1) + fib(n - 2)
+end
+check(3, 55, fib(10))
+
+# --- Bug #2: closures hermanas comparten el mismo upvalue ---
+func makeCounter()
+    count = 0
+    increment = func()
+        count = count + 1
+        return count
+    end
+    getCount = func()
+        return count
+    end
+    return [increment, getCount]
+end
+
+pair = makeCounter()
+inc = pair[0]
+get = pair[1]
+inc()
+inc()
+inc()
+check(4, 3, get())
+
+# dos instancias independientes de la misma factory no comparten estado
+pairA = makeCounter()
+pairB = makeCounter()
+incA = pairA[0]
+incB = pairB[0]
+getA = pairA[1]
+getB = pairB[1]
+incA()
+incA()
+incB()
+check(5, 2, getA())
+check(6, 1, getB())
+
+# --- Bug #3: closures anidadas 2+ niveles ven variables de ancestros lejanos ---
+func abuelo()
+    x = 100
+    y = 5
+    func padre()
+        func hijo()
+            return x + y
+        end
+        return hijo()
+    end
+    return padre()
+end
+check(7, 105, abuelo())
+
+func abueloEscritura()
+    total = 0
+    func nivel2()
+        func nivel3()
+            func nivel4()
+                total = total + 1
+            end
+            nivel4()
+            nivel4()
+        end
+        nivel3()
+    end
+    nivel2()
+    return total
+end
+check(8, 2, abueloEscritura())
+
+# llamada a función usando dos parámetros heredados del abuelo, desde 2 niveles
+func sumador(a, b)
+    func nivel1()
+        func nivel2()
+            return a + b
+        end
+        return nivel2()
+    end
+    return nivel1()
+end
+check(9, 30, sumador(12, 18))
+
+# --- Bug #4: closure dentro de async sobrevive a la suspensión ---
+# (una funcion async se llama como "fire and forget" o se espera con
+# await desde OTRA funcion async -- await no es valido en top-level
+# sync, asi que verificamos via un dict compartido en vez del valor
+# de retorno directo, igual que el repro usado al arreglar el bug.)
+resultados = {}
+
+async func tick()
+    return 1
+end
+
+async func outerAsync()
+    count = 0
+    async func inner()
+        count = count + await tick()
+    end
+    await inner()
+    await inner()
+    resultados["r4"] = count
+end
+
+outerAsync()
+check(10, 2, resultados["r4"])
+
+# variante de 3 niveles async
+async func tick2()
+    return 1
+end
+async func outer2()
+    total = 0
+    async func mid()
+        async func inner2()
+            total = total + await tick2()
+        end
+        await inner2()
+        await inner2()
+    end
+    await mid()
+    resultados["r5"] = total
+end
+outer2()
+check(11, 2, resultados["r5"])
+
+# dos coroutines independientes no se pisan entre si
+async func makeAsyncCounter(label)
+    n = 0
+    async func stepFn()
+        n = n + await tick()
+        return n
+    end
+    a = await stepFn()
+    b = await stepFn()
+    resultados[label] = a + b
+end
+makeAsyncCounter("A")
+makeAsyncCounter("B")
+check(12, 3, resultados["A"])
+check(13, 3, resultados["B"])
+
+print("=== test_closures.ava terminado ===")

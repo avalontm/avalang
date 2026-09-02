@@ -1,5 +1,0 @@
-func saludar(nombre)
-    print("hola " + nombre)
-end
-
-saludar_typo("Ada")

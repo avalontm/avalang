@@ -141,7 +141,7 @@ bool ValueEquals(const Value& a, const Value& b) {
     }
 }
 
-size_t ValidateIntegerIndex(double n, const char* context) {
+size_t ValidateIntegerIndex(double n, size_t len, const char* context) {
     if (avastd::abs(n - avastd::round(n)) >= 0.0000001) {
         AVA_THROW(avastd::runtime_error(avastd::string(context) + ": index must be an integer, got " + NumberToString(n)));
     }
@@ -152,7 +152,22 @@ size_t ValidateIntegerIndex(double n, const char* context) {
     if (rounded > static_cast<double>(avastd::size_t_max)) {
         AVA_THROW(avastd::runtime_error(avastd::string(context) + ": index too large: " + NumberToString(rounded)));
     }
-    return static_cast<size_t>(rounded);
+    size_t pos = static_cast<size_t>(rounded);
+    // Bug #6 en AvaLang_Bugs_Encontrados.md ("escritura fuera de rango es
+    // no-op silencioso"): antes esta funcion solo validaba tipo/signo y
+    // dejaba que cada call site (OpGetIndex/OpSetIndex en
+    // vm_containers.cpp) decidiera por su cuenta que hacer con un indice
+    // positivo fuera de rango -- y todos decidian "nada" (silencio). Al
+    // mover el chequeo de limite superior aca (unico lugar que ya conoce
+    // el largo del contenedor via `len`), lectura y escritura quedan con
+    // el MISMO comportamiento uniforme que ya tenian indice negativo e
+    // indice no entero: excepcion dura, estilo VB6 "Subscript out of
+    // range" pero con el detalle moderno de indice y largo real.
+    if (pos >= len) {
+        AVA_THROW(avastd::runtime_error(avastd::string(context) + ": index out of range: " +
+            NumberToString(rounded) + " (length " + avastd::to_string(len) + ")"));
+    }
+    return pos;
 }
 
 avastd::string JoinPath(const avastd::string& a, const avastd::string& b) {

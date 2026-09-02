@@ -1,9 +1,0 @@
-import system.io
-
-system.File.WriteAllText("avalang_dotted_demo.txt", "hello from a dotted import")
-print("read back: " + system.File.ReadAllText("avalang_dotted_demo.txt"))
-system.File.Delete("avalang_dotted_demo.txt")
-
-import system.diagnostics
-
-print("current pid: " + str(system.Process.GetCurrentId()))

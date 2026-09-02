@@ -1,0 +1,122 @@
+# test_this_in_closures.ava
+# Repro y regresion para el bug #15: "this" no se podia capturar como
+# upvalue desde un lambda o func anidado DENTRO de un metodo -- ver la
+# fila del bug #15 en AvaLang_Bugs_Encontrados.md para la causa raiz y
+# el fix (Compiler::CompileExpr, caso LambdaExpr, y
+# Compiler::CompileFunctionDecl).
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+class Animal
+    static kind = "animal"
+    func speak()
+        return "..."
+    end
+end
+
+class Dog : Animal
+    name = "Rex"
+    static total = 10
+    count = 0
+
+    # --- lectura de this.attr desde un lambda ---
+    func greetViaLambda()
+        f = () => "hola soy " + this.name
+        return f()
+    end
+
+    # --- lectura de this.attr desde un func anidado con nombre ---
+    func greetViaNamedFunc()
+        func inner()
+            return "hola soy " + this.name
+        end
+        return inner()
+    end
+
+    # --- escritura a this.attr desde un func anidado con nombre ---
+    func writeViaNamedFunc(newName)
+        func setter()
+            this.name = newName
+        end
+        setter()
+        return this.name
+    end
+
+    # --- this.metodo() desde un lambda ---
+    func callMethodViaLambda()
+        f = () => this.speak()
+        return f()
+    end
+
+    # --- base.metodo() desde un lambda (requiere this Y current_base_class_) ---
+    func callBaseViaLambda()
+        f = () => base.speak()
+        return f()
+    end
+
+    # --- 2 niveles de lambdas anidados dentro de un metodo (upvalue de upvalue) ---
+    func nestedTwoLevels()
+        f = () => (() => this.name)()
+        return f()
+    end
+
+    # --- atributo static leido desde un lambda ---
+    func staticViaLambda()
+        f = () => this.total
+        return f()
+    end
+
+    # --- escritura repetida a this.attr desde un func anidado, llamado varias veces ---
+    func incViaNestedFuncWrite()
+        func bump()
+            this.count = this.count + 1
+        end
+        bump()
+        bump()
+        bump()
+        return this.count
+    end
+
+    # --- 3 niveles de lambdas anidados ---
+    func threeLevels()
+        f1 = () => (() => (() => this.count)())()
+        return f1()
+    end
+end
+
+d = Dog()
+check(1, "hola soy Rex", d.greetViaLambda())
+check(2, "hola soy Rex", d.greetViaNamedFunc())
+check(3, "Fido", d.writeViaNamedFunc("Fido"))
+check(4, "...", d.callMethodViaLambda())
+check(5, "...", d.callBaseViaLambda())
+check(6, "Fido", d.nestedTwoLevels())
+check(7, 10, d.staticViaLambda())
+check(8, 3, d.incViaNestedFuncWrite())
+check(9, 3, d.threeLevels())
+
+# --- regresion: closures normales (sin "this") siguen funcionando ---
+x = 5
+f2 = () => x + 1
+check(10, 6, f2())
+
+# --- regresion: closures anidadas del abuelo (bug #3), sin "this" de por medio ---
+func outerPlain()
+    a = 1
+    func midPlain()
+        func innerPlain()
+            return a + 100
+        end
+        return innerPlain()
+    end
+    return midPlain()
+end
+check(11, 101, outerPlain())
+
+print("=== test_this_in_closures.ava terminado ===")

@@ -1,0 +1,115 @@
+# test_list_api_and_task_display.ava
+# Cubre las 2 mejoras de esta pasada (ver notas finales en
+# AvaLang_Bugs_Encontrados.md):
+#   - superficie de API de `list` emparejada con `str`/las funciones
+#     globales: indexOf, sort, reverse, clear, copy, join
+#   - Task ya no se imprime como "<unknown>" (ToDisplayString/TypeName
+#     ahora tienen un caso propio para ValueType::Task)
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+func listEquals(a, b)
+    if len(a) != len(b) then
+        return false
+    end
+    i = 0
+    while i < len(a)
+        if a[i] != b[i] then
+            return false
+        end
+        i++
+    end
+    return true
+end
+
+# --- indexOf ---
+lst = [10, 20, 30, 40]
+check(1, 2, lst.indexOf(30))
+check(2, -1, lst.indexOf(99))
+
+# indexOf con strings construidos en runtime (mismo criterio de
+# igualdad estructural que ya usan contains()/remove(), bug #7)
+prefix = "o"
+built = prefix + "bj"
+lst2 = ["a", "obj", "c"]
+check(3, 1, lst2.indexOf(built))
+
+# --- sort (in-place, no confundir con sorted() global que NO muta) ---
+lst3 = [5, 3, 8, 1, 9]
+ref = lst3               # misma referencia -- list es por-referencia
+result3 = lst3.sort()
+check(4, true, listEquals(lst3, [1, 3, 5, 8, 9]))
+check(5, true, listEquals(ref, [1, 3, 5, 8, 9]))   # mutó in-place
+check(6, true, listEquals(result3, [1, 3, 5, 8, 9]))  # y devuelve la misma lista
+
+# sort de strings (orden lexicografico, mismo LessThan que usa sorted())
+lst3b = ["banana", "apple", "cherry"]
+lst3b.sort()
+check(7, true, listEquals(lst3b, ["apple", "banana", "cherry"]))
+
+# sorted() global sigue sin mutar (no debe regresionar)
+original = [3, 1, 2]
+copiaOrdenada = sorted(original)
+check(8, true, listEquals(original, [3, 1, 2]))
+check(9, true, listEquals(copiaOrdenada, [1, 2, 3]))
+
+# --- reverse (in-place) ---
+lst4 = [1, 2, 3, 4, 5]
+lst4.reverse()
+check(10, true, listEquals(lst4, [5, 4, 3, 2, 1]))
+
+# reversed() global sigue sin mutar
+original2 = [1, 2, 3]
+copiaInvertida = reversed(original2)
+check(11, true, listEquals(original2, [1, 2, 3]))
+check(12, true, listEquals(copiaInvertida, [3, 2, 1]))
+
+# --- clear ---
+lst5 = [1, 2, 3]
+lst5.clear()
+check(13, 0, len(lst5))
+
+# --- copy (shallow, independiente de la original) ---
+lst6 = [1, 2, 3]
+lst6copia = lst6.copy()
+lst6copia.append(4)
+check(14, 3, len(lst6))       # la original no cambia
+check(15, 4, len(lst6copia))
+check(16, true, listEquals(lst6, [1, 2, 3]))
+check(17, true, listEquals(lst6copia, [1, 2, 3, 4]))
+
+# --- join ---
+lst7 = ["a", "b", "c"]
+check(18, "a-b-c", lst7.join("-"))
+check(19, "a, b, c", lst7.join())     # separador por defecto ", "
+
+lst8 = [1, 2, 3]
+check(20, "1|2|3", lst8.join("|"))    # numeros tambien se formatean bien
+
+# combinacion realista: ordenar, invertir y unir
+nombres = ["Carlos", "Ana", "Beto"]
+nombres.sort()
+check(21, "Ana, Beto, Carlos", nombres.join())
+nombres.reverse()
+check(22, "Carlos-Beto-Ana", nombres.join("-"))
+
+# --- Task ya no se imprime como <unknown> ---
+async func addOne(n)
+    return n + 1
+end
+t = addOne(5)
+check(23, "<task: resolved: 6>", str(t))
+
+async func boom()
+    raise "algo fallo"
+end
+t2 = boom()
+check(24, "<task: rejected: algo fallo>", str(t2))
+
+print("=== test_list_api_and_task_display.ava terminado ===")

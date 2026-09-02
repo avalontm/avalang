@@ -1,0 +1,82 @@
+# test_default_params.ava
+# Cubre el bug #9 (ver AvaLang_Bugs_Encontrados.md):
+#   EmitDefaultsPrologue (valores default de parametros, func f(a, b=5))
+#   usaba un FreeRegs(1) fijo despues de CompileExpr(def). Si el default
+#   referenciaba una variable local ya existente (tipicamente un parametro
+#   anterior: func foo(a, b = a, c = 99)), CompileExpr devolvia el registro
+#   ya asignado sin alocar uno nuevo, y el FreeRegs(1) liberaba de mas,
+#   corrompiendo el registro del siguiente parametro.
+#
+# Repro minimo (antes del fix, c salia "<native>" en vez de 99):
+#   func foo(a, b = a, c = 99) ... end
+#   foo(5)
+#
+# Fix: mismo patron regs_before/diff que ya usa el resto de compiler.cpp
+# (compartido con el fix del bug #6), en vez de contar registros a mano.
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+# --- Repro minimo del bug #9 ---
+func foo(a, b = a, c = 99)
+    return str(a) + "," + str(b) + "," + str(c)
+end
+check(1, "5,5,99", foo(5))
+
+# --- Encadenado: cada default referencia al parametro anterior ---
+func chained(x, y = x, z = x + 1, w = "lit")
+    return str(x) + "," + str(y) + "," + str(z) + "," + w
+end
+check(2, "3,3,4,lit", chained(3))
+
+# --- Default en constructor de clase ---
+class Box
+    func __init__(this, w, h = w, area = w * h)
+        this.w = w
+        this.h = h
+        this.area = area
+    end
+end
+b = Box(4)
+check(3, 4, b.w)
+check(4, 4, b.h)
+check(5, 16, b.area)
+
+# --- Default en metodo, referenciando this.attr ---
+class Adder
+    func __init__(this, x)
+        this.x = x
+    end
+    func sum(this, extra = this.x)
+        return this.x + extra
+    end
+end
+a = Adder(10)
+check(6, 20, a.sum())
+check(7, 15, a.sum(5))
+
+# --- Lambda con default encadenado ---
+lam = (a, b = a, c = 42) => str(a) + "," + str(b) + "," + str(c)
+check(8, "7,7,42", lam(7))
+
+# --- Closure anidada con default capturando variable del padre ---
+func outerDefaults(outerVal)
+    func inner(x, y = outerVal)
+        return str(x) + "," + str(y)
+    end
+    return inner(1)
+end
+check(9, "1,9", outerDefaults(9))
+
+# --- Con 3+ parametros y solo el ultimo con default referenciando local ---
+func setup(a, b, c = b)
+    return str(a) + "," + str(b) + "," + str(c)
+end
+check(10, "1,2,2", setup(1, 2))
+
+print("=== test_default_params.ava terminado ===")

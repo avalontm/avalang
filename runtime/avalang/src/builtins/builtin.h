@@ -33,6 +33,12 @@ ava_value_t builtin_list_remove(AvaVM* vm, const ava_value_t* args, size_t count
 ava_value_t builtin_list_removeAt(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_list_length(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_list_contains(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_list_indexOf(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_list_sort(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_list_reverse(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_list_clear(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_list_copy(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_list_join(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 
 ava_value_t builtin_dict_keys(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_dict_values(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);

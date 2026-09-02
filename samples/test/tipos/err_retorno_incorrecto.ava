@@ -1,3 +1,0 @@
-func getAge() as int
-    return "hello"
-end

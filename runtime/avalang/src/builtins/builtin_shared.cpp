@@ -9,6 +9,7 @@
 // reusa la version canonica de vm/, en vez de renombrar y mantener dos
 // formateadores de numero que puedan divergir en el mismo binario.
 #include "vm/vm_helpers.h"
+#include "vm/task.h"
 
 namespace ava {
 
@@ -30,6 +31,7 @@ avastd::string TypeName(const Value& v) {
         case ValueType::Bound:     return "bound";
         case ValueType::Exception: return "exception";
         case ValueType::Module:    return "module";
+        case ValueType::Task:      return "task";
         default:                   return "unknown";
     }
 }
@@ -81,6 +83,22 @@ avastd::string ToDisplayString(const Value& v) {
         case ValueType::Module: {
             auto* mod = static_cast<ModuleObj*>(v.obj);
             return "<extern " + mod->name + ">";
+        }
+        case ValueType::Task: {
+            // Antes caia al `default` de abajo -> TypeName(v) daba
+            // "unknown" (Task no tenia caso propio) -> se imprimia
+            // literalmente "<unknown>". Con clave numerica no aplica
+            // (esto es ValueType::Task, no dict); ver nota en
+            // AvaLang_Bugs_Encontrados.md sobre por que llamar una
+            // `async func` desde codigo sincrono top-level devuelve un
+            // Task en vez del valor resuelto -- esto solo mejora como
+            // se ve ese Task al imprimirlo/convertirlo a string, no
+            // cambia la semantica de await/Task en si.
+            auto* task = reinterpret_cast<TaskObj*>(v.obj);
+            if (!task) return "<task>";
+            if (!task->done) return "<task: pending>";
+            if (task->has_error) return "<task: rejected: " + ToDisplayString(task->error) + ">";
+            return "<task: resolved: " + ToDisplayString(task->result) + ">";
         }
         default:
             return "<" + TypeName(v) + ">";

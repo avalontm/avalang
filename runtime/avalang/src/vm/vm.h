@@ -315,7 +315,17 @@ private:
     // arma el entry_frame con bound->proto y bound->instance en el
     // registro 0 (this), en vez de asumir un Closure con proto propio.
     // Ver vm_call_op.cpp::OpCall, rama ValueType::Bound.
-    Value StartAsyncBoundCall(const Value& bound_val, const avastd::vector<Value>& args);
+    //
+    // base_lookup_class (bug #17): opcional, default nullptr. Cuando la
+    // llamada viene de OpBaseCall (base.metodo_async(), no obj.metodo()
+    // directo), hay que propagar la clase dueña del metodo que se esta
+    // resolviendo al entry_frame de la coroutine recien creada -- mismo
+    // mecanismo que el bug #14 ya resuelve para el camino sincrono
+    // (CallFrame::base_lookup_class), necesario para que un SEGUNDO
+    // base.xxx() dentro de este metodo async siga avanzando un nivel
+    // real de la cadena de herencia en vez de repetir el mismo hop.
+    Value StartAsyncBoundCall(const Value& bound_val, const avastd::vector<Value>& args,
+                               ClassObj* base_lookup_class = nullptr);
     // Resumes a coroutine that's suspended on an `await`, either with the
     // awaited Task's result (is_error=false) or its error (is_error=true),
     // and settles this coroutine's own owner_task if it finishes as a
@@ -326,6 +336,39 @@ private:
     // PostAsyncTask, so settling never re-enters the VM synchronously from
     // inside another frame's execution.
     void SettleTask(TaskObj* task, Value value, bool is_error);
+
+    // Upvalue "open"/"close" machinery (standard cell/box technique, same
+    // shape as Lua's). An upvalue is "open" while its `location` still
+    // points into the registers of the CallFrame that owns the captured
+    // local -- reads/writes during that time go straight through
+    // `location`, so every closure sharing that Upvalue (and the frame
+    // itself) sees the same value. Returns the existing Upvalue for
+    // `reg_idx` in `frame` if one is already open (so sibling closures
+    // capturing the same local share one object), otherwise opens a new
+    // one and records it in `frame.open_upvalues`.
+    avastd::shared_ptr<Upvalue> FindOrCreateUpvalue(CallFrame& frame, avastd::uint32_t reg_idx);
+    // Closes every upvalue `frame` opened: snapshots the live value into
+    // Upvalue::value and repoints `location` at that snapshot, so
+    // closures still holding the Upvalue keep working with self-contained
+    // storage after `frame` (and its `registers` buffer) is destroyed.
+    // Must be called on every CallFrame right before it's popped from
+    // frames_ -- otherwise any Upvalue::location still pointing into its
+    // registers becomes a dangling pointer.
+    void CloseUpvalues(CallFrame& frame);
+    // Used when `from`'s registers buffer is about to be destroyed but a
+    // byte-identical copy of the frame already exists in `to` (e.g. `to`
+    // is the entry `saved_frames_.back()[i]` that was just pushed as a
+    // copy of `frames_[i]` before an async suspend clears `frames_`).
+    // Unlike CloseUpvalues, this does NOT detach the upvalues into a
+    // frozen snapshot: it repoints each open upvalue's `location` at the
+    // corresponding register in `to` and transfers `open_upvalues`
+    // ownership to `to`, so the upvalue stays "open" and any closure
+    // holding it keeps reading/writing through live register storage --
+    // just `to`'s buffer instead of `from`'s. This is what lets a
+    // captured local kept alive across a suspended `await`/`yield` still
+    // be shared correctly with the resumed frame once `to` eventually
+    // replaces `frames_` again.
+    void RelocateUpvalues(CallFrame& from, CallFrame& to);
 
     PrintSink print_sink_;
     InputSink input_sink_;

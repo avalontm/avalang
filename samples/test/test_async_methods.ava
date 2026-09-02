@@ -1,0 +1,111 @@
+# test_async_methods.ava
+# Repro y regresion para el bug #16: un metodo `async func` (llamado
+# via BoundMethod, ej. `obj.metodo()`) nunca envolvia su valor de
+# retorno en un Task -- devolvia el valor ya resuelto directamente,
+# a diferencia de una funcion `async func` libre (top-level, no
+# metodo), que si lo envolvia correctamente. Ver la fila del bug #16
+# en AvaLang_Bugs_Encontrados.md para la causa raiz y el fix
+# (VM::ExecuteFrame, caso CALL, rama ValueType::Bound, vm.cpp).
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+# --- 1. Metodo async simple: debe devolver un Task, no el valor resuelto ---
+class Counter
+    valor = 0
+    async func getValor()
+        return this.valor
+    end
+end
+
+c = Counter()
+c.valor = 42
+t1 = c.getValor()
+check(1, "<task: resolved: 42>", str(t1))
+
+# --- 2. Metodo async con parametros ---
+class Calculadora
+    async func sumar(a, b)
+        return a + b
+    end
+end
+
+calc = Calculadora()
+t2 = calc.sumar(10, 5)
+check(2, "<task: resolved: 15>", str(t2))
+
+# --- 3. Metodo async que hace raise -- debe dar Task rejected, no
+#        propagar la excepcion de forma sincrona ---
+class Bomba
+    async func explotar()
+        raise "boom"
+    end
+end
+
+b = Bomba()
+t3 = b.explotar()
+check(3, "<task: rejected: boom>", str(t3))
+
+# --- 4. Metodo async heredado (NO sobreescrito en la subclase, se
+#        invoca sobre una instancia de la subclase) sigue devolviendo
+#        Task correctamente -- confirma que el fix no depende de que
+#        el metodo este definido en la clase exacta de la instancia ---
+class Animal
+    async func hacerSonido()
+        return "..."
+    end
+end
+
+class Perro : Animal
+end
+
+p = Perro()
+t4 = p.hacerSonido()
+check(4, "<task: resolved: ...>", str(t4))
+
+# --- 5. await de un metodo async (via BoundMethod) desde OTRA funcion
+#        async -- confirma que el unwrap via await tambien funciona
+#        para metodos, igual que ya funcionaba para funciones libres
+#        (ver bug #4/#10 en test_closures.ava) ---
+resultados = {}
+
+class Servicio
+    base_valor = 100
+    async func obtener()
+        return this.base_valor
+    end
+end
+
+async func consumir(servicio)
+    v = await servicio.obtener()
+    resultados["r5"] = v + 1
+end
+
+srv = Servicio()
+consumir(srv)
+check(5, 101, resultados["r5"])
+
+# --- 6. func anidado (named) DENTRO de un metodo que a su vez declara
+#        un async func anidado tocando this (combinando con el fix del
+#        bug #15: this capturado como upvalue) -- el async func anidado
+#        sigue devolviendo Task, no es una ruta especial distinta ---
+class Contador2
+    n = 5
+    func hacerAsyncViaAnidado()
+        async func interno()
+            return this.n * 2
+        end
+        return interno()
+    end
+end
+
+c2 = Contador2()
+t6 = c2.hacerAsyncViaAnidado()
+check(6, "<task: resolved: 10>", str(t6))
+
+print("=== test_async_methods.ava terminado ===")

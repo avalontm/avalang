@@ -166,6 +166,7 @@ Value VM::Run(const avastd::shared_ptr<Proto>& main) {
     frames_.push_back(avastd::move(frame));
     AVA_TRY {
         Value result = ExecuteFrame(frames_.size() - 1);
+        CloseUpvalues(frames_.back());
         frames_.pop_back();
         return result;
     } AVA_CATCH(avastd::exception, e) {

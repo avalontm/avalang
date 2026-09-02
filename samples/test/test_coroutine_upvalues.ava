@@ -1,0 +1,113 @@
+# test_coroutine_upvalues.ava
+# Cubre el bug de upvalues de la propia coroutine (ver
+# AvaLang_Bugs_Encontrados.md, nota de diseno del bug #4): una closure que
+# captura una variable LOCAL DE SU PROPIA COROUTINE (no del caller) podia
+# perder la conexion con el registro real cuando esa coroutine se resumia
+# mas de una vez via resume().
+#
+# Causa raiz: tanto OpResume (coroutine.cpp, opcode YIELD/RESUME) como el
+# camino de VM::Call para ValueType::Coroutine (vm_call.cpp -- el que
+# realmente dispara el builtin resume() usado desde AvaLang) guardaban y
+# restauraban co->frames con asignacion por COPIA en vez de swap/move en
+# los puntos donde importaba, dejando temporalmente el buffer real
+# "parqueado" en un lugar (co->frames o el vm.frames_ swapeado) que luego
+# se sobreescribia sin relocar las Upvalue::location abiertas -- dangling
+# pointer despues del segundo resume.
+#
+# Fix: mismo patron VM::RelocateUpvalues que ya se uso para el bug #4
+# (relocar, no cerrar/snapshotear), aplicado en ambas direcciones (frames
+# del caller Y frames de la propia coroutine) en los dos lugares donde
+# ocurre el swap/copia: coroutine.cpp::OpResume y
+# vm_call.cpp::VM::Call (branch ValueType::Coroutine).
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+# --- Repro: closure capturando un local de su propia coroutine,
+#     llamada externamente entre dos resume() ---
+func makeGen()
+    count = 0
+    bump = func()
+        count = count + 1
+        return count
+    end
+    yield bump
+    yield count
+    return count
+end
+
+co = coroutine(makeGen)
+r1 = resume(co)
+bumpFn = r1[0]
+bumpFn()
+bumpFn()
+r2 = resume(co)
+check(1, 2, r2[0])
+r3 = resume(co)
+check(2, 2, r3)
+
+# --- Variante: la propia coroutine sigue escribiendo la variable
+#     capturada DESPUES de cada resume, y la closure externa la lee bien
+#     (comparte la misma caja, no un snapshot congelado) ---
+func makeGen2()
+    total = 10
+    peek = func()
+        return total
+    end
+    yield peek
+    total = total + 5
+    yield peek
+    total = total + 5
+    return peek
+end
+
+co2 = coroutine(makeGen2)
+p1 = resume(co2)
+peekFn = p1[0]
+check(3, 10, peekFn())
+resume(co2)
+check(4, 15, peekFn())
+p3 = resume(co2)
+finalPeek = p3
+check(5, 20, finalPeek())
+
+# --- Dos coroutines independientes con closures propias, resumidas
+#     entrelazadas, no deben pisarse entre si ---
+# (el label se liga via una func "wrapper" en vez de pasarlo como
+# argumento al primer resume() -- pasar argumentos en el PRIMER resume
+# de una coroutine es una limitacion preexistente, no relacionada con
+# este bug, y queda fuera de alcance de esta pasada)
+func makeCounterCo(label)
+    n = 0
+    stepFn2 = func()
+        n = n + 1
+        return label + ":" + str(n)
+    end
+    yield stepFn2
+    yield stepFn2
+    return n
+end
+func wrapCounterA()
+    return makeCounterCo("A")
+end
+func wrapCounterB()
+    return makeCounterCo("B")
+end
+
+coA = coroutine(wrapCounterA)
+coB = coroutine(wrapCounterB)
+sA = resume(coA)[0]
+sB = resume(coB)[0]
+check(6, "A:1", sA())
+check(7, "B:1", sB())
+check(8, "A:2", sA())
+resume(coA)
+resume(coB)
+check(9, "B:2", sB())
+
+print("=== test_coroutine_upvalues.ava terminado ===")

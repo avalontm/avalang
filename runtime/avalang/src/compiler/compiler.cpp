@@ -115,13 +115,26 @@ bool Compiler::IsShortCircuit(BinOp op) {
 }
 
 int16_t Compiler::FindUpvalue(const std::string& name) {
+    // Bug #3 (captura de closures a 2+ niveles de anidamiento): antes este
+    // loop solo consideraba entradas con from_parent_local == true (una
+    // captura directa de un registro del padre inmediato). parent_locals_
+    // y proto_->upvalue_descs se llenan siempre en lockstep (mismo índice
+    // en ambos, ver los dos sitios que hacen push_back de a pares en las
+    // funciones que compilan lambdas/func anidados más abajo), tanto para
+    // capturas directas (from_parent_local=true, uvd.index = registro del
+    // padre) como para capturas encadenadas (from_parent_local=false,
+    // uvd.index = índice dentro del propio upvalue_descs/parent_locals_
+    // del padre -- "upvalue de upvalue", lo que permite a una closure de
+    // 2+ niveles llegar a una variable del abuelo o de un ancestro más
+    // lejano). El gate `if (uvd.from_parent_local)` ocultaba esas
+    // entradas encadenadas, así que un nombre capturado del abuelo nunca
+    // se encontraba acá -- de ahí el falso "'x' is not defined". Quitar
+    // el gate: el match por (name, index) es válido para ambos casos.
     for (size_t upval_idx = 0; upval_idx < proto_->upvalue_descs.size(); ++upval_idx) {
         auto& uvd = proto_->upvalue_descs[upval_idx];
-        if (uvd.from_parent_local) {
-            for (auto& [pname, preg] : parent_locals_) {
-                if (pname == name && preg == uvd.index) {
-                    return static_cast<int16_t>(upval_idx);
-                }
+        for (auto& [pname, preg] : parent_locals_) {
+            if (pname == name && preg == uvd.index) {
+                return static_cast<int16_t>(upval_idx);
             }
         }
     }
@@ -212,22 +225,49 @@ static TypeRef ResolveTypeNameAgainst(const std::string& name,
 // instance. Parameter types (`out`) are deliberately left as plain Type,
 // unchanged -- see class_method_params_'s comment in compiler.h for why
 // parameter class-awareness isn't extended by this phase.
+// Bugfix (Aug 2026 build/test pass): records `target` into
+// `out_globals` if it's a plain bare-NAME target (a NameExpr) -- the
+// only shape a top-level assignment needs to be treated as a
+// potentially-callable global (see known_top_level_globals_'s comment
+// in compiler.h). Assignment targets that are attribute/index
+// expressions (`obj.attr = ...`, `items[0] = ...`) are deliberately
+// ignored here, same as CheckCallArgs/NameShadowsGlobalCallable only
+// ever care about bare NameExpr callees.
+static void RecordIfNameTarget(const std::shared_ptr<ExprNode>& target,
+                                std::unordered_set<std::string>& out_globals) {
+    if (auto* n = dynamic_cast<NameExpr*>(target.get())) out_globals.insert(n->name);
+}
+
 static void CollectFuncSignatures(
         const std::vector<std::shared_ptr<StmtNode>>& stmts,
         std::unordered_map<std::string, std::vector<std::pair<std::string, Type>>>& out,
         std::unordered_map<std::string, TypeRef>& out_returns,
-        const std::unordered_map<std::string, ClassObj*>& compiled_classes) {
+        const std::unordered_map<std::string, ClassObj*>& compiled_classes,
+        std::unordered_set<std::string>& out_globals) {
     for (auto& stmt : stmts) {
-        auto* f = dynamic_cast<FuncDef*>(stmt.get());
-        if (!f) continue;
-        std::vector<std::pair<std::string, Type>> sig;
-        sig.reserve(f->params.size());
-        for (size_t i = 0; i < f->params.size(); ++i) {
-            Type t = (i < f->param_types.size()) ? TypeFromName(f->param_types[i]) : Type::Unknown;
-            sig.push_back({f->params[i].first, t});
+        if (auto* f = dynamic_cast<FuncDef*>(stmt.get())) {
+            std::vector<std::pair<std::string, Type>> sig;
+            sig.reserve(f->params.size());
+            for (size_t i = 0; i < f->params.size(); ++i) {
+                Type t = (i < f->param_types.size()) ? TypeFromName(f->param_types[i]) : Type::Unknown;
+                sig.push_back({f->params[i].first, t});
+            }
+            out[f->name] = std::move(sig);
+            out_returns[f->name] = ResolveTypeNameAgainst(f->return_type, compiled_classes);
+            continue;
         }
-        out[f->name] = std::move(sig);
-        out_returns[f->name] = ResolveTypeNameAgainst(f->return_type, compiled_classes);
+        // Bugfix (Aug 2026): also record bare-NAME assignment targets at
+        // this same top-level-statements-only scan depth, so a name
+        // holding a lambda/function value (`f = (x) => x*2`) is
+        // recognized as callable by NameShadowsGlobalCallable, same as a
+        // `func f(...) ... end` already is via `out` above.
+        if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
+            RecordIfNameTarget(a->target, out_globals);
+        } else if (auto* ma = dynamic_cast<MultiAssignStmt*>(stmt.get())) {
+            for (auto& tgt : ma->targets) RecordIfNameTarget(tgt, out_globals);
+        } else if (auto* aug = dynamic_cast<AugAssignStmt*>(stmt.get())) {
+            RecordIfNameTarget(aug->target, out_globals);
+        }
     }
 }
 
@@ -775,15 +815,18 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
             }
         }
 
+        // Bug #3: mismo fix que FindUpvalue arriba -- ya no se filtra por
+        // from_parent_local, para que una lectura de una variable
+        // capturada del abuelo (encadenada, from_parent_local=false)
+        // también resuelva a GETUPVAL en vez de caer al branch de
+        // global/nuevo-local de más abajo.
         for (size_t upval_idx = 0; upval_idx < proto_->upvalue_descs.size(); ++upval_idx) {
             auto& uvd = proto_->upvalue_descs[upval_idx];
-            if (uvd.from_parent_local) {
-                for (auto& [pname, preg] : parent_locals_) {
-                    if (pname == n->name && preg == uvd.index) {
-                        auto reg = AllocReg();
-                        Emit(OpCode::GETUPVAL, reg, static_cast<uint16_t>(upval_idx));
-                        return reg;
-                    }
+            for (auto& [pname, preg] : parent_locals_) {
+                if (pname == n->name && preg == uvd.index) {
+                    auto reg = AllocReg();
+                    Emit(OpCode::GETUPVAL, reg, static_cast<uint16_t>(upval_idx));
+                    return reg;
                 }
             }
         }
@@ -1067,13 +1110,41 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
     }
 
     if (auto* s = dynamic_cast<BaseExpr*>(expr.get())) {
-        if (locals_.find("this") == locals_.end()) {
+        // Bug #15 (parte 3): este chequeo solo miraba locals_, así que
+        // `base.metodo()` dentro de un lambda/func anidado en un método
+        // (donde "this" ya no es un local propio, sino una upvalue
+        // capturada del método -- ver el fix de más arriba) tiraba
+        // "base() can only be used inside a method" aunque sí estuviera
+        // dentro de un método, solo que a través de una closure anidada.
+        // FindUpvalue("this") cubre ese caso: encuentra "this" tanto si
+        // es captura directa del padre inmediato como si es una captura
+        // encadenada de un ancestro más lejano (lambda dentro de lambda
+        // dentro de método).
+        if (locals_.find("this") == locals_.end() && FindUpvalue("this") < 0) {
             throw AvaError("base() can only be used inside a method", current_line_, current_col_, source_name_);
         }
         if (!current_base_class_) {
             throw AvaError("base() can only be used inside a class that extends another class "
                             "(this class has no ': ParentClass')",
                             current_line_, current_col_, source_name_);
+        }
+
+        // Bug #15 (parte 4): OpBaseCall (vm_call_op.cpp) siempre lee la
+        // instancia de frame.registers[0] -- la misma convención que usa
+        // CompileClass para "this" en un método normal (registro 0
+        // reservado). Eso es correcto para un método normal (ahí "this"
+        // YA está en el registro 0 de este mismo frame), pero un
+        // lambda/func anidado tiene su PROPIO frame en runtime, con el
+        // registro 0 libre/sin usar (los lambdas arrancan next_reg_ = 1,
+        // igual que las funciones libres) -- "this" ahí vive como upvalue
+        // capturada, no en un registro local. Sin este paso, BASECALL
+        // leería basura de un registro 0 nunca inicializado. Fix:
+        // materializar la upvalue capturada en el registro 0 de ESTE
+        // frame antes de emitir BASECALL -- inofensivo, ese registro
+        // nunca se usa para otra cosa dentro de un lambda/func anidado.
+        if (locals_.find("this") == locals_.end()) {
+            int16_t this_upval = FindUpvalue("this");
+            Emit(OpCode::GETUPVAL, 0, static_cast<uint16_t>(this_upval));
         }
 
         auto method_idx = AddConstant(MakeString(s->method_name));
@@ -1129,11 +1200,21 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
         // vuelta al padre, misma lógica que compiled_classes_ arriba.
         sub.known_funcs_ = known_funcs_;
         sub.known_func_returns_ = known_func_returns_;
+        sub.known_top_level_globals_ = known_top_level_globals_;
         sub.extern_func_params_ = extern_func_params_;
         sub.extern_func_returns_ = extern_func_returns_;
         // Fase 4 de PLAN_VALIDACION_ESTATICA.md: mismo motivo que
         // known_funcs_ arriba -- ver has_wildcard_import_ en compiler.h.
         sub.has_wildcard_import_ = has_wildcard_import_;
+        // Bug #15 (parte 2): sin esto, `base.metodo()` dentro de un
+        // lambda anidado en un método fallaba a compilar con "base()
+        // can only be used inside a method" -- BaseExpr (ver más abajo
+        // en CompileExpr) valida contra current_base_class_, que un
+        // `Compiler sub` nuevo nunca tenía seteado (solo se setea al
+        // compilar el método en sí, en CompileClass). Copia plana, igual
+        // que compiled_classes_/known_funcs_ arriba -- el lambda no
+        // necesita escribirla de vuelta al padre.
+        sub.current_base_class_ = current_base_class_;
 
         sub.next_reg_ = 1;
         sub.max_reg_ = sub.next_reg_;
@@ -1142,12 +1223,43 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
             sub.next_reg_++;
         }
 
+        // Bug #15: "this" solía excluirse a propósito de esta captura
+        // (`if (name != "this")`), así que un lambda anidado DENTRO de un
+        // método no podía capturar "this" como upvalue -- cualquier
+        // `this.attr`/`this.metodo()` (o `base.metodo()`, que también
+        // depende de "this") dentro de ese lambda fallaba en runtime con
+        // 'this' is not defined (o en compile-time para un `func`
+        // anidado con nombre, ver el mismo patrón más abajo en
+        // CompileFunctionDecl). No hay ninguna razón real para excluir
+        // "this" -- es un local más del frame del método (registro 0),
+        // así que se captura igual que cualquier otro nombre.
         for (auto& [name, reg] : locals_) {
-            if (name != "this") {
-                sub.parent_locals_.push_back({name, reg});
-                sub.proto_->upvalue_descs.push_back({true, reg});
-                sub.next_reg_++;
-            }
+            sub.parent_locals_.push_back({name, reg});
+            sub.proto_->upvalue_descs.push_back({true, reg});
+            sub.next_reg_++;
+        }
+        // Bug #3 (captura de closures a 2+ niveles de anidamiento): el
+        // loop de arriba solo captura los locals_ PROPIOS del padre
+        // inmediato (registros reales de su frame). Si el padre a su vez
+        // ya había capturado algo de un ancestro más lejano (vive en
+        // parent_locals_/upvalue_descs del padre, no en locals_), esa
+        // captura era invisible para este lambda -- de ahí el falso
+        // "'x' is not defined" al leer una variable del abuelo desde 2+
+        // niveles de anidamiento. Fix: encadenar también las upvalues que
+        // el padre mismo ya tiene, marcadas from_parent_local=false para
+        // que el VM (CLOSURE en vm.cpp) sepa que uvd.index es un índice
+        // dentro de las upvalues del padre (no un registro de su frame) y
+        // reuse ese mismo Upvalue compartido en vez de crear uno nuevo.
+        // Bug #15: "this" ya no se excluye acá tampoco -- un lambda
+        // anidado a 2+ niveles dentro de un método (lambda dentro de
+        // lambda) también necesita poder encadenar la captura de "this"
+        // que el lambda padre ya hizo.
+        for (size_t i = 0; i < parent_locals_.size(); ++i) {
+            auto& pname = parent_locals_[i].first;
+            if (locals_.count(pname)) continue;  // el local propio del padre ya gana (loop de arriba)
+            sub.parent_locals_.push_back({pname, static_cast<uint16_t>(i)});
+            sub.proto_->upvalue_descs.push_back({false, static_cast<uint16_t>(i)});
+            sub.next_reg_++;
         }
 
         sub.EmitDefaultsPrologue(l->defaults, 1);
@@ -1688,16 +1800,27 @@ static bool IsBuiltinGlobal(const std::string& name) {
 bool Compiler::NameShadowsGlobalCallable(const std::string& name) const {
     if (locals_.count(name)) return true;
     if (name == "this" && locals_.count("this")) return true;
+    // Bug #3: mismo fix que FindUpvalue -- sin el gate de from_parent_local,
+    // para que un nombre capturado del abuelo (encadenado) también cuente
+    // como "sombra un global" y no dispare un falso "not defined".
     for (size_t upval_idx = 0; upval_idx < proto_->upvalue_descs.size(); ++upval_idx) {
         auto& uvd = proto_->upvalue_descs[upval_idx];
-        if (uvd.from_parent_local) {
-            for (auto& [pname, preg] : parent_locals_) {
-                if (pname == name && preg == uvd.index) return true;
-            }
+        for (auto& [pname, preg] : parent_locals_) {
+            if (pname == name && preg == uvd.index) return true;
         }
     }
     bool in_method = locals_.count("this") != 0;
     if (in_method && instance_attrs_.count(name)) return true;
+    // Bugfix (Aug 2026 build/test pass): `name` may be a bare NAME
+    // assigned at the top level of this chunk (`f = (x) => x*2`), which
+    // compiles to SETGLOBAL/GETGLOBAL, never touching locals_ above --
+    // see known_top_level_globals_'s comment in compiler.h for the full
+    // story and why CollectFuncSignatures now also populates it. Without
+    // this check, calling such a name -- whether at top level or from any
+    // nested function/method/lambda that inherited this map -- produced a
+    // false "function 'name' is not defined" from CheckCallArgs even
+    // though GETGLOBAL would resolve it fine at runtime.
+    if (known_top_level_globals_.count(name)) return true;
     return false;
 }
 
@@ -3260,9 +3383,10 @@ void Compiler::EmitDefaultsPrologue(const std::vector<std::pair<std::string, std
         Emit(OpCode::JMP, 0);
         FreeRegs(1);
 
+        uint16_t regs_before = next_reg_;
         auto val_reg = CompileExpr(def);
         Emit(OpCode::MOVE, param_reg, val_reg);
-        FreeRegs(1);
+        FreeRegs(next_reg_ - regs_before);
 
         PatchJump(jmp_have_arg);
     }
@@ -3309,11 +3433,17 @@ void Compiler::CompileFunc(const FuncDef* func) {
     // compiled_classes_ arriba.
     sub.known_funcs_ = known_funcs_;
     sub.known_func_returns_ = known_func_returns_;
+    sub.known_top_level_globals_ = known_top_level_globals_;
     sub.extern_func_params_ = extern_func_params_;
     sub.extern_func_returns_ = extern_func_returns_;
     // Fase 4 de PLAN_VALIDACION_ESTATICA.md: mismo motivo que
     // known_funcs_ arriba -- ver has_wildcard_import_ en compiler.h.
     sub.has_wildcard_import_ = has_wildcard_import_;
+    // Bug #15 (parte 2): mismo motivo que en el caso de lambdas de
+    // arriba -- sin esto, `base.metodo()` dentro de un `func` anidado
+    // con nombre, dentro de un método, fallaba a compilar con "base()
+    // can only be used inside a method".
+    sub.current_base_class_ = current_base_class_;
 
     sub.next_reg_ = 1;
     sub.max_reg_ = sub.next_reg_;
@@ -3333,12 +3463,29 @@ void Compiler::CompileFunc(const FuncDef* func) {
     // call gets its own throwaway copy instead of sharing the parent's.
     // Top-level functions have no enclosing locals_ to capture (is_top_level_
     // compiler instance has none for real locals), so this is a no-op there.
+    // Bug #15: mismo fix que en el caso de lambdas de arriba -- "this" ya
+    // no se excluye de esta captura. Antes, un `func` anidado con nombre
+    // dentro de un método no podía capturar "this" como upvalue, así que
+    // cualquier `this.attr`/`this.metodo()`/`base.metodo()` dentro de él
+    // fallaba (en este caso, en tiempo de COMPILACIÓN: 'this' is not
+    // defined, porque acá no hay nada que resolver en runtime todavía).
     for (auto& [name, reg] : locals_) {
-        if (name != "this") {
-            sub.parent_locals_.push_back({name, reg});
-            sub.proto_->upvalue_descs.push_back({true, reg});
-            sub.next_reg_++;
-        }
+        sub.parent_locals_.push_back({name, reg});
+        sub.proto_->upvalue_descs.push_back({true, reg});
+        sub.next_reg_++;
+    }
+    // Bug #3: mismo fix que en el caso de lambdas de arriba -- encadenar
+    // las upvalues que el padre mismo ya capturó de un ancestro más
+    // lejano, para que un `func` anidado con nombre también pueda leer
+    // (y, vía SETUPVAL, escribir) una variable del abuelo o de un
+    // ancestro más lejano, no solo del padre inmediato. Bug #15: "this"
+    // ya no se excluye acá tampoco, por la misma razón que arriba.
+    for (size_t i = 0; i < parent_locals_.size(); ++i) {
+        auto& pname = parent_locals_[i].first;
+        if (locals_.count(pname)) continue;
+        sub.parent_locals_.push_back({pname, static_cast<uint16_t>(i)});
+        sub.proto_->upvalue_descs.push_back({false, static_cast<uint16_t>(i)});
+        sub.next_reg_++;
     }
 
     sub.EmitDefaultsPrologue(func->params, 1);
@@ -3373,7 +3520,7 @@ void Compiler::CompileFunc(const FuncDef* func) {
 
 void Compiler::CompileChunk(const std::vector<std::shared_ptr<StmtNode>>& stmts) {
     RejectDuplicateFuncDefs(stmts, source_name_);
-    CollectFuncSignatures(stmts, known_funcs_, known_func_returns_, compiled_classes_);
+    CollectFuncSignatures(stmts, known_funcs_, known_func_returns_, compiled_classes_, known_top_level_globals_);
     for (size_t i = 0; i < stmts.size(); i++) {
         if (i == stmts.size() - 1) {
             result_reg_ = CompileExprToReg(stmts[i]);
@@ -3482,6 +3629,17 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
             return 0;
         }
         if (auto* i = dynamic_cast<IndexExpr*>(a->target.get())) {
+            // Bug #6 (AvaLang_Bugs_Encontrados.md): esta rama usaba
+            // `FreeRegs(5)` fijo, asumiendo que val_reg/obj_reg/idx_reg
+            // SIEMPRE son 3 registros recien alocados (+2 de saved_idx/
+            // saved_obj). Falso cuando `a->value`/`i->obj`/`i->index` son
+            // una simple lectura de variable local (CompileExpr(NameExpr)
+            // devuelve el registro YA existente sin llamar AllocReg) --
+            // ahi se liberaban de mas registros que nunca se alocaron aca,
+            // corrompiendo next_reg_ y pisando el registro de otra
+            // variable viva en la siguiente asignacion. Fix: mismo patron
+            // regs_before/diff que ya usa la rama gemela de CompileStmt.
+            uint16_t regs_before = next_reg_;
             auto val_reg = CompileExpr(a->value);
             auto obj_reg = CompileExpr(i->obj);
             auto idx_reg = CompileExpr(i->index);
@@ -3490,7 +3648,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
             auto saved_obj = AllocReg();
             Emit(OpCode::MOVE, saved_obj, obj_reg);
             Emit(OpCode::SETINDEX, saved_obj, saved_idx, val_reg);
-            FreeRegs(5);
+            FreeRegs(next_reg_ - regs_before);
             return 0;
         }
         if (auto* a_expr = dynamic_cast<AttrExpr*>(a->target.get())) {
@@ -3501,6 +3659,16 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
                 }
             }
 
+            // Bug #6 (AvaLang_Bugs_Encontrados.md): esta rama usaba
+            // `FreeRegs(1)` (dos veces si `!is_this`) asumiendo que
+            // val_reg/obj_reg siempre son registros recien alocados. Es
+            // exactamente el mismo bug que la rama de IndexExpr de arriba
+            // -- `this.attr = a` con `a` una variable local no aloca
+            // nada nuevo, asi que el FreeRegs(1) fijo liberaba un
+            // registro ajeno (repro: `this.head = a` como unica/ultima
+            // statement de un `if` sin else corrompia el parametro `b`).
+            // Fix: mismo patron regs_before/diff que CompileStmt.
+            uint16_t regs_before = next_reg_;
             auto val_reg = CompileExpr(a->value);
 
             uint16_t obj_reg;
@@ -3513,10 +3681,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
             auto attr_idx = AddConstant(MakeString(a_expr->attr));
             Emit(OpCode::SETATTR, obj_reg, attr_idx, val_reg);
 
-            if (!is_this) {
-                FreeRegs(1);
-            }
-            FreeRegs(1);
+            FreeRegs(next_reg_ - regs_before);
             return 0;
         }
         FreeRegs(1);
@@ -3884,6 +4049,7 @@ void Compiler::CompileClass(const ClassDef* cls) {
             // definida" no la marque como inexistente.
             sub.known_funcs_ = known_funcs_;
             sub.known_func_returns_ = known_func_returns_;
+            sub.known_top_level_globals_ = known_top_level_globals_;
             sub.extern_func_params_ = extern_func_params_;
             sub.extern_func_returns_ = extern_func_returns_;
             // Fase 4 de PLAN_VALIDACION_ESTATICA.md: mismo motivo que
@@ -3985,9 +4151,19 @@ void Compiler::CompileClass(const ClassDef* cls) {
     }
 
     if (cls->base_class) {
+        // Bug #13 (misma familia que vm.cpp/vm_call_op.cpp/vm_classes.cpp):
+        // `base_class` es un ClassObj* ya existente (viene de
+        // compiled_classes_, no de un `new` recien hecho aca), asi que
+        // armar una Value con campos manuales sin retener deja un Release()
+        // de mas cuando `base_val` sale de scope al final de este bloque --
+        // cancela silenciosamente el Retain() real que la asignacion de
+        // abajo (class_obj->attrs["__base__"] = base_val) ya hizo, dejando
+        // el ref_count neto de la clase base sin el +1 que le corresponde
+        // por esta nueva referencia persistente.
         Value base_val;
         base_val.type = ValueType::Class;
         base_val.obj = base_class;
+        Retain(base_val);
         class_obj->attrs["__base__"] = base_val;
         compiled_classes_[cls->name + ".__base__"] = class_obj;
     }
