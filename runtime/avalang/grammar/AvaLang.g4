@@ -18,7 +18,7 @@ statement
     ;
 
 simpleStatement
-    : smallStatement (NEWLINE | ';' NEWLINE)+
+    : smallStatement ((NEWLINE | ';' NEWLINE)+)?
     ;
 
 smallStatement
@@ -231,9 +231,9 @@ caseClause
 //   is >= 60       -> valor >= 60 (cualquier compOp)
 //   <expr>         -> valor == expr (default, igualdad exacta)
 caseItem
-    : expr 'to' expr    # caseItemRange
+    : expr NAME expr     # caseItemRange
     | 'is' compOp expr  # caseItemRelational
-    | expr               # caseItemEquals
+    | expr              # caseItemEquals
     ;
 
 whileStatement
@@ -251,7 +251,7 @@ whileStatement
 forStatement
     : 'for' targetList 'in' exprList 'then' block 'end'
     | 'for' targetList 'in' '(' exprList ')' 'then' block 'end'
-    | 'for' NAME '=' expr 'to' expr ('step' expr)? 'then' block 'end'
+    | 'for' NAME '=' expr NAME expr (NAME expr)? 'then' block 'end'
     ;
 
 // `returnType` (`as Type` after the parameter list, before the body) is
@@ -354,7 +354,7 @@ expr
 // que ocupa en C/JS -- por eso reemplaza a `orExpr` como cuerpo del alt
 // `orExprAlt` en vez de agregarse como alternativa nueva de `expr`.
 ternaryExpr
-    : orExpr ('?' expr ':' expr)?
+    : orExpr ('?' NEWLINE* expr NEWLINE* ':' NEWLINE* expr)?
     ;
 
 // Phase 14 of AvaLang_Plan_Sistema_de_Tipos.md ("Lambdas y funciones como
@@ -390,11 +390,11 @@ lambdaExpr
     ;
 
 orExpr
-    : andExpr ('or' andExpr)*
+    : andExpr ('or' NEWLINE* andExpr)*
     ;
 
 andExpr
-    : notExpr ('and' notExpr)*
+    : notExpr ('and' NEWLINE* notExpr)*
     ;
 
 notExpr
@@ -403,7 +403,7 @@ notExpr
     ;
 
 comparison
-    : bitOr (compOp bitOr)*
+    : bitOr (compOp NEWLINE* bitOr)*
     ;
 
 compOp
@@ -425,27 +425,27 @@ compOp
 // `-`/`not`. Solo operan sobre Number (truncados a entero en runtime,
 // mismo criterio que IDIV) -- ver vm_arith.cpp OpBand/OpBor/etc.
 bitOr
-    : bitXor ('|' bitXor)*
+    : bitXor ('|' NEWLINE* bitXor)*
     ;
 
 bitXor
-    : bitAnd ('^' bitAnd)*
+    : bitAnd ('^' NEWLINE* bitAnd)*
     ;
 
 bitAnd
-    : shift ('&' shift)*
+    : shift ('&' NEWLINE* shift)*
     ;
 
 shift
-    : additive (('<<' | '>>') additive)*
+    : additive (('<<' | '>>') NEWLINE* additive)*
     ;
 
 additive
-    : multiplicative (('+' | '-') multiplicative)*
+    : multiplicative (('+' | '-') NEWLINE* multiplicative)*
     ;
 
 multiplicative
-    : unary (('*' | '/' | '%' | IDIV) unary)*
+    : unary (('*' | '/' | '%' | IDIV) NEWLINE* unary)*
     ;
 
 unary
@@ -454,7 +454,7 @@ unary
     ;
 
 power
-    : postfix ('**' unary)?
+    : postfix ('**' NEWLINE* unary)?
     ;
 
 postfix
@@ -465,7 +465,7 @@ trailer
     : '.' NAME                     # attrTrailer
     | '[' expr ']'                 # indexTrailer
     | '[' sliceRange ']'           # sliceTrailer
-    | '(' argList? ')'             # callTrailer
+    | '(' NEWLINE* argList? NEWLINE* ')'  # callTrailer
     | INC                          # incTrailer
     | DEC                          # decTrailer
     ;
@@ -475,7 +475,7 @@ sliceRange
     ;
 
 argList
-    : arg (',' arg)*
+    : arg (NEWLINE* ',' NEWLINE* arg)*
     ;
 
 arg
@@ -493,18 +493,18 @@ primary
     | 'nil'                         # nilAtom
     | listLiteral                   # listAtom
     | dictLiteral                   # dictAtom
-    | '(' expr ')'                  # groupAtom
+    | '(' NEWLINE* expr NEWLINE* ')'      # groupAtom
     | 'base' ('.' NAME)? '(' argList? ')' trailer*  # baseAtom
     | 'yield' exprList?             # yieldAtom
     | 'await' expr                  # awaitAtom
     ;
 
 listLiteral
-    : '[' (expr (',' expr)* ','?)? ']'
+    : '[' NEWLINE* (expr (NEWLINE* ',' NEWLINE* expr)* NEWLINE* ','?)? NEWLINE* ']'
     ;
 
 dictLiteral
-    : '{' (dictEntry (',' dictEntry)* ','?)? '}'
+    : '{' NEWLINE* (dictEntry (NEWLINE* ',' NEWLINE* dictEntry)* NEWLINE* ','?)? NEWLINE* '}'
     ;
 
 dictEntry
@@ -532,7 +532,11 @@ NAME
     ;
 
 NUMBER
-    : DIGIT+ ('.' DIGIT+)?
+    : DIGIT+ ('.' DIGIT+)? EXPONENT?
+    ;
+
+fragment EXPONENT
+    : [eE] [+-]? DIGIT+
     ;
 
 fragment DIGIT

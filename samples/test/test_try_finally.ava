@@ -1,0 +1,92 @@
+g_n = 0
+g_fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+func runCatchOnly()
+    order = ""
+    try
+        order = order + "t"
+        raise "x"
+        order = order + "N"
+    catch (e)
+        order = order + "c"
+    end
+    order = order + "a"
+    return order
+end
+
+mark(check(g_n + 1, "tca", runCatchOnly()))
+
+func runNoCatch()
+    try
+        raise "boom"
+    finally
+        order2 = order2 + "f"
+    end
+end
+
+order2 = ""
+g_outerHit = false
+try
+    runNoCatch()
+catch (e3)
+    g_outerHit = true
+end
+mark(check(g_n + 1, true, g_outerHit))
+mark(check(g_n + 1, "f", order2))
+
+func runCatchFinally()
+    order3 = ""
+    try
+        order3 = order3 + "t"
+        raise "y"
+        order3 = order3 + "N"
+    catch (e)
+        order3 = order3 + "c"
+    finally
+        order3 = order3 + "f"
+    end
+    order3 = order3 + "a"
+    return order3
+end
+
+mark(check(g_n + 1, "tcfa", runCatchFinally()))
+
+func runNoThrowCatchFinally()
+    order4 = ""
+    try
+        order4 = order4 + "t"
+    catch (e)
+        order4 = order4 + "c"
+    finally
+        order4 = order4 + "f"
+    end
+    order4 = order4 + "a"
+    return order4
+end
+
+mark(check(g_n + 1, "tfa", runNoThrowCatchFinally()))
+
+mark(check(g_n + 1, true, g_fails == 0))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST TRY FAILED: " + str(g_fails) + " checks en rojo"
+end
+print("TEST TRY: TODO OK")

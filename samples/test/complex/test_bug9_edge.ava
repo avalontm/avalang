@@ -1,0 +1,40 @@
+# test_bug9_edge.ava
+# Casos borde del fix de BUG 9.
+
+import lib.stress.edge
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+# --- 1. Funcion cuyo cuerpo entero es UNA sola asignacion a global ---
+check(1, 0, lib.stress.edge.get_flag())
+lib.stress.edge.set_flag()
+check(2, 1, lib.stress.edge.get_flag())
+
+# --- 2. Recursion mutando global como ultimo statement ---
+# dive(5) incrementa depth_counter 5 veces
+lib.stress.edge.dive(5)
+check(3, 5, lib.stress.edge.get_depth())
+lib.stress.edge.dive(3)
+check(4, 8, lib.stress.edge.get_depth())
+
+# --- 3. Fibonacci contando llamadas en global ---
+lib.stress.edge.reset_fib_calls()
+r = lib.stress.edge.fib(10)
+check(5, 55, r)
+# fib(n) hace fib_calls = 2*fib(n+1)-1 llamadas; para n=10: 177
+check(6, 177, lib.stress.edge.get_fib_calls())
+
+# --- 4. Global persiste entre secuencias de llamadas recursivas ---
+lib.stress.edge.reset_fib_calls()
+lib.stress.edge.fib(3)   # 5 llamadas
+check(7, 5, lib.stress.edge.get_fib_calls())
+lib.stress.edge.fib(2)   # +3 -> 8
+check(8, 8, lib.stress.edge.get_fib_calls())
+
+print("=== test_bug9_edge.ava terminado ===")

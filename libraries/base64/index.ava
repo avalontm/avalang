@@ -1,0 +1,127 @@
+g_ordTable = nil
+
+func _table()
+    if g_ordTable != nil then
+        return g_ordTable
+    end
+    buf = mem_alloc(256)
+    mem_write_bytes(buf, 0, range(0, 256))
+    g_ordTable = mem_string(buf, 0, 256)
+    mem_free(buf)
+    return g_ordTable
+end
+
+func charCode(c)
+    return _table().indexOf(c)
+end
+
+func char(c)
+    t = _table()
+    if c < 0 or c > 255 then
+        return nil
+    end
+    return t.substring(c, c + 1)
+end
+
+func charCodes(s)
+    t = _table()
+    out = []
+    i = 0
+    while i < len(s)
+        out.append(t.indexOf(s[i]))
+        i++
+    end
+    return out
+end
+
+func fromCodes(list)
+    t = _table()
+    out = ""
+    i = 0
+    while i < len(list)
+        v = list[i]
+        out = out + t.substring(v, v + 1)
+        i++
+    end
+    return out
+end
+
+b64alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+func encode(data)
+    t = _table()
+    out = ""
+    n = len(data)
+    i = 0
+    while i < n
+        b0 = t.indexOf(data[i])
+        b1 = 0
+        b2 = 0
+        if i + 1 < n then
+            b1 = t.indexOf(data[i + 1])
+        end
+        if i + 2 < n then
+            b2 = t.indexOf(data[i + 2])
+        end
+        triple = (b0 << 16) | (b1 << 8) | b2
+        c0 = (triple >> 18) & 63
+        c1 = (triple >> 12) & 63
+        c2 = (triple >> 6) & 63
+        c3 = triple & 63
+        out = out + b64alphabet.substring(c0, c0 + 1)
+        out = out + b64alphabet.substring(c1, c1 + 1)
+        if i + 1 < n then
+            out = out + b64alphabet.substring(c2, c2 + 1)
+        else
+            out = out + "="
+        end
+        if i + 2 < n then
+            out = out + b64alphabet.substring(c3, c3 + 1)
+        else
+            out = out + "="
+        end
+        i = i + 3
+    end
+    return out
+end
+
+func decode(text)
+    t = _table()
+    clean = ""
+    i = 0
+    while i < len(text)
+        c = text[i]
+        if c != "=" then
+            clean = clean + c
+        end
+        i++
+    end
+    out = ""
+    i = 0
+    n = len(clean)
+    while i < n
+        v0 = b64alphabet.indexOf(clean[i])
+        v1 = b64alphabet.indexOf(clean[i + 1])
+        v2 = 0
+        v3 = 0
+        if i + 2 < n then
+            v2 = b64alphabet.indexOf(clean[i + 2])
+        end
+        if i + 3 < n then
+            v3 = b64alphabet.indexOf(clean[i + 3])
+        end
+        triple = (v0 << 18) | (v1 << 12) | (v2 << 6) | v3
+        b0 = (triple >> 16) & 255
+        b1 = (triple >> 8) & 255
+        b2 = triple & 255
+        out = out + t.substring(b0, b0 + 1)
+        if i + 2 < n then
+            out = out + t.substring(b1, b1 + 1)
+        end
+        if i + 3 < n then
+            out = out + t.substring(b2, b2 + 1)
+        end
+        i = i + 4
+    end
+    return out
+end

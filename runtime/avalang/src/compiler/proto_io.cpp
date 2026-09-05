@@ -74,10 +74,6 @@ bool ReadF64(avastd::istream& in, double& v) {
 bool ReadString(avastd::istream& in, avastd::string& s) {
     uint32_t len = 0;
     if (!ReadU32(in, len)) return false;
-    // Guard against a corrupt/truncated length blowing up the allocation;
-    // no .avbc this compiler emits should ever need a single string this
-    // large (source files aren't gigabytes), so treat it as invalid input
-    // rather than trusting it blindly.
     constexpr uint32_t kMaxReasonableStringLen = 64u * 1024u * 1024u;
     if (len > kMaxReasonableStringLen) return false;
     s.resize(len);
@@ -105,13 +101,6 @@ void WriteValue(avastd::ostream& out, const Value& v) {
             break;
         }
         default:
-            // No debería llegar acá: el compilador solo mete Nil/Bool/
-            // Number/String en la constant pool (ver AddConstant en
-            // compiler.cpp). Si esto dispara, algo nuevo está agregando
-            // un tipo de constante que este formato todavía no sabe
-            // serializar -- se escribe como Nil en vez de corromper el
-            // stream, para que el .avbc siga siendo válido aunque pierda
-            // esa constante puntual.
             WriteU8(out, 0);
             break;
     }
@@ -143,7 +132,7 @@ bool ReadValue(avastd::istream& in, Value& out_value) {
             return true;
         }
         default:
-            return false; // tag desconocido: archivo corrupto o de una versión futura
+            return false; 
     }
 }
 
@@ -178,13 +167,6 @@ void WriteProtoNode(const Proto& proto, avastd::ostream& out, bool with_debug_in
     if (with_debug_info) {
         WriteU32(out, static_cast<uint32_t>(proto.debug_lines.size()));
         for (uint32_t line : proto.debug_lines) WriteU32(out, line);
-        // debug_columns es nuevo (antes MakeFrameError solo tenia
-        // linea); serializado siempre despues de debug_lines, tamano
-        // propio por si algun Proto viejo en memoria no tiene una
-        // entrada 1:1 con instructions (no deberia pasar, pero no vale
-        // la pena asumirlo en el formato on-disk). Rompe compatibilidad
-        // con .avapack generados antes de este cambio -- aceptable,
-        // formato en desarrollo activo, no hay consumidores externos.
         WriteU32(out, static_cast<uint32_t>(proto.debug_columns.size()));
         for (uint32_t col : proto.debug_columns) WriteU32(out, col);
         WriteString(out, proto.debug_name);

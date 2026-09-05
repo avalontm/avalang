@@ -1,0 +1,17 @@
+# lib/data/counter.ava
+# Modulo para reproducir BUG 9: variable de nivel modulo mutada desde funcion
+
+counter_value = 0
+
+func increment()
+    counter_value = counter_value + 1
+    return counter_value
+end
+
+func get_counter()
+    return counter_value
+end
+
+func reset_counter()
+    counter_value = 0
+end

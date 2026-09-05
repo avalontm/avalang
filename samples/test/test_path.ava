@@ -1,0 +1,82 @@
+import path
+
+g_n = 0
+g_fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+print("== isAbsolute ==")
+mark(check(g_n + 1, true, isAbsolute("C:\\foo\\bar.txt")))
+mark(check(g_n + 1, true, isAbsolute("C:/foo/bar.txt")))
+mark(check(g_n + 1, true, isAbsolute("\\\\server\\share")))
+mark(check(g_n + 1, false, isAbsolute("foo\\bar.txt")))
+mark(check(g_n + 1, true, isAbsolute("/etc/passwd")))
+
+print("== dirname / basename ==")
+mark(check(g_n + 1, "C:\\foo", dirname("C:\\foo\\bar.txt")))
+mark(check(g_n + 1, "bar.txt", basename("C:\\foo\\bar.txt")))
+mark(check(g_n + 1, "", basename("C:\\foo\\")))
+mark(check(g_n + 1, "archivo", basename("archivo")))
+mark(check(g_n + 1, "C:\\foo\\bar", dirname("C:\\foo\\bar\\")))
+mark(check(g_n + 1, "", dirname("archivo")))
+
+print("== extname ==")
+mark(check(g_n + 1, ".txt", extname("archivo.txt")))
+mark(check(g_n + 1, ".gz", extname("a.tar.gz")))
+mark(check(g_n + 1, "", extname("archivo")))
+mark(check(g_n + 1, "", extname(".archivo")))
+mark(check(g_n + 1, ".txt", extname("archivo.txt.txt")))
+
+print("== join ==")
+mark(check(g_n + 1, "a\\b", join("a", "b")))
+mark(check(g_n + 1, "a\\b", join("a\\", "b")))
+mark(check(g_n + 1, "a\\b", join("a", "\\b")))
+mark(check(g_n + 1, "a", join("a", "")))
+mark(check(g_n + 1, "b", join("", "b")))
+mark(check(g_n + 1, "C:\\a\\b", join("C:\\a", "b")))
+
+print("== joinAll ==")
+mark(check(g_n + 1, "x\\y\\z", joinAll(["x", "y", "z"])))
+mark(check(g_n + 1, "C:\\a\\b", joinAll(["C:\\", "a", "b"])))
+
+print("== split ==")
+mark(check(g_n + 1, 2, len(split("a\\b"))))
+mark(check(g_n + 1, "a", split("a\\b")[0]))
+mark(check(g_n + 1, "b", split("a\\b")[1]))
+mark(check(g_n + 1, 3, split("C:\\a\\b").length()))
+mark(check(g_n + 1, "C:", split("C:\\a\\b")[0]))
+mark(check(g_n + 1, "b", split("C:\\a\\b")[2]))
+mark(check(g_n + 1, 0, len(split(""))))
+
+print("== normalize ==")
+mark(check(g_n + 1, "a\\b", normalize("a\\b")))
+mark(check(g_n + 1, "a\\b", normalize("a\\.\\b")))
+mark(check(g_n + 1, "a\\b", normalize("a\\x\\..\\b")))
+mark(check(g_n + 1, "b", normalize("a\\..\\b")))
+mark(check(g_n + 1, "C:\\a\\b", normalize("C:\\a\\b")))
+mark(check(g_n + 1, "C:\\a\\b", normalize("C:\\a\\.\\b")))
+mark(check(g_n + 1, "C:\\b", normalize("C:\\a\\..\\b")))
+mark(check(g_n + 1, "\\\\srv\\share\\x", normalize("\\\\srv\\share\\.\\x")))
+mark(check(g_n + 1, "\\etc\\passwd", normalize("/etc/./passwd")))
+mark(check(g_n + 1, "a\\b\\b", normalize("a/b/./x/../b")))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST PATH FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST PATH: TODO OK")

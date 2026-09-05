@@ -153,7 +153,7 @@ size_t ValidateIntegerIndex(double n, size_t len, const char* context) {
         AVA_THROW(avastd::runtime_error(avastd::string(context) + ": index too large: " + NumberToString(rounded)));
     }
     size_t pos = static_cast<size_t>(rounded);
-    // Bug #6 en AvaLang_Bugs_Encontrados.md ("escritura fuera de rango es
+    // Bug #6 en BUGS_ENCONTRADOS.md ("escritura fuera de rango es
     // no-op silencioso"): antes esta funcion solo validaba tipo/signo y
     // dejaba que cada call site (OpGetIndex/OpSetIndex en
     // vm_containers.cpp) decidiera por su cuenta que hacer con un indice
@@ -176,10 +176,6 @@ avastd::string JoinPath(const avastd::string& a, const avastd::string& b) {
     char sep = PATH_SEPARATOR_CHAR;
     if (a.back() == sep || a.back() == '/') return a + b;
     return a + PATH_SEPARATOR + b;
-}
-
-bool FileExists(const avastd::string& path) {
-    return VmPlatformAccessor::Get().FileSystem().Exists(path);
 }
 
 avastd::string GetCurrentWorkingDir() {

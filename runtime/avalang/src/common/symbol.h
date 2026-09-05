@@ -6,7 +6,7 @@
 
 #include "type.h"
 
-// Phase 4 of AvaLang_Plan_Sistema_de_Tipos.md ("Tabla de simbolos"). Symbol
+// Phase 4 ("Tabla de simbolos"). Symbol
 // is the per-name record the compiler's symbol table keeps once a name is
 // declared (see Compiler::symbols_ and Compiler::DeclareSymbol in
 // src/compiler/compiler.h/.cpp), so later phases have somewhere to look a
@@ -33,7 +33,7 @@ struct Symbol {
     Type inferredType = Type::Unknown;   // Phase 5, not implemented yet
     Type effectiveType = Type::Unknown;  // declaredType if present, else inferredType
 
-    // Phase 13 of AvaLang_Plan_Sistema_de_Tipos.md ("Clases y objetos").
+    // Phase 13 ("Clases y objetos").
     // Parallel to declaredType/inferredType/effectiveType above, meaningful
     // only when the corresponding *Type field is Type::Object (a class
     // instance, see type.h's TypeRef). Kept as separate fields instead of
@@ -45,7 +45,7 @@ struct Symbol {
     std::string inferredClassName;
     std::string effectiveClassName;
 
-    // Phase 15 of AvaLang_Plan_Sistema_de_Tipos.md ("Colecciones").
+    // Phase 15 ("Colecciones").
     // Parallel to declaredClassName/inferredClassName/effectiveClassName
     // above, meaningful only when the corresponding *Type field is
     // Type::List (elementType only) or Type::Dict (keyType + elementType,

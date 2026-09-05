@@ -1,0 +1,219 @@
+extern "sqlite3.dll" as SqliteNative
+    func sqlite3_open(filename, ppDb)
+    func sqlite3_close(db)
+    func sqlite3_errmsg(db)
+    func sqlite3_exec(db, sql, callback, arg, errmsg)
+    func sqlite3_prepare_v2(db, zSql, nByte, ppStmt, pzTail)
+    func sqlite3_step(stmt)
+    func sqlite3_finalize(stmt)
+    func sqlite3_column_count(stmt)
+    func sqlite3_column_name(stmt, iCol)
+    func sqlite3_column_type(stmt, iCol)
+    func sqlite3_column_int64(stmt, iCol)
+    func sqlite3_column_text(stmt, iCol)
+    func sqlite3_column_blob(stmt, iCol)
+    func sqlite3_column_bytes(stmt, iCol)
+    func sqlite3_changes(db)
+    func sqlite3_last_insert_rowid(db)
+    func sqlite3_libversion()
+end
+
+g_tbl = nil
+
+func _t()
+    if g_tbl == nil then
+        buf = mem_alloc(256)
+        mem_write_bytes(buf, 0, range(0, 256))
+        g_tbl = mem_string(buf, 0, 256)
+        mem_free(buf)
+    end
+    return g_tbl
+end
+
+func char(n)
+    return _t().substring(n, n + 1)
+end
+
+func _readRaw(ptr, n)
+    out = ""
+    i = 0
+    while i < n
+        chunk = mem_peek_u32(ptr, i)
+        take = n - i
+        if take > 4 then
+            take = 4
+        end
+        j = 0
+        while j < take
+            out = out + char((chunk >> (j * 8)) & 255)
+            j = j + 1
+        end
+        i = i + 4
+    end
+    return out
+end
+
+class Db
+    handle = nil
+    isOpen = false
+
+    func Db(path)
+        cell = mem_alloc(8)
+        rc = SqliteNative.sqlite3_open(path, cell)
+        this.handle = mem_peek_ptr(cell, 0)
+        mem_free(cell)
+        if rc != 0 then
+            msg = "open fallo"
+            if not mem_is_null(this.handle) then
+                msg = mem_peek_string(SqliteNative.sqlite3_errmsg(this.handle))
+                SqliteNative.sqlite3_close(this.handle)
+            end
+            this.handle = nil
+            raise "sqlite: " + msg
+        end
+        this.isOpen = true
+    end
+
+    func close()
+        if this.isOpen then
+            SqliteNative.sqlite3_close(this.handle)
+            this.isOpen = false
+            this.handle = nil
+        end
+    end
+
+    func error()
+        if mem_is_null(this.handle) then
+            return "sin conexion"
+        end
+        return mem_peek_string(SqliteNative.sqlite3_errmsg(this.handle))
+    end
+
+    func _requireOpen()
+        if not this.isOpen then
+            raise "sqlite: base de datos cerrada"
+        end
+    end
+
+    func exec(sql)
+        this._requireOpen()
+        rc = SqliteNative.sqlite3_exec(this.handle, sql, nil, nil, nil)
+        if rc != 0 then
+            raise "sqlite: " + this.error() + " -- sql: " + sql
+        end
+        return SqliteNative.sqlite3_changes(this.handle)
+    end
+
+    func query(sql)
+        this._requireOpen()
+        cell = mem_alloc(8)
+        rc = SqliteNative.sqlite3_prepare_v2(this.handle, sql, -1, cell, nil)
+        if rc != 0 then
+            mem_free(cell)
+            raise "sqlite: " + this.error() + " -- sql: " + sql
+        end
+        stmt = mem_peek_ptr(cell, 0)
+        mem_free(cell)
+        if mem_is_null(stmt) then
+            return []
+        end
+
+        cols = SqliteNative.sqlite3_column_count(stmt)
+        names = []
+        i = 0
+        while i < cols
+            p = SqliteNative.sqlite3_column_name(stmt, i)
+            if mem_is_null(p) then
+                names.append("col" + str(i))
+            else
+                names.append(mem_peek_string(p))
+            end
+            i = i + 1
+        end
+
+        rows = []
+        while true
+            rc = SqliteNative.sqlite3_step(stmt)
+            if rc == 100 then
+                row = {}
+                i = 0
+                while i < cols
+                    ct = SqliteNative.sqlite3_column_type(stmt, i)
+                    v = nil
+                    if ct == 1 then
+                        v = SqliteNative.sqlite3_column_int64(stmt, i)
+                    elif ct == 2 then
+                        tp = SqliteNative.sqlite3_column_text(stmt, i)
+                        if mem_is_null(tp) then
+                            v = 0
+                        else
+                            v = float(mem_peek_string(tp))
+                        end
+                    elif ct == 3 then
+                        tp = SqliteNative.sqlite3_column_text(stmt, i)
+                        if mem_is_null(tp) then
+                            v = ""
+                        else
+                            v = mem_peek_string(tp)
+                        end
+                    elif ct == 4 then
+                        bp = SqliteNative.sqlite3_column_blob(stmt, i)
+                        bl = SqliteNative.sqlite3_column_bytes(stmt, i)
+                        if mem_is_null(bp) or bl == 0 then
+                            v = ""
+                        else
+                            v = _readRaw(bp, bl)
+                        end
+                    end
+                    row[names[i]] = v
+                    i = i + 1
+                end
+                rows.append(row)
+            elif rc == 101 then
+                break
+            else
+                SqliteNative.sqlite3_finalize(stmt)
+                raise "sqlite: step fallo (codigo " + str(rc) + "): " + this.error()
+            end
+        end
+        SqliteNative.sqlite3_finalize(stmt)
+        return rows
+    end
+
+    func fetchOne(sql)
+        rows = this.query(sql)
+        if len(rows) == 0 then
+            return nil
+        end
+        return rows[0]
+    end
+
+    func changes()
+        this._requireOpen()
+        return SqliteNative.sqlite3_changes(this.handle)
+    end
+
+    func lastId()
+        this._requireOpen()
+        return SqliteNative.sqlite3_last_insert_rowid(this.handle)
+    end
+
+    func begin()
+        this.exec("BEGIN")
+        return this
+    end
+
+    func commit()
+        this.exec("COMMIT")
+        return this
+    end
+
+    func rollback()
+        this.exec("ROLLBACK")
+        return this
+    end
+
+    func version()
+        return mem_peek_string(SqliteNative.sqlite3_libversion())
+    end
+end

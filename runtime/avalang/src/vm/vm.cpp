@@ -106,6 +106,19 @@ Value VM::ExecuteFrame(size_t frame_idx) {
 
             case OpCode::GETGLOBAL: {
                 avastd::string name = avastd::string(static_cast<StringObj*>(K[in.b].obj)->data);
+                // Bug 1 fix: a closure belonging to an imported module
+                // resolves its free names against the module's own global
+                // table first (see DoImport in vm_import.cpp), falling back
+                // to the VM's shared globals_ -- so a module function can
+                // call a sibling function/constant while still seeing
+                // builtins like str/len/print.
+                if (auto& mg = frames_[frame_idx].proto->module_globals) {
+                    auto mit = mg->find(name);
+                    if (mit != mg->end()) {
+                        frames_[frame_idx].registers[in.a] = mit->second;
+                        break;
+                    }
+                }
                 // Antes esto era `frames_[frame_idx].registers[in.a] =
                 // GetGlobal(name);` sin chequear nada: un typo o un
                 // identificador nunca declarado (ni funcion, ni variable
@@ -133,10 +146,19 @@ Value VM::ExecuteFrame(size_t frame_idx) {
                 frames_[frame_idx].registers[in.a] = GetGlobal(name);
                 break;
             }
-            case OpCode::SETGLOBAL: 
-                SetGlobal(avastd::string(
-                    static_cast<StringObj*>(K[in.b].obj)->data), frames_[frame_idx].registers[in.a]); 
+            case OpCode::SETGLOBAL: {
+                avastd::string name = avastd::string(
+                    static_cast<StringObj*>(K[in.b].obj)->data);
+                // Bug 1 fix: mirror GETGLOBAL -- a module writes its own
+                // symbols into its module-scoped table, not the VM's shared
+                // globals_.
+                if (auto& mg = frames_[frame_idx].proto->module_globals) {
+                    (*mg)[name] = frames_[frame_idx].registers[in.a];
+                } else {
+                    SetGlobal(name, frames_[frame_idx].registers[in.a]);
+                }
                 break;
+            }
 
             case OpCode::ADD:
                 OpAdd(frames_[frame_idx], in, K, *this);

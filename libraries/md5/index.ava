@@ -1,0 +1,140 @@
+hexdigits = "0123456789abcdef"
+g_ordTable = nil
+g_codes = nil
+
+func _table()
+    if g_ordTable != nil then
+        return g_ordTable
+    end
+    buf = mem_alloc(256)
+    mem_write_bytes(buf, 0, range(0, 256))
+    g_ordTable = mem_string(buf, 0, 256)
+    mem_free(buf)
+    return g_ordTable
+end
+
+func charCode(c)
+    return _table().indexOf(c)
+end
+
+func char(n)
+    return _table().substring(n, n + 1)
+end
+
+func _codes()
+    if g_codes != nil then
+        return g_codes
+    end
+    t = _table()
+    g_codes = []
+    i = 0
+    while i < 256
+        g_codes.append(t.substring(i, i + 1))
+        i++
+    end
+    return g_codes
+end
+
+s_table = [7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21]
+
+k_table = [3614090360, 3905402710, 606105819, 3250441966, 4118548399, 1200080426, 2821735955, 4249261313, 1770035416, 2336552879, 4294925233, 2304563134, 1804603682, 4254626195, 2792965006, 1236535329, 4129170786, 3225465664, 643717713, 3921069994, 3593408605, 38016083, 3634488961, 3889429448, 568446438, 3275163606, 4107603335, 1163531501, 2850285829, 4243563512, 1735328473, 2368359562, 4294588738, 2272392833, 1839030562, 4259657740, 2763975236, 1272893353, 4139469664, 3200236656, 681279174, 3936430074, 3572445317, 76029189, 3654602809, 3873151461, 530742520, 3299628645, 4096336452, 1126891415, 2878612391, 4237533241, 1700485571, 2399980690, 4293915773, 2240044497, 1873313359, 4264355552, 2734768916, 1309151649, 4149444226, 3174756917, 718787259, 3951481745]
+
+g_a = 1732584193
+g_b = 4023233417
+g_c = 2562383102
+g_d = 271733878
+
+func _mix()
+    a = g_a
+    b = g_b
+    c = g_c
+    d = g_d
+    i = 0
+    while i < 64
+        f = 0
+        g = 0
+        if i < 16 then
+            f = (b & c) | ((4294967295 - b) & d)
+            g = i
+        elif i < 32 then
+            f = (d & b) | ((4294967295 - d) & c)
+            g = (5 * i + 1) % 16
+        elif i < 48 then
+            f = b ^ c ^ d
+            g = (3 * i + 5) % 16
+        else
+            f = c ^ (b | (4294967295 - d))
+            g = (7 * i) % 16
+        end
+        f = (f + a + k_table[i] + g_m[g]) & 4294967295
+        a = d
+        d = c
+        c = b
+        b = (b + _rotl(f, s_table[i])) & 4294967295
+        i++
+    end
+    g_a = (g_a + a) & 4294967295
+    g_b = (g_b + b) & 4294967295
+    g_c = (g_c + c) & 4294967295
+    g_d = (g_d + d) & 4294967295
+end
+
+g_m = []
+
+func _le_w(b0, b1, b2, b3)
+    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+end
+
+func _rotl(x, n)
+    mask = (1 << (32 - n)) - 1
+    return ((x & mask) << n) | (x >> (32 - n))
+end
+
+func digest(data)
+    g_a = 1732584193
+    g_b = 4023233417
+    g_c = 2562383102
+    g_d = 271733878
+    g_m = []
+    n = len(data)
+    bitlen = n * 8
+    padded = data
+    padded = padded + char(128)
+    while len(padded) % 64 != 56
+        padded = padded + char(0)
+    end
+    padded = padded + char(bitlen & 255) + char((bitlen >> 8) & 255) + char((bitlen >> 16) & 255) + char((bitlen >> 24) & 255)
+    padded = padded + char(0) + char(0) + char(0) + char(0)
+    codes = _codes()
+    block = 0
+    while block * 64 < len(padded)
+        g_m = []
+        i = 0
+        while i < 16
+            off = block * 64 + i * 4
+            w = _le_w(charCode(padded[off]), charCode(padded[off + 1]), charCode(padded[off + 2]), charCode(padded[off + 3]))
+            g_m.append(w)
+            i++
+        end
+        _mix()
+        block++
+    end
+    out = ""
+    regs = [g_a, g_b, g_c, g_d]
+    i = 0
+    while i < 4
+        v = regs[i]
+        j = 0
+        while j < 4
+            b = (v >> (j * 8)) & 255
+            out = out + hexdigits.substring(b >> 4, (b >> 4) + 1) + hexdigits.substring(b & 15, (b & 15) + 1)
+            j++
+        end
+        i++
+    end
+    return out
+end
+
+func hash(data)
+    return digest(data)
+end

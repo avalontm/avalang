@@ -1,0 +1,87 @@
+import semver
+
+g_n = 0
+g_fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+func raisesIt(f)
+    try
+        f()
+        return false
+    catch (e)
+        return true
+    end
+end
+
+func ltFn(a, b)
+    return compare(a, b) < 0
+end
+
+print("== parse ==")
+v = parse("1.2.3")
+mark(check(g_n + 1, 1, v["major"]))
+mark(check(g_n + 1, 2, v["minor"]))
+mark(check(g_n + 1, 3, v["patch"]))
+mark(check(g_n + 1, "", v["prerelease"]))
+mark(check(g_n + 1, "", v["build"]))
+
+v = parse("2.0.0-alpha.1+build.007")
+mark(check(g_n + 1, "alpha.1", v["prerelease"]))
+mark(check(g_n + 1, "build.007", v["build"]))
+
+mark(check(g_n + 1, nil, parse("1.2")))
+mark(check(g_n + 1, nil, parse("a.b.c")))
+mark(check(g_n + 1, nil, parse("1.2.3-01")))
+mark(check(g_n + 1, nil, parse("1.2.3-.")))
+mark(check(g_n + 1, true, isValid("1.2.3")))
+mark(check(g_n + 1, false, isValid("x.y.z")))
+
+print("== compare core ==")
+mark(check(g_n + 1, -1, compare("1.0.0", "2.0.0")))
+mark(check(g_n + 1, -1, compare("2.0.0", "2.1.0")))
+mark(check(g_n + 1, -1, compare("2.1.0", "2.1.1")))
+mark(check(g_n + 1, 0, compare("1.2.3", "1.2.3")))
+mark(check(g_n + 1, 1, compare("2.0.0", "1.9.9")))
+
+print("== precedencia prerelease ==")
+seq = ["1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta", "1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0"]
+okall = true
+i = 1
+while i < len(seq)
+    if not ltFn(seq[i - 1], seq[i]) then
+        okall = false
+    end
+    i++
+end
+mark(check(g_n + 1, true, okall))
+
+mark(check(g_n + 1, -1, compare("1.0.0-alpha", "1.0.0")))
+mark(check(g_n + 1, 0, compare("1.0.0+build", "1.0.0")))
+
+print("== errores ==")
+func cmpBad()
+    compare("1.2.3", "nop")
+end
+mark(check(g_n + 1, true, raisesIt(cmpBad)))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST SEMVER FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST SEMVER: TODO OK")

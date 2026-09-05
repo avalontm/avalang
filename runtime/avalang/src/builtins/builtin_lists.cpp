@@ -141,7 +141,7 @@ ava_value_t builtin_list_contains(AvaVM* vm, const ava_value_t* args, size_t cou
 
 // ---------------------------------------------------------------------
 // Superficie de API asimetrica en `list` (anotada como pendiente de
-// prioridad baja en AvaLang_Bugs_Encontrados.md, notas finales): `str`
+// prioridad baja en BUGS_ENCONTRADOS.md, notas finales): `str`
 // ya tenia `indexOf`, y existian `sorted()`/`reversed()` globales
 // (funcionales, devuelven una lista NUEVA, no mutan -- ver
 // builtin_natives.cpp) pero `list` no tenia el equivalente dotted

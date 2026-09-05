@@ -1,0 +1,74 @@
+﻿
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+g_n = 0
+g_fails = 0
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+buf = mem_alloc(32)
+mark(check(g_n + 1, true, buf != 0))
+
+mem_write_byte(buf, 0, 171)        # 0xAB
+mark(check(g_n + 1, 171, mem_read_byte(buf, 0)))
+
+mem_write_u16(buf, 1, 4660)        # 0x1234
+mark(check(g_n + 1, 4660, mem_read_u16(buf, 1)))
+
+mem_write_u32(buf, 4, 3735928559)  # 0xDEADBEEF
+mark(check(g_n + 1, 3735928559, mem_read_u32(buf, 4)))
+
+mem_write_u64(buf, 8, 123456789012345)
+mark(check(g_n + 1, 123456789012345, mem_read_u64(buf, 8)))
+
+mark(check(g_n + 1, 0, mem_read_byte(buf, 24)))
+
+data = [1, 2, 3, 255, 128, 0, 66]
+mem_write_bytes(buf, 16, data)
+got = mem_read_bytes(buf, 16, len(data))
+ok = true
+i = 0
+while i < len(data)
+    if got[i] != data[i] then
+        ok = false
+    end
+    i++
+end
+mark(check(g_n + 1, true, ok))
+
+mem_write_bytes(buf, 20, [72, 79, 76, 65])
+s = mem_string(buf, 20, 4)
+mark(check(g_n + 1, "HOLA", s))
+mark(check(g_n + 1, 4, len(s)))
+
+caught = false
+try
+    mem_read_u64(buf, 31)
+catch (errB)
+    caught = true
+end
+mark(check(g_n + 1, true, caught))
+
+mem_free(12345.6)
+mem_free(buf)
+mem_free(buf) # doble free: no debe crashear
+mark(check(g_n + 1, 0, mem_leak_count()))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST MEM BUILTINS FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST MEM BUILTINS: TODO OK")

@@ -1,0 +1,8 @@
+import lib.data.counter
+
+print("initial get: " + str(lib.data.counter.get_counter()))
+print("reset returns: " + str(lib.data.counter.reset_counter()))
+print("get after reset: " + str(lib.data.counter.get_counter()))
+print("inc returns: " + str(lib.data.counter.increment()))
+print("inc returns: " + str(lib.data.counter.increment()))
+print("get after 2 inc: " + str(lib.data.counter.get_counter()))

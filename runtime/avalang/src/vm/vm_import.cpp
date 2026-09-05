@@ -7,11 +7,26 @@
 
 namespace ava {
 
+// Recursively gives `proto` (and every child proto in its tree) a shared
+// module-scoped global table. DoImport attaches a fresh table to an
+// imported module this way, so a closure for any function/method/lambda
+// defined in the module resolves its free names against the module's own
+// globals (see GETGLOBAL/SETGLOBAL in vm.cpp) instead of the VM's shared
+// globals_ -- which is what lets one module function call another.
+static void AttachModuleGlobals(const avastd::shared_ptr<Proto>& proto,
+                                const avastd::shared_ptr<avastd::unordered_map<avastd::string, Value>>& mod_globals) {
+    if (!proto) return;
+    proto->module_globals = mod_globals;
+    for (auto& child : proto->child_protos) {
+        AttachModuleGlobals(child, mod_globals);
+    }
+}
+
 static void SetNestedNamespace(
     avastd::unordered_map<avastd::string, Value>& globals,
     const avastd::vector<avastd::string>& parts,
     // Bug nuevo (encontrado en esta pasada -- ver la fila correspondiente
-    // en AvaLang_Bugs_Encontrados.md): esta función SIEMPRE ignoraba el
+    // en BUGS_ENCONTRADOS.md): esta función SIEMPRE ignoraba el
     // nivel real de anidamiento y operaba sobre el mismo `globals` de
     // nivel superior en cada llamada recursiva, tanto para crear el
     // namespace intermedio como para el caso base (guardar
@@ -223,15 +238,27 @@ Value VM::DoImport(const avastd::string& module_path, const avastd::string& alia
     }
     
     auto proto = module_cache_.Get(module_path);
-    
+
+    // Bug 1 fix: give every proto of this module (top + all children) a
+    // shared, module-scoped global table. Without it, module closures
+    // resolve free names against the VM's single globals_, which DoImport
+    // restores to the caller's table right after this returns -- so a
+    // module function calling a sibling function/constant defined in the
+    // same module failed at runtime with "'x' is not defined". Now the
+    // module's own symbols live in module_globals (visible to any of its
+    // closures no matter when they run), while builtins/__import__ still
+    // come from the fallback to globals_.
+    auto module_globals = avastd::make_shared<avastd::unordered_map<avastd::string, Value>>();
+    AttachModuleGlobals(proto, module_globals);
+
     avastd::unordered_map<avastd::string, Value> outer_globals = avastd::move(globals_);
     globals_.clear();
-    
+
     auto import_fn = outer_globals.find("__import__");
     if (import_fn != outer_globals.end()) {
         SetGlobal("__import__", import_fn->second);
     }
-    
+
     CallFrame frame;
     frame.registers.resize(proto->num_registers);
     // Usa proto->num_registers antes de mover: `proto` no se lee de
@@ -240,22 +267,31 @@ Value VM::DoImport(const avastd::string& module_path, const avastd::string& alia
     // ModuleCache::Add, ver module.cpp).
     frame.proto = avastd::move(proto);
     frames_.push_back(avastd::move(frame));
-    
+
     ExecuteFrame(frames_.size() - 1);
-    
+
     CloseUpvalues(frames_.back());
     frames_.pop_back();
-    
+
+    // A top-level module `import` (e.g. `import lib.foo`) registers its
+    // namespace via PlaceModuleInScope -> SetGlobal into the (cleared)
+    // globals_ above. Fold those into module_globals so the module's own
+    // dict still exports them exactly like before.
+    for (auto& entry : globals_) {
+        if (entry.first != "__import__") {
+            (*module_globals)[entry.first] = entry.second;
+        }
+    }
+
     // module_dict recien creado: ref_count arranca en 1, propiedad de
     // esta variable local (misma convencion que Value::String() en
     // value.h). Su propio destructor la libera al salir de DoImport.
     Value module_dict;
     module_dict.type = ValueType::Dict;
     module_dict.obj = new DictObj();
-    
+
     auto* dict = static_cast<DictObj*>(module_dict.obj);
-    for (auto& entry : globals_) {
-        if (entry.first == "__import__") continue;
+    for (auto& entry : *module_globals) {
         dict->index[entry.first] = dict->entries.size();
         // emplace_back copy-construye el Value -> ya Retiene (RAII); el
         // Retain(entry.second) manual que seguia duplicaba esa retencion.

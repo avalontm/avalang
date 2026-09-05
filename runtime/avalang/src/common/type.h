@@ -4,7 +4,7 @@
 #include <memory>
 #include <string>
 
-// Phase 1 of AvaLang_Plan_Sistema_de_Tipos.md ("Definir el sistema de
+// Phase 1 ("Definir el sistema de
 // tipos"). This header only establishes the vocabulary of types that the
 // rest of the type system will build on. It intentionally does NOT touch
 // the grammar, the AST, the symbol table, or the compiler yet -- those are
@@ -118,7 +118,7 @@ inline bool IsPrimitiveType(Type type) {
     }
 }
 
-// Phase 13 of AvaLang_Plan_Sistema_de_Tipos.md ("Clases y objetos"). A
+// Phase 13 ("Clases y objetos"). A
 // resolved type together with, when type == Type::Object, which class it
 // refers to (class_name is empty/meaningless for every other Type value).
 // Kept separate from the plain Type enum rather than growing Type a case
@@ -129,7 +129,7 @@ inline bool IsPrimitiveType(Type type) {
 // Unknown/Object-as-a-bucket (e.g. ValidateBinOpTypes, which treats every
 // Object the same regardless of class, same as it already does for
 // String -- see compiler.cpp).
-// Phase 15 of AvaLang_Plan_Sistema_de_Tipos.md ("Colecciones"). element_type
+// Phase 15 ("Colecciones"). element_type
 // and key_type are meaningful only when type == Type::List (element_type =
 // element type) or Type::Dict (key_type = key type, element_type = value
 // type -- reusing element_type for both List's element and Dict's value
@@ -150,7 +150,7 @@ struct TypeRef {
     std::shared_ptr<TypeRef> key_type;      // Dict only: key
 };
 
-// Phase 15 of AvaLang_Plan_Sistema_de_Tipos.md. Structural equality between
+// Phase 15. Structural equality between
 // two TypeRefs, used wherever a plain `a.type == b.type` (plus the
 // Object-only class_name check) used to be enough before List/Dict existed
 // -- see ValidateTypeAnnotation/ValidateReassignment/CheckReturnType in

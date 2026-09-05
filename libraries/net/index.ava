@@ -1,0 +1,227 @@
+﻿
+extern "ws2_32" as WsaNative
+    func WSAStartup(version, data)
+    func socket(af, type, protocol)
+    func connect(sock, addr, addrlen)
+    func send(sock, buf, len, flags)
+    func recv(sock, buf, len, flags)
+    func closesocket(sock)
+    func WSAGetLastError()
+    func htons(value)
+    func inet_addr(ip)
+    func gethostbyname(name)
+end
+
+g_wsaStarted = false
+
+func ensureWsa()
+    if g_wsaStarted then
+        return
+    end
+    wsaData = mem_alloc(512)
+    rc = WsaNative.WSAStartup(514, wsaData)
+    mem_free(wsaData)
+    if rc != 0 then
+        raise "net: WSAStartup fallo (codigo " + str(rc) + ")"
+    end
+    g_wsaStarted = true
+end
+
+class Socket
+    handle = nil
+    state = "idle"
+    lastError = nil
+    _host = nil
+    _port = 0
+    _addr = nil
+
+    func Socket(host, port)
+        ensureWsa()
+        this._host = host
+        this._port = port
+
+        ip = this._resolve(host)
+
+        addr = mem_alloc(16)
+        mem_write_u16(addr, 0, 2)
+        mem_write_u16(addr, 2, WsaNative.htons(port))
+        mem_write_u32(addr, 4, ip)
+        this._addr = addr
+
+        sock = WsaNative.socket(2, 1, 0)
+        if sock <= 0 or sock > 4294967296 then
+            this.lastError = WsaNative.WSAGetLastError()
+            mem_free(addr)
+            this._addr = nil
+            raise "net: socket() fallo para " + host + " (WSAGetLastError=" + str(this.lastError) + ")"
+        end
+        this.handle = sock
+
+        rc = 0
+        try
+            rc = WsaNative.connect(sock, addr, 16)
+        catch (e)
+            WsaNative.closesocket(this.handle)
+            mem_free(addr)
+            this._addr = nil
+            raise e
+        end
+        if rc != 0 then
+            this.lastError = WsaNative.WSAGetLastError()
+            WsaNative.closesocket(this.handle)
+            mem_free(addr)
+            this._addr = nil
+            raise "net: no se pudo conectar a " + host + ":" + str(port) + " (WSAGetLastError=" + str(this.lastError) + ")"
+        end
+
+        this.state = "connected"
+    end
+
+    func _resolve(host)
+        ip = WsaNative.inet_addr(host)
+        if ip != 4294967295 then
+            return ip
+        end
+
+        he = WsaNative.gethostbyname(host)
+        if mem_is_null(he) then
+            raise "net: no se pudo resolver '" + host + "' (WSAGetLastError=" + str(WsaNative.WSAGetLastError()) + ")"
+        end
+        addrList = mem_peek_ptr(he, 3)
+        if mem_is_null(addrList) then
+            raise "net: sin direcciones para '" + host + "'"
+        end
+        inaddr = mem_peek_ptr(addrList, 0)
+        if mem_is_null(inaddr) then
+            raise "net: sin direcciones para '" + host + "'"
+        end
+        return mem_peek_u32(inaddr, 0)
+    end
+
+    func send(data)
+        if this.state != "connected" then
+            raise "net: no hay conexion activa"
+        end
+        total = len(data)
+        sent = 0
+        while sent < total
+            chunk = data.substring(sent, total)
+            n = WsaNative.send(this.handle, chunk, len(chunk), 0)
+            if n == -1 then
+                this.lastError = WsaNative.WSAGetLastError()
+                raise "net: send fallo (WSAGetLastError=" + str(this.lastError) + ")"
+            end
+            sent = sent + n
+        end
+        return sent
+    end
+
+    func recv(maxBytes)
+        if this.state != "connected" then
+            raise "net: no hay conexion activa"
+        end
+        buf = mem_alloc(maxBytes)
+        out = nil
+        try
+            n = WsaNative.recv(this.handle, buf, maxBytes, 0)
+            if n == -1 then
+                this.lastError = WsaNative.WSAGetLastError()
+                raise "net: recv fallo (WSAGetLastError=" + str(this.lastError) + ")"
+            end
+            if n == 0 then
+                out = ""
+            else
+                out = mem_string(buf, 0, n)
+            end
+        catch (e)
+            mem_free(buf)
+            raise e
+        end
+        mem_free(buf)
+        return out
+    end
+
+    func readAll(maxBytes)
+        out = ""
+        total = 0
+        buf = mem_alloc(4096)
+        try
+            while true
+                n = WsaNative.recv(this.handle, buf, 4096, 0)
+                if n == 0 then
+                    break
+                end
+                if n == -1 then
+                    this.lastError = WsaNative.WSAGetLastError()
+                    raise "net: recv fallo (WSAGetLastError=" + str(this.lastError) + ")"
+                end
+                out = out + mem_string(buf, 0, n)
+                total = total + n
+                if maxBytes != nil and total >= maxBytes then
+                    break
+                end
+            end
+        catch (e)
+            mem_free(buf)
+            raise e
+        end
+        mem_free(buf)
+        return out
+    end
+
+    func close()
+        if this.handle != nil and this.state == "connected" then
+            WsaNative.closesocket(this.handle)
+            this.state = "closed"
+        end
+        if this._addr != nil then
+            mem_free(this._addr)
+            this._addr = nil
+        end
+    end
+end
+
+
+func parseUrl(url)
+    r = url
+    if r.startsWith("http://") then
+        r = r.substring(7, len(r))
+    end
+
+    s = r.indexOf("/")
+    hostPort = ""
+    path = "/"
+    if s < 0 then
+        hostPort = r
+    else
+        hostPort = r.substring(0, s)
+        if s < len(r) then
+            path = r.substring(s, len(r))
+        end
+    end
+
+    c = hostPort.indexOf(":")
+    host = hostPort
+    port = 80
+    if c >= 0 then
+        host = hostPort.substring(0, c)
+        port = int(hostPort.substring(c + 1, len(hostPort)))
+    end
+
+    return [host, port, path]
+end
+
+func httpGet(url)
+    p = parseUrl(url)
+    s = Socket(p[0], p[1])
+    request = "GET " + p[2] + " HTTP/1.1\r\nHost: " + p[0] + "\r\nConnection: close\r\n\r\n"
+    s.send(request)
+    resp = s.readAll(nil)
+    s.close()
+
+    i = resp.indexOf("\r\n\r\n")
+    if i < 0 then
+        return resp
+    end
+    return resp.substring(i + 4, len(resp))
+end

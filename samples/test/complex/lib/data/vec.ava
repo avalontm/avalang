@@ -1,0 +1,29 @@
+# lib/data/vec.ava
+# Modulo que reproduce BUG 1: funciones que se auto-referencian dentro
+# de un mismo modulo importado. Antes del fix, v2lenSq no podia llamar a
+# v2dot, ni v2double podia leer la constante SCALE (error de runtime
+# "'x' is not defined"). Despues del fix, las closures del modulo resuelven
+# sus simbolos contra la tabla global propia del modulo.
+
+func v2dot(a, b)
+    return a[0] * b[0] + a[1] * b[1]
+end
+
+func v2lenSq(v)
+    return v2dot(v, v)
+end
+
+func v2norm(v)
+    return v2lenSq(v)
+end
+
+SCALE = 2
+
+func v2double(v)
+    out = [v[0] * SCALE, v[1] * SCALE]
+    return out
+end
+
+func formatPair(v)
+    return str(v[0]) + "," + str(v[1])
+end

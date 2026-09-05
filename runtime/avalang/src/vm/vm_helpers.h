@@ -36,11 +36,10 @@ double CoerceToNumber(const Value& v, const char* op);
 // str->data.size()); ademas de tipo (entero) y signo (no negativo),
 // valida que el indice quede dentro de rango y tira runtime_error si no
 // -- misma politica dura para GET y SET, para positivo y negativo out-of-
-// range (ver AvaLang_Bugs_Encontrados.md, bug de "escritura fuera de
+// range (ver BUGS_ENCONTRADOS.md, bug de "escritura fuera de
 // rango silenciosa").
 size_t ValidateIntegerIndex(double n, size_t len, const char* context);
 avastd::string JoinPath(const avastd::string& a, const avastd::string& b);
-bool FileExists(const avastd::string& path);
 avastd::string GetCurrentWorkingDir();
 ClassObj* FindClassOwningAttr(ClassObj* cls, const avastd::string& name);
 

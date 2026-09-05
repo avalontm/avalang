@@ -5,14 +5,6 @@ namespace ava {
 
 namespace {
 
-// FNV-1a de 64 bits, sembrado con module_seed. No es un hash criptográfico
-// y no pretende serlo: el objetivo acá es solo generar identificadores
-// estables y sin colisiones prácticas para nombres de función dentro de un
-// mismo build, no resistir un adversario que intente invertirlo -- para
-// alguien mirando el bytecode ofuscado sin el mapa de símbolos, un
-// identificador opaco cumple su función igual de bien con FNV que con
-// SHA-256, y evita que compiler/ (que no debería saber nada de
-// criptografía) dependa de runtime/avapack/src/checksum.
 uint64_t HashSymbol(uint64_t seed, const avastd::string& kind, const avastd::string& value) {
     uint64_t h = 1469598103934665603ull ^ seed;
     auto mix = [&h](const avastd::string& s) {
@@ -20,9 +12,7 @@ uint64_t HashSymbol(uint64_t seed, const avastd::string& kind, const avastd::str
             h ^= c;
             h *= 1099511628211ull;
         }
-        h ^= 0xFFu; // separador entre "kind" y "value" para no colisionar
-                    // p.ej. HashSymbol(seed, "fu", "nc") con
-                    // HashSymbol(seed, "func", "")
+        h ^= 0xFFu;
         h *= 1099511628211ull;
     };
     mix(kind);
@@ -36,11 +26,6 @@ avastd::string ToOpaqueId(uint64_t hash) {
     return oss.str();
 }
 
-// Genera `len` bytes de keystream determinista a partir de (seed, string_index),
-// hasheando bloques consecutivos (contador de bloque incluido en el hash) hasta
-// cubrir la longitud pedida. XOR con este keystream es su propia inversa, así que
-// la misma función sirve para ofuscar y para revertir -- no hace falta una
-// implementación separada de "decode".
 avastd::string XorKeystreamTransform(uint64_t seed, uint64_t string_index, const avastd::string& data) {
     avastd::string out;
     out.resize(data.size());
@@ -60,13 +45,6 @@ avastd::string XorKeystreamTransform(uint64_t seed, uint64_t string_index, const
     return out;
 }
 
-// Recorre proto->constants buscando Value::String y les aplica
-// XorKeystreamTransform in-place, avanzando `next_index` (compartido entre todo
-// el árbol de Proto, pasado por referencia) para que cada string del proyecto
-// -- sin importar en qué función/child_proto esté -- tenga un índice único y
-// por lo tanto un keystream distinto. El orden de recorrido (constants en orden,
-// luego child_protos en orden) es el mismo tanto al ofuscar como al
-// deofuscar porque ambos caminan la misma estructura de datos ya construida.
 void TransformStringsNode(Proto& proto, uint64_t seed, uint64_t& next_index) {
     for (auto& c : proto.constants) {
         if (c.type != ValueType::String) continue;
@@ -80,11 +58,9 @@ void TransformStringsNode(Proto& proto, uint64_t seed, uint64_t& next_index) {
     }
 }
 
-// -- Parte 3: control-flow flattening --------------------------------------
-
 struct FlatBlock {
-    size_t start; // original instruction index, inclusive
-    size_t end;   // original instruction index, exclusive
+    size_t start;
+    size_t end; 
 };
 
 bool HasUnsupportedControlFlow(const Proto& proto) {
@@ -104,10 +80,6 @@ bool HasUnsupportedControlFlow(const Proto& proto) {
     return false;
 }
 
-// Leaders: instr 0, cualquier target de JMP, la instruccion siguiente a
-// cada JMP, y la instruccion siguiente a cada RETURN. TEST nunca es leader
-// por si solo -- siempre va inmediatamente seguido de un JMP (protocolo del
-// VM), asi que el JMP que le sigue ya cubre el corte de bloque necesario.
 avastd::vector<FlatBlock> ComputeBlocks(const avastd::vector<Instr>& ins) {
     avastd::set<size_t> leaders;
     leaders.insert(0);
@@ -132,9 +104,6 @@ avastd::vector<FlatBlock> ComputeBlocks(const avastd::vector<Instr>& ins) {
     return blocks;
 }
 
-// blocks.size() (fuera de rango) = sentinel "exit": el target cae en
-// ins.size() exacto (JMP al final de la funcion) o en algo que no es
-// leader de ningun bloque real.
 size_t FindBlockForTarget(const avastd::vector<FlatBlock>& blocks, size_t target) {
     for (size_t i = 0; i < blocks.size(); ++i) {
         if (blocks[i].start == target) return i;
@@ -146,8 +115,7 @@ uint64_t NextPrng(uint64_t seed, const avastd::string& tag, uint64_t& counter) {
     return HashSymbol(seed, "cf_prng", tag + ":" + avastd::to_string(counter++));
 }
 
-} // namespace (helpers de flatten cierran aca, el resto del anonymous
-  // namespace original sigue mas abajo sin cambios)
+} 
 
 namespace {
 
@@ -197,13 +165,6 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& 
         proto.constants.push_back(Value::Number(static_cast<double>(state_value)));
     }
 
-    // El dispatcher necesita una rama EQK/TEST/JMP por cada estado posible,
-    // incluido exit_id -- si no, un JMP hacia "exit" (ver ends_in_jmp mas
-    // abajo, caso raw_target fuera de rango) no tendria a donde saltar
-    // dentro del dispatcher y el patch final terminaria escribiendo sobre
-    // el slot 0 (bug real, encontrado corriendo flatten_check.cpp contra
-    // un if/else de prueba: el LOADK inicial quedaba pisado y la funcion
-    // devolvia el resultado del RETURN de "estado desconocido").
     avastd::vector<size_t> order(total_states);
     for (size_t i = 0; i < order.size(); ++i) order[i] = i;
     uint64_t shuffle_counter = 0;
@@ -217,16 +178,6 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& 
     const uint16_t tmp_reg = static_cast<uint16_t>(proto.num_registers + 1);
     proto.num_registers = static_cast<uint16_t>(proto.num_registers + 2);
 
-    // proto.debug_lines/debug_columns tienen que quedar alineados 1:1 con
-    // proto.instructions al final de esta funcion, igual que los deja
-    // Compiler::Emit() (ver compiler.cpp) -- este pase reconstruye
-    // instructions entero en `out`, asi que construye out_lines/out_cols en
-    // el mismo orden en vez de dejar los arrays viejos (de otro largo y
-    // otro mapeo) pisados por el `proto.instructions = move(out)` de abajo.
-    // Antes de este fix, cualquier bytecode que pasara por flatten
-    // (ava_pack/ava_cli build --obfuscate) quedaba con debug_lines
-    // desalineado -- errores runtime en un build empacado reportaban
-    // linea/columna de otra instruccion cualquiera, no la que fallo.
     avastd::vector<Instr> out;
     const bool have_debug_info = !proto.debug_lines.empty();
     avastd::vector<uint32_t> out_lines;
@@ -235,15 +186,12 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& 
         out_lines.reserve(proto.instructions.size() * 2 + blocks.size() * 3 + 8);
         out_cols.reserve(proto.instructions.size() * 2 + blocks.size() * 3 + 8);
     }
-    // Instrucciones sinteticas del dispatcher/trampolines (no vienen de
-    // ninguna statement real) -- se stampean con linea/columna 0, el mismo
-    // "desconocido" que ya usa MakeFrameError cuando no hay debug info.
+
     auto push_synth = [&](const Instr& instr) {
         out.push_back(instr);
         if (have_debug_info) { out_lines.push_back(0); out_cols.push_back(0); }
     };
-    // Instruccion copiada tal cual desde proto.instructions[src_idx] --
-    // arrastra su linea/columna original.
+
     auto push_orig = [&](size_t src_idx) {
         out.push_back(proto.instructions[src_idx]);
         if (have_debug_info) {
@@ -284,10 +232,6 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& 
         push_synth(jmp);
     }
     {
-        // Estado desconocido (no deberia poder pasar con bytecode propio,
-        // pero un dispatcher sin salida por defecto es peor que uno con
-        // un RETURN 0,0 -- mismo patron que compiler.cpp usa para return
-        // implicito).
         Instr trap{};
         trap.op = OpCode::RETURN;
         trap.a = 0;
@@ -297,17 +241,6 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& 
     }
 
     avastd::vector<size_t> entry_point(total_states);
-    // TEST solo salta UNA instruccion (el JMP que le sigue -- protocolo
-    // fijo del VM, ver opcodes.h). Si un bloque termina en TEST+JMP no se
-    // puede reemplazar ese JMP por dos instrucciones en linea (LOADK+JMP):
-    // el camino donde TEST decide saltar solo se saltaria la primera
-    // (LOADK) y caeria en la segunda (JMP) igual, con el registro de
-    // estado sin actualizar -- exactamente el bug que encontro
-    // flatten_check.cpp (loop infinito entre el dispatcher y el bloque
-    // con el registro de estado nunca cambiando). Para esos casos se dej
-    // un JMP real, unico, inmediatamente despues de TEST, apuntando a un
-    // trampolin (LOADK+JMP-al-dispatcher) emitido aparte, con el offset
-    // parcheado en una segunda pasada una vez se conoce su posicion.
     avastd::vector<size_t> deferred_jmp_slot;
     avastd::vector<size_t> deferred_target_block;
 
@@ -337,9 +270,6 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& 
                                    ? FindBlockForTarget(blocks, static_cast<size_t>(raw_target))
                                    : exit_id;
         } else {
-            // Bloque sin terminador propio (cae en el por ser leader de
-            // otro JMP externo, no porque este termine en JMP/RETURN):
-            // el sucesor logico es siempre el bloque contiguo siguiente.
             target_block_id = FindBlockForTarget(blocks, blk.end);
         }
 
@@ -365,8 +295,6 @@ bool FlattenProtoControlFlow(Proto& proto, uint64_t seed, const avastd::string& 
         }
     }
 
-    // Trampolines de los casos TEST+JMP diferidos arriba: cada uno vive
-    // aparte (no en linea) para no romper el "TEST salta solo 1 instruccion".
     for (size_t k = 0; k < deferred_jmp_slot.size(); ++k) {
         size_t trampoline_entry = out.size();
         Instr lk{};
@@ -432,12 +360,6 @@ void FlattenProtoTree(Proto& proto, const ObfuscateOptions& options, uint64_t& p
 void ObfuscateProto(Proto& root, const ObfuscateOptions& options,
                      avastd::vector<SymbolMapEntry>* out_symbol_map) {
     if (options.flatten_control_flow) {
-        // Corre ANTES del renombrado de simbolos (mas abajo): flatten
-        // matchea flatten_functions contra debug_name original, y no lee
-        // ni escribe debug_name/source_name, asi que el orden entre este
-        // paso y ObfuscateProtoNode no afecta el resultado del renombrado
-        // -- solo importa para que el matching de flatten_functions vea
-        // los nombres reales, no los ya ofuscados.
         uint64_t proto_counter = 0;
         FlattenProtoTree(root, options, proto_counter);
     }
@@ -449,12 +371,6 @@ void ObfuscateProto(Proto& root, const ObfuscateOptions& options,
 }
 
 void DeobfuscateStrings(Proto& root, uint64_t module_seed) {
-    // XOR con el mismo keystream es su propia inversa: es literalmente el
-    // mismo recorrido que TransformStringsNode usa para ofuscar. Se separa
-    // en una función pública propia (en vez de reusar ObfuscateProto con
-    // un flag "reverse") porque el caller de este lado (avapack/avahost al
-    // cargar un .avbc) no tiene ni debería tener que pasar un
-    // ObfuscateOptions completo -- solo necesita el seed.
     uint64_t next_index = 0;
     TransformStringsNode(root, module_seed, next_index);
 }

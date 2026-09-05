@@ -1,0 +1,310 @@
+# test_complex_closures_coroutines.ava
+# Combina closures, coroutines, upvalues, y funciones de orden superior
+# en patrones complejos: generadores, memoizacion, pipeline funcional,
+# y coroutines con estado.
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+func listEquals(a, b)
+    if len(a) != len(b) then
+        return false
+    end
+    i = 0
+    while i < len(a)
+        if a[i] != b[i] then
+            return false
+        end
+        i++
+    end
+    return true
+end
+
+# =====================================================================
+# 1. GENERADOR INFINITO con closure + coroutine
+# =====================================================================
+func makeCounter(start, inc)
+    n = start
+    func next()
+        val = n
+        n = n + inc
+        return val
+    end
+    return next
+end
+
+gen = makeCounter(0, 3)
+check(1, 0, gen())
+check(2, 3, gen())
+check(3, 6, gen())
+check(4, 9, gen())
+
+# =====================================================================
+# 2. GENERADOR DE FIBONACCI (closure con 2 upvalues)
+# =====================================================================
+func makeFib()
+    a = 0
+    b = 1
+    func next()
+        val = a
+        temp = b
+        b = a + b
+        a = temp
+        return val
+    end
+    return next
+end
+
+fib = makeFib()
+fibs = []
+i = 0
+while i < 10
+    fibs.append(fib())
+    i++
+end
+check(5, true, listEquals(fibs, [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]))
+
+# =====================================================================
+# 3. MEMOIZACION general (closure que cachea resultados)
+# =====================================================================
+func memoize(fn)
+    cache = {}
+    func wrapped(arg)
+        if cache.containsKey(arg) then
+            return cache[arg]
+        end
+        result = fn(arg)
+        cache[arg] = result
+        return result
+    end
+    return wrapped
+end
+
+func expensiveDouble(x)
+    return x * 2
+end
+
+memoDouble = memoize(expensiveDouble)
+check(6, 10, memoDouble(5))
+check(7, 10, memoDouble(5))   # cache hit
+check(8, 20, memoDouble(10))
+
+# =====================================================================
+# 4. FUNCIONES DE ORDEN SUPERIOR: map, filter, reduce, compose
+# =====================================================================
+func mapList(lst, fn)
+    out = []
+    i = 0
+    while i < len(lst)
+        out.append(fn(lst[i]))
+        i++
+    end
+    return out
+end
+
+func filterList(lst, fn)
+    out = []
+    i = 0
+    while i < len(lst)
+        if fn(lst[i]) then
+            out.append(lst[i])
+        end
+        i++
+    end
+    return out
+end
+
+func reduceList(lst, fn, acc)
+    i = 0
+    while i < len(lst)
+        acc = fn(acc, lst[i])
+        i++
+    end
+    return acc
+end
+
+func compose(f, g)
+    return (x) => f(g(x))
+end
+
+nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+# Pipeline: filtrar pares, duplicar, sumar
+paresDobles = mapList(filterList(nums, (x) => x % 2 == 0), (x) => x * 2)
+check(9, true, listEquals(paresDobles, [4, 8, 12, 16, 20]))
+
+sumaTotal = reduceList(nums, (acc, x) => acc + x, 0)
+check(10, 55, sumaTotal)
+
+# Composicion: sqrt luego floor
+# (floor(sqrt(x)) de 0..9)
+cuadrados = mapList([0, 1, 4, 9, 16, 25], (x) => int(sqrt(x)))
+check(11, true, listEquals(cuadrados, [0, 1, 2, 3, 4, 5]))
+
+# =====================================================================
+# 5. CLOSURE CON MUTACION PROFUNDA (varias capas de captura)
+# =====================================================================
+func makeBank(initial)
+    balance = initial
+    transactions = []
+
+    func deposit(amt)
+        balance = balance + amt
+        transactions.append("+" + str(amt))
+        return balance
+    end
+
+    func withdraw(amt)
+        if amt > balance then
+            return nil
+        end
+        balance = balance - amt
+        transactions.append("-" + str(amt))
+        return balance
+    end
+
+    func getBalance()
+        return balance
+    end
+
+    func getHistory()
+        return transactions
+    end
+
+    return [deposit, withdraw, getBalance, getHistory]
+end
+
+bank = makeBank(1000)
+dep = bank[0]
+wit = bank[1]
+bal = bank[2]
+hist = bank[3]
+
+check(12, 1200, dep(200))
+check(13, 1100, wit(100))
+check(14, 1100, bal())
+check(15, nil, wit(2000))   # fondos insuficientes
+check(16, 1100, bal())      # no cambio
+
+h = hist()
+check(17, 2, len(h))
+check(18, "+200", h[0])
+check(19, "-100", h[1])
+
+# =====================================================================
+# 6. CURRYING y PARTIAL APPLICATION
+# =====================================================================
+func curry2(fn)
+    return (a) => (b) => fn(a, b)
+end
+
+func add(a, b)
+    return a + b
+end
+
+func mul(a, b)
+    return a * b
+end
+
+add5 = curry2(add)(5)
+check(20, 15, add5(10))
+check(21, 5, add5(0))
+
+double = curry2(mul)(2)
+check(22, 20, double(10))
+check(22, 20, double(10))
+
+# =====================================================================
+# 7. COROUTINE como PARSER-generator (tokens -> AST simplificado)
+# =====================================================================
+func makeParser(tokenList)
+    pos = 0
+    current = nil
+
+    func advance()
+        if pos < len(tokenList) then
+            current = tokenList[pos]
+            pos = pos + 1
+        else
+            current = nil
+        end
+        return current
+    end
+
+    func expect(tok)
+        if current != tok then
+            raise "esperaba '" + tok + "', obtuvo '" + str(current) + "'"
+        end
+        advance()
+    end
+
+    func peek()
+        return current
+    end
+
+    return [advance, expect, peek]
+end
+
+parser = makeParser(["(", "+", "3", "4", ")", "*", "2"])
+pAdvance = parser[0]
+pExpect = parser[1]
+pPeek = parser[2]
+
+pAdvance()
+check(23, "(", pPeek())
+pAdvance()
+check(24, "+", pPeek())
+pAdvance()
+check(25, "3", pPeek())
+
+# =====================================================================
+# 8. CIERRE SOBRE LISTA (cada closure modifica la misma lista)
+# =====================================================================
+func makeActions()
+    items = []
+
+    func add(x)
+        items.append(x)
+    end
+
+    func removeFirst()
+        if len(items) == 0 then
+            return nil
+        end
+        first = items[0]
+        items = items[1:len(items)]
+        return first
+    end
+
+    func getAll()
+        return items
+    end
+
+    return [add, removeFirst, getAll]
+end
+
+actions = makeActions()
+actAdd = actions[0]
+actRm = actions[1]
+actAll = actions[2]
+
+actAdd("a")
+actAdd("b")
+actAdd("c")
+all = actAll()
+check(26, 3, len(all))
+check(27, "a", actRm())
+check(28, "b", actRm())
+
+actAdd("d")
+all2 = actAll()
+check(29, 2, len(all2))
+check(30, "c", all2[0])
+check(31, "d", all2[1])
+
+print("=== test_complex_closures_coroutines.ava terminado ===")

@@ -179,15 +179,15 @@ check(11, 12, incrementarLuegoDuplicar(5))
 grafo = {"A": ["B", "C"], "B": ["A", "D"], "C": ["A", "D"], "D": ["B", "C", "E"], "E": ["D"]}
 
 func bfs(grafo, inicio)
-    visitados = []
-    cola = [inicio]
+    local visitados = []
+    local cola = [inicio]
     while len(cola) > 0
-        actual = cola[0]
+        local actual = cola[0]
         cola = cola[1:len(cola)]
         if not visitados.contains(actual) then
             visitados.append(actual)
-            vecinos = grafo[actual]
-            i = 0
+            local vecinos = grafo[actual]
+            local i = 0
             while i < len(vecinos)
                 if not visitados.contains(vecinos[i]) then
                     cola.append(vecinos[i])
@@ -209,8 +209,8 @@ func dfs(grafo, actual, visitados)
         return visitados
     end
     visitados.append(actual)
-    vecinos = grafo[actual]
-    i = 0
+    local vecinos = grafo[actual]
+    local i = 0
     while i < len(vecinos)
         visitados = dfs(grafo, vecinos[i], visitados)
         i++

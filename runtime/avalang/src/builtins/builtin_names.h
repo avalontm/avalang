@@ -58,6 +58,7 @@
     X(len, builtin_len) \
     X(range, builtin_range) \
     X(slice, builtin_slice) \
+    X(keys, builtin_keys) \
     X(setglobal, builtin_setglobal) \
     /* Requerido por todo `import` -- ver builtin_import en */ \
     /* builtin_natives.h para el porque tiene que registrarse aca. */ \
@@ -68,6 +69,23 @@
     X(mem_is_null, builtin_mem_is_null) \
     X(mem_peek_string, builtin_mem_peek_string) \
     X(mem_peek_ptr, builtin_mem_peek_ptr) \
+    X(mem_peek_u32, builtin_mem_peek_u32) \
+    /* Buffers escribibles (Fase 0 de bibliotecas azlib/net) -- ver */ \
+    /* builtin_mem.cpp: mem_alloc/free con registro y bounds-checking. */ \
+    X(mem_alloc, builtin_mem_alloc) \
+    X(mem_free, builtin_mem_free) \
+    X(mem_leak_count, builtin_mem_leak_count) \
+    X(mem_read_byte, builtin_mem_read_byte) \
+    X(mem_read_u16, builtin_mem_read_u16) \
+    X(mem_read_u32, builtin_mem_read_u32) \
+    X(mem_read_u64, builtin_mem_read_u64) \
+    X(mem_write_byte, builtin_mem_write_byte) \
+    X(mem_write_u16, builtin_mem_write_u16) \
+    X(mem_write_u32, builtin_mem_write_u32) \
+    X(mem_write_u64, builtin_mem_write_u64) \
+    X(mem_read_bytes, builtin_mem_read_bytes) \
+    X(mem_write_bytes, builtin_mem_write_bytes) \
+    X(mem_string, builtin_mem_string) \
     /* Antes registrados sueltos en builtin_registry.cpp; movidos aca en */ \
     /* la Fase 1 porque tambien son bare natives (coroutine(...), */ \
     /* resume(...), etc.), no metodos dotted -- pertenecian a esta lista. */ \

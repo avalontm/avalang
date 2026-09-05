@@ -1,0 +1,52 @@
+# lib/stress/edge.ava
+# Casos borde del fix de BUG 9.
+
+flag = 0
+depth_counter = 0
+fib_calls = 0
+
+# Caso mas puro: el cuerpo entero es UNA asignacion a global, sin return
+func set_flag()
+    flag = 1
+end
+
+func get_flag()
+    return flag
+end
+
+# Recursion mutando global como ultimo statement (profundidad de recursion)
+func dive(n)
+    if n <= 0 then
+        return 0
+    end
+    depth_counter = depth_counter + 1
+    dive(n - 1)
+end
+
+func get_depth()
+    return depth_counter
+end
+
+# Recursion de Fibonacci contando llamadas en un global
+func fib(n)
+    fib_calls = fib_calls + 1
+    if n < 2 then
+        return n
+    end
+    return fib(n - 1) + fib(n - 2)
+end
+
+func get_fib_calls()
+    return fib_calls
+end
+
+func reset_fib_calls()
+    fib_calls = 0
+end
+
+# Lambda que muta un global del modulo (la lambda captura el global,
+# no es upvalue de funcion -- sigue siendo global del modulo)
+func apply_bump(f)
+    f()
+    return flag
+end

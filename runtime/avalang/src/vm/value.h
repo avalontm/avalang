@@ -166,8 +166,8 @@ struct InstanceObj : Object {
     avastd::unordered_map<avastd::string, Value> attrs;
 };
 
-// Namespace creado por un bloque `extern "lib" as Alias ... end`
-// (ver EXTERN_FFI_DESIGN.md). `attrs` mapea nombre de función declarada ->
+// Namespace creado por un bloque `extern "lib" as Alias ... end`.
+// `attrs` mapea nombre de función declarada ->
 // Value de tipo Native cuyo NativeObj::user_data apunta a un
 // ExternFuncMeta (ver vm/vm_extern.h). No es instanciable (a diferencia de
 // Class) ni tiene métodos con `this`: es solo un contenedor de funciones.

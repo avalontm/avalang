@@ -1,0 +1,38 @@
+# test_bug1_module_self_reference.ava
+# Reproduce BUG 1: funciones dentro de un modulo importado que llaman a
+# otras funciones / leen constantes definidas en el MISMO modulo.
+#
+# Antes del fix: error de runtime "'v2dot' is not defined" (y '"SCALE" is
+# not defined') porque la closure del modulo resolvia sus nombres contra
+# la tabla global del script llamador, no contra la del propio modulo.
+# Despues del fix: cada modulo tiene su propia tabla global y las
+# closures la usan.
+
+import lib.data.vec
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+v = [3, 4]
+
+# --- funcion del modulo que llama a otra funcion del mismo modulo ---
+check(1, 25, lib.data.vec.v2lenSq(v))
+check(2, 25, lib.data.vec.v2dot(v, v))
+
+# --- funcion del modulo que llama a otra funcion en cascada ---
+check(3, 25, lib.data.vec.v2norm(v))
+
+# --- funcion del modulo que lee una constante del mismo modulo ---
+d = lib.data.vec.v2double(v)
+check(4, 6, d[0])
+check(5, 8, d[1])
+
+# --- builtin str sigue visible dentro de la closure del modulo ---
+check(6, "2,3", lib.data.vec.formatPair([2, 3]))
+
+print("=== test_bug1_module_self_reference.ava terminado ===")

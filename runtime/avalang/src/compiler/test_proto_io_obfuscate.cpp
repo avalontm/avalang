@@ -1,9 +1,3 @@
-// Test manual (no framework) para proto_io + obfuscate. Construye un
-// Proto a mano (mismo patrón que usa el resto del repo para ejercitar el
-// VM sin el frontend ANTLR -- ver frontend_stub.cpp) que simula una
-// función pequeña con un hijo (closure), lo ofusca, lo serializa, lo
-// deserializa, y verifica que el resultado sea funcionalmente idéntico al
-// original salvo por los campos de debug.
 #include <cassert>
 #include <iostream>
 #include <sstream>
@@ -86,7 +80,6 @@ bool ProtosEqualIgnoringDebug(const Proto& a, const Proto& b) {
 } // namespace
 
 int main() {
-    // --- 1. Round-trip de serialización SIN ofuscar (con debug info) ---
     {
         auto proto = BuildSampleProto();
         auto bytes = SerializeProto(*proto);
@@ -101,7 +94,6 @@ int main() {
         std::cout << "[OK] round-trip sin ofuscar preserva bytecode + debug info\n";
     }
 
-    // --- 2. Ofuscar y verificar que cambian los símbolos, no el bytecode ---
     {
         auto proto = BuildSampleProto();
         std::vector<SymbolMapEntry> map;
@@ -116,17 +108,14 @@ int main() {
         assert(proto->child_protos[0]->debug_name != "saludo_interno");
         assert(proto->debug_lines.empty());
         assert(proto->child_protos[0]->debug_lines.empty());
-        // El bytecode/constant pool NO debe tocarse en esta parte del pase.
         assert(proto->constants.size() == 2);
         assert(proto->child_protos[0]->constants.size() == 2);
         assert(static_cast<StringObj*>(proto->child_protos[0]->constants[1].obj)->data == "hola mundo");
 
-        // 4 entradas: main, app.ava, saludo_interno, services/catalog.ava
         assert(map.size() == 4);
 
         std::cout << "[OK] ObfuscateProto reemplaza symbols, preserva bytecode/constants\n";
 
-        // --- 3. Determinismo por seed: misma seed -> mismo id ofuscado ---
         auto proto2 = BuildSampleProto();
         std::vector<SymbolMapEntry> map2;
         ObfuscateProto(*proto2, opts, &map2);
@@ -134,7 +123,6 @@ int main() {
         assert(proto->child_protos[0]->debug_name == proto2->child_protos[0]->debug_name);
         std::cout << "[OK] misma module_seed produce los mismos IDs ofuscados (reproducible)\n";
 
-        // --- 4. Seeds distintas -> ids distintos (no hay tabla fija) ---
         auto proto3 = BuildSampleProto();
         std::vector<SymbolMapEntry> map3;
         ObfuscateOptions opts2;
@@ -143,7 +131,6 @@ int main() {
         assert(proto->debug_name != proto3->debug_name);
         std::cout << "[OK] seeds distintas producen IDs distintos (nada hardcodeado)\n";
 
-        // --- 5. Round-trip serializando el proto YA ofuscado ---
         auto bytes = SerializeProto(*proto);
         std::string err;
         auto restored = DeserializeProto(bytes, &err);
@@ -152,7 +139,6 @@ int main() {
         assert(restored->debug_name == proto->debug_name);
         std::cout << "[OK] round-trip de un Proto ya ofuscado preserva todo\n";
 
-        // --- 6. strip_debug_info en WriteProto: ni siquiera queda el ID opaco ---
         ProtoIoOptions io_opts;
         io_opts.strip_debug_info = true;
         auto bytes_no_debug = SerializeProto(*proto, io_opts);
@@ -168,14 +154,9 @@ int main() {
         std::cout << FormatSymbolMap(map);
     }
 
-    // --- 7. Parte 2: ofuscar strings, incluyendo nombres de GETGLOBAL/GETATTR ---
     {
         auto proto = std::make_shared<Proto>();
         proto->num_registers = 3;
-        // K[0] = nombre de global ("Kernel"), K[1] = mensaje de usuario,
-        // K[2] = nombre de atributo ("saldo") -- las tres son
-        // Value::String en la misma constant pool, tal como las usaría
-        // GETGLOBAL/GETATTR en bytecode real (ver opcodes.h).
         proto->constants.push_back(Value::String("Kernel"));
         proto->constants.push_back(Value::String("Bienvenido a AvaLang"));
         proto->constants.push_back(Value::String("saldo"));
@@ -194,25 +175,20 @@ int main() {
         ObfuscateOptions opts;
         opts.module_seed = 0x1234567890ABCDEFULL;
         opts.obfuscate_strings = true;
-        opts.strip_debug_lines = false; // no relevante acá, no ensuciar el test
+        opts.strip_debug_lines = false; 
         ObfuscateProto(*proto, opts, nullptr);
 
-        // Los strings YA NO son los originales tras ofuscar.
         assert(static_cast<StringObj*>(proto->constants[0].obj)->data != original_0);
         assert(static_cast<StringObj*>(proto->constants[1].obj)->data != original_1);
         assert(static_cast<StringObj*>(proto->constants[2].obj)->data != original_2);
         assert(static_cast<StringObj*>(proto->child_protos[0]->constants[0].obj)->data != original_child);
         std::cout << "[OK] ObfuscateProto(obfuscate_strings=true) transforma todos los strings, incluidos child_protos\n";
 
-        // Serializar/deserializar el proto YA ofuscado (simula: build ->
-        // .avbc en disco -> avahost lo carga en otra corrida del proceso).
         auto bytes = SerializeProto(*proto);
         std::string err;
         auto loaded = DeserializeProto(bytes, &err);
         assert(loaded != nullptr && err.empty());
 
-        // El loader (avahost) llama DeobfuscateStrings con el mismo seed
-        // ANTES de correr el módulo en el VM.
         DeobfuscateStrings(*loaded, opts.module_seed);
 
         assert(static_cast<StringObj*>(loaded->constants[0].obj)->data == original_0);
@@ -223,16 +199,12 @@ int main() {
                    << static_cast<StringObj*>(loaded->constants[0].obj)->data
                    << "\" recuperado -- GETGLOBAL resolvería el nombre real, no el ofuscado\n";
 
-        // Seed equivocado (ej. build corrupto/mezcla de versiones) NO debe
-        // reproducir el string original -- si esto fallara, el "cifrado"
-        // no estaría aportando nada.
         auto loaded_wrong = DeserializeProto(bytes, &err);
         DeobfuscateStrings(*loaded_wrong, opts.module_seed ^ 0xFFULL);
         assert(static_cast<StringObj*>(loaded_wrong->constants[0].obj)->data != original_0);
         std::cout << "[OK] seed incorrecto no revierte al string original (no es un XOR con clave fija adivinable)\n";
     }
 
-    // --- 8. Archivo corrupto / no-avbc se rechaza sin crashear ---
     {
         std::string garbage = "esto no es un .avbc";
         std::istringstream iss(garbage, std::ios::binary);

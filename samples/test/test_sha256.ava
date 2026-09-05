@@ -1,0 +1,86 @@
+import sha256
+
+g_n = 0
+g_fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+func binString(bytes)
+    buf = mem_alloc(len(bytes))
+    mem_write_bytes(buf, 0, bytes)
+    s = mem_string(buf, 0, len(bytes))
+    mem_free(buf)
+    return s
+end
+
+print("== Vectores NIST / conocidos ==")
+
+mark(check(g_n + 1, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", hash("")))
+mark(check(g_n + 1, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", hash("abc")))
+mark(check(g_n + 1, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9", hash("hello world")))
+mark(check(g_n + 1, "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592", hash("The quick brown fox jumps over the lazy dog")))
+mark(check(g_n + 1, 64, len(hash("abc"))))
+
+print("== Fronteras de padding ==")
+
+x55 = binString([120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120])
+mark(check(g_n + 1, "d5e285683cd4efc02d021a5c62014694958901005d6f71e89e0989fac77e4072", hash(x55)))
+y56 = binString([121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121, 121])
+mark(check(g_n + 1, "4877e564e5e36e367c7c8d59670774becd3350610b6df4c399c9fa9b66da5813", hash(y56)))
+
+a1000 = "a"
+i2 = 1
+while i2 < 1000
+    a1000 = a1000 + "a"
+    i2++
+end
+mark(check(g_n + 1, "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3", hash(a1000)))
+
+print("== Binario multi-bloque ==")
+
+lst = range(0, 256)
+j = 0
+while j < 256
+    lst.append(j)
+    j++
+end
+b512 = binString(lst)
+mark(check(g_n + 1, "110009dcee21620b166f3abfecb5eff7a873be729d1c2d53822e7acc5f34eb9b", hash(b512)))
+
+lst2 = range(0, 256)
+j = 0
+while j < 512
+    lst2.append(j % 256)
+    j++
+end
+lst2.append(122)
+lst2.append(122)
+lst2.append(122)
+b771 = binString(lst2)
+mark(check(g_n + 1, "7d67c4a7a6eb85c429cdbcce20ee1fa726645efd9b926bb813ecec72ca843394", hash(b771)))
+
+b4 = binString([0, 128, 255, 1])
+mark(check(g_n + 1, "cfe2a57fb25cf3772b5ac499ea03caba2f066a396b1e52d3743f8a205de41f19", hash(b4)))
+
+mark(check(g_n + 1, 0, mem_leak_count()))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST SHA256 FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST SHA256: TODO OK")

@@ -58,11 +58,6 @@ void OpNewInstance(CallFrame& frame, const Instr& in, const avastd::vector<Value
 void OpGetAttr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 void OpSetAttr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 
-void OpCall(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
-void OpReturn(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
-void OpClosure(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
-void OpGetUpval(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
-void OpSetUpval(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 Value OpBaseCall(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 
 void OpSlice(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);

@@ -42,6 +42,16 @@ struct AVA_PROTO_API Proto {
     // report the correct file when an error happens inside an imported
     // module, not just a line number (see vm.cpp).
     avastd::string             source_name;
+    // Module-scoped global table for protos that belong to an imported
+    // module. When non-null, GETGLOBAL/SETGLOBAL read/write this map
+    // instead of the VM's shared globals_ (falling back to globals_ for
+    // names not present), so one function in a module can see another
+    // symbol defined at the module's top level no matter when the calling
+    // closure runs (module top-level executes in its own env; see
+    // DoImport in vm_import.cpp). Null for the main script / builtins.
+    // Shared by a module's top proto and all its child protos via the
+    // same shared_ptr, so every closure of the module resolves together.
+    avastd::shared_ptr<avastd::unordered_map<avastd::string, Value>> module_globals;
 };
 
 } // namespace ava

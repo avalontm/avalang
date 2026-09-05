@@ -1,0 +1,101 @@
+﻿
+extern "zlib1.dll" as ZlibNative
+    func zlibVersion()
+    func compressBound(sourceLen)
+    func compress2(dest, destLen, source, sourceLen, level)
+    func uncompress(dest, destLen, source, sourceLen)
+    func crc32(crc, buf, len)
+    func adler32(adler, buf, len)
+    func zError(code)
+end
+
+class Zlib
+    func version()
+        ptr = ZlibNative.zlibVersion()
+        if mem_is_null(ptr) then
+            return "unknown"
+        end
+        return mem_peek_string(ptr)
+    end
+
+    func compressBound(n)
+        return ZlibNative.compressBound(n)
+    end
+
+    func compress(data, level)
+        lvl = level
+        if lvl == nil then
+            lvl = -1
+        end
+
+        sourceLen = len(data)
+        cap = this.compressBound(sourceLen)
+        dest = mem_alloc(cap)
+        sizeCell = mem_alloc(8)
+
+        out = nil
+        try
+            mem_write_u32(sizeCell, 0, cap)
+            rc = ZlibNative.compress2(dest, sizeCell, data, sourceLen, lvl)
+            if rc != 0 then
+                raise "azlib: compress2 fallo (codigo " + str(rc) + "): " + this.zErrorText(rc)
+            end
+            outLen = mem_read_u32(sizeCell, 0)
+            out = mem_string(dest, 0, outLen)
+        catch (e)
+            mem_free(dest)
+            mem_free(sizeCell)
+            raise e
+        end
+        mem_free(dest)
+        mem_free(sizeCell)
+        return out
+    end
+
+    func uncompress(data, targetSize)
+        dest = mem_alloc(targetSize)
+        sizeCell = mem_alloc(8)
+
+        out = nil
+        try
+            mem_write_u32(sizeCell, 0, targetSize)
+            rc = ZlibNative.uncompress(dest, sizeCell, data, len(data))
+            if rc != 0 then
+                raise "azlib: uncompress fallo (codigo " + str(rc) + "): " + this.zErrorText(rc)
+            end
+            outLen = mem_read_u32(sizeCell, 0)
+            out = mem_string(dest, 0, outLen)
+        catch (e)
+            mem_free(dest)
+            mem_free(sizeCell)
+            raise e
+        end
+        mem_free(dest)
+        mem_free(sizeCell)
+        return out
+    end
+
+    func crc32(data, seed)
+        s = seed
+        if s == nil then
+            s = 0
+        end
+        return ZlibNative.crc32(s, data, len(data))
+    end
+
+    func adler32(data, seed)
+        s = seed
+        if s == nil then
+            s = 1
+        end
+        return ZlibNative.adler32(s, data, len(data))
+    end
+
+    func zErrorText(code)
+        ptr = ZlibNative.zError(code)
+        if mem_is_null(ptr) then
+            return "unknown zlib error"
+        end
+        return mem_peek_string(ptr)
+    end
+end

@@ -1,0 +1,117 @@
+alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+g_tbl = nil
+
+func _t()
+    if g_tbl == nil then
+        buf = mem_alloc(256)
+        mem_write_bytes(buf, 0, range(0, 256))
+        g_tbl = mem_string(buf, 0, 256)
+        mem_free(buf)
+    end
+    return g_tbl
+end
+
+func charCode(c)
+    return _t().indexOf(c)
+end
+
+func char(n)
+    return _t().substring(n, n + 1)
+end
+
+func _divmod58(bytes)
+    carry = 0
+    i = 0
+    while i < len(bytes)
+        v = carry * 256 + bytes[i]
+        bytes[i] = int(v / 58)
+        carry = v % 58
+        i++
+    end
+    return carry
+end
+
+func _allZero(bytes)
+    i = 0
+    while i < len(bytes)
+        if bytes[i] != 0 then
+            return false
+        end
+        i++
+    end
+    return true
+end
+
+func encode(data)
+    zeros = 0
+    i = 0
+    while i < len(data) and charCode(data[i]) == 0
+        zeros++
+        i++
+    end
+    bytes = []
+    i = zeros
+    while i < len(data)
+        bytes.append(charCode(data[i]))
+        i++
+    end
+    stack = []
+    if len(bytes) > 0 then
+        while not _allZero(bytes)
+            stack.append(_divmod58(bytes))
+        end
+    end
+    out = ""
+    j = 0
+    while j < zeros
+        out = out + "1"
+        j++
+    end
+    while len(stack) > 0
+        v = stack[len(stack) - 1]
+        stack.removeAt(len(stack) - 1)
+        out = out + alphabet.substring(v, v + 1)
+    end
+    return out
+end
+
+func decode(text)
+    zeros = 0
+    i = 0
+    while i < len(text) and text[i] == "1"
+        zeros++
+        i++
+    end
+    bytes = []
+    i = zeros
+    while i < len(text)
+        v = alphabet.indexOf(text[i])
+        if v < 0 then
+            raise "base58: caracter invalido"
+        end
+        carry = v
+        j = 0
+        while j < len(bytes)
+            t2 = bytes[j] * 58 + carry
+            bytes[j] = t2 % 256
+            carry = int(t2 / 256) & 255
+            j++
+        end
+        if carry > 0 then
+            bytes.append(carry)
+        end
+        i++
+    end
+    out = ""
+    j = 0
+    while j < zeros
+        out = out + char(0)
+        j++
+    end
+    i = len(bytes) - 1
+    while i >= 0
+        out = out + char(bytes[i])
+        i = i - 1
+    end
+    return out
+end

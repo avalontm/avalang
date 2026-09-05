@@ -1,0 +1,43 @@
+# lib/algo/structs.ava
+# Clases de estructuras de datos basicas autocontenidas.
+# PATRON CANONICO: constructor = nombre de clase; this implicito en metodos.
+class Stack
+    func Stack()
+        this.items = []
+    end
+    func push(x)
+        this.items.append(x)
+    end
+    func pop()
+        n = len(this.items)
+        if n == 0 then
+            return nil
+        end
+        top = this.items[n - 1]
+        this.items = this.items[0:n - 1]
+        return top
+    end
+    func size()
+        return len(this.items)
+    end
+end
+
+class Queue
+    func Queue()
+        this.items = []
+    end
+    func enqueue(x)
+        this.items.append(x)
+    end
+    func dequeue()
+        if len(this.items) == 0 then
+            return nil
+        end
+        first = this.items[0]
+        this.items = this.items[1:len(this.items)]
+        return first
+    end
+    func size()
+        return len(this.items)
+    end
+end

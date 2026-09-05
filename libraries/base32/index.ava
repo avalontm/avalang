@@ -1,0 +1,77 @@
+alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+g_tbl = nil
+
+func _t()
+    if g_tbl == nil then
+        buf = mem_alloc(256)
+        mem_write_bytes(buf, 0, range(0, 256))
+        g_tbl = mem_string(buf, 0, 256)
+        mem_free(buf)
+    end
+    return g_tbl
+end
+
+func charCode(c)
+    return _t().indexOf(c)
+end
+
+func char(n)
+    return _t().substring(n, n + 1)
+end
+
+func encode(data)
+    out = ""
+    acc = 0
+    bits = 0
+    n = len(data)
+    i = 0
+    while i < n
+        acc = (acc << 8) | charCode(data[i])
+        bits = bits + 8
+        while bits >= 5
+            bits = bits - 5
+            idx = (acc >> bits) & 31
+            out = out + alphabet.substring(idx, idx + 1)
+        end
+        acc = acc & 4294967295
+        i++
+    end
+    if bits > 0 then
+        idx = (acc << (5 - bits)) & 31
+        out = out + alphabet.substring(idx, idx + 1)
+    end
+    pad = 8 - (len(out) % 8)
+    if pad != 8 then
+        j = 0
+        while j < pad
+            out = out + "="
+            j++
+        end
+    end
+    return out
+end
+
+func decode(text)
+    out = ""
+    acc = 0
+    bits = 0
+    n = len(text)
+    i = 0
+    while i < n
+        c = text[i]
+        if c == "=" then
+            i++
+            continue
+        end
+        v = alphabet.indexOf(c)
+        acc = (acc << 5) | v
+        bits = bits + 5
+        if bits >= 8 then
+            bits = bits - 8
+            out = out + char((acc >> bits) & 255)
+            acc = acc & 4294967295
+        end
+        i++
+    end
+    return out
+end

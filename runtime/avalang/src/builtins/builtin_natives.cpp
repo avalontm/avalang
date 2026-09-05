@@ -150,6 +150,16 @@ ava_value_t builtin_reversed(AvaVM*, const ava_value_t* args, size_t count, void
     return ToCNew(out);
 }
 
+ava_value_t builtin_keys(AvaVM*, const ava_value_t* args, size_t count, void*) {
+    if (count < 1 || args[0].type != AVA_DICT) return ava_list_create(nullptr);
+    auto* dict = static_cast<DictObj*>(FromC(args[0]).obj);
+    Value out; out.type = ValueType::List; out.obj = new ListObj();
+    for (const auto& kv : dict->entries) {
+        static_cast<ListObj*>(out.obj)->items.push_back(Value::String(kv.first));
+    }
+    return ToCNew(out);
+}
+
 ava_value_t builtin_any(AvaVM*, const ava_value_t* args, size_t count, void*) {
     auto items = CollectItems(ArgsToValues(args, count));
     for (const auto& v : items) {

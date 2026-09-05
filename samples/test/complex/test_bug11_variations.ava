@@ -1,0 +1,137 @@
+# test_bug11_variations.ava
+# Variaciones duras de BUG 11 para confirmar que ya no se reproduce.
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+# --- 1. Caso original del doc: base 2 params, atributo nuevo desde param ---
+class Animal
+    func Animal(name, sound)
+        this.name = name
+        this.sound = sound
+    end
+end
+
+class Dog : Animal
+    func Dog(name, breed)
+        base.__init__(name, "guau")
+        this.breed = breed
+    end
+end
+
+d = Dog("Rex", "Labrador")
+check(1, "Rex", d.name)
+check(2, "guau", d.sound)
+check(3, "Labrador", d.breed)
+
+# --- 2. Base con 3 parametros, DOS atributos nuevos desde params ---
+class Point3
+    func Point3(x, y, z)
+        this.x = x
+        this.y = y
+        this.z = z
+    end
+end
+
+class NamedPoint : Point3
+    func NamedPoint(x, y, z, label)
+        base.__init__(x, y, z)
+        this.label = label
+        this.tag = "pt-" + label
+    end
+end
+
+np = NamedPoint(1, 2, 3, "origen")
+check(4, 1, np.x)
+check(5, 2, np.y)
+check(6, 3, np.z)
+check(7, "origen", np.label)
+check(8, "pt-origen", np.tag)
+
+# --- 3. Atributo nuevo ANTES y DESPUES de base.__init__ ---
+class A
+    func A(a1, a2)
+        this.a1 = a1
+        this.a2 = a2
+    end
+end
+
+class B : A
+    func B(a1, a2, extra)
+        this.before = extra * 10
+        base.__init__(a1, a2)
+        this.after = extra * 100
+    end
+end
+
+b = B(7, 8, 9)
+check(9, 7, b.a1)
+check(10, 8, b.a2)
+check(11, 90, b.before)
+check(12, 900, b.after)
+
+# --- 4. Cadena de 3 niveles: cada nivel agrega un atributo nuevo
+#        desde parametro, y cada base tiene 2+ parametros ---
+class Veh
+    func Veh(marca, modelo)
+        this.marca = marca
+        this.modelo = modelo
+    end
+end
+
+class Coche : Veh
+    func Coche(marca, modelo, puertas)
+        base.__init__(marca, modelo)
+        this.puertas = puertas
+    end
+end
+
+class CocheElectrico : Coche
+    func CocheElectrico(marca, modelo, puertas, autonomia)
+        base.__init__(marca, modelo, puertas)
+        this.autonomia = autonomia
+    end
+end
+
+ce = CocheElectrico("Tesla", "Model3", 4, 500)
+check(13, "Tesla", ce.marca)
+check(14, "Model3", ce.modelo)
+check(15, 4, ce.puertas)
+check(16, 500, ce.autonomia)
+
+# --- 5. Expresion del parametro (no el parametro crudo) ---
+class Rect
+    func Rect(w, h)
+        this.w = w
+        this.h = h
+    end
+end
+
+class Square : Rect
+    func Square(side)
+        base.__init__(side, side)
+        this.area = side * side
+    end
+end
+
+sq = Square(5)
+check(17, 5, sq.w)
+check(18, 5, sq.h)
+check(19, 25, sq.area)
+
+# --- 6. Multiples instancias entrelazadas ---
+d1 = Dog("A", "X")
+sq1 = Square(2)
+d2 = Dog("B", "Y")
+sq2 = Square(3)
+check(20, "X", d1.breed)
+check(21, 4, sq1.area)
+check(22, "Y", d2.breed)
+check(23, 9, sq2.area)
+
+print("=== test_bug11_variations.ava terminado ===")

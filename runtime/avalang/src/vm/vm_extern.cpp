@@ -52,8 +52,8 @@ namespace {
 avastd::mutex g_lib_mutex;
 avastd::unordered_map<avastd::string, platform::ILibraryHandle*> g_loaded_libs;
 
-// Nombre lógico -> candidatos de nombre de archivo por plataforma. Ver
-// EXTERN_FFI_DESIGN.md, sección "Platform Resolution".
+// Nombre lógico -> candidatos de nombre de archivo por plataforma
+// (sección "Platform Resolution").
 avastd::vector<avastd::string> CandidateFileNames(const avastd::string& logical) {
     avastd::vector<avastd::string> out;
     out.push_back(logical); // por si ya vino con extensión/nombre exacto
@@ -241,7 +241,7 @@ extern "C" ava_value_t ava_extern_call(AvaVM*, const ava_value_t* c_args, size_t
     throw avastd::runtime_error(
         "extern: '" + where + "' no se puede invocar -- este build se compilo sin libffi. "
         "Instala libffi (p.ej. 'vcpkg install libffi') y reconfigura para habilitar llamadas "
-        "nativas reales. Ver EXTERN_FFI_TODO.md.");
+        "nativas reales.");
 #else
     platform::ILibraryHandle* handle = LoadNativeLibrary(meta->library);
     if (!handle) {

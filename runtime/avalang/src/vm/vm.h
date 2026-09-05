@@ -271,11 +271,6 @@ public:
     friend void OpGetAttr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
     friend void OpSetAttr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 
-    friend void OpCall(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
-    friend void OpReturn(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
-    friend void OpClosure(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
-    friend void OpGetUpval(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
-    friend void OpSetUpval(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
     friend Value OpBaseCall(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 
     friend void OpSlice(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
@@ -314,7 +309,7 @@ private:
     // StartAsyncCall pero para un BoundMethod (obj.metodo_async(...)):
     // arma el entry_frame con bound->proto y bound->instance en el
     // registro 0 (this), en vez de asumir un Closure con proto propio.
-    // Ver vm_call_op.cpp::OpCall, rama ValueType::Bound.
+    // Ver vm.cpp, rama ValueType::Bound del despacho inline de CALL.
     //
     // base_lookup_class (bug #17): opcional, default nullptr. Cuando la
     // llamada viene de OpBaseCall (base.metodo_async(), no obj.metodo()

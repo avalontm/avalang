@@ -1,0 +1,245 @@
+# test_mysql_complex.ava
+# Suite de estres para la libreria `mysql` (binding FFI sobre libmysql.dll).
+# Ejercita TODA la API publica de index.ava y los paths de error, contra un
+# servidor MySQL/MariaDB real en 127.0.0.1:3306 (root, password vacio, db test).
+#
+# Cobertura:
+#   connect / isConnected / ping / selectDb / serverInfo / reconnect / close
+#   query con _bindParams (int, float, bool, nil, string con comilla escapada)
+#   fetchAll / fetchOne / fetchValue / fetchColumn / count / exists / execute
+#   tableExists (true y false) / lastInsertId / insert / update / delete
+#   transacciones (commit y rollback) / errno / error
+#   errores: tabla inexistente (1146), SQL invalido (1064), params de mas/menos,
+#   query sin conexion activa / recuperacion despues de un error.
+
+import mysql
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+g_n = 0
+g_fails = 0
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+func strListEquals(a, b)
+    if len(a) != len(b) then
+        return false
+    end
+    local i = 0
+    while i < len(a)
+        if a[i] != b[i] then
+            return false
+        end
+        i++
+    end
+    return true
+end
+
+# ============================================================================
+# 1. SETUP + CONEXION
+# ============================================================================
+
+db = MySQL()
+mark(check(g_n + 1, "idle", db.state))
+
+db.connect("127.0.0.1", "root", "", "test", 3306)
+mark(check(g_n + 1, "connected", db.state))
+mark(check(g_n + 1, true, db.isConnected()))
+mark(check(g_n + 1, true, db.ping()))
+server = db.serverInfo()
+print("  server: " + server)
+mark(check(g_n + 1, true, server.contains("MariaDB") or server.contains("MySQL")))
+
+# tabla fresca cada corrida (idempotente: si quedo de una corrida
+# anterior sin que llegara al drop final, la limpiamos primero)
+if db.tableExists("ffi_products") then
+    db.execute("drop table ffi_products")
+end
+mark(check(g_n + 1, false, db.tableExists("ffi_products")))
+db.execute("create table ffi_products (id int auto_increment primary key, name varchar(100), price double, qty int, active tinyint(1) default 1, note varchar(100))")
+mark(check(g_n + 1, true, db.tableExists("ffi_products")))
+mark(check(g_n + 1, false, db.tableExists("ffi_no_existe_zzz")))
+
+# ============================================================================
+# 2. INSERT con tipos variados + fetchOne (round-trip de tipos)
+# ============================================================================
+
+# string con comilla simple (escapada por _bindParams), float, int, bool, nil (NULL)
+id1 = db.insert("ffi_products", {name: "O'Brien", price: 12.5, qty: 7, active: false, note: nil})
+mark(check(g_n + 1, true, id1 > 0))
+mark(check(g_n + 1, id1, db.lastInsertId()))
+
+row = db.fetchOne("select * from ffi_products where id = ?", [id1])
+mark(check(g_n + 1, "O'Brien", row["name"]))
+mark(check(g_n + 1, 12.5, float(row["price"])))
+mark(check(g_n + 1, 7, int(row["qty"])))
+mark(check(g_n + 1, 0, int(row["active"])))
+mark(check(g_n + 1, nil, row["note"]))
+
+# fetchValue (columna sola) y fetchOne vacio -> nil
+mark(check(g_n + 1, "O'Brien", db.fetchValue("select name from ffi_products where id = ?", [id1])))
+mark(check(g_n + 1, nil, db.fetchOne("select * from ffi_products where name = ?", ["nadie"])))
+
+# ============================================================================
+# 3. UPDATE sencillo + affectedRows via execute
+# ============================================================================
+
+affected = db.execute("update ffi_products set qty = qty + 10 where id = ?", [id1])
+mark(check(g_n + 1, 1, affected))
+mark(check(g_n + 1, 17, int(db.fetchValue("select qty from ffi_products where id = ?", [id1]))))
+
+# ============================================================================
+# 4. Multi-row INSERT con 10 params mixtos (flujo plano de _bindParams)
+# ============================================================================
+
+rows2 = db.execute(
+    "insert into ffi_products (name, price, qty, active, note) values (?,?,?,?,?), (?,?,?,?,?)",
+    ["Alpha", 1.0, 1, true, "a1", "Beta", 2.5, 2, false, nil])
+mark(check(g_n + 1, 2, rows2))
+
+mark(check(g_n + 1, 3, db.count("ffi_products")))
+mark(check(g_n + 1, 3, len(db.fetchAll("select * from ffi_products"))))
+
+# fetchColumn devuelve la columna completa en orden
+nombres = db.fetchColumn("select * from ffi_products order by id", nil, "name")
+mark(check(g_n + 1, true, strListEquals(["O'Brien", "Alpha", "Beta"], nombres)))
+
+# count con clave bool (true -> 1) y negacion
+mark(check(g_n + 1, 1, db.count("ffi_products", "active = ?", [true])))
+mark(check(g_n + 1, 2, db.count("ffi_products", "active = ?", [false])))
+
+# exists: true y false
+mark(check(g_n + 1, true, db.exists("ffi_products", "name = ?", ["Alpha"])))
+mark(check(g_n + 1, false, db.exists("ffi_products", "name = ?", ["Ghost"])))
+
+# ============================================================================
+# 5. Transacciones: rollback NO persiste, commit SI persiste
+# ============================================================================
+
+db.begin()
+db.insert("ffi_products", {name: "TempRow", price: 0.0, qty: 0, active: false, note: "rollback-me"})
+mark(check(g_n + 1, 4, db.count("ffi_products")))
+db.rollback()
+mark(check(g_n + 1, 3, db.count("ffi_products")))
+mark(check(g_n + 1, false, db.exists("ffi_products", "note = ?", ["rollback-me"])))
+
+db.begin()
+db.update("ffi_products", {note: "committed-note"}, "id = ?", [id1])
+db.commit()
+mark(check(g_n + 1, "committed-note", db.fetchValue("select note from ffi_products where id = ?", [id1])))
+
+# ============================================================================
+# 6. DELETE + conteo final
+# ============================================================================
+
+mark(check(g_n + 1, 1, db.delete("ffi_products", "name = ?", ["Beta"])))
+mark(check(g_n + 1, 2, db.count("ffi_products")))
+
+# ============================================================================
+# 7. ERRORES: los paths que hacen raise deben dar mensaje + errno correcto
+# ============================================================================
+
+# tabla inexistente -> errno 1146 (MySQL/MariaDB)
+errMsg = ""
+gotCode = 0
+try
+    db.query("select * from ffi_tabla_inexistente_zzz")
+catch (err7a)
+    errMsg = err7a
+    gotCode = db.errno()
+end
+mark(check(g_n + 1, true, errMsg.contains("doesn't exist")))
+mark(check(g_n + 1, 1146, gotCode))
+
+# SQL invalido -> errno 1064
+errMsg2 = ""
+gotCode2 = 0
+try
+    db.query("selec bogus")
+catch (err7b)
+    errMsg2 = err7b
+    gotCode2 = db.errno()
+end
+mark(check(g_n + 1, 1064, gotCode2))
+mark(check(g_n + 1, true, db.error().contains("SQL")))
+
+# demasiados parametros vs '?'
+errMsg3 = ""
+try
+    db.query("select 1 where 1 = ?", [1, 2])
+catch (err7c)
+    errMsg3 = err7c
+end
+mark(check(g_n + 1, true, errMsg3.contains("parameters were passed")))
+
+# faltan parametros vs '?'
+errMsg4 = ""
+try
+    db.query("select 1 where 1 = ?", [])
+catch (err7d)
+    errMsg4 = err7d
+end
+mark(check(g_n + 1, true, errMsg4.contains("more '?' than parameters")))
+
+# la conexion sigue viva despues de los errores
+mark(check(g_n + 1, true, db.ping()))
+mark(check(g_n + 1, 2, db.count("ffi_products")))
+
+# ============================================================================
+# 8. selectDb: ir a information_schema, traer tablas, volver
+# ============================================================================
+
+db.selectDb("information_schema")
+tablas = db.fetchAll("select table_name from tables where table_schema = 'information_schema' limit 3")
+mark(check(g_n + 1, true, len(tablas) > 0))
+mark(check(g_n + 1, true, db.serverInfo().contains("MariaDB") or db.serverInfo().contains("MySQL")))
+
+db.selectDb("test")
+mark(check(g_n + 1, 2, db.count("ffi_products")))
+
+# ============================================================================
+# 9. reconnect despues de close + query sin conexion
+# ============================================================================
+
+db.close()
+mark(check(g_n + 1, "closed", db.state))
+mark(check(g_n + 1, false, db.isConnected()))
+
+errMsg5 = ""
+try
+    db.query("select 1")
+catch (err9a)
+    errMsg5 = err9a
+end
+mark(check(g_n + 1, true, errMsg5.contains("no active connection")))
+
+db.reconnect()
+mark(check(g_n + 1, "connected", db.state))
+mark(check(g_n + 1, true, db.ping()))
+mark(check(g_n + 1, 2, db.count("ffi_products")))
+
+# ============================================================================
+# 10. Cierre final + estado
+# ============================================================================
+
+db.close()
+mark(check(g_n + 1, "closed", db.state))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST MYSQL COMPLEX FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST MYSQL COMPLEX: TODO OK")

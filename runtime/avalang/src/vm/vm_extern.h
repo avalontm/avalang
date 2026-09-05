@@ -8,7 +8,6 @@
 namespace ava {
 
 // Metadata de una función declarada dentro de un bloque `extern`.
-// Ver EXTERN_FFI_DESIGN.md / EXTERN_FFI_TODO.md (Fase 3).
 struct ExternFuncMeta {
     avastd::string library;     // nombre lógico, p.ej. "kernel32"
     avastd::string alias;       // p.ej. "Kernel"
@@ -21,7 +20,7 @@ struct ExternFuncMeta {
 // librería nativa (cacheada por nombre lógico), resuelve el símbolo
 // (cacheado en `meta`) y lo invoca con libffi.
 //
-// Limitaciones conocidas (ver EXTERN_FFI_TODO.md):
+// Limitaciones conocidas:
 // - Argumentos soportados: number (int64 si es entero exacto, si no
 //   double), string (const char*), bool (int64 0/1), nil (puntero NULL).
 //   List/Dict/Instance/etc. no son soportados todavía.

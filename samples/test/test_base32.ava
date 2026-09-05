@@ -1,0 +1,54 @@
+import base32
+
+g_n = 0
+g_fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+func binString(bytes)
+    buf = mem_alloc(len(bytes))
+    mem_write_bytes(buf, 0, bytes)
+    s = mem_string(buf, 0, len(bytes))
+    mem_free(buf)
+    return s
+end
+
+print("== Vectores RFC 4648 ==")
+mark(check(g_n + 1, "", encode("")))
+mark(check(g_n + 1, "MY======", encode("f")))
+mark(check(g_n + 1, "MZXQ====", encode("fo")))
+mark(check(g_n + 1, "MZXW6===", encode("foo")))
+mark(check(g_n + 1, "MZXW6YQ=", encode("foob")))
+mark(check(g_n + 1, "MZXW6YTB", encode("fooba")))
+mark(check(g_n + 1, "MZXW6YTBOI======", encode("foobar")))
+
+print("== decode ==")
+mark(check(g_n + 1, "foobar", decode("MZXW6YTBOI======")))
+mark(check(g_n + 1, "foobar", decode("MZXW6YTBOI")))
+mark(check(g_n + 1, "f", decode("MY======")))
+mark(check(g_n + 1, "", decode("")))
+
+print("== roundtrip ==")
+bin = binString([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 250, 251, 252, 253, 254, 255])
+mark(check(g_n + 1, bin, decode(encode(bin))))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST BASE32 FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST BASE32: TODO OK")

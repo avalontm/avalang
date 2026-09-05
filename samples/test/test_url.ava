@@ -1,0 +1,91 @@
+import url
+
+g_n = 0
+g_fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+func raisesIt(f)
+    try
+        f()
+        return false
+    catch (e)
+        return true
+    end
+end
+
+print("== encodeComponent ==")
+mark(check(g_n + 1, "hello%20world", encodeComponent("hello world")))
+mark(check(g_n + 1, "a%2Fb%3Fc%23d", encodeComponent("a/b?c#d")))
+mark(check(g_n + 1, "%26%3D%25", encodeComponent("&=%")))
+mark(check(g_n + 1, "AZaz09-._~", encodeComponent("AZaz09-._~")))
+
+print("== decodeComponent ==")
+mark(check(g_n + 1, "hello world", decodeComponent("hello%20world")))
+mark(check(g_n + 1, "a/b?c#d", decodeComponent("a%2Fb%3Fc%23d")))
+mark(check(g_n + 1, "A%", decodeComponent("A%25")))
+mark(check(g_n + 1, "+", decodeComponent("+")))
+
+func badPct()
+    decodeComponent("%GG")
+end
+mark(check(g_n + 1, true, raisesIt(badPct)))
+
+func badPct2()
+    decodeComponent("%4")
+end
+mark(check(g_n + 1, true, raisesIt(badPct2)))
+
+print("== parseQuery ==")
+q = parseQuery("a=1&b=hola%20mundo&c=")
+mark(check(g_n + 1, 3, len(keys(q))))
+mark(check(g_n + 1, "1", q["a"]))
+mark(check(g_n + 1, "hola mundo", q["b"]))
+mark(check(g_n + 1, "", q["c"]))
+mark(check(g_n + 1, 0, len(keys(parseQuery("")))))
+mark(check(g_n + 1, "hola mundo", parseQuery("x=hola+mundo")["x"]))
+
+print("== buildQuery ==")
+mark(check(g_n + 1, "a=1&b=2", buildQuery({"a": "1", "b": "2"})))
+mark(check(g_n + 1, "x=hola%20mundo", buildQuery({"x": "hola mundo"})))
+
+print("== parse ==")
+u = parse("https://user@host.com:8080/ruta/x?a=1&b=2#ancla")
+mark(check(g_n + 1, "https", u["scheme"]))
+mark(check(g_n + 1, "host.com", u["host"]))
+mark(check(g_n + 1, 8080, u["port"]))
+mark(check(g_n + 1, "/ruta/x", u["path"]))
+mark(check(g_n + 1, "a=1&b=2", u["query"]))
+mark(check(g_n + 1, "ancla", u["fragment"]))
+
+u2 = parse("http://ejemplo.com")
+mark(check(g_n + 1, "http", u2["scheme"]))
+mark(check(g_n + 1, "ejemplo.com", u2["host"]))
+mark(check(g_n + 1, 0, u2["port"]))
+mark(check(g_n + 1, "", u2["path"]))
+
+u3 = parse("ruta/relativa.txt")
+mark(check(g_n + 1, "", u3["scheme"]))
+mark(check(g_n + 1, "", u3["host"]))
+mark(check(g_n + 1, "ruta/relativa.txt", u3["path"]))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST URL FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST URL: TODO OK")

@@ -1,0 +1,151 @@
+import system
+import system.io
+
+g_n = 0
+g_fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+scratch = "ava_test_scratch"
+sample = scratch + "/sample.txt"
+sample_bin = scratch + "/sample.bin"
+sample_empty = scratch + "/empty.dat"
+subdir = scratch + "/sub"
+inner = subdir + "/inner.txt"
+dotted_file = scratch + "/dotted.txt"
+gone = scratch + "/no_such_dir_here"
+
+if IO.File.Exists(sample) then IO.File.Delete(sample) end
+if IO.File.Exists(sample_bin) then IO.File.Delete(sample_bin) end
+if IO.File.Exists(sample_empty) then IO.File.Delete(sample_empty) end
+if IO.File.Exists(dotted_file) then IO.File.Delete(dotted_file) end
+if IO.Directory.Exists(subdir) then
+    if IO.File.Exists(inner) then IO.File.Delete(inner) end
+    IO.Directory.Delete(subdir)
+end
+if IO.Directory.Exists(scratch) then IO.Directory.Delete(scratch) end
+
+print("== Setup ==")
+
+mark(check(g_n + 1, true, IO.Directory.Create(scratch)))
+mark(check(g_n + 1, true, IO.Directory.Create(scratch)))
+mark(check(g_n + 1, true, IO.Directory.Exists(scratch)))
+
+print("== File ==")
+
+mark(check(g_n + 1, true, IO.File.WriteAllText(sample, "contenido de prueba")))
+mark(check(g_n + 1, "contenido de prueba", IO.File.ReadAllText(sample)))
+mark(check(g_n + 1, 19, IO.File.Size(sample)))
+mark(check(g_n + 1, true, IO.File.Exists(sample)))
+mark(check(g_n + 1, false, IO.File.Exists(gone + "/missing.txt")))
+mark(check(g_n + 1, nil, IO.File.ReadAllText(gone + "/missing.txt")))
+mark(check(g_n + 1, nil, IO.File.Size(gone + "/missing.txt")))
+mark(check(g_n + 1, true, IO.File.WriteAllText(sample, "segundo")))
+mark(check(g_n + 1, 7, IO.File.Size(sample)))
+mark(check(g_n + 1, "segundo", IO.File.ReadAllText(sample)))
+mark(check(g_n + 1, true, IO.File.WriteAllText(sample_empty, "")))
+mark(check(g_n + 1, "", IO.File.ReadAllText(sample_empty)))
+mark(check(g_n + 1, 0, IO.File.Size(sample_empty)))
+mark(check(g_n + 1, false, IO.File.WriteAllText(gone + "/x.txt", "x")))
+
+print("== Directory ==")
+
+mark(check(g_n + 1, true, IO.Directory.Exists(scratch)))
+mark(check(g_n + 1, false, IO.Directory.Exists(gone)))
+mark(check(g_n + 1, false, IO.File.Exists(scratch)))
+mark(check(g_n + 1, false, IO.Directory.Exists(sample)))
+mark(check(g_n + 1, true, IO.Directory.Create(subdir)))
+mark(check(g_n + 1, true, IO.File.WriteAllText(inner, "inner")))
+mark(check(g_n + 1, false, IO.Directory.Delete(scratch)))
+
+print("== system.io ==")
+
+mark(check(g_n + 1, true, system.io.File.Exists(sample)))
+mark(check(g_n + 1, "segundo", system.io.File.ReadAllText(sample)))
+mark(check(g_n + 1, true, system.io.Directory.Exists(subdir)))
+mark(check(g_n + 1, true, system.io.File.WriteAllText(dotted_file, "d")))
+mark(check(g_n + 1, "d", system.io.File.ReadAllText(dotted_file)))
+
+print("== Binario ==")
+
+binbuf = mem_alloc(16)
+mask = [0, 1, 127, 128, 254, 255, 65, 66, 67, 10, 0, 13, 9, 32, 33, 126]
+mem_write_bytes(binbuf, 0, mask)
+bin_ref = mem_string(binbuf, 0, len(mask))
+mem_free(binbuf)
+mark(check(g_n + 1, true, IO.File.WriteAllText(sample_bin, bin_ref)))
+raw_bin = IO.File.ReadAllText(sample_bin)
+mark(check(g_n + 1, true, raw_bin != nil))
+mark(check(g_n + 1, 16, len(raw_bin)))
+mark(check(g_n + 1, true, raw_bin == bin_ref))
+mark(check(g_n + 1, 16, IO.File.Size(sample_bin)))
+
+print("== Enumerate ==")
+
+entries = IO.Directory.Enumerate(scratch)
+mark(check(g_n + 1, true, entries != nil))
+mark(check(g_n + 1, true, len(entries) >= 3))
+
+func findEntry(list, name)
+    i = 0
+    while i < len(list)
+        item = list[i]
+        if item.Name == name then
+            return item
+        end
+        i++
+    end
+    return nil
+end
+
+e_sam = findEntry(entries, "sample.txt")
+mark(check(g_n + 1, true, e_sam != nil and e_sam.IsDirectory == false))
+e_sub = findEntry(entries, "sub")
+mark(check(g_n + 1, true, e_sub != nil and e_sub.IsDirectory == true))
+mark(check(g_n + 1, nil, IO.Directory.Enumerate(gone)))
+
+print("== Environment / Process / DateTime ==")
+
+mark(check(g_n + 1, true, Environment.SetEnvironmentVariable("AVALANG_TEST_VAR", "hola")))
+mark(check(g_n + 1, "hola", Environment.GetEnvironmentVariable("AVALANG_TEST_VAR")))
+mark(check(g_n + 1, nil, Environment.GetEnvironmentVariable("AVALANG_NO_EXISTE_123")))
+cwd = Environment.GetCurrentDirectory()
+mark(check(g_n + 1, true, cwd != nil and len(cwd) > 0))
+mark(check(g_n + 1, true, Diagnostics.Process.GetCurrentId() > 0))
+now = DateTime.Now()
+mark(check(g_n + 1, true, now != nil and now.Year >= 2000))
+
+print("== Limpieza ==")
+
+mark(check(g_n + 1, true, IO.File.Delete(sample)))
+mark(check(g_n + 1, false, IO.File.Exists(sample)))
+mark(check(g_n + 1, true, IO.File.Delete(sample_bin)))
+mark(check(g_n + 1, true, IO.File.Delete(sample_empty)))
+mark(check(g_n + 1, true, IO.File.Delete(dotted_file)))
+mark(check(g_n + 1, true, IO.File.Delete(inner)))
+mark(check(g_n + 1, true, IO.Directory.Delete(subdir)))
+mark(check(g_n + 1, true, IO.Directory.Delete(scratch)))
+mark(check(g_n + 1, false, IO.Directory.Exists(scratch)))
+
+mark(check(g_n + 1, 0, mem_leak_count()))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST SYSTEM FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST SYSTEM: TODO OK")

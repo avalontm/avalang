@@ -1,0 +1,76 @@
+import csv
+
+g_n = 0
+g_fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+print("== parse basico ==")
+r = parse("a,b,c\n1,2,3\n")
+mark(check(g_n + 1, 2, len(r)))
+mark(check(g_n + 1, 3, len(r[0])))
+mark(check(g_n + 1, "a", r[0][0]))
+mark(check(g_n + 1, "3", r[1][2]))
+
+r = parse("")
+mark(check(g_n + 1, 0, len(r)))
+
+r = parse("solo\n")
+mark(check(g_n + 1, 1, len(r)))
+mark(check(g_n + 1, "solo", r[0][0]))
+
+print("== parse con comillas ==")
+r = parse("\"hola, mundo\",42\n\"linea1\nlinea2\",x\n")
+mark(check(g_n + 1, 2, len(r)))
+mark(check(g_n + 1, "hola, mundo", r[0][0]))
+mark(check(g_n + 1, "42", r[0][1]))
+mark(check(g_n + 1, "linea1\nlinea2", r[1][0]))
+mark(check(g_n + 1, "x", r[1][1]))
+
+r = parse("\"dos \"\"comillas\"\"\",ok\n")
+mark(check(g_n + 1, "dos \"comillas\"", r[0][0]))
+
+print("== generate ==")
+mark(check(g_n + 1, "a,b", generate([["a", "b"]])))
+mark(check(g_n + 1, "\"a,b\",\"linea\n2\"", generate([["a,b", "linea\n2"]])))
+mark(check(g_n + 1, "\"dos \"\"comillas\"\"\"", generate([["dos \"comillas\""]])))
+mark(check(g_n + 1, "1\r\n2", generate([["1"], ["2"]])))
+
+print("== roundtrip ==")
+rows = [["nombre", "apellido", "etiqueta"], ["juan", "perez", "a,b"], ["ana", "lopez", "multi\nlinea"], ["solo", "", ""]]
+out = generate(rows)
+back = parse(out)
+mark(check(g_n + 1, len(rows), len(back)))
+mark(check(g_n + 1, "juan", back[1][0]))
+mark(check(g_n + 1, "a,b", back[1][2]))
+mark(check(g_n + 1, "multi\nlinea", back[2][2]))
+mark(check(g_n + 1, "", back[3][1]))
+
+print("== parseDicts ==")
+d = parseDicts("nombre,edad\npablo,30\nmaria,25\n")
+mark(check(g_n + 1, 2, len(d)))
+mark(check(g_n + 1, "pablo", d[0]["nombre"]))
+mark(check(g_n + 1, "30", d[0]["edad"]))
+mark(check(g_n + 1, "25", d[1]["edad"]))
+mark(check(g_n + 1, 0, len(parseDicts("solo_cabecera\n"))))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST CSV FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST CSV: TODO OK")

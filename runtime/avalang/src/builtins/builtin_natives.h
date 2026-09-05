@@ -44,6 +44,7 @@ ava_value_t builtin_all(AvaVM* vm, const ava_value_t* args, size_t count, void* 
 ava_value_t builtin_len(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_range(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_slice(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_keys(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 
 ava_value_t builtin_setglobal(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 
@@ -62,6 +63,23 @@ ava_value_t builtin_import(AvaVM* vm, const ava_value_t* args, size_t count, voi
 ava_value_t builtin_mem_is_null(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_mem_peek_string(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_mem_peek_ptr(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_mem_peek_u32(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+
+// Buffers escribibles (Fase 0 de bibliotecas azlib/net). Ver builtin_mem.cpp.
+ava_value_t builtin_mem_alloc(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_mem_free(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_mem_leak_count(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_mem_read_byte(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_mem_read_u16(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_mem_read_u32(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_mem_read_u64(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_mem_write_byte(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_mem_write_u16(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_mem_write_u32(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_mem_write_u64(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_mem_read_bytes(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_mem_write_bytes(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_mem_string(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 
 #ifdef __cplusplus
 }

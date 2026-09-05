@@ -1,0 +1,172 @@
+unreserved = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+hexd = "0123456789ABCDEF"
+hexdl = "0123456789abcdef"
+
+g_tbl = nil
+
+func _t()
+    if g_tbl == nil then
+        buf = mem_alloc(256)
+        mem_write_bytes(buf, 0, range(0, 256))
+        g_tbl = mem_string(buf, 0, 256)
+        mem_free(buf)
+    end
+    return g_tbl
+end
+
+func charCode(c)
+    return _t().indexOf(c)
+end
+
+func char(n)
+    return _t().substring(n, n + 1)
+end
+
+func encodeComponent(s)
+    out = ""
+    i = 0
+    while i < len(s)
+        c = s[i]
+        if unreserved.indexOf(c) >= 0 then
+            out = out + c
+        else
+            b = charCode(c)
+            out = out + "%" + hexd.substring(b >> 4, (b >> 4) + 1) + hexd.substring(b & 15, (b & 15) + 1)
+        end
+        i++
+    end
+    return out
+end
+
+func _hexVal(c)
+    v = hexd.indexOf(c)
+    if v < 0 then
+        v = hexdl.indexOf(c)
+    end
+    return v
+end
+
+func decodeComponent(s)
+    out = ""
+    i = 0
+    while i < len(s)
+        c = s[i]
+        if c == "%" then
+            if i + 2 >= len(s) then
+                raise "url: secuencia % incompleta"
+            end
+            hi = _hexVal(s[i + 1])
+            lo = _hexVal(s[i + 2])
+            if hi < 0 or lo < 0 then
+                raise "url: secuencia % invalida"
+            end
+            out = out + char((hi << 4) | lo)
+            i = i + 3
+        else
+            out = out + c
+            i++
+        end
+    end
+    return out
+end
+
+func _findFrom(s, ch, start)
+    i = start
+    while i < len(s)
+        if s[i] == ch then
+            return i
+        end
+        i++
+    end
+    return -1
+end
+
+func parseQuery(qs)
+    d = {}
+    if len(qs) == 0 then
+        return d
+    end
+    start = 0
+    while start <= len(qs)
+        amp = _findFrom(qs, "&", start)
+        if amp < 0 then
+            amp = len(qs)
+        end
+        pair = qs.substring(start, amp)
+        if len(pair) > 0 then
+            k = ""
+            v = ""
+            eq = _findFrom(pair, "=", 0)
+            if eq < 0 then
+                k = pair
+            else
+                k = pair.substring(0, eq)
+                v = pair.substring(eq + 1, len(pair))
+            end
+            d[decodeComponent(k.replace("+", " "))] = decodeComponent(v.replace("+", " "))
+        end
+        if amp == len(qs) then
+            return d
+        end
+        start = amp + 1
+    end
+    return d
+end
+
+func buildQuery(d)
+    ks = keys(d)
+    out = ""
+    i = 0
+    while i < len(ks)
+        if i > 0 then
+            out = out + "&"
+        end
+        out = out + encodeComponent(ks[i]) + "=" + encodeComponent(d[ks[i]])
+        i++
+    end
+    return out
+end
+
+func parse(u)
+    rest = u
+    frag = ""
+    h = _findFrom(rest, "#", 0)
+    if h >= 0 then
+        frag = rest.substring(h + 1, len(rest))
+        rest = rest.substring(0, h)
+    end
+    query = ""
+    q = _findFrom(rest, "?", 0)
+    if q >= 0 then
+        query = rest.substring(q + 1, len(rest))
+        rest = rest.substring(0, q)
+    end
+    scheme = ""
+    host = ""
+    port = 0
+    path = rest
+    sp = rest.indexOf("://")
+    if sp >= 0 then
+        scheme = rest.substring(0, sp)
+        rest = rest.substring(sp + 3, len(rest))
+        slash = _findFrom(rest, "/", 0)
+        authority = rest
+        path = ""
+        if slash >= 0 then
+            authority = rest.substring(0, slash)
+            path = rest.substring(slash, len(rest))
+        end
+        at = _findFrom(authority, "@", 0)
+        if at >= 0 then
+            authority = authority.substring(at + 1, len(authority))
+        end
+        colon = _findFrom(authority, ":", 0)
+        if colon >= 0 then
+            host = authority.substring(0, colon)
+            port = int(authority.substring(colon + 1, len(authority)))
+        else
+            host = authority
+        end
+    end
+    return {"scheme": scheme, "host": host, "port": port, "path": path, "query": query, "fragment": frag}
+end

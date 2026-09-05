@@ -133,7 +133,9 @@ void OpBxor(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, V
 void OpShl(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
     long long b = RequireIntOperand(frame.registers[in.b], "<<");
     long long c = RequireIntOperand(frame.registers[in.c], "<<");
-    frame.registers[in.a] = Value::Number(static_cast<double>(b << c));
+    unsigned long long count = static_cast<unsigned long long>(c) & 63;
+    unsigned long long shifted = static_cast<unsigned long long>(b) << count;
+    frame.registers[in.a] = Value::Number(static_cast<double>(static_cast<uint32_t>(shifted)));
 }
 
 void OpShr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {

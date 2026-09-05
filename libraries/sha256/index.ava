@@ -1,0 +1,157 @@
+g_ordTable = nil
+g_codes = nil
+g_k = nil
+hexdigits = "0123456789abcdef"
+
+func _table()
+    if g_ordTable != nil then
+        return g_ordTable
+    end
+    buf = mem_alloc(256)
+    mem_write_bytes(buf, 0, range(0, 256))
+    g_ordTable = mem_string(buf, 0, 256)
+    mem_free(buf)
+    return g_ordTable
+end
+
+func _codes()
+    if g_codes != nil then
+        return g_codes
+    end
+    t = _table()
+    m = {}
+    i = 0
+    while i < 256
+        m[t.substring(i, i + 1)] = i
+        i++
+    end
+    g_codes = m
+    return m
+end
+
+func _k()
+    if g_k != nil then
+        return g_k
+    end
+    g_k = [1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993, 2453635748, 2870763221, 3624381080, 310598401, 607225278, 1426881987, 1925078388, 2162078206, 2614888103, 3248222580, 3835390401, 4022224774, 264347078, 604807628, 770255983, 1249150122, 1555081692, 1996064986, 2554220882, 2821834349, 2952996808, 3210313671, 3336571891, 3584528711, 113926993, 338241895, 666307205, 773529912, 1294757372, 1396182291, 1695183700, 1986661051, 2177026350, 2456956037, 2730485921, 2820302411, 3259730800, 3345764771, 3516065817, 3600352804, 4094571909, 275423344, 430227734, 506948616, 659060556, 883997877, 958139571, 1322822218, 1537002063, 1747873779, 1955562222, 2024104815, 2227730452, 2361852424, 2428436474, 2756734187, 3204031479, 3329325298]
+    return g_k
+end
+
+func charCode(c)
+    return _codes()[c]
+end
+
+func byteVal(data, codes, ml, lengthStart, bi)
+    if bi < ml then
+        return codes[data.substring(bi, bi + 1)]
+    end
+    if bi == ml then
+        return 128
+    end
+    if bi >= lengthStart then
+        return (ml * 8 >> ((7 - (bi - lengthStart)) * 8)) & 255
+    end
+    return 0
+end
+
+func rotr(x, n)
+    return ((x >> n) | ((x & ((1 << n) - 1)) << (32 - n))) & 4294967295
+end
+
+func hash(data)
+    codes = _codes()
+    k = _k()
+    ml = len(data)
+    blockCount = (ml + 72) // 64
+    totalLen = blockCount * 64
+    lengthStart = totalLen - 8
+
+    h0 = 1779033703
+    h1 = 3144134277
+    h2 = 1013904242
+    h3 = 2773480762
+    h4 = 1359893119
+    h5 = 2600822924
+    h6 = 528734635
+    h7 = 1541459225
+
+    w = []
+    i = 0
+    while i < 64
+        w.append(0)
+        i++
+    end
+
+    block = 0
+    while block < blockCount
+        blkBase = block * 64
+        i = 0
+        while i < 16
+            byteIdx = blkBase + i * 4
+            w[i] = (byteVal(data, codes, ml, lengthStart, byteIdx) << 24) | (byteVal(data, codes, ml, lengthStart, byteIdx + 1) << 16) | (byteVal(data, codes, ml, lengthStart, byteIdx + 2) << 8) | byteVal(data, codes, ml, lengthStart, byteIdx + 3)
+            i++
+        end
+        i = 16
+        while i < 64
+            s0 = (rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3)) & 4294967295
+            s1 = (rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10)) & 4294967295
+            w[i] = (w[i - 16] + s0 + w[i - 7] + s1) & 4294967295
+            i++
+        end
+
+        a = h0
+        b = h1
+        c = h2
+        d = h3
+        e = h4
+        f = h5
+        g = h6
+        h = h7
+
+        i = 0
+        while i < 64
+            s1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) & 4294967295
+            ch = ((e & f) ^ (((~e) & 4294967295) & g)) & 4294967295
+            temp1 = (h + s1 + ch + k[i] + w[i]) & 4294967295
+            s0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) & 4294967295
+            maj = ((a & b) ^ (a & c) ^ (b & c)) & 4294967295
+            temp2 = (s0 + maj) & 4294967295
+
+            h = g
+            g = f
+            f = e
+            e = (d + temp1) & 4294967295
+            d = c
+            c = b
+            b = a
+            a = (temp1 + temp2) & 4294967295
+            i++
+        end
+
+        h0 = (h0 + a) & 4294967295
+        h1 = (h1 + b) & 4294967295
+        h2 = (h2 + c) & 4294967295
+        h3 = (h3 + d) & 4294967295
+        h4 = (h4 + e) & 4294967295
+        h5 = (h5 + f) & 4294967295
+        h6 = (h6 + g) & 4294967295
+        h7 = (h7 + h) & 4294967295
+
+        block++
+    end
+
+    hs = [h0, h1, h2, h3, h4, h5, h6, h7]
+    out = ""
+    i = 0
+    while i < 8
+        v = hs[i]
+        j = 0
+        while j < 8
+            nib = (v >> ((7 - j) * 4)) & 15
+            out = out + hexdigits.substring(nib, nib + 1)
+            j++
+        end
+        i++
+    end
+    return out
+end

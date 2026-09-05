@@ -1,0 +1,455 @@
+# test_complex_minidb.ava
+# Motor de base de datos en miniatura: tabla con columnas y filas (dicts),
+# CRUD con predicados, join, agregacion (sum/avg/min/max), un heap binario
+# de prioridad minima, y una lista enlazada. Combina clases, closures
+# como predicados, y funcionales con local correcto.
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+func listEquals(a, b)
+    if len(a) != len(b) then
+        return false
+    end
+    local i = 0
+    while i < len(a)
+        if a[i] != b[i] then
+            return false
+        end
+        i++
+    end
+    return true
+end
+
+# =====================================================================
+# 1. TABLA RELACIONAL con CRUD + predicados
+# =====================================================================
+class Table
+    func Table(columns)
+        this.columns = columns
+        this.rows = []
+        this.nextId = 1
+    end
+    func insert(row)
+        row["id"] = this.nextId
+        this.nextId = this.nextId + 1
+        this.rows.append(row)
+        return row["id"]
+    end
+    func all()
+        return this.rows
+    end
+    func count()
+        return len(this.rows)
+    end
+    func filterBy(pred)
+        local out = []
+        local i = 0
+        while i < len(this.rows)
+            if pred(this.rows[i]) then
+                out.append(this.rows[i])
+            end
+            i++
+        end
+        return out
+    end
+    func where(key, val)
+        local out = []
+        local i = 0
+        while i < len(this.rows)
+            if this.rows[i][key] == val then
+                out.append(this.rows[i])
+            end
+            i++
+        end
+        return out
+    end
+    func update(pred, key, val)
+        local i = 0
+        while i < len(this.rows)
+            if pred(this.rows[i]) then
+                this.rows[i][key] = val
+            end
+            i++
+        end
+    end
+    func delete(pred)
+        local out = []
+        local i = 0
+        while i < len(this.rows)
+            if not pred(this.rows[i]) then
+                out.append(this.rows[i])
+            end
+            i++
+        end
+        this.rows = out
+    end
+end
+
+empleados = Table([])
+empleados.insert({"nombre": "ana", "dept": "ventas", "sueldo": 3000})
+empleados.insert({"nombre": "bob", "dept": "ventas", "sueldo": 4000})
+empleados.insert({"nombre": "carl", "dept": "rrhh", "sueldo": 3500})
+empleados.insert({"nombre": "dana", "dept": "it", "sueldo": 5000})
+empleados.insert({"nombre": "eve", "dept": "it", "sueldo": 4500})
+
+check(1, 5, empleados.count())
+
+# select con predicado closure
+vendas = empleados.filterBy((r) => r["dept"] == "ventas")
+check(2, 2, len(vendas))
+check(3, "ana", vendas[0]["nombre"])
+
+# where por clave
+its = empleados.where("dept", "it")
+check(4, 2, len(its))
+check(5, "dana", its[0]["nombre"])
+
+# update por predicado
+empleados.update((r) => r["dept"] == "rrhh", "sueldo", 3800)
+check(6, 3800, empleados.where("nombre", "carl")[0]["sueldo"])
+
+# delete por predicado
+empleados.delete((r) => r["nombre"] == "eve")
+check(7, 4, empleados.count())
+check(8, false, len(empleados.where("nombre", "eve")) == 1)
+
+# ids autoincrementales
+check(9, 1, empleados.filterBy((r) => r["nombre"] == "ana")[0]["id"])
+check(10, 4, empleados.filterBy((r) => r["nombre"] == "dana")[0]["id"])
+
+# =====================================================================
+# 2. AGREGACION funcional sobre columnas
+# =====================================================================
+func sumCol(rows, key)
+    local acc = 0
+    local i = 0
+    while i < len(rows)
+        acc = acc + rows[i][key]
+        i++
+    end
+    return acc
+end
+
+func maxCol(rows, key)
+    local best = nil
+    local i = 0
+    while i < len(rows)
+        if best == nil or rows[i][key] > best then
+            best = rows[i][key]
+        end
+        i++
+    end
+    return best
+end
+
+func avgCol(rows, key)
+    return sumCol(rows, key) / len(rows)
+end
+
+func countBy(rows, key, val)
+    local c = 0
+    local i = 0
+    while i < len(rows)
+        if rows[i][key] == val then
+            c++
+        end
+        i++
+    end
+    return c
+end
+
+check(11, 15800, sumCol(empleados.all(), "sueldo"))
+check(12, 5000, maxCol(empleados.all(), "sueldo"))
+check(13, 3950, avgCol(empleados.all(), "sueldo"))
+check(14, 2, countBy(empleados.all(), "dept", "ventas"))
+
+# filtrar y luego agregar: sueldo promedio de ventas
+vendas2 = empleados.filterBy((r) => r["dept"] == "ventas")
+check(15, 3500, avgCol(vendas2, "sueldo"))
+
+# =====================================================================
+# 3. JOIN de dos tablas por clave
+# =====================================================================
+departamentos = Table([])
+departamentos.insert({"dname": "ventas", "piso": 1})
+departamentos.insert({"dname": "it", "piso": 3})
+departamentos.insert({"dname": "rrhh", "piso": 2})
+
+func join(tablaA, keyA, tablaB, keyB)
+    local out = []
+    local rowsB = tablaB.all()
+    local rowsA = tablaA.all()
+    local i = 0
+    while i < len(rowsA)
+        local j = 0
+        while j < len(rowsB)
+            if rowsA[i][keyA] == rowsB[j][keyB] then
+                local merged = {"emp": rowsA[i]["nombre"], "sueldo": rowsA[i]["sueldo"], "piso": rowsB[j]["piso"]}
+                out.append(merged)
+            end
+            j++
+        end
+        i++
+    end
+    return out
+end
+
+joined = join(empleados, "dept", departamentos, "dname")
+check(16, 4, len(joined))
+check(17, 2, countBy(joined, "piso", 1))
+check(18, 1, countBy(joined, "piso", 3))
+check(19, 1, countBy(joined, "piso", 2))
+
+# sumar sueldos por piso con join + agregacion
+func filterJoined(rows, piso)
+    local out = []
+    local i = 0
+    while i < len(rows)
+        if rows[i]["piso"] == piso then
+            out.append(rows[i])
+        end
+        i++
+    end
+    return out
+end
+
+check(20, 7000, sumCol(filterJoined(joined, 1), "sueldo"))
+
+# =====================================================================
+# 4. HEAP BINARIO MIN (cola de prioridad)
+# =====================================================================
+class Heap
+    func Heap()
+        this.data = []
+    end
+    func size()
+        return len(this.data)
+    end
+    func peek()
+        if len(this.data) == 0 then
+            return nil
+        end
+        return this.data[0]
+    end
+    func push(v)
+        this.data.append(v)
+        this.bubbleUp(len(this.data) - 1)
+    end
+    func bubbleUp(i)
+        while i > 0
+            local parent = (i - 1) / 2
+            local pi = int(parent)
+            if this.data[i] < this.data[pi] then
+                local tmp = this.data[i]
+                this.data[i] = this.data[pi]
+                this.data[pi] = tmp
+                i = pi
+            else
+                break
+            end
+        end
+    end
+    func bubbleDown(i)
+        local n = len(this.data)
+        while true
+            local left = 2 * i + 1
+            local right = 2 * i + 2
+            local smallest = i
+            if left < n and this.data[left] < this.data[smallest] then
+                smallest = left
+            end
+            if right < n and this.data[right] < this.data[smallest] then
+                smallest = right
+            end
+            if smallest == i then
+                break
+            end
+            local tmp = this.data[i]
+            this.data[i] = this.data[smallest]
+            this.data[smallest] = tmp
+            i = smallest
+        end
+    end
+    func pop()
+        if len(this.data) == 0 then
+            return nil
+        end
+        local top = this.data[0]
+        local last = this.data[len(this.data) - 1]
+        this.data = this.data[0:len(this.data) - 1]
+        if len(this.data) > 0 then
+            this.data[0] = last
+            this.bubbleDown(0)
+        end
+        return top
+    end
+end
+
+h = Heap()
+vals = [5, 3, 8, 1, 9, 2, 7, 4, 6, 0]
+local vi = 0
+while vi < len(vals)
+    h.push(vals[vi])
+    vi++
+end
+check(21, 10, h.size())
+check(22, 0, h.peek())
+
+func heapSorted(hp)
+    local out = []
+    while hp.size() > 0
+        out.append(hp.pop())
+    end
+    return out
+end
+
+sorted = heapSorted(h)
+check(23, true, listEquals(sorted, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]))
+check(24, nil, h.pop())
+
+# usar heap como cola de prioridad para Dijkstra-lite de 5 nodos
+pq = Heap()
+pq.push(7)
+pq.push(2)
+pq.push(11)
+check(25, 2, pq.peek())
+check(26, 2, pq.pop())
+check(27, 7, pq.pop())
+check(28, 11, pq.peek())
+
+# =====================================================================
+# 5. LISTA ENLAZADA (nodos + clases)
+# =====================================================================
+class Node
+    func Node(v)
+        this.val = v
+        this.next = nil
+    end
+end
+
+class LinkedList
+    func LinkedList()
+        this.head = nil
+    end
+    func add(v)
+        local n = Node(v)
+        if this.head == nil then
+            this.head = n
+            return
+        end
+        local cur = this.head
+        while cur.next != nil
+            cur = cur.next
+        end
+        cur.next = n
+    end
+    func toList()
+        local out = []
+        local cur = this.head
+        while cur != nil
+            out.append(cur.val)
+            cur = cur.next
+        end
+        return out
+    end
+    func size()
+        local c = 0
+        local cur = this.head
+        while cur != nil
+            c++
+            cur = cur.next
+        end
+        return c
+    end
+    func contains(v)
+        local cur = this.head
+        while cur != nil
+            if cur.val == v then
+                return true
+            end
+            cur = cur.next
+        end
+        return false
+    end
+    func remove(v)
+        if this.head == nil then
+            return false
+        end
+        if this.head.val == v then
+            this.head = this.head.next
+            return true
+        end
+        local prev = this.head
+        local cur = this.head.next
+        while cur != nil
+            if cur.val == v then
+                prev.next = cur.next
+                return true
+            end
+            prev = cur
+            cur = cur.next
+        end
+        return false
+    end
+end
+
+ll = LinkedList()
+ll.add(10)
+ll.add(20)
+ll.add(30)
+ll.add(40)
+check(29, 4, ll.size())
+check(30, true, listEquals(ll.toList(), [10, 20, 30, 40]))
+check(31, true, ll.contains(20))
+check(32, false, ll.contains(99))
+check(33, true, ll.remove(20))
+check(34, false, ll.contains(20))
+check(35, 3, ll.size())
+check(36, true, listEquals(ll.toList(), [10, 30, 40]))
+ll.remove(10)
+check(37, true, listEquals(ll.toList(), [30, 40]))
+check(38, false, ll.remove(999))
+check(39, 2, ll.size())
+
+# =====================================================================
+# 6. COMPOSICION FINAL: heap de nodos de lista enlazada (objetos como claves)
+# =====================================================================
+lh = Heap()
+lh.push(3)
+lh.push(1)
+lh.push(5)
+lh.push(2)
+waypoints = ["w3", "w1", "w5", "w2"]
+order = []
+while lh.size() > 0
+    order.append(lh.pop())
+end
+
+func lhPeekAt(waypoints, order, idx)
+    local target = order[idx]
+    local wi = 0
+    while wi < len(waypoints)
+        if waypoints[wi] == "w" + str(target) then
+            return target
+        end
+        wi++
+    end
+    return target
+end
+
+orderedWaypoints = []
+local oi = 0
+while oi < len(waypoints)
+    orderedWaypoints.append("w" + str(lhPeekAt(waypoints, order, oi)))
+    oi++
+end
+
+check(40, true, listEquals(order, [1, 2, 3, 5]))
+
+print("=== test_complex_minidb.ava terminado ===")

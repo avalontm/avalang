@@ -1,0 +1,27 @@
+import sha256
+import hex
+
+func _padKey(key)
+    if len(key) > 64 then
+        key = decode(hash(key))
+    end
+    ipad = ""
+    opad = ""
+    i = 0
+    while i < 64
+        v = 0
+        if i < len(key) then
+            v = charCode(key[i])
+        end
+        ipad = ipad + char(v ^ 54)
+        opad = opad + char(v ^ 92)
+        i++
+    end
+    return [ipad, opad]
+end
+
+func sha256Hex(key, msg)
+    pads = _padKey(key)
+    inner = decode(hash(pads[0] + msg))
+    return hash(pads[1] + inner)
+end

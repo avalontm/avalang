@@ -1,0 +1,206 @@
+# test_complex_async_tasks.ava
+# Combinaciones avanzadas de async func + await: pipelines de tareas,
+# cadenas multi-nivel, tareas con estado compartido, y coroutines
+# async anidadas.
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+resultados = {}
+
+# =====================================================================
+# 1. PIPELINE DE TAREAS ASYNC (3 niveles de await)
+#    entrada = x
+#    etapa1: x + 1
+#    etapa2: (x + 1) * 2
+#    etapa3: ((x+1)*2) - 3
+# =====================================================================
+async func etapa1(x)
+    return x + 1
+end
+
+async func etapa2(x)
+    v = await etapa1(x)
+    return v * 2
+end
+
+async func etapa3(x)
+    v = await etapa2(x)
+    return v - 3
+end
+
+async func pipeline(x)
+    pipeline_val = await etapa3(x)
+    resultados["pipeline"] = pipeline_val
+end
+
+pipeline(10)
+check(1, 19, resultados["pipeline"])   # (10+1)*2-3 = 22-3 = 19
+
+# =====================================================================
+# 2. CADENA DE AWAIT SOBRE LISTA (operaciones en paralelo encadenadas)
+# =====================================================================
+async func adder(a, b)
+    return a + b
+end
+
+async func sumPairs(nums)
+    if len(nums) == 1 then
+        resultados["sumPairs"] = nums[0]
+        return
+    end
+    out = []
+    i = 0
+    while i + 1 < len(nums)
+        r = await adder(nums[i], nums[i + 1])
+        out.append(r)
+        i = i + 2
+    end
+    # si quedo uno solo, pasarlo
+    if i < len(nums) then
+        out.append(nums[i])
+    end
+    await sumPairs(out)
+end
+
+sumPairs([1, 2, 3, 4, 5, 6, 7, 8])
+# ronda1: [3, 7, 11, 15] -> ronda2: [10, 26] -> ronda3: [36]
+check(2, 36, resultados["sumPairs"])
+
+# =====================================================================
+# 3. TAREA RECHAZADA ATRAPADA DENTRO DE OTRA ASYNC (try/catch async)
+# =====================================================================
+async func risky(d)
+    if d == 0 then
+        raise "div0"
+    end
+    return 100 / d
+end
+
+async func safeDivide(a, b)
+    try
+        r = await risky(b)
+        resultados["safeDivide"] = a * r
+    catch (err)
+        resultados["safeDivide"] = -1
+    end
+end
+
+safeDivide(2, 10)
+check(3, 20, resultados["safeDivide"])   # 2 * (100/10)
+
+safeDivide(0, 0)
+check(4, -1, resultados["safeDivide"])   # error atrapado
+
+# =====================================================================
+# 4. ACUMULADOR ASYNC CON ESTADO VIA UPVALUES (contador de tareas)
+# =====================================================================
+async func makeAsyncAccumulator(seed)
+    total = seed
+    async func addOne(amount)
+        total = total + amount
+        return total
+    end
+    r1 = await addOne(5)
+    r2 = await addOne(10)
+    resultados["acc"] = total
+end
+
+makeAsyncAccumulator(100)
+check(5, 115, resultados["acc"])   # 100 + 5 + 10
+
+# =====================================================================
+# 5. MULTIPLES COROUTINES ASYNC INDEPENDIENTES NO SE PISAN
+# =====================================================================
+async func counter(label, hits)
+    n = 0
+    async func bump()
+        n = n + 1
+        return n
+    end
+    i = 0
+    while i < hits
+        await bump()
+        i++
+    end
+    resultados[label] = n
+end
+
+counter("cA", 3)
+counter("cB", 5)
+check(6, 3, resultados["cA"])
+check(7, 5, resultados["cB"])
+
+# =====================================================================
+# 6. FIBONACCI ASYNC RECURSIVO (await recursivo profundo)
+# =====================================================================
+async func fibAsync(n)
+    if n <= 1 then
+        return n
+    end
+    a = await fibAsync(n - 1)
+    b = await fibAsync(n - 2)
+    return a + b
+end
+
+async func fibWrapper(n)
+    v = await fibAsync(n)
+    resultados["fib"] = v
+end
+
+fibWrapper(15)
+check(8, 610, resultados["fib"])
+
+# =====================================================================
+# 7. TAREA QUE DEVUELVE TASK DE TASK (no anidar, solo verificar)
+# =====================================================================
+async func returnsTask()
+    return etapa1(100)   # un Task, no el valor
+end
+
+async func consumesTask()
+    t = returnsTask()
+    resultados["nestedTask"] = str(t)
+end
+
+consumesTask()
+# etapa1(100) devuelve Task que dentro producira 101; no lo awaitemos
+check(9, true, resultados["nestedTask"] != "")
+check(10, true, resultados["nestedTask"].contains("task") or resultados["nestedTask"].contains("101"))
+
+# =====================================================================
+# 8. MANEJO DE ERRORES EN CADENA (raise propagado por awaits, atrapado)
+# =====================================================================
+async func levelA(x)
+    if x < 0 then
+        raise "negativo"
+    end
+    return x * 2
+end
+
+async func levelB(x)
+    v = await levelA(x)
+    return v + 1
+end
+
+async func levelC(x)
+    try
+        v = await levelB(x)
+        resultados["levelC"] = v
+    catch (err)
+        resultados["levelC"] = "error:" + err
+    end
+end
+
+levelC(5)
+check(11, 11, resultados["levelC"])   # (5*2)+1 = 11
+
+levelC(-1)
+check(12, true, resultados["levelC"] == "error:negativo")
+
+print("=== test_complex_async_tasks.ava terminado ===")

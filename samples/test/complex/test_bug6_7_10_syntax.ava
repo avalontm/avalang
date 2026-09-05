@@ -1,0 +1,91 @@
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+func bsearch(arr, val)
+    lo = 0
+    hi = len(arr) - 1
+    while lo <= hi
+        mid = (lo + hi) // 2
+        if arr[mid] == val then return true end
+        if arr[mid] < val then lo = mid + 1 end
+        if arr[mid] > val then hi = mid - 1 end
+    end
+    return false
+end
+
+check(1, true, bsearch([1, 3, 5, 7, 9], 7))
+check(2, false, bsearch([1, 3, 5, 7, 9], 4))
+
+x = 10
+if x > 5 then y = "grande" else y = "chico" end
+check(3, "grande", y)
+
+if x == 10 then r = 1 elif x == 20 then r = 2 else r = 3 end
+check(4, 1, r)
+
+i = 0
+while i < 5
+    if i == 3 then break end
+    i = i + 1
+end
+check(5, 3, i)
+
+grafo = {
+    "A": [1, 2],
+    "B": [3, 4],
+    "C": [5]
+}
+check(6, 2, len(grafo["A"]))
+check(7, 5, grafo["C"][0])
+
+config = {
+    "host": "localhost",
+    "port": 8080,
+}
+check(8, "localhost", config["host"])
+
+lista = [
+    10,
+    20,
+    30,
+]
+check(9, 30, lista[2])
+check(10, 3, len(lista))
+
+func makeNum(n)
+    return {"n": n}
+end
+
+func makeAdd(a, b)
+    return {"op": "+", "l": a, "r": b}
+end
+
+func makeMul(a, b)
+    return {"op": "*", "l": a, "r": b}
+end
+
+ast = makeAdd(
+    makeMul(makeNum(2), makeNum(3)),
+    makeNum(4)
+)
+check(11, "+", ast["op"])
+check(12, "*", ast["l"]["op"])
+
+total = (
+    1 +
+    2 +
+    3
+)
+check(13, 6, total)
+
+r2 = makeNum(
+    42
+)
+check(14, 42, r2["n"])
+
+print("=== test_bug6_7_10_syntax.ava terminado ===")

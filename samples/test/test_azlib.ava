@@ -1,0 +1,96 @@
+﻿
+import azlib
+
+z = Zlib()
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+g_n = 0
+g_fails = 0
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+v = z.version()
+print("  zlib version: " + v)
+mark(check(g_n + 1, true, v.contains("1.3")))
+
+mark(check(g_n + 1, 113, z.compressBound(100)))
+mark(check(g_n + 1, 1013, z.compressBound(1000)))
+
+text = "hello world, this is azlib. "  # 30 chars
+text = text + text + text + text       # 120 chars, repetitivo
+c = z.compress(text, 6)
+print("  compress('" + text.substring(0, 20) + "...') -> " + str(len(c)) + " bytes")
+mark(check(g_n + 1, true, len(c) < len(text) / 2))
+mark(check(g_n + 1, text, z.uncompress(c, len(text))))
+
+c2 = z.compress("hello world", 6)
+mark(check(g_n + 1, 19, len(c2)))
+mark(check(g_n + 1, 2773027033, z.crc32(c2)))
+mark(check(g_n + 1, 1609566110, z.adler32(c2)))
+mark(check(g_n + 1, "hello world", z.uncompress(c2, 11)))
+
+binData = "azaÃ©" + str(20)
+cb = z.compress(binData, 9)
+mark(check(g_n + 1, binData, z.uncompress(cb, len(binData))))
+
+ce = z.compress("", 6)
+mark(check(g_n + 1, "", z.uncompress(ce, 16)))
+
+c0 = z.compress("abcabcabc", 0)
+mark(check(g_n + 1, "abcabcabc", z.uncompress(c0, 9)))
+
+mark(check(g_n + 1, text, z.uncompress(z.compress(text, 1), len(text))))
+mark(check(g_n + 1, text, z.uncompress(z.compress(text, 9), len(text))))
+
+mark(check(g_n + 1, 907060870, z.crc32("hello")))
+mark(check(g_n + 1, 103547413, z.adler32("hello")))
+mark(check(g_n + 1, 3421780262, z.crc32("123456789")))
+mark(check(g_n + 1, 152961502, z.adler32("123456789")))
+
+mark(check(g_n + 1, z.crc32("hello"), z.crc32("llo", z.crc32("he"))))
+mark(check(g_n + 1, z.adler32("hello"), z.adler32("llo", z.adler32("he"))))
+
+caught = false
+errText = ""
+errType = ""
+try
+    z.uncompress("esto no es un stream zlib", 64)
+catch (errZ)
+    caught = true
+    errText = str(errZ)
+    errType = type(errZ)
+    print("  (uncompress con basura lanza: " + errText + ")")
+end
+mark(check(g_n + 1, true, caught))
+mark(check(g_n + 1, true, errText.contains("uncompress fallo")))
+mark(check(g_n + 1, "string", errType))
+
+caught2 = false
+try
+    z.uncompress(c, 10)
+catch (errZ2)
+    caught2 = true
+end
+mark(check(g_n + 1, true, caught2))
+
+mark(check(g_n + 1, 0, mem_leak_count()))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST AZLIB FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST AZLIB: TODO OK")

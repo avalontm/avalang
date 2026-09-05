@@ -1,0 +1,106 @@
+func parse(text)
+    rows = []
+    if len(text) == 0 then
+        return rows
+    end
+    row = []
+    field = ""
+    inQuotes = false
+    hasData = false
+    i = 0
+    n = len(text)
+    while i < n
+        c = text[i]
+        if inQuotes then
+            if c == "\"" then
+                if i + 1 < n and text[i + 1] == "\"" then
+                    field = field + "\""
+                    i++
+                else
+                    inQuotes = false
+                end
+            else
+                field = field + c
+            end
+        else
+            if c == "\"" then
+                inQuotes = true
+            elif c == "," then
+                row.append(field)
+                field = ""
+                hasData = true
+            elif c == "\r" then
+            elif c == "\n" then
+                row.append(field)
+                rows.append(row)
+                row = []
+                field = ""
+                hasData = false
+            else
+                field = field + c
+            end
+        end
+        i++
+    end
+    if hasData or len(field) > 0 or len(row) > 0 then
+        row.append(field)
+        rows.append(row)
+    end
+    return rows
+end
+
+func generate(rows)
+    lines = ""
+    r = 0
+    while r < len(rows)
+        if r > 0 then
+            lines = lines + "\r\n"
+        end
+        row = rows[r]
+        i = 0
+        while i < len(row)
+            if i > 0 then
+                lines = lines + ","
+            end
+            f = row[i]
+            needQuote = false
+            if f.indexOf(",") >= 0 or f.indexOf("\"") >= 0 or f.indexOf("\n") >= 0 or f.indexOf("\r") >= 0 then
+                needQuote = true
+            end
+            if needQuote then
+                lines = lines + "\"" + f.replace("\"", "\"\"") + "\""
+            else
+                lines = lines + f
+            end
+            i++
+        end
+        r++
+    end
+    return lines
+end
+
+func parseDicts(text)
+    rows = parse(text)
+    out = []
+    if len(rows) < 2 then
+        return out
+    end
+    header = rows[0]
+    r = 1
+    while r < len(rows)
+        row = rows[r]
+        d = {}
+        i = 0
+        while i < len(header)
+            v = ""
+            if i < len(row) then
+                v = row[i]
+            end
+            d[header[i]] = v
+            i++
+        end
+        out.append(d)
+        r++
+    end
+    return out
+end

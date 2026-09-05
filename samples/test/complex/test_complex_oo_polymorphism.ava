@@ -1,0 +1,370 @@
+# test_complex_oo_polymorphism.ava
+# Suite completa de OO: herencia de 4 niveles, dispatch polimorfico,
+# composicion, this en closures, static/private, mutacion de objetos
+# por referencia, y encadenamiento de metodos. Usa local para todos los
+# locales de funciones helper (semantica correcta del lenguaje).
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+func listEquals(a, b)
+    if len(a) != len(b) then
+        return false
+    end
+    local i = 0
+    while i < len(a)
+        if a[i] != b[i] then
+            return false
+        end
+        i++
+    end
+    return true
+end
+
+# =====================================================================
+# 1. JERARQUIA GEO: Shape -> Rect -> Square, con dispatch polimorfico
+# =====================================================================
+class Shape
+    static totalCreated = 0
+    func Shape(name)
+        this.name = name
+        Shape.totalCreated = Shape.totalCreated + 1
+    end
+    func area()
+        return 0
+    end
+    func describe()
+        return this.name + ":area=" + str(this.area())
+    end
+end
+
+class Rect : Shape
+    func Rect(w, h)
+        base.__init__("rect")
+        this.w = w
+        this.h = h
+    end
+    func area()
+        return this.w * this.h
+    end
+end
+
+class Square : Rect
+    func Square(s)
+        base.__init__(s, s)
+        this.name = "square"
+    end
+    func area()
+        return this.w * this.w
+    end
+end
+
+class Cube : Square
+    func Cube(s)
+        base.__init__(s)
+        this.name = "cube"
+    end
+    func area()
+        return 6 * this.w * this.w
+    end
+    func volume()
+        return this.w * this.w * this.w
+    end
+end
+
+r = Rect(4, 5)
+s = Square(6)
+c = Cube(3)
+check(1, 20, r.area())
+check(2, 36, s.area())
+check(3, 54, c.area())
+check(4, 27, c.volume())
+check(5, "rect:area=20", r.describe())
+check(6, "square:area=36", s.describe())
+check(7, "cube:area=54", c.describe())
+
+# static contador: 3 instancias creadas
+check(8, 3, Shape.totalCreated)
+
+# dispatch polimorfico a traves de una lista heterogenea
+formas = [r, s, c]
+areas = []
+local j = 0
+while j < len(formas)
+    areas.append(formas[j].area())
+    j++
+end
+check(9, true, listEquals(areas, [20, 36, 54]))
+
+# =====================================================================
+# 2. COMPOSICION: Point + Line + Polygon (objetos dentro de objetos)
+# =====================================================================
+class Point
+    func Point(x, y)
+        this.x = x
+        this.y = y
+    end
+    func distTo(o)
+        return sqrt((this.x - o.x) * (this.x - o.x) + (this.y - o.y) * (this.y - o.y))
+    end
+end
+
+class Line
+    func Line(a, b)
+        this.a = a
+        this.b = b
+    end
+    func length()
+        return this.a.distTo(this.b)
+    end
+    func midpoint()
+        local mx = (this.a.x + this.b.x) / 2
+        local my = (this.a.y + this.b.y) / 2
+        return Point(mx, my)
+    end
+end
+
+p1 = Point(0, 0)
+p2 = Point(3, 4)
+line = Line(p1, p2)
+check(10, 5, line.length())   # 3-4-5
+mid = line.midpoint()
+check(11, 1.5, mid.x)
+check(12, 2, mid.y)
+
+# mutacion por referencia: mover uno de los puntos y recalcular
+p2.x = 6
+p2.y = 8
+check(13, 10, line.length())   # 6-8-10 (misma referencia)
+
+# =====================================================================
+# 3. THIS EN CLOSURES: contador de eventos dentro de un objeto
+# =====================================================================
+class EventCounter
+    func EventCounter()
+        this.count = 0
+        this.handlers = []
+    end
+    func onEvent()
+        this.count = this.count + 1
+    end
+    func addHandler(fn)
+        this.handlers.append(fn)
+    end
+    func fireAll()
+        local k = 0
+        while k < len(this.handlers)
+            this.handlers[k]()
+            k++
+        end
+    end
+    func getCount()
+        return this.count
+    end
+end
+
+ec = EventCounter()
+func incA()
+    ec.onEvent()
+end
+func incB()
+    ec.onEvent()
+end
+ec.addHandler(incA)
+ec.addHandler(incB)
+ec.addHandler(incA)
+ec.fireAll()
+check(14, 3, ec.getCount())
+ec.fireAll()
+check(15, 6, ec.getCount())
+
+# =====================================================================
+# 4. FLUENT INTERFACE (metodos que devuelven this, encadenados)
+# =====================================================================
+class StringBuilder
+    func StringBuilder()
+        this.parts = []
+    end
+    func add(t)
+        this.parts.append(t)
+        return this
+    end
+    func up(t)
+        this.parts.append(str(t))
+        return this
+    end
+    func build()
+        local res = ""
+        local i = 0
+        while i < len(this.parts)
+            res = res + this.parts[i]
+            i++
+        end
+        return res
+    end
+end
+
+sb = StringBuilder()
+out = sb.add("a").up("b").add("c").build()
+check(16, "abc", out)
+
+# =====================================================================
+# 5. METODOS DE INSTANCIA + ESTATICOS PUROS + FACTORIA DE MODULO
+# =====================================================================
+class Vector
+    static count = 0
+    func Vector(x, y)
+        this.x = x
+        this.y = y
+        Vector.count = Vector.count + 1
+    end
+    func add(o)
+        return makeVec(this.x + o.x, this.y + o.y)
+    end
+    func scale(k)
+        return makeVec(this.x * k, this.y * k)
+    end
+    func mag()
+        return sqrt(this.x * this.x + this.y * this.y)
+    end
+    static func dot(a, b)
+        return a.x * b.x + a.y * b.y
+    end
+end
+
+func makeVec(x, y)
+    return Vector(x, y)
+end
+
+v0 = makeVec(0, 0)
+check(17, 0, v0.mag())
+vu = makeVec(1, 0)
+check(18, 1, vu.mag())
+vsum = v0.add(vu)
+check(19, 1, vsum.x)
+check(20, 0, vsum.y)
+v2 = Vector(3, 4).add(Vector(1, 1))
+check(21, sqrt(41), v2.mag())   # (4,5) -> sqrt(41)
+vd = Vector.dot(makeVec(2, 0), makeVec(0, 3))
+check(22, 0, vd)
+check(23, 12, Vector.dot(makeVec(2, 2), makeVec(3, 3)))
+vs = makeVec(2, 3).scale(3)
+check(24, 6, vs.x)
+check(25, 9, vs.y)
+
+# =====================================================================
+# 6. GRAFO CON CLASES: nodos + aristas, DFS con pilas locales
+# =====================================================================
+class Graph
+    func Graph()
+        this.nodes = {}
+    end
+    func addNode(name)
+        this.nodes[name] = []
+    end
+    func addEdge(a, b)
+        this.nodes[a].append(b)
+    end
+    func nodesList()
+        return this.nodes.keys()
+    end
+    func neighbors(name)
+        return this.nodes[name]
+    end
+end
+
+gr = Graph()
+gr.addNode("A")
+gr.addNode("B")
+gr.addNode("C")
+gr.addNode("D")
+gr.addEdge("A", "B")
+gr.addEdge("A", "C")
+gr.addEdge("B", "D")
+gr.addEdge("C", "D")
+
+# DFS con stack explicito (lista usada como pila), locals apropiados
+func graphHasPath(graph, start, goal, order)
+    local stack = [start]
+    local seen = {}
+    while len(stack) > 0
+        local cur = stack[len(stack) - 1]
+        stack = stack[0:len(stack) - 1]
+        if seen.containsKey(cur) then
+            continue
+        end
+        seen[cur] = true
+        order.append(cur)
+        local ns = graph.neighbors(cur)
+        local k = 0
+        while k < len(ns)
+            stack.append(ns[k])
+            k++
+        end
+    end
+    return seen.containsKey(goal)
+end
+
+func seenContains(lst, v)
+    local i = 0
+    while i < len(lst)
+        if lst[i] == v then
+            return true
+        end
+        i++
+    end
+    return false
+end
+
+orden1 = []
+res1 = graphHasPath(gr, "A", "D", orden1)
+check(26, true, res1)
+check(27, true, seenContains(orden1, "A") and seenContains(orden1, "D"))
+
+orden2 = []
+check(28, true, graphHasPath(gr, "A", "B", orden2))
+check(29, false, graphHasPath(gr, "B", "Z", []))
+
+# =====================================================================
+# 7. CLASE CON ESTADO Y REFERENCIAS CRUZADAS (grafo dirigido con padres)
+# =====================================================================
+class TreeNode
+    func TreeNode(val)
+        this.val = val
+        this.parent = nil
+        this.children = []
+    end
+    func addChild(child)
+        child.parent = this
+        this.children.append(child)
+    end
+    func depth()
+        local d = 0
+        local cur = this
+        while cur.parent != nil
+            cur = cur.parent
+            d++
+        end
+        return d
+    end
+end
+
+root = TreeNode(1)
+childA = TreeNode(2)
+childB = TreeNode(3)
+root.addChild(childA)
+root.addChild(childB)
+grand = TreeNode(4)
+childA.addChild(grand)
+check(30, 0, root.depth())
+check(31, 1, childA.depth())
+check(32, 1, childB.depth())
+check(33, 2, grand.depth())
+check(34, 2, len(root.children))
+
+print("=== test_complex_oo_polymorphism.ava terminado ===")

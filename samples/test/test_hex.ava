@@ -1,0 +1,58 @@
+import hex
+
+g_n = 0
+g_fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+func binString(bytes)
+    buf = mem_alloc(len(bytes))
+    mem_write_bytes(buf, 0, bytes)
+    s = mem_string(buf, 0, len(bytes))
+    mem_free(buf)
+    return s
+end
+
+print("== Vectores estandar ==")
+
+mark(check(g_n + 1, "", encode("")))
+mark(check(g_n + 1, "", decode("")))
+mark(check(g_n + 1, "68656c6c6f", encode("hello")))
+mark(check(g_n + 1, "hello", decode("68656c6c6f")))
+mark(check(g_n + 1, "Hello", decode("48656C6C6F")))
+mark(check(g_n + 1, "48454c4c4f", encode("HELLO")))
+mark(check(g_n + 1, "000f10ff", encode(binString([0, 15, 16, 255]))))
+mark(check(g_n + 1, binString([0, 15, 16, 255]), decode("000f10ff")))
+mark(check(g_n + 1, 10, len(encode("hello"))))
+mark(check(g_n + 1, nil, decode("abc")))
+mark(check(g_n + 1, nil, decode("0g")))
+
+print("== Binario / full range ==")
+
+full = binString(range(0, 256))
+mark(check(g_n + 1, 512, len(encode(full))))
+mark(check(g_n + 1, full, decode(encode(full))))
+mark(check(g_n + 1, "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff", encode(full)))
+
+mark(check(g_n + 1, 0, mem_leak_count()))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST HEX FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST HEX: TODO OK")

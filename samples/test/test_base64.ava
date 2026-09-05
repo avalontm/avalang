@@ -1,0 +1,71 @@
+import base64
+
+g_n = 0
+g_fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+func binString(bytes)
+    buf = mem_alloc(len(bytes))
+    mem_write_bytes(buf, 0, bytes)
+    s = mem_string(buf, 0, len(bytes))
+    mem_free(buf)
+    return s
+end
+
+print("== Vectores estandar ==")
+
+mark(check(g_n + 1, "", encode("")))
+mark(check(g_n + 1, "", decode("")))
+mark(check(g_n + 1, "Zg==", encode("f")))
+mark(check(g_n + 1, "f", decode("Zg==")))
+mark(check(g_n + 1, "Zm8=", encode("fo")))
+mark(check(g_n + 1, "fo", decode("Zm8=")))
+mark(check(g_n + 1, "Zm9v", encode("foo")))
+mark(check(g_n + 1, "foo", decode("Zm9v")))
+mark(check(g_n + 1, "Zm9vYg==", encode("foob")))
+mark(check(g_n + 1, "foob", decode("Zm9vYg==")))
+mark(check(g_n + 1, "Zm9vYmE=", encode("fooba")))
+mark(check(g_n + 1, "fooba", decode("Zm9vYmE=")))
+mark(check(g_n + 1, "Zm9vYmFy", encode("foobar")))
+mark(check(g_n + 1, "foobar", decode("Zm9vYmFy")))
+mark(check(g_n + 1, "TWFu", encode("Man")))
+mark(check(g_n + 1, "Man", decode("TWFu")))
+mark(check(g_n + 1, "SGVsbG8sIHdvcmxkIQ==", encode("Hello, world!")))
+mark(check(g_n + 1, "Hello, world!", decode("SGVsbG8sIHdvcmxkIQ==")))
+mark(check(g_n + 1, "SGVsbG8sIHdvcmxkIQ==", encode(decode("SGVsbG8sIHdvcmxkIQ=="))))
+mark(check(g_n + 1, "f", decode("Zg")))
+
+print("== Binario ==")
+
+part = binString([0, 1, 127, 128, 254, 255, 65, 66, 10, 0, 13])
+mark(check(g_n + 1, part, decode(encode(part))))
+mark(check(g_n + 1, true, len(encode(part)) == 16))
+
+full = binString(range(0, 256))
+mark(check(g_n + 1, 344, len(encode(full))))
+mark(check(g_n + 1, full, decode(encode(full))))
+mark(check(g_n + 1, "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w==", encode(full)))
+
+mark(check(g_n + 1, 0, mem_leak_count()))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST BASE64 FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST BASE64: TODO OK")

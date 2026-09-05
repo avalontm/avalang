@@ -1,0 +1,259 @@
+# test_complex_integration.ava
+# Suite de integracion: combina async/await, closures con upvalues,
+# manejo de errores multi-nivel, recursion + memoizacion, notacion
+# cientifica, select/case, 'to'/'step' como identificadores, y shadowing
+# de variables con 'local'. Verifica que los fixes recientes conviven.
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+func listEquals(a, b)
+    if len(a) != len(b) then
+        return false
+    end
+    local i = 0
+    while i < len(a)
+        if a[i] != b[i] then
+            return false
+        end
+        i++
+    end
+    return true
+end
+
+resultados = {}
+
+# =====================================================================
+# 1. NOTACION CIENTIFICA en operaciones mixtas
+# =====================================================================
+check(1, 1000, 1e3)
+check(2, 0.025, 2.5e-2)
+check(3, 150, 1.5E2)
+check(4, true, 1e3 == 1000)
+check(5, 2500, 2.5e3)
+check(6, 12.5, 1.25e1)
+check(7, true, 5e-1 == 0.5)
+check(8, 200, 2e2)
+
+func sciScale(x)
+    return x * 1e3
+end
+check(9, 5000, sciScale(5))
+check(10, true, sciScale(0.25) == 250)
+check(11, 30000, 3e1 * 1e3)
+
+# =====================================================================
+# 2. 'to' y 'step' como identificadores + for con to/step
+# =====================================================================
+to = 5
+step = 3
+check(12, 5, to)
+check(13, 3, step)
+
+acum = 0
+for i = 1 to 4 then
+    acum = acum + i
+end
+check(14, 10, acum)
+
+acum2 = 0
+for i = 1 to 9 step 2 then
+    acum2 = acum2 + i
+end
+check(15, 25, acum2)
+
+func rangeLen(a, b, step)
+    local c = 0
+    local i = a
+    while i <= b
+        c++
+        i = i + step
+    end
+    return c
+end
+check(16, 4, rangeLen(1, 10, 3))
+
+# =====================================================================
+# 3. SELECT/CASE con rangos y valores exactos
+# =====================================================================
+func classify(v)
+    if v < 0 then
+        return "neg"
+    end
+    select v
+        case 0 to 9 then
+            return "unidad"
+        case 10 to 99 then
+            return "decena"
+        case 100 to 999 then
+            return "centena"
+        else
+            return "grande"
+    end
+end
+
+check(17, "neg", classify(-5))
+check(18, "unidad", classify(3))
+check(19, "decena", classify(42))
+check(20, "centena", classify(700))
+check(21, "grande", classify(5000))
+check(22, "unidad", classify(0))
+
+# =====================================================================
+# 4. LOCAL SHADOWING: local dentro de la funcion vs modulo
+# =====================================================================
+g = 1
+func withLocal()
+    local g = 99
+    return g
+end
+func touchesModule()
+    g = 42
+    return g
+end
+check(23, 99, withLocal())
+check(24, 1, g)
+touchesModule()
+check(25, 42, g)
+
+# local dentro del cuerpo de un bucle, en una funcion, no toca el modulo
+q = 0
+func loopLocal()
+    local k = 0
+    while k < 3
+        local q = k * 10
+        k++
+    end
+    return q
+end
+check(26, 0, loopLocal())
+check(27, 0, q)
+
+# =====================================================================
+# 5. CLOSURE + MEMOIZACION
+# =====================================================================
+func memoize(fn)
+    local cache = {}
+    func wrapped(a)
+        if cache.containsKey(a) then
+            return cache[a]
+        end
+        local r = fn(a)
+        cache[a] = r
+        return r
+    end
+    return wrapped
+end
+
+func fibSlow(n)
+    if n <= 1 then
+        return n
+    end
+    return fibSlow(n - 1) + fibSlow(n - 2)
+end
+
+memoFib = memoize(fibSlow)
+check(27, 55, memoFib(10))
+check(28, 55, memoFib(10))
+check(29, 89, memoFib(11))
+
+# =====================================================================
+# 6. ERRORES MULTI-NIVEL + ASYNC (try/catch dentro de async)
+# =====================================================================
+async func nivelA(x)
+    if x < 0 then
+        raise "negativo"
+    end
+    return x * 10
+end
+
+async func nivelB(x)
+    v = await nivelA(x)
+    return v + 1
+end
+
+async func nivelC(x)
+    try
+        v = await nivelB(x)
+        resultados["nivel"] = v
+    catch (err)
+        resultados["nivel"] = "err:" + err
+    end
+end
+
+nivelC(4)
+check(30, 41, resultados["nivel"])
+nivelC(-2)
+check(31, "err:negativo", resultados["nivel"])
+
+# =====================================================================
+# 7. PIPELINE ASYNC con closures de orden superior
+# =====================================================================
+async func incVal(x)
+    return x + 1
+end
+
+async func dblVal(x)
+    return x * 2
+end
+
+async func runPipeline(x)
+    local r = x
+    r = await incVal(r)
+    r = await dblVal(r)
+    r = await incVal(r)
+    resultados["pipe"] = r
+end
+
+runPipeline(5)
+check(32, 13, resultados["pipe"])
+
+# =====================================================================
+# 8. COROUTINA GENERADOR con upvalues
+# =====================================================================
+func makeRange(start, endv, stepv)
+    local cur = start
+    func nextVal()
+        local v = cur
+        cur = cur + stepv
+        return v
+    end
+    return nextVal
+end
+
+rg = makeRange(0, 100, 10)
+valsGen = []
+local gi = 0
+while gi < 5
+    valsGen.append(rg())
+    gi++
+end
+check(33, true, listEquals(valsGen, [0, 10, 20, 30, 40]))
+
+# =====================================================================
+# 9. SUMA DE VALORES DE UN DICT + keys()
+# =====================================================================
+func sumDict(d)
+    local total = 0
+    local keys = d.keys()
+    local i = 0
+    while i < len(keys)
+        total = total + d[keys[i]]
+        i++
+    end
+    return total
+end
+
+config = {"a": 1, "b": 2, "c": 3}
+check(34, 6, sumDict(config))
+
+config2 = {"x": 10, "y": 20}
+check(35, 30, sumDict(config2))
+check(36, true, len(config2.keys()) == 2)
+
+print("=== test_complex_integration.ava terminado ===")

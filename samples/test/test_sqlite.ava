@@ -1,0 +1,129 @@
+import sqlite
+
+g_n = 0
+g_fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+func raisesIt(f)
+    try
+        f()
+        return false
+    catch (e)
+        return true
+    end
+end
+
+print("== Apertura / version ==")
+
+db = Db(":memory:")
+mark(check(g_n + 1, "3.53.4", db.version()))
+mark(check(g_n + 1, true, db.isOpen))
+
+print("== DDL y DML ==")
+
+db.exec("create table t (id integer primary key, name text, score real, extra, data blob)")
+mark(check(g_n + 1, 0, db.changes()))
+
+db.exec("insert into t (name, score, extra, data) values ('ana', 3.5, null, x'000102FF')")
+mark(check(g_n + 1, 1, db.changes()))
+mark(check(g_n + 1, 1, db.lastId()))
+
+db.exec("insert into t (name, score, extra, data) values ('beto', 0.25, 'txt', x'414243')")
+mark(check(g_n + 1, 2, db.lastId()))
+
+mark(check(g_n + 1, 1, db.exec("update t set name = 'anita' where id = 1")))
+
+print("== Query y tipos ==")
+
+rows = db.query("select id, name, score, extra, data from t order by id")
+mark(check(g_n + 1, 2, len(rows)))
+
+r1 = rows[0]
+mark(check(g_n + 1, 1, r1["id"]))
+mark(check(g_n + 1, "number", type(r1["id"])))
+mark(check(g_n + 1, "anita", r1["name"]))
+mark(check(g_n + 1, 3.5, r1["score"]))
+mark(check(g_n + 1, "number", type(r1["score"])))
+mark(check(g_n + 1, nil, r1["extra"]))
+mark(check(g_n + 1, "nil", type(r1["extra"])))
+mark(check(g_n + 1, char(0) + char(1) + char(2) + char(255), r1["data"]))
+
+r2 = rows[1]
+mark(check(g_n + 1, 2, r2["id"]))
+mark(check(g_n + 1, "beto", r2["name"]))
+mark(check(g_n + 1, 0.25, r2["score"]))
+mark(check(g_n + 1, "txt", r2["extra"]))
+mark(check(g_n + 1, "ABC", r2["data"]))
+
+print("== fetchOne / vacios ==")
+
+cnt = db.fetchOne("select count(*) as n from t")
+mark(check(g_n + 1, 2, cnt["n"]))
+
+mark(check(g_n + 1, nil, db.fetchOne("select id from t where id = 999")))
+mark(check(g_n + 1, 0, len(db.query("select id from t where id > 100"))))
+
+print("== Transacciones ==")
+
+db.begin()
+db.exec("insert into t (name) values ('tmp')")
+db.rollback()
+mark(check(g_n + 1, 2, db.fetchOne("select count(*) as n from t")["n"]))
+
+db.begin()
+db.exec("insert into t (name) values ('tmp')")
+db.commit()
+mark(check(g_n + 1, 3, db.fetchOne("select count(*) as n from t")["n"]))
+db.exec("delete from t where name = 'tmp'")
+
+print("== Errores ==")
+
+func badExec()
+    db.exec("select * from tabla_inexistente")
+end
+
+func badQuery()
+    db.query("esto no es sql")
+end
+
+func openBad()
+    bad = Db("Z:\\dir_que_no_existe_ava\\x.db")
+end
+
+func useClosed()
+    c = Db(":memory:")
+    c.close()
+    c.exec("select 1")
+end
+
+mark(check(g_n + 1, true, raisesIt(badExec)))
+mark(check(g_n + 1, true, raisesIt(badQuery)))
+mark(check(g_n + 1, true, raisesIt(openBad)))
+mark(check(g_n + 1, true, raisesIt(useClosed)))
+
+db.close()
+mark(check(g_n + 1, false, db.isOpen))
+
+mark(check(g_n + 1, 0, mem_leak_count()))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST SQLITE FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST SQLITE: TODO OK")

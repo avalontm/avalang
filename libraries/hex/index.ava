@@ -1,0 +1,85 @@
+g_ordTable = nil
+
+func _table()
+    if g_ordTable != nil then
+        return g_ordTable
+    end
+    buf = mem_alloc(256)
+    mem_write_bytes(buf, 0, range(0, 256))
+    g_ordTable = mem_string(buf, 0, 256)
+    mem_free(buf)
+    return g_ordTable
+end
+
+func charCode(c)
+    return _table().indexOf(c)
+end
+
+func char(c)
+    t = _table()
+    if c < 0 or c > 255 then
+        return nil
+    end
+    return t.substring(c, c + 1)
+end
+
+func charCodes(s)
+    t = _table()
+    out = []
+    i = 0
+    while i < len(s)
+        out.append(t.indexOf(s[i]))
+        i++
+    end
+    return out
+end
+
+func fromCodes(list)
+    t = _table()
+    out = ""
+    i = 0
+    while i < len(list)
+        v = list[i]
+        out = out + t.substring(v, v + 1)
+        i++
+    end
+    return out
+end
+
+hexdigits = "0123456789abcdef"
+
+func encode(data)
+    t = _table()
+    out = ""
+    i = 0
+    while i < len(data)
+        b = t.indexOf(data[i])
+        hi = b >> 4
+        lo = b & 15
+        out = out + hexdigits.substring(hi, hi + 1) + hexdigits.substring(lo, lo + 1)
+        i++
+    end
+    return out
+end
+
+func decode(text)
+    t = _table()
+    text = text.lower()
+    n = len(text)
+    if n % 2 != 0 then
+        return nil
+    end
+    out = ""
+    i = 0
+    while i < n
+        hi = hexdigits.indexOf(text[i])
+        lo = hexdigits.indexOf(text[i + 1])
+        if hi < 0 or lo < 0 then
+            return nil
+        end
+        v = (hi << 4) | lo
+        out = out + t.substring(v, v + 1)
+        i = i + 2
+    end
+    return out
+end

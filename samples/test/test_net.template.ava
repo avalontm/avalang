@@ -1,0 +1,78 @@
+﻿
+import net
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+g_n = 0
+g_fails = 0
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+p = parseUrl("http://mi.host:8080/pagina/por?q=1")
+mark(check(g_n + 1, 8080, p[1]))
+mark(check(g_n + 1, "mi.host", p[0]))
+mark(check(g_n + 1, "/pagina/por?q=1", p[2]))
+mark(check(g_n + 1, 3, len(p)))
+
+p = parseUrl("http://mi.host/pagina")
+mark(check(g_n + 1, 80, p[1]))
+mark(check(g_n + 1, "/pagina", p[2]))
+
+p = parseUrl("http://mi.host")
+mark(check(g_n + 1, 80, p[1]))
+mark(check(g_n + 1, "/", p[2]))
+
+body = httpGet("http://127.0.0.1:@PORT@/hola")
+mark(check(g_n + 1, "OK-BODY", body))
+
+body2 = httpGet("http://localhost:@PORT@/otra")
+mark(check(g_n + 1, "OK-BODY", body2))
+
+s = Socket("127.0.0.1", @PORT@)
+nSent = s.send("ping!")
+mark(check(g_n + 1, 5, nSent))
+echo = s.recv(64)
+mark(check(g_n + 1, "ping!", echo))
+s.close()
+
+raised = false
+err = ""
+try
+    s2 = Socket("127.0.0.1", 1)
+catch (e)
+    raised = true
+    err = str(e)
+end
+mark(check(g_n + 1, true, raised))
+mark(check(g_n + 1, true, err.contains("no se pudo conectar")))
+mark(check(g_n + 1, true, err.contains("10061"))) # WSAECONNREFUSED
+
+raised2 = false
+try
+    s3 = Socket("este.host.no.existe.invalid", 80)
+catch (e2)
+    raised2 = true
+end
+mark(check(g_n + 1, true, raised2))
+
+leaks = mem_leak_count()
+mark(check(g_n + 1, 0, leaks))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST NET FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST NET: TODO OK")

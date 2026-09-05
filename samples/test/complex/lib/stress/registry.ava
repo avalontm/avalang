@@ -1,0 +1,76 @@
+# lib/stress/registry.ava
+# Modulo para pruebas complejas de BUG 9: mutacion de variables de
+# nivel modulo desde varios tipos de funciones y estructuras de control.
+
+# Estado global del modulo: contadores, acumuladores y un buffer
+total_items = 0
+total_cost = 0
+call_count = 0
+last_id = 0
+registry = {}
+ids_seen = []
+
+# --- Ultimo statement = asignacion a global (caso exacto del fix) ---
+func add_item(cost)
+    total_items = total_items + 1
+    total_cost = total_cost + cost
+    last_id = last_id + 1
+    id = last_id
+    registry[id] = cost
+    ids_seen.append(id)
+    call_count = call_count + 1
+end
+
+# Esta funcion tambien termina en asignacion a global
+func clear()
+    total_items = 0
+    total_cost = 0
+    call_count = 0
+    last_id = 0
+    ids_seen = []
+end
+
+# Ultimo statement dentro de un WHILE muta un global acumulador
+func sum_even(maximo)
+    suma = 0
+    i = 0
+    while i <= maximo
+        if (i % 2) == 0 then
+            suma = suma + i
+        end
+        i = i + 1
+        total_items = total_items + 1
+    end
+end
+
+# Global mutado como ultimo statement de un FOR
+func fill_ids(n)
+    for j = 0 to n then
+        ids_seen.append(j * 10)
+        last_id = last_id + 1
+    end
+end
+
+func get_total()
+    return total_items
+end
+
+func get_cost()
+    return total_cost
+end
+
+func get_calls()
+    return call_count
+end
+
+func get_last()
+    return last_id
+end
+
+func get_registry_size()
+    return total_items
+end
+
+func get_ids_len()
+    return len(ids_seen)
+end

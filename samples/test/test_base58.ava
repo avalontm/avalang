@@ -1,0 +1,69 @@
+import base58
+
+g_n = 0
+g_fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+func binString(bytes)
+    buf = mem_alloc(len(bytes))
+    mem_write_bytes(buf, 0, bytes)
+    s = mem_string(buf, 0, len(bytes))
+    mem_free(buf)
+    return s
+end
+
+func raisesIt(f)
+    try
+        f()
+        return false
+    catch (e)
+        return true
+    end
+end
+
+print("== vectores conocidos ==")
+mark(check(g_n + 1, "StV1DL6CwTryKyV", encode("hello world")))
+mark(check(g_n + 1, "112", encode(binString([0, 0, 1]))))
+mark(check(g_n + 1, "11", encode(binString([0, 0]))))
+mark(check(g_n + 1, "1", encode(binString([0]))))
+mark(check(g_n + 1, "", encode("")))
+mark(check(g_n + 1, "GTFcJ7VjJ5DH28yrRznc2UeiV5", encode("The quick brown fox")))
+
+print("== decode ==")
+mark(check(g_n + 1, "hello world", decode("StV1DL6CwTryKyV")))
+mark(check(g_n + 1, binString([0, 0, 1]), decode("112")))
+mark(check(g_n + 1, binString([0]), decode("1")))
+mark(check(g_n + 1, binString([0, 0]), decode("11")))
+mark(check(g_n + 1, binString([0, 0, 0]), decode("111")))
+mark(check(g_n + 1, "", decode("")))
+
+func badChar()
+    decode("0OIl")
+end
+mark(check(g_n + 1, true, raisesIt(badChar)))
+
+print("== roundtrip binario ==")
+bin = binString([0, 0, 5, 255, 128, 0, 1, 42, 200, 0])
+mark(check(g_n + 1, bin, decode(encode(bin))))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST BASE58 FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST BASE58: TODO OK")

@@ -303,7 +303,7 @@ std::any AstBuilder::visitAssignStatement(AvaLangParser::AssignStatementContext*
     return std::make_shared<AssignStmt>(target, value);
 }
 
-// Phase 3 of AvaLang_Plan_Sistema_de_Tipos.md. Grammar: `NAME typeAnnotation
+// Phase 3. Grammar: `NAME typeAnnotation
 // '=' expr` (grammar/AvaLang.g4, typedAssignStatement, Phase 2) -- target is
 // always a bare NAME here (unlike visitAssignStatement's target, which can
 // carry index/attr trailers), so build the NameExpr directly instead of
@@ -582,6 +582,12 @@ std::any AstBuilder::visitSelectStatement(AvaLangParser::SelectStatementContext*
     // Construye la condicion booleana de un caseItem contra __select$N.
     auto conditionForItem = [&](AvaLangParser::CaseItemContext* item) -> std::shared_ptr<ExprNode> {
         if (auto* range = dynamic_cast<AvaLangParser::CaseItemRangeContext*>(item)) {
+            auto kw = range->NAME()->getText();
+            if (kw != "to") {
+                auto line = static_cast<int>(range->NAME()->getSymbol()->getLine());
+                auto col = static_cast<int>(range->NAME()->getSymbol()->getCharPositionInLine());
+                throw AvaError("expected 'to' in case range, got '" + kw + "'", line, col);
+            }
             auto lo = exprFromAny(range->expr(0)->accept(this));
             auto hi = exprFromAny(range->expr(1)->accept(this));
             auto ge = std::make_shared<BinOpExpr>(BinOp::Ge, tmp_ref(), lo);
@@ -644,12 +650,24 @@ std::any AstBuilder::visitForStatement(AvaLangParser::ForStatementContext* ctx) 
     // de forStatement (`for i = a to b step s`) es la unica de las tres
     // que no pasa por targetList -- ver el comentario de la gramatica.
     if (!ctx->targetList()) {
-        auto var_name = ctx->NAME()->getText();
+        auto var_name = ctx->NAME(0)->getText();
+        auto to_kw = ctx->NAME(1)->getText();
+        if (to_kw != "to") {
+            auto line = static_cast<int>(ctx->NAME(1)->getSymbol()->getLine());
+            auto col = static_cast<int>(ctx->NAME(1)->getSymbol()->getCharPositionInLine());
+            throw AvaError("expected 'to' in for-range loop, got '" + to_kw + "'", line, col);
+        }
         auto branches = ctx->expr();
         auto start_expr = exprFromAny(branches[0]->accept(this));
         auto stop_expr = exprFromAny(branches[1]->accept(this));
         std::shared_ptr<ExprNode> step_expr = nullptr;
         if (branches.size() == 3) {
+            auto step_kw = ctx->NAME(2)->getText();
+            if (step_kw != "step") {
+                auto line = static_cast<int>(ctx->NAME(2)->getSymbol()->getLine());
+                auto col = static_cast<int>(ctx->NAME(2)->getSymbol()->getCharPositionInLine());
+                throw AvaError("expected 'step' in for-range loop, got '" + step_kw + "'", line, col);
+            }
             step_expr = exprFromAny(branches[2]->accept(this));
         }
         auto body = stmtsFromAny(visitBlock(ctx->block()));
@@ -666,7 +684,7 @@ std::any AstBuilder::visitForStatement(AvaLangParser::ForStatementContext* ctx) 
 std::any AstBuilder::visitFuncDeclaration(AvaLangParser::FuncDeclarationContext* ctx) {
     auto name = ctx->NAME()->getText();
     std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> params;
-    // Phase 8 of AvaLang_Plan_Sistema_de_Tipos.md -- parallel to `params`
+    // Phase 8 -- parallel to `params`
     // below, built in the same loop so the indices always line up.
     std::vector<std::string> param_types;
     bool is_vararg = false;
@@ -686,7 +704,7 @@ std::any AstBuilder::visitFuncDeclaration(AvaLangParser::FuncDeclarationContext*
 
     auto body = stmtsFromAny(visitBlock(ctx->block()));
     auto func = std::make_shared<FuncDef>(name, params, is_vararg, body);
-    // Phase 8 of AvaLang_Plan_Sistema_de_Tipos.md ("Funciones"): stop
+    // Phase 8 ("Funciones"): stop
     // discarding what the grammar has parsed since Phase 2
     // (`param: NAME typeAnnotation? (...)`, `funcDeclaration: ...
     // returnType? block 'end'`). See ast.h's FuncDef::param_types/
@@ -733,7 +751,7 @@ std::any AstBuilder::visitExternFuncDeclaration(AvaLangParser::ExternFuncDeclara
     if (ctx->externParamList()) {
         for (auto* p : ctx->externParamList()->externParam()) {
             decl.params.push_back(p->NAME()->getText());
-            // Phase 16 of AvaLang_Plan_Sistema_de_Tipos.md -- same
+            // Phase 16 -- same
             // "" = no annotation convention as visitFuncDeclaration's
             // identical param_types loop above.
             decl.param_types.push_back(p->typeAnnotation() ? p->typeAnnotation()->NAME()->getText() : "");
@@ -812,7 +830,7 @@ std::any AstBuilder::visitShortLambdaExprAlt(AvaLangParser::ShortLambdaExprAltCo
     if (!ctx->shortLambdaExpr()) return visitSingleParamLambdaExprAlt(nullptr);
     auto* lambda = ctx->shortLambdaExpr();
     std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> defaults;
-    // Phase 14 of AvaLang_Plan_Sistema_de_Tipos.md -- parallel to
+    // Phase 14 -- parallel to
     // `defaults` below, same convention as visitFuncDeclaration's
     // param_types (Phase 8): "" = no annotation for that parameter.
     std::vector<std::string> param_types;
@@ -838,7 +856,7 @@ std::any AstBuilder::visitShortLambdaExprAlt(AvaLangParser::ShortLambdaExprAltCo
     return result;
 }
 
-// Phase 14 of AvaLang_Plan_Sistema_de_Tipos.md ("Lambdas y funciones como
+// Phase 14 ("Lambdas y funciones como
 // valores"): the new bare, paren-less, untyped single-parameter form
 // (`callback = x => x * 2`, grammar/AvaLang.g4's singleParamLambdaExpr).
 // Mirrors visitShortLambdaExprAlt's body-building (implicit `return` of
@@ -1123,10 +1141,12 @@ std::any AstBuilder::visitNameAtom(AvaLangParser::NameAtomContext* ctx) {
 std::any AstBuilder::visitNumberAtom(AvaLangParser::NumberAtomContext* ctx) {
     std::string text = ctx->NUMBER()->getText();
     double val = std::stod(text);
-    // Phase 5 of AvaLang_Plan_Sistema_de_Tipos.md: `10` -> Int, `10.0` ->
+    // Phase 5: `10` -> Int, `10.0` ->
     // Float (see NumberExpr::is_float in ast.h). Textual check, not a check
     // on `val`, so `10.0` doesn't get misread as an int-valued double.
-    bool is_float = text.find('.') != std::string::npos;
+    bool is_float = text.find('.') != std::string::npos ||
+                    text.find('e') != std::string::npos ||
+                    text.find('E') != std::string::npos;
     return std::make_shared<NumberExpr>(val, is_float);
 }
 

@@ -1,0 +1,162 @@
+func _isDigit(c)
+    return "0123456789".indexOf(c) >= 0
+end
+
+func _findFrom(s, ch, start)
+    i = start
+    while i < len(s)
+        if s[i] == ch then
+            return i
+        end
+        i++
+    end
+    return -1
+end
+
+func _isNumeric(s)
+    if len(s) == 0 then
+        return false
+    end
+    i = 0
+    while i < len(s)
+        if not _isDigit(s[i]) then
+            return false
+        end
+        i++
+    end
+    return true
+end
+
+func parse(v)
+    d = {}
+    build = ""
+    plus = _findFrom(v, "+", 0)
+    if plus >= 0 then
+        build = v.substring(plus + 1, len(v))
+        v = v.substring(0, plus)
+    end
+    pre = ""
+    dash = _findFrom(v, "-", 0)
+    if dash >= 0 then
+        pre = v.substring(dash + 1, len(v))
+        v = v.substring(0, dash)
+    end
+    parts = v.split(".")
+    if len(parts) != 3 then
+        return nil
+    end
+    major = int(parts[0])
+    if not _isDigit(parts[0]) then
+        return nil
+    end
+    minor = int(parts[1])
+    if not _isDigit(parts[1]) then
+        return nil
+    end
+    patch = int(parts[2])
+    if not _isDigit(parts[2]) then
+        return nil
+    end
+    if len(pre) > 0 then
+        ids = pre.split(".")
+        i = 0
+        while i < len(ids)
+            if _isNumeric(ids[i]) and ids[i].length() > 1 and ids[i][0] == "0" then
+                return nil
+            end
+            if len(ids[i]) == 0 then
+                return nil
+            end
+            i++
+        end
+    end
+    d["major"] = major
+    d["minor"] = minor
+    d["patch"] = patch
+    d["prerelease"] = pre
+    d["build"] = build
+    return d
+end
+
+func isValid(v)
+    return parse(v) != nil
+end
+
+func _preCmp(a, b)
+    if a == "" and b == "" then
+        return 0
+    end
+    if a == "" then
+        return 1
+    end
+    if b == "" then
+        return -1
+    end
+    ai = a.split(".")
+    bi = b.split(".")
+    i = 0
+    while true
+        al = i < len(ai)
+        bl = i < len(bi)
+        if not al and not bl then
+            return 0
+        end
+        if not al then
+            return -1
+        end
+        if not bl then
+            return 1
+        end
+        x = ai[i]
+        y = bi[i]
+        if _isNumeric(x) and _isNumeric(y) then
+            xl = int(x)
+            yl = int(y)
+            if xl < yl then
+                return -1
+            end
+            if xl > yl then
+                return 1
+            end
+        elif _isNumeric(x) then
+            return -1
+        elif _isNumeric(y) then
+            return 1
+        else
+            if x < y then
+                return -1
+            end
+            if x > y then
+                return 1
+            end
+        end
+        i++
+    end
+end
+
+func compare(a, b)
+    pa = parse(a)
+    pb = parse(b)
+    if pa == nil or pb == nil then
+        raise "semver: version invalida"
+    end
+    if pa["major"] < pb["major"] then
+        return -1
+    end
+    if pa["major"] > pb["major"] then
+        return 1
+    end
+    if pa["minor"] < pb["minor"] then
+        return -1
+    end
+    if pa["minor"] > pb["minor"] then
+        return 1
+    end
+    if pa["patch"] < pb["patch"] then
+        return -1
+    end
+    if pa["patch"] > pb["patch"] then
+        return 1
+    end
+    return _preCmp(pa["prerelease"], pb["prerelease"])
+end

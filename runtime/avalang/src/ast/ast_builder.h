@@ -19,7 +19,7 @@ public:
     std::any visitAssignStatement(AvaLangParser::AssignStatementContext* ctx) override;
     std::any visitMultiAssignStatement(AvaLangParser::MultiAssignStatementContext* ctx) override;
     std::any visitAugAssignStatement(AvaLangParser::AugAssignStatementContext* ctx) override;
-    // Phase 3 of AvaLang_Plan_Sistema_de_Tipos.md: `age as int = 25` and
+    // Phase 3: `age as int = 25` and
     // `age as int` (no initializer). Both build an AssignStmt with
     // explicit_type set (see ast.h) -- kept as separate visitors instead
     // of folding into visitAssignStatement because their grammar contexts
@@ -56,7 +56,7 @@ public:
 
     std::any visitExprList(AvaLangParser::ExprListContext* ctx) override;
     std::any visitShortLambdaExprAlt(AvaLangParser::ShortLambdaExprAltContext* ctx) override;
-    // Phase 14 of AvaLang_Plan_Sistema_de_Tipos.md: the new bare
+    // Phase 14: the new bare
     // `x => expr` form (grammar/AvaLang.g4's singleParamLambdaExpr).
     std::any visitSingleParamLambdaExprAlt(AvaLangParser::SingleParamLambdaExprAltContext* ctx) override;
     std::any visitLambdaExprAlt(AvaLangParser::LambdaExprAltContext* ctx) override;

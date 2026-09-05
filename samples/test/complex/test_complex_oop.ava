@@ -1,0 +1,407 @@
+# test_complex_oop.ava
+# Patrones OOP y de diseno: visitor pattern, observer pattern, chain of
+# responsibility, composicion de objetos. Combinado con herencia SIMPLE
+# que reutiliza el mismo atributo de la base (patron del bug #14).
+# (Se evita a proposito el BUG 11: subclase que agrega atributo nuevo
+# tras base.__init__ corrompe el primer atributo.)
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+func listEquals(a, b)
+    if len(a) != len(b) then
+        return false
+    end
+    i = 0
+    while i < len(a)
+        if a[i] != b[i] then
+            return false
+        end
+        i++
+    end
+    return true
+end
+
+# =====================================================================
+# 1. HERENCIA con reasignacion del MISMO atributo base (patron #14)
+#    Animal -> Dog -> Puppy (cada nivel pisa this.kind)
+# =====================================================================
+class Animal
+    func Animal(name)
+        this.name = name
+        this.kind = "animal"
+    end
+    func describe()
+        return this.name + " " + this.kind
+    end
+end
+
+class Dog : Animal
+    func Dog(name, breed)
+        base.__init__(name)
+        this.kind = "dog"
+        this.breed = breed
+    end
+end
+
+class Puppy : Dog
+    func Puppy(name, breed, age)
+        base.__init__(name, breed)
+        this.kind = "puppy"
+        this.age = age
+    end
+end
+
+p = Puppy("Rex", "Labrador", 1)
+check(1, "Rex", p.name)
+check(2, "Labrador", p.breed)
+check(3, 1, p.age)
+check(4, "puppy", p.kind)
+
+# Polimorfismo: describe() usa this.name y this.kind de la propia clase
+d = Dog("Fido", "Beagle")
+check(5, true, d.describe() == "Fido dog")
+
+# =====================================================================
+# 2. VISITOR PATTERN sobre AST simulado con dicts
+# =====================================================================
+func makeNum(val)
+    return {"type": "num", "val": val}
+end
+
+func makeAdd(left, right)
+    return {"type": "add", "left": left, "right": right}
+end
+
+func makeMul(left, right)
+    return {"type": "mul", "left": left, "right": right}
+end
+
+func eval(node)
+    if node["type"] == "num" then
+        return node["val"]
+    end
+    if node["type"] == "add" then
+        return eval(node["left"]) + eval(node["right"])
+    end
+    if node["type"] == "mul" then
+        return eval(node["left"]) * eval(node["right"])
+    end
+    return 0
+end
+
+func toString(node)
+    if node["type"] == "num" then
+        return str(node["val"])
+    end
+    if node["type"] == "add" then
+        return "(" + toString(node["left"]) + " + " + toString(node["right"]) + ")"
+    end
+    if node["type"] == "mul" then
+        return "(" + toString(node["left"]) + " * " + toString(node["right"]) + ")"
+    end
+    return "?"
+end
+
+# AST: (3 + 4) * 2
+ast = makeMul(makeAdd(makeNum(3), makeNum(4)), makeNum(2))
+check(6, 14, eval(ast))
+check(7, true, toString(ast) == "((3 + 4) * 2)")
+
+# AST anidada: (2 * (1 + 3)) + (4 * 5)
+left2 = makeMul(makeNum(2), makeAdd(makeNum(1), makeNum(3)))
+right2 = makeMul(makeNum(4), makeNum(5))
+ast2 = makeAdd(left2, right2)
+check(8, 28, eval(ast2))
+
+# =====================================================================
+# 3. OBSERVER PATTERN (event emitter con closures)
+# =====================================================================
+func makeEventEmitter()
+    listeners = {}
+
+    func on(event, callback)
+        if not listeners.containsKey(event) then
+            listeners[event] = []
+        end
+        listeners[event].append(callback)
+    end
+
+    func emit(event, data)
+        if listeners.containsKey(event) then
+            cbs = listeners[event]
+            i = 0
+            while i < len(cbs)
+                cbs[i](data)
+                i++
+            end
+        end
+    end
+
+    func listenerCount(event)
+        if listeners.containsKey(event) then
+            return len(listeners[event])
+        end
+        return 0
+    end
+
+    return [on, emit, listenerCount]
+end
+
+emitter = makeEventEmitter()
+emOn = emitter[0]
+emEmit = emitter[1]
+emCount = emitter[2]
+
+log = []
+emOn("click", (data) => log.append("clicked:" + data))
+emOn("click", (data) => log.append("log:" + data))
+emOn("hover", (data) => log.append("hovered:" + data))
+
+check(9, 2, emCount("click"))
+check(10, 1, emCount("hover"))
+check(11, 0, emCount("unknown"))
+
+emEmit("click", "btn1")
+check(12, 2, len(log))
+check(13, true, log[0] == "clicked:btn1")
+check(14, true, log[1] == "log:btn1")
+
+emEmit("hover", "panel")
+check(15, 3, len(log))
+check(16, true, log[2] == "hovered:panel")
+
+# =====================================================================
+# 4. CHAIN OF RESPONSIBILITY
+# =====================================================================
+func makeHandler(name)
+    return {"name": name, "threshold": 0, "next": nil}
+end
+
+func chainAdd(prev, next)
+    prev["next"] = next
+end
+
+func chainProcess(chain, amount)
+    current = chain
+    while current != nil
+        if amount <= current["threshold"] then
+            return current["name"] + ":" + str(amount)
+        end
+        current = current["next"]
+    end
+    return "unhandled:" + str(amount)
+end
+
+hSmall = makeHandler("small")
+hSmall["threshold"] = 10
+hMed = makeHandler("medium")
+hMed["threshold"] = 100
+hLarge = makeHandler("large")
+hLarge["threshold"] = 1000
+chainAdd(hSmall, hMed)
+chainAdd(hMed, hLarge)
+
+check(17, true, chainProcess(hSmall, 5) == "small:5")
+check(18, true, chainProcess(hSmall, 50) == "medium:50")
+check(19, true, chainProcess(hSmall, 500) == "large:500")
+check(20, true, chainProcess(hSmall, 5000) == "unhandled:5000")
+
+# =====================================================================
+# 5. COMPOSICION DE OBJETOS (model + serializer + validator via dicts)
+# =====================================================================
+func makeModel(fields)
+    return {"fields": fields, "data": {}}
+end
+
+func modelSet(model, key, val)
+    model["data"][key] = val
+end
+
+func modelGet(model, key)
+    return model["data"][key]
+end
+
+func modelToJSON(model)
+    out = "{"
+    fkeys = model["fields"]
+    i = 0
+    while i < len(fkeys)
+        k = fkeys[i]
+        if i > 0 then
+            out = out + ", "
+        end
+        out = out + "\"" + k + "\": " + str(modelGet(model, k))
+        i++
+    end
+    out = out + "}"
+    return out
+end
+
+func modelValidate(model)
+    fkeys = model["fields"]
+    i = 0
+    while i < len(fkeys)
+        if modelGet(model, fkeys[i]) == nil then
+            return false
+        end
+        i++
+    end
+    return true
+end
+
+m = makeModel(["name", "age"])
+modelSet(m, "name", "Ava")
+modelSet(m, "age", 5)
+check(21, "Ava", modelGet(m, "name"))
+check(22, 5, modelGet(m, "age"))
+check(23, true, modelValidate(m))
+
+# model incompleto -> invalido
+m2 = makeModel(["name", "email"])
+modelSet(m2, "name", "Solo")
+check(24, false, modelValidate(m2))
+
+j = modelToJSON(m)
+
+check(25, true, j == "{\"name\": Ava, \"age\": 5}")
+
+# =====================================================================
+# 6. ARBOL CON RECORRIDOS MULTIPLES (BFS, DFS, in/pre/post-order)
+# =====================================================================
+func treeInsert(tree, val)
+    if tree == nil then
+        return {"val": val, "left": nil, "right": nil}
+    end
+    if val < tree["val"] then
+        tree["left"] = treeInsert(tree["left"], val)
+    end
+    if val > tree["val"] then
+        tree["right"] = treeInsert(tree["right"], val)
+    end
+    return tree
+end
+
+func treeInorder(tree, out)
+    if tree == nil then
+        return out
+    end
+    out = treeInorder(tree["left"], out)
+    out.append(tree["val"])
+    out = treeInorder(tree["right"], out)
+    return out
+end
+
+func treePreorder(tree, out)
+    if tree == nil then
+        return out
+    end
+    out.append(tree["val"])
+    out = treePreorder(tree["left"], out)
+    out = treePreorder(tree["right"], out)
+    return out
+end
+
+func treePostorder(tree, out)
+    if tree == nil then
+        return out
+    end
+    out = treePostorder(tree["left"], out)
+    out = treePostorder(tree["right"], out)
+    out.append(tree["val"])
+    return out
+end
+
+func treeBFS(tree)
+    if tree == nil then
+        return []
+    end
+    result = []
+    queue = [tree]
+    while len(queue) > 0
+        node = queue[0]
+        queue = queue[1:len(queue)]
+        result.append(node["val"])
+        if node["left"] != nil then
+            queue.append(node["left"])
+        end
+        if node["right"] != nil then
+            queue.append(node["right"])
+        end
+    end
+    return result
+end
+
+#     5
+#    / \
+#   3   8
+#  / \   \
+# 1   4   9
+tree = nil
+vals = [5, 3, 8, 1, 4, 9]
+i = 0
+while i < len(vals)
+    tree = treeInsert(tree, vals[i])
+    i++
+end
+
+check(26, true, listEquals(treeInorder(tree, []), [1, 3, 4, 5, 8, 9]))
+check(27, true, listEquals(treePreorder(tree, []), [5, 3, 1, 4, 8, 9]))
+check(28, true, listEquals(treePostorder(tree, []), [1, 4, 3, 9, 8, 5]))
+check(29, true, listEquals(treeBFS(tree), [5, 3, 8, 1, 4, 9]))
+
+# =====================================================================
+# 7. FRACTION con GCD (numeros racionales via dict, sin herencia)
+# =====================================================================
+func gcd(a, b)
+    while b != 0
+        t = b
+        b = a % b
+        a = t
+    end
+    return a
+end
+
+func frac(n, d)
+    g = gcd(n, d)
+    if g == 0 then
+        g = 1
+    end
+    return {"num": n / g, "den": d / g}
+end
+
+func fracAdd(f1, f2)
+    num = f1["num"] * f2["den"] + f2["num"] * f1["den"]
+    den = f1["den"] * f2["den"]
+    return frac(num, den)
+end
+
+func fracMul(f1, f2)
+    return frac(f1["num"] * f2["num"], f1["den"] * f2["den"])
+end
+
+func fracEquals(f1, f2)
+    return f1["num"] == f2["num"] and f1["den"] == f2["den"]
+end
+
+fHalf = frac(1, 2)
+fThird = frac(1, 3)
+fSum = fracAdd(fHalf, fThird)     # 5/6
+fMul = fracMul(fHalf, fThird)     # 1/6
+
+check(30, true, fracEquals(fSum, frac(5, 6)))
+check(31, true, fracEquals(fMul, frac(1, 6)))
+check(32, true, fracEquals(frac(2, 4), frac(1, 2)))   # reduccion
+check(33, true, frac(4, 6)["num"] == 2 and frac(4, 6)["den"] == 3)
+check(34, 1, fHalf["num"])
+check(35, 2, fHalf["den"])
+
+print("=== test_complex_oop.ava terminado ===")
+
+
+

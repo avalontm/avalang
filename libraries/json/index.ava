@@ -1,0 +1,318 @@
+hexd = "0123456789abcdef"
+digits = "0123456789"
+ws = " \t\n\r"
+g_tbl = nil
+
+func _t()
+    if g_tbl == nil then
+        buf = mem_alloc(256)
+        mem_write_bytes(buf, 0, range(0, 256))
+        g_tbl = mem_string(buf, 0, 256)
+        mem_free(buf)
+    end
+    return g_tbl
+end
+
+func charCode(c)
+    return _t().indexOf(c)
+end
+
+func char(n)
+    return _t().substring(n, n + 1)
+end
+
+func fromCodes(list)
+    out = ""
+    i = 0
+    while i < len(list)
+        out = out + char(list[i])
+        i++
+    end
+    return out
+end
+
+func _skipWs(text, pos)
+    while pos < len(text) and ws.indexOf(text[pos]) >= 0
+        pos++
+    end
+    return pos
+end
+
+func _isDec(c)
+    return digits.indexOf(c) >= 0
+end
+
+func _u4(text, i)
+    v = 0
+    j = 0
+    while j < 4
+        d = hexd.indexOf(text[i + j].lower())
+        if d < 0 then
+            raise "json: escape \\u invalido"
+        end
+        v = (v << 4) | d
+        j++
+    end
+    return v
+end
+
+func _utf8(cp)
+    if cp < 128 then
+        return char(cp)
+    end
+    bytes = []
+    if cp < 2048 then
+        bytes.append(192 | (cp >> 6))
+        bytes.append(128 | (cp & 63))
+    else
+        bytes.append(224 | (cp >> 12))
+        bytes.append(128 | ((cp >> 6) & 63))
+        bytes.append(128 | (cp & 63))
+    end
+    return fromCodes(bytes)
+end
+
+func _string(text, pos)
+    out = ""
+    pos = pos + 1
+    while pos < len(text)
+        c = text[pos]
+        if c == "\"" then
+            return [out, pos + 1]
+        end
+        if c == "\\" then
+            pos = pos + 1
+            e = text[pos]
+            if e == "u" then
+                out = out + _utf8(_u4(text, pos + 1))
+                pos = pos + 5
+            elif e == "n" then
+                out = out + "\n"
+                pos = pos + 1
+            elif e == "t" then
+                out = out + "\t"
+                pos = pos + 1
+            elif e == "r" then
+                out = out + "\r"
+                pos = pos + 1
+            elif e == "b" then
+                out = out + char(8)
+                pos = pos + 1
+            elif e == "f" then
+                out = out + char(12)
+                pos = pos + 1
+            elif e == "/" then
+                out = out + "/"
+                pos = pos + 1
+            elif e == "\"" then
+                out = out + "\""
+                pos = pos + 1
+            elif e == "\\" then
+                out = out + "\\"
+                pos = pos + 1
+            else
+                raise "json: escape invalido"
+            end
+        else
+            out = out + c
+            pos = pos + 1
+        end
+    end
+    raise "json: string sin cierre"
+end
+
+func _number(text, pos)
+    start = pos
+    while pos < len(text) and "0123456789.eE+-".indexOf(text[pos]) >= 0
+        pos++
+    end
+    ns = text.substring(start, pos)
+    if ns.indexOf(".") >= 0 or ns.indexOf("e") >= 0 or ns.indexOf("E") >= 0 then
+        return [float(ns), pos]
+    end
+    return [int(ns), pos]
+end
+
+func _word(text, pos, expected, val)
+    if text.substring(pos, pos + len(expected)) == expected then
+        return [val, pos + len(expected)]
+    end
+    raise "json: token invalido"
+end
+
+func _value(text, pos)
+    pos = _skipWs(text, pos)
+    c = text[pos]
+    if c == "{" then
+        return _object(text, pos)
+    end
+    if c == "[" then
+        return _array(text, pos)
+    end
+    if c == "\"" then
+        return _string(text, pos)
+    end
+    if c == "t" then
+        return _word(text, pos, "true", true)
+    end
+    if c == "f" then
+        return _word(text, pos, "false", false)
+    end
+    if c == "n" then
+        return _word(text, pos, "null", nil)
+    end
+    if c == "-" or _isDec(c) then
+        return _number(text, pos)
+    end
+    raise "json: token inesperado '" + c + "'"
+end
+
+func _object(text, pos)
+    d = {}
+    pos = _skipWs(text, pos + 1)
+    if pos < len(text) and text[pos] == "}" then
+        return [d, pos + 1]
+    end
+    while true
+        pos = _skipWs(text, pos)
+        kv = _string(text, pos)
+        pos = _skipWs(text, kv[1])
+        if pos >= len(text) or text[pos] != ":" then
+            raise "json: se esperaba ':'"
+        end
+        pos = _skipWs(text, pos + 1)
+        vv = _value(text, pos)
+        d[kv[0]] = vv[0]
+        pos = _skipWs(text, vv[1])
+        if pos >= len(text) then
+            raise "json: objeto sin cierre"
+        end
+        if text[pos] == "," then
+            pos = pos + 1
+        elif text[pos] == "}" then
+            return [d, pos + 1]
+        else
+            raise "json: se esperaba ',' o '}'"
+        end
+    end
+end
+
+func _array(text, pos)
+    arr = []
+    pos = _skipWs(text, pos + 1)
+    if pos < len(text) and text[pos] == "]" then
+        return [arr, pos + 1]
+    end
+    while true
+        pos = _skipWs(text, pos)
+        vv = _value(text, pos)
+        arr.append(vv[0])
+        pos = _skipWs(text, vv[1])
+        if pos >= len(text) then
+            raise "json: array sin cierre"
+        end
+        if text[pos] == "," then
+            pos = pos + 1
+        elif text[pos] == "]" then
+            return [arr, pos + 1]
+        else
+            raise "json: se esperaba ',' o ']'"
+        end
+    end
+end
+
+func decode(text)
+    if len(text) == 0 then
+        raise "json: texto vacio"
+    end
+    r = _value(text, 0)
+    pos = _skipWs(text, r[1])
+    if pos < len(text) then
+        raise "json: contenido extra tras el valor"
+    end
+    return r[0]
+end
+
+func _esc(s)
+    out = "\""
+    i = 0
+    while i < len(s)
+        c = s[i]
+        if c == "\"" then
+            out = out + "\\\""
+        elif c == "\\" then
+            out = out + "\\\\"
+        elif c == "\n" then
+            out = out + "\\n"
+        elif c == "\t" then
+            out = out + "\\t"
+        elif c == "\r" then
+            out = out + "\\r"
+        elif charCode(c) == 8 then
+            out = out + "\\b"
+        elif charCode(c) == 12 then
+            out = out + "\\f"
+        else
+            code = charCode(c)
+            if code < 32 then
+                hi = code >> 4
+                lo = code & 15
+                out = out + "\\u00" + hexd.substring(hi, hi + 1) + hexd.substring(lo, lo + 1)
+            else
+                out = out + c
+            end
+        end
+        i++
+    end
+    return out + "\""
+end
+
+func _enc(value)
+    t = type(value)
+    if t == "nil" then
+        return "null"
+    end
+    if t == "bool" then
+        if value then
+            return "true"
+        end
+        return "false"
+    end
+    if t == "number" then
+        return str(value)
+    end
+    if t == "string" then
+        return _esc(value)
+    end
+    if t == "list" then
+        out = "["
+        i = 0
+        while i < len(value)
+            if i > 0 then
+                out = out + ","
+            end
+            out = out + _enc(value[i])
+            i++
+        end
+        return out + "]"
+    end
+    if t == "dict" then
+        out = "{"
+        ks = keys(value)
+        i = 0
+        while i < len(ks)
+            if i > 0 then
+                out = out + ","
+            end
+            k = ks[i]
+            out = out + _esc(k) + ":" + _enc(value[k])
+            i++
+        end
+        return out + "}"
+    end
+    raise "json: no serializable tipo " + t
+end
+
+func encode(value)
+    return _enc(value)
+end

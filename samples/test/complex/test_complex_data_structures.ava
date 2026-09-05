@@ -1,0 +1,337 @@
+# test_complex_data_structures.ava
+# Estructuras de datos avanzadas: grafo con pesos, arbol binario de
+# busqueda, tabla hash con chaining, y composicion de las tres.
+# TODO inline (evita BUG 1 de modulos importados).
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+func listEquals(a, b)
+    if len(a) != len(b) then
+        return false
+    end
+    i = 0
+    while i < len(a)
+        if a[i] != b[i] then
+            return false
+        end
+        i++
+    end
+    return true
+end
+
+# =====================================================================
+# 1. GRAFO CON PESOS + DIJKSTRA (dict de listas de dicts)
+# =====================================================================
+func dijkstra(adj, start, n)
+    local dist = {}
+    local visited = {}
+    local keys = adj.keys()
+    local i = 0
+    while i < len(keys)
+        dist[keys[i]] = 999999999
+        i++
+    end
+    dist[start] = 0
+    local loop = 0
+    while loop < n
+        local best = nil
+        local bestDist = 999999999
+        local dkeys = dist.keys()
+        local k = 0
+        while k < len(dkeys)
+            local node = dkeys[k]
+            if not visited.containsKey(node) and dist[node] < bestDist then
+                bestDist = dist[node]
+                best = node
+            end
+            k++
+        end
+        if best == nil then
+            break
+        end
+        visited[best] = true
+        local edges = adj[best]
+        local ei = 0
+        while ei < len(edges)
+            local edge = edges[ei]
+            local dest = edge["dest"]
+            local w = edge["w"]
+            local nd = dist[best] + w
+            if nd < dist[dest] then
+                dist[dest] = nd
+            end
+            ei++
+        end
+        loop++
+    end
+    return dist
+end
+
+# Construir grafo programaticamente (evita BUG 7 de dicts multiline)
+g = {}
+g["A"] = [{"dest": "B", "w": 2}, {"dest": "C", "w": 5}]
+g["B"] = [{"dest": "D", "w": 3}]
+g["C"] = [{"dest": "D", "w": 1}]
+g["D"] = []
+
+dist = dijkstra(g, "A", 4)
+check(1, 0, dist["A"])
+check(2, 2, dist["B"])
+check(3, 5, dist["C"])
+check(4, 5, dist["D"])   # A->B->D = 5, A->C->D = 6, min es 5
+
+dist2 = dijkstra(g, "C", 4)
+check(5, 999999999, dist2["A"])   # inalcanzable desde C
+check(6, 1, dist2["D"])
+
+# =====================================================================
+# 2. ARBOL BINARIO DE BUSQUEDA (sin clases, con dicts)
+# =====================================================================
+func bstInsert(tree, val)
+    if tree == nil then
+        return {"val": val, "left": nil, "right": nil}
+    end
+    if val < tree["val"] then
+        tree["left"] = bstInsert(tree["left"], val)
+    end
+    if val > tree["val"] then
+        tree["right"] = bstInsert(tree["right"], val)
+    end
+    return tree
+end
+
+func bstInorder(tree, out)
+    if tree == nil then
+        return out
+    end
+    out = bstInorder(tree["left"], out)
+    out.append(tree["val"])
+    out = bstInorder(tree["right"], out)
+    return out
+end
+
+func bstCount(tree)
+    if tree == nil then
+        return 0
+    end
+    return 1 + bstCount(tree["left"]) + bstCount(tree["right"])
+end
+
+func bstDepth(tree)
+    if tree == nil then
+        return 0
+    end
+    ld = bstDepth(tree["left"])
+    rd = bstDepth(tree["right"])
+    if ld > rd then
+        return ld + 1
+    end
+    return rd + 1
+end
+
+func bstSearch(tree, val)
+    if tree == nil then
+        return false
+    end
+    if val == tree["val"] then
+        return true
+    end
+    if val < tree["val"] then
+        return bstSearch(tree["left"], val)
+    end
+    return bstSearch(tree["right"], val)
+end
+
+# Insertar valores y verificar orden
+bst = nil
+vals = [50, 30, 70, 20, 40, 60, 80, 10, 25, 35, 45]
+i = 0
+while i < len(vals)
+    bst = bstInsert(bst, vals[i])
+    i++
+end
+
+check(7, 11, bstCount(bst))
+check(8, 4, bstDepth(bst))
+check(9, true, listEquals(bstInorder(bst, []), [10, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80]))
+check(10, true, bstSearch(bst, 35))
+check(11, false, bstSearch(bst, 99))
+
+# =====================================================================
+# 3. TABLA HASH CON CHAINING (dict de listas de pairs)
+# =====================================================================
+func hashCreate(size)
+    buckets = []
+    i = 0
+    while i < size
+        buckets.append([])
+        i++
+    end
+    return buckets
+end
+
+func hashPut(buckets, key, value)
+    idx = 0
+    s = str(key)
+    i = 0
+    while i < len(s)
+        idx = idx + s[i]
+        i++
+    end
+    idx = idx % len(buckets)
+    chain = buckets[idx]
+    j = 0
+    while j < len(chain)
+        if chain[j][0] == key then
+            chain[j] = [key, value]
+            return
+        end
+        j++
+    end
+    chain.append([key, value])
+end
+
+func hashGet(buckets, key)
+    idx = 0
+    s = str(key)
+    i = 0
+    while i < len(s)
+        idx = idx + s[i]
+        i++
+    end
+    idx = idx % len(buckets)
+    chain = buckets[idx]
+    j = 0
+    while j < len(chain)
+        if chain[j][0] == key then
+            return chain[j][1]
+        end
+        j++
+    end
+    return nil
+end
+
+func hashLen(buckets)
+    total = 0
+    i = 0
+    while i < len(buckets)
+        total = total + len(buckets[i])
+        i++
+    end
+    return total
+end
+
+ht = hashCreate(8)
+hashPut(ht, 10, "uno")
+hashPut(ht, 20, "dos")
+hashPut(ht, 30, "tres")
+hashPut(ht, 40, "cuatro")
+hashPut(ht, 50, "cinco")
+
+check(12, "uno", hashGet(ht, 10))
+check(13, "tres", hashGet(ht, 30))
+check(14, nil, hashGet(ht, 999))
+check(15, 5, hashLen(ht))
+
+# Sobreescribir
+hashPut(ht, 30, "TRES")
+check(16, "TRES", hashGet(ht, 30))
+check(17, 5, hashLen(ht))  # misma cantidad
+
+# =====================================================================
+# 4. COMPOSICION: BST sobre datos de Dijkstra
+# =====================================================================
+distBST = nil
+distKeys = dist.keys()
+i = 0
+while i < len(distKeys)
+    d = dist[distKeys[i]]
+    if d < 999999999 then
+        distBST = bstInsert(distBST, d)
+    end
+    i++
+end
+
+check(18, 3, bstCount(distBST))        # distancias unicas: 0, 2, 5
+check(19, true, bstSearch(distBST, 0))
+check(20, true, bstSearch(distBST, 2))
+check(21, true, bstSearch(distBST, 5))
+check(22, false, bstSearch(distBST, 3))
+
+# =====================================================================
+# 5. MATRIZ NxN (dict de dicts) + traza + transpuesta
+# =====================================================================
+func matCreate(n, val)
+    local m = {}
+    local i = 0
+    while i < n
+        local row = {}
+        local j = 0
+        while j < n
+            row[str(j)] = val
+            j++
+        end
+        m[str(i)] = row
+        i++
+    end
+    return m
+end
+
+func matSet(m, r, c, val)
+    m[str(r)][str(c)] = val
+end
+
+func matGet(m, r, c)
+    return m[str(r)][str(c)]
+end
+
+func matTrace(m, n)
+    s = 0
+    i = 0
+    while i < n
+        s = s + matGet(m, i, i)
+        i++
+    end
+    return s
+end
+
+func matTranspose(m, n)
+    t = matCreate(n, 0)
+    i = 0
+    while i < n
+        j = 0
+        while j < n
+            matSet(t, i, j, matGet(m, j, i))
+            j++
+        end
+        i++
+    end
+    return t
+end
+
+m = matCreate(3, 0)
+matSet(m, 0, 0, 1)
+matSet(m, 0, 1, 2)
+matSet(m, 0, 2, 3)
+matSet(m, 1, 0, 4)
+matSet(m, 1, 1, 5)
+matSet(m, 1, 2, 6)
+matSet(m, 2, 0, 7)
+matSet(m, 2, 1, 8)
+matSet(m, 2, 2, 9)
+
+check(23, 15, matTrace(m, 3))         # 1+5+9 = 15
+
+mt = matTranspose(m, 3)
+check(24, 4, matGet(mt, 0, 1))        # m[1][0] = 4
+check(25, 2, matGet(mt, 1, 0))        # m[0][1] = 2
+check(26, 9, matGet(mt, 2, 2))        # m[2][2] = 9
+check(27, 8, matGet(mt, 1, 2))        # m[2][1] = 8
+
+print("=== test_complex_data_structures.ava terminado ===")

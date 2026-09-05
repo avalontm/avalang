@@ -1,0 +1,33 @@
+# test_bug11_base_init_attr_corruption.ava
+# Repro minima de BUG 11: corrupcion de `this.attr = param` tras
+# base.__init__ cuando la base tiene 2+ parametros.
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+# Base con 2 parametros (condicion para disparar el bug)
+class Animal
+    func Animal(name, sound)
+        this.name = name
+        this.sound = sound
+    end
+end
+
+class Dog : Animal
+    func Dog(name, breed)
+        base.__init__(name, "guau")
+        this.breed = breed
+    end
+end
+
+d = Dog("Rex", "Labrador")
+check(1, "Rex", d.name)
+check(2, "guau", d.sound)
+check(3, "Labrador", d.breed)
+
+print("=== test_bug11_base_init_attr_corruption.ava terminado ===")

@@ -1,0 +1,88 @@
+# test_bug4_static_props.ava
+# BUG 4: propiedades estaticas de clase. Resultado: YA ESTAN
+# SOPORTADAS con la keyword `static` (el reporte original usaba
+# `next_id = 1` a secas, que correctamente es default de instancia).
+# Este test mapea lo que `static`/`private` soportan en cuerpo de clase.
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+# --- 1. Atributo estatico leido/mutado desde un metodo via ClassName ---
+class Registry
+    static next_id = 1
+
+    func register(name)
+        id = Registry.next_id
+        Registry.next_id = Registry.next_id + 1
+        return id
+    end
+end
+
+r1 = Registry.register("a")
+r2 = Registry.register("b")
+check(1, 1, r1)
+check(2, 2, r2)
+check(3, 3, Registry.next_id)
+
+# --- 2. Atributo estatico compartido entre instancias (no de instancia) ---
+class Counter
+    static count = 0
+    func Counter()
+        Counter.count = Counter.count + 1
+    end
+end
+
+c1 = Counter()
+c2 = Counter()
+c3 = Counter()
+check(4, 3, Counter.count)
+
+# --- 3. Mutacion de estatico desde FUERA de la clase ---
+Registry.next_id = 100
+check(5, 100, Registry.next_id)
+Registry.register("c")
+check(6, 101, Registry.next_id)
+
+# --- 4. String estatico ---
+class Config
+    static mode = "dev"
+end
+check(7, "dev", Config.mode)
+Config.mode = "prod"
+check(8, "prod", Config.mode)
+
+# --- 5. Estatico + atributo de instancia conviviendo ---
+class Mixed
+    static shared = 0
+    own = 99
+
+    func Mixed()
+        Mixed.shared = Mixed.shared + 1
+    end
+end
+
+m1 = Mixed()
+m2 = Mixed()
+check(9, 2, Mixed.shared)
+check(10, 99, m1.own)
+check(11, 99, m2.own)
+m1.own = 1
+check(12, 1, m1.own)
+check(13, 99, m2.own)
+
+# --- 6. static func: metodo estatico ---
+class Mathx
+    static func double(x)
+        return x * 2
+    end
+end
+
+check(14, 10, Mathx.double(5))
+check(15, 6, Mathx.double(3))
+
+print("=== test_bug4_static_props.ava terminado ===")

@@ -1,0 +1,21 @@
+# lib/data/config.ava
+# Configuracion con constantes y una clase autocontenida.
+# PATRON CANONICO: constructor = nombre de clase.
+CONFIG_APP = "AvaLang"
+CONFIG_VERSION = "1.0"
+CONFIG_MAX_ITEMS = 100
+
+class Config
+    func Config()
+        this.host = "localhost"
+        this.port = 8080
+        this.maxItems = 100
+    end
+    func url()
+        return this.host + ":" + str(this.port)
+    end
+    func update(host, port)
+        this.host = host
+        this.port = port
+    end
+end

@@ -1,0 +1,170 @@
+func _normRoot(p)
+    if p.indexOf("\\") >= 0 or p.indexOf("/") >= 0 then
+        p = p.replace("/", "\\")
+    end
+    return p
+end
+
+func isAbsolute(p)
+    if len(p) >= 2 and p[1] == ":" then
+        return true
+    end
+    if p.indexOf("\\\\") == 0 then
+        return true
+    end
+    if len(p) > 0 and p[0] == "/" then
+        return true
+    end
+    return false
+end
+
+func _parts(p)
+    if len(p) == 0 then
+        return []
+    end
+    p = p.replace("/", "\\")
+    list = p.split("\\")
+    out = []
+    i = 0
+    while i < len(list)
+        seg = list[i]
+        if seg != "" then
+            out.append(seg)
+        end
+        i++
+    end
+    return out
+end
+
+func split(p)
+    return _parts(p)
+end
+
+func _lastSplit(p)
+    p = _normRoot(p)
+    i = len(p)
+    while i > 0 and p[i - 1] != "/" and p[i - 1] != "\\"
+        i = i - 1
+    end
+    return [p.substring(0, i), p.substring(i, len(p))]
+end
+
+func dirname(p)
+    sp = _lastSplit(p)
+    d = sp[0]
+    while len(d) > 1 and (d[len(d) - 1] == "/" or d[len(d) - 1] == "\\")
+        d = d.substring(0, len(d) - 1)
+    end
+    return d
+end
+
+func basename(p)
+    return _lastSplit(p)[1]
+end
+
+func extname(p)
+    b = basename(p)
+    i = len(b) - 1
+    while i >= 0
+        if b[i] == "." then
+            if i == 0 then
+                return ""
+            end
+            return b.substring(i, len(b))
+        end
+        i = i - 1
+    end
+    return ""
+end
+
+func join(a, b)
+    a = _normRoot(a)
+    b = _normRoot(b)
+    if len(a) == 0 then
+        return b
+    end
+    if len(b) == 0 then
+        return a
+    end
+    last = a[len(a) - 1]
+    first = b[0]
+    if last == "\\" or last == "/" or first == "\\" or first == "/" then
+        return a + b
+    end
+    return a + "\\" + b
+end
+
+func joinAll(list)
+    out = ""
+    i = 0
+    while i < len(list)
+        out = join(out, list[i])
+        i++
+    end
+    return out
+end
+
+func normalize(p)
+    p = _normRoot(p)
+    drive = ""
+    prefix = ""
+    rest = ""
+    if len(p) >= 2 and p[1] == ":" then
+        drive = p.substring(0, 2)
+        rest = p.substring(2, len(p))
+        prefix = drive
+        if len(rest) > 0 and rest[0] == "\\" then
+            prefix = drive + "\\"
+            rest = rest.substring(1, len(rest))
+        end
+    elif p.indexOf("\\\\") == 0 then
+        rest = p.substring(2, len(p))
+        sp = rest.indexOf("\\")
+        if sp >= 0 then
+            server = rest.substring(0, sp)
+            rest2 = rest.substring(sp + 1, len(rest))
+            sp2 = rest2.indexOf("\\")
+            if sp2 >= 0 then
+                share = rest2.substring(0, sp2)
+                prefix = "\\\\" + server + "\\" + share + "\\"
+                rest = rest2.substring(sp2 + 1, len(rest2))
+            else
+                prefix = "\\\\" + server + "\\" + rest2 + "\\"
+                rest = ""
+            end
+        else
+            prefix = "\\\\" + rest + "\\"
+            rest = ""
+        end
+    elif len(p) > 0 and (p[0] == "/" or p[0] == "\\") then
+        prefix = "\\"
+        rest = p.substring(1, len(p))
+    else
+        rest = p
+    end
+    segs = rest.split("\\")
+    stack = []
+    i = 0
+    while i < len(segs)
+        s = segs[i]
+        if s == "." then
+        elif s == ".." then
+            if len(stack) > 0 then
+                stack.removeAt(len(stack) - 1)
+            end
+        elif s != "" then
+            stack.append(s)
+        end
+        i++
+    end
+    joined = ""
+    i = 0
+    while i < len(stack)
+        if i > 0 then
+            joined = joined + "\\"
+        end
+        joined = joined + stack[i]
+        i++
+    end
+    return prefix + joined
+end

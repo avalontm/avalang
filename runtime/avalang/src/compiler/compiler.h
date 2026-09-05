@@ -43,7 +43,7 @@ private:
     uint16_t max_reg_ = 0;
     uint16_t result_reg_ = 0;
     std::unordered_map<std::string, uint16_t> locals_;
-    // Phase 4 of AvaLang_Plan_Sistema_de_Tipos.md. Scoped the same way as
+    // Phase 4. Scoped the same way as
     // locals_ above: one map per Compiler instance, so a function/method/
     // lambda's own sub-Compiler (see CompileFunc, CompileClass, LambdaExpr)
     // has its own symbols_, separate from its parent's -- same lifetime and
@@ -55,7 +55,7 @@ private:
     // Phase 5 (inference reads/writes inferredType) and Phase 6
     // (validation reads declaredType/effectiveType to check assignments).
     std::unordered_map<std::string, Symbol> symbols_;
-    // Phase 9 of AvaLang_Plan_Sistema_de_Tipos.md ("Validación de
+    // Phase 9 ("Validación de
     // parámetros en llamadas"). Same scoping as symbols_/locals_ above --
     // one map per Compiler instance. Populated by the free function
     // CollectFuncSignatures (compiler.cpp), called from CompileChunk
@@ -76,7 +76,7 @@ private:
     // yet (same category of limitation as InferExprType's NameExpr
     // lookup not following upvalues, Phase 5).
     std::unordered_map<std::string, std::vector<std::pair<std::string, Type>>> known_funcs_;
-    // Phase 10 of AvaLang_Plan_Sistema_de_Tipos.md ("Validación de
+    // Phase 10 ("Validación de
     // retornos"). Companion to known_funcs_ above: same population site
     // (CollectFuncSignatures, extended this phase to also fill this map)
     // and the exact same scoping/limitations (per-Compiler-instance,
@@ -90,7 +90,7 @@ private:
     // everything else (obj.method(), a lambda stored in a variable, a call
     // to a function outside this chunk) still infers Type::Unknown, same
     // gap as known_funcs_ itself.
-    // Phase 13 of AvaLang_Plan_Sistema_de_Tipos.md: class-aware (TypeRef,
+    // Phase 13: class-aware (TypeRef,
     // not plain Type) since a free function's declared return type can
     // itself be a class name (`func make() as User ... end`) -- see
     // ResolveTypeName. Populated alongside known_funcs_ above by the same
@@ -122,7 +122,7 @@ private:
     // nested scope can see top-level assigned names the same way it
     // already sees top-level function defs.
     std::unordered_set<std::string> known_top_level_globals_;
-    // Phase 10 of AvaLang_Plan_Sistema_de_Tipos.md. The CURRENT function
+    // Phase 10. The CURRENT function
     // body's declared return type (Phase 8's FuncDef::return_type,
     // resolved via TypeFromName), set once per Compiler instance right
     // before CompileChunk(func->body) runs -- CompileFunc for a free
@@ -135,7 +135,7 @@ private:
     // instance never got a function body at all (module top level, or an
     // `if`/`while`/`for` block sharing its enclosing function's instance),
     // or the function genuinely has no `as Type` after its parameter list.
-    // Phase 14 of AvaLang_Plan_Sistema_de_Tipos.md ("Lambdas y funciones
+    // Phase 14 ("Lambdas y funciones
     // como valores"): LambdaExpr's own `Compiler sub` (CompileExpr's
     // LambdaExpr case) now sets this too, exactly like CompileFunc does,
     // from LambdaExpr::return_type -- so `return` inside a lambda that
@@ -169,7 +169,7 @@ private:
     // de la función async que lo contiene). Ver CompileExpr(AwaitExpr).
     bool in_async_func_ = false;
     std::unordered_map<std::string, ClassObj*> compiled_classes_;
-    // Phase 13 of AvaLang_Plan_Sistema_de_Tipos.md ("Clases y objetos").
+    // Phase 13 ("Clases y objetos").
     // className -> fieldName -> resolved TypeRef. Populated in
     // CompileClass from AssignStmt::explicit_type when a class-body field
     // carries one (`name as string`), else from InferExprType(a->value)
@@ -215,7 +215,7 @@ private:
     // CheckMethodCallArgs, the obj.method(...) companion to CheckCallArgs.
     std::unordered_map<std::string, std::unordered_map<std::string, std::vector<std::pair<std::string, Type>>>>
         class_method_params_;
-    // Phase 16 of AvaLang_Plan_Sistema_de_Tipos.md ("extern"). Alias ->
+    // Phase 16 ("extern"). Alias ->
     // funcName -> (param name, declared Type) list -- the exact same
     // shape and scope limit as class_method_params_ right above (plain
     // Type only, not TypeRef: an extern parameter typed `as SomeClass`
@@ -292,6 +292,11 @@ private:
 
     uint32_t for_depth_ = 0;
 
+    std::vector<std::unordered_set<std::string>> block_scoped_names_;
+
+    int block_depth_ = 0;
+    std::unordered_map<std::string, Symbol> floor_symbols_;
+
     // Fase 1 del plan break/continue: cuantos bucles (while/for/for-range)
     // envuelven el punto que se esta compilando ahora mismo, en este mismo
     // Compiler instance (cada func/metodo/lambda compila en su propio
@@ -329,7 +334,7 @@ private:
     // en vez de reimplementar el check.
     void StampLine(const std::shared_ptr<StmtNode>& stmt);
 
-    // Phase 4 of AvaLang_Plan_Sistema_de_Tipos.md: records/updates a name
+    // Phase 4: records/updates a name
     // in symbols_ when an AssignStmt declares or assigns it (see
     // CompileStmt/CompileExprToReg). declared_type is
     // TypeFromName(AssignStmt::explicit_type) -- Type::Unknown when the
@@ -345,7 +350,7 @@ private:
     // or between successive inferred types, for the same name is Phase
     // 6/7's job, not this one's. effectiveType is refreshed either way.
     //
-    // Phase 15 of AvaLang_Plan_Sistema_de_Tipos.md ("Colecciones"): the two
+    // Phase 15 ("Colecciones"): the two
     // Type+class-name pairs this used to take were replaced with two full
     // TypeRef parameters, so a name assigned a list/dict literal also gets
     // its element_type/key_type (see type.h's TypeRef and symbol.h's
@@ -356,7 +361,7 @@ private:
     // element_type + key_type move together, never partially).
     void DeclareSymbol(const std::string& name, const TypeRef& declared, const TypeRef& inferred = TypeRef{});
 
-    // Phase 13 of AvaLang_Plan_Sistema_de_Tipos.md ("Clases y objetos").
+    // Phase 13 ("Clases y objetos").
     // Resolves an `as Type` spelling to either a primitive (TypeFromName,
     // unchanged) or, when that fails, a class name already present in
     // compiled_classes_ -- same "must be defined earlier in the file"
@@ -378,7 +383,7 @@ private:
     // callers that don't need the class name keep using it as before;
     // only the new class-aware call sites (annotation/reassignment/
     // return-type validation, method-call argument checks) use this.
-    // Phase 15 of AvaLang_Plan_Sistema_de_Tipos.md ("Colecciones") extended
+    // Phase 15 ("Colecciones") extended
     // this walk with real branches for ListExpr/DictExpr (element/value
     // type from the literal's own items, when they agree on one type) and
     // for IndexExpr/SliceExpr (reads the element/value type back off
@@ -393,7 +398,7 @@ private:
     // else in this type system).
     TypeRef InferExprTypeRef(const std::shared_ptr<ExprNode>& expr);
 
-    // Phase 5 of AvaLang_Plan_Sistema_de_Tipos.md ("Inferencia"). Infers the
+    // Phase 5 ("Inferencia"). Infers the
     // ava::Type of an expression without compiling it (no bytecode emitted,
     // no registers touched) -- purely a lookup/walk over the AST, called
     // from DeclareSymbol's call sites right before/alongside CompileExpr on
@@ -412,7 +417,7 @@ private:
     // failures of this one.
     Type InferExprType(const std::shared_ptr<ExprNode>& expr);
 
-    // Phase 7 of AvaLang_Plan_Sistema_de_Tipos.md ("Asignaciones
+    // Phase 7 ("Asignaciones
     // posteriores"). Called from the three AssignStmt branches that call
     // DeclareSymbol for a NameExpr target with a value (has_local,
     // brand-new local, and top-level global -- see CompileStmt/
@@ -429,7 +434,7 @@ private:
     // symbols_ and defers to the free function ValidateReassignment.
     void CheckReassignment(const AssignStmt* a, const std::string& name, const TypeRef& inferred);
 
-    // Phase 9 of AvaLang_Plan_Sistema_de_Tipos.md ("Validación de
+    // Phase 9 ("Validación de
     // parámetros en llamadas"). See the definition in compiler.cpp for
     // what it does and does not check.
     void CheckCallArgs(const std::string& func_name, const CallExpr* c);
@@ -448,13 +453,13 @@ private:
     void CheckCallArgsAgainst(const std::vector<std::pair<std::string, Type>>& params,
                                const std::string& label, const CallExpr* c);
 
-    // Phase 10 of AvaLang_Plan_Sistema_de_Tipos.md ("Validación de
+    // Phase 10 ("Validación de
     // retornos"). See the definition in compiler.cpp for what it does and
     // does not check, including the "empty return in a non-void function"
     // decision (plan section 14).
     void CheckReturnType(const ReturnStmt* r);
 
-    // Phase 11 of AvaLang_Plan_Sistema_de_Tipos.md ("Operadores"). See the
+    // Phase 11 ("Operadores"). See the
     // static ValidateBinOpTypes/ValidateUnOpTypes definitions in
     // compiler.cpp for the actual compatibility table and the reasoning
     // behind it (built from vm_arith.cpp/vm_compare.cpp's real behavior,
@@ -469,6 +474,7 @@ private:
     void CompileStmt(const std::shared_ptr<StmtNode>& stmt);
     void CompileChunk(const std::vector<std::shared_ptr<StmtNode>>& stmts);
     uint16_t CompileExprToReg(const std::shared_ptr<StmtNode>& stmt);
+    void CompileBlock(const std::vector<std::shared_ptr<StmtNode>>& body);
 
     void PatchJump(size_t instr_idx);
     void PatchContinueJump(size_t instr_idx, size_t loop_start);
@@ -503,6 +509,8 @@ private:
     static bool IsShortCircuit(BinOp op);
 
     int16_t FindUpvalue(const std::string& name);
+
+    void MarkBlockScoped(const std::string& name);
 
 private:
     std::shared_ptr<ExprNode> ParseExpr(const std::string& s, size_t& pos);

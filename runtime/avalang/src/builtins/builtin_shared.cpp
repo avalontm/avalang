@@ -89,7 +89,7 @@ avastd::string ToDisplayString(const Value& v) {
             // "unknown" (Task no tenia caso propio) -> se imprimia
             // literalmente "<unknown>". Con clave numerica no aplica
             // (esto es ValueType::Task, no dict); ver nota en
-            // AvaLang_Bugs_Encontrados.md sobre por que llamar una
+            // BUGS_ENCONTRADOS.md sobre por que llamar una
             // `async func` desde codigo sincrono top-level devuelve un
             // Task en vez del valor resuelto -- esto solo mejora como
             // se ve ese Task al imprimirlo/convertirlo a string, no

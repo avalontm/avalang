@@ -1,0 +1,47 @@
+# lib/stress/logger.ava
+# Modulo con log de eventos: muta un array global y un contador de
+# nivel modulo desde funcion cuyo ultimo statement es una asignacion.
+
+log_lines = []
+event_count = 0
+error_count = 0
+seq = 0
+
+func log_event(level, msg)
+    seq = seq + 1
+    entry = "[" + str(seq) + "] " + level + ": " + msg
+    log_lines.append(entry)
+end
+
+func log_error(msg)
+    event_count = event_count + 1
+    error_count = error_count + 1
+    seq = seq + 1
+    log_lines.append("[ERR] " + msg)
+end
+
+func log_info(msg)
+    event_count = event_count + 1
+    seq = seq + 1
+    log_lines.append("[INFO] " + msg)
+end
+
+func get_log_len()
+    return len(log_lines)
+end
+
+func get_events()
+    return event_count
+end
+
+func get_errors()
+    return error_count
+end
+
+func get_first()
+    return log_lines[0]
+end
+
+func get_last()
+    return log_lines[len(log_lines) - 1]
+end

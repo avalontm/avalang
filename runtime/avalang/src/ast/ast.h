@@ -39,10 +39,11 @@ struct ExprNode : AstNode {};
 
 struct NumberExpr : ExprNode {
     double value;
-    // Phase 5 of AvaLang_Plan_Sistema_de_Tipos.md ("Inferencia"): whether the
+    // Phase 5 ("Inferencia"): whether the
     // literal was written with a decimal point (`10.0`) vs. without one
-    // (`10`). NUMBER's grammar rule is `DIGIT+ ('.' DIGIT+)?` (no exponent,
-    // no hex), so this is a plain textual check in AstBuilder::visitNumberAtom
+    // (`10`). NUMBER's grammar rule is `DIGIT+ ('.' DIGIT+)? EXPONENT?`
+    // (no hex), so this is a plain textual check in
+    // AstBuilder::visitNumberAtom
     // -- it does NOT look at `value` itself, because `10.0` and `10` parse to
     // the same double but must infer as Float and Int respectively. Only
     // Compiler::InferExprType reads this; codegen (CompileExpr) still just
@@ -157,7 +158,7 @@ struct ExprStmt : StmtNode {
 struct AssignStmt : StmtNode {
     std::shared_ptr<ExprNode> target;
     // nullptr only for a type declaration without an initializer (Phase 3
-    // of AvaLang_Plan_Sistema_de_Tipos.md -- `age as int` with no `= value`,
+    //  -- `age as int` with no `= value`,
     // see AstBuilder::visitTypedDeclStatement). Every other AssignStmt
     // (plain `x = 1`, typed `x as int = 1`, `static`/`private` attrs)
     // still always has a value. The compiler does not yet handle a null
@@ -185,17 +186,15 @@ struct AssignStmt : StmtNode {
     // shadowing con `local`"): true for `local x = expr` / `local x as
     // Type = expr` / `local x as Type`, set by
     // AstBuilder::visitLocalStatement. Consulted by
-    // Compiler::CompileStmt/CompileExprToReg to skip validating this
-    // assignment's value against a same-named symbol already in scope --
-    // `local` always starts a fresh binding on the type side, even when a
-    // name with that spelling already exists. NOTE: this only affects type
-    // bookkeeping. AvaLang's compiler has no block-level scope stack today
-    // (CompileIf/CompileWhile/CompileFor all compile their body via the
-    // same function-wide locals_/symbols_ as their surrounding code, see
-    // compiler.h), so `local` cannot yet give a name truly separate
-    // storage that shadows an outer register and un-shadows itself when
-    // the block ends -- that needs a real scope-stack, which is a bigger,
-    // separate architectural change than this plan's phases cover.
+    // Compiler::CompileStmt/CompileExprToReg (a) to skip validating this
+    // assignment's value against a same-named symbol already in scope and
+    // (b) to allocate a FRESH function-local register that shadows any
+    // same-named module global / upvalue / outer local, instead of
+    // falling through to SETGLOBAL/SETUPVAL -- see CompileStmt. NOTE: the
+    // shadow lives for the whole function (there is still no block-level
+    // scope stack, so it does not un-shadow itself when the enclosing
+    // block ends); a second `local x` later in the same function binds to
+    // a new register and onwards references use it.
     bool is_local = false;
     AssignStmt(std::shared_ptr<ExprNode> t, std::shared_ptr<ExprNode> v)
         : target(std::move(t)), value(std::move(v)) {}
@@ -287,7 +286,7 @@ struct ForRangeStmt : StmtNode {
 struct FuncDef : StmtNode {
     std::string name;
     std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> params;
-    // Phase 8 of AvaLang_Plan_Sistema_de_Tipos.md ("Funciones"): raw
+    // Phase 8 ("Funciones"): raw
     // spelling of each parameter's `as Type` annotation, parallel to
     // `params` (same index, same length once set -- empty if this FuncDef
     // predates Phase 8 or was built some other way) -- "" = no annotation
@@ -359,7 +358,7 @@ struct LambdaExpr : ExprNode {
     std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> defaults;
     std::vector<std::shared_ptr<StmtNode>> body;
     bool is_vararg = false;
-    // Phase 14 of AvaLang_Plan_Sistema_de_Tipos.md ("Lambdas y funciones
+    // Phase 14 ("Lambdas y funciones
     // como valores"). Same convention as FuncDef::param_types/return_type
     // (Phase 8): raw `as Type` spelling, parallel to `defaults` (same
     // index, "" = no annotation for that parameter), and the raw
@@ -382,10 +381,9 @@ struct LambdaExpr : ExprNode {
 };
 
 // Declaración de una función dentro de un bloque `extern` (sin cuerpo,
-// resuelta contra la librería nativa por el runtime). Ver
-// EXTERN_FFI_DESIGN.md.
+// resuelta contra la librería nativa por el runtime).
 //
-// Phase 16 of AvaLang_Plan_Sistema_de_Tipos.md ("extern"): param_types/
+// Phase 16 ("extern"): param_types/
 // return_type are the exact same parallel-array + raw-spelling pattern as
 // FuncDef's (this file, Phase 8) and LambdaExpr's (Phase 14) -- one string
 // per entry in `params`, index-aligned, "" = no annotation for that

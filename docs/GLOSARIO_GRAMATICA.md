@@ -526,7 +526,7 @@ solo sirve para poner más de un statement simple en la misma línea.
 | Palabra clave | Sección |
 |---|---|
 | `if` `elif` `else` `then` `end` | [§4](#4-control-de-flujo) |
-| `select` `case` `to` `is` | [§4](#4-control-de-flujo) |
+| `select` `case` `is` | [§4](#4-control-de-flujo) |
 | `while` `for` `in` | [§4](#4-control-de-flujo) |
 | `break` `continue` `pass` | [§4](#4-control-de-flujo) |
 | `func` `return` `async` `await` | [§5](#5-funciones-y-lambdas) |
@@ -537,6 +537,7 @@ solo sirve para poner más de un statement simple en la misma línea.
 | `local` `as` (anotación de tipo) | [§2](#2-variables-asignación-y-tipos) |
 | `and` `or` `not` | [§3](#3-operadores) |
 | `yield` | expresión (`yieldAtom` en `primary`, ver `AvaLang.g4`) — generadores, no cubierto todavía por ningún ejemplo del repo |
+| `to` `step` | **NO son palabras reservadas**: tokens `NAME` contextuales en `for ... to ... step` y `case X to Y`, validados semánticamente (ver [§4](#4-control-de-flujo)). Por eso pueden usarse como variables/params. |
 
 ---
 

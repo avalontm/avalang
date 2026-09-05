@@ -1,0 +1,98 @@
+import azlib
+
+g_tbl = nil
+g_zlib = nil
+
+func _t()
+    if g_tbl == nil then
+        buf = mem_alloc(256)
+        mem_write_bytes(buf, 0, range(0, 256))
+        g_tbl = mem_string(buf, 0, 256)
+        mem_free(buf)
+    end
+    return g_tbl
+end
+
+func charCode(c)
+    return _t().indexOf(c)
+end
+
+func char(n)
+    return _t().substring(n, n + 1)
+end
+
+func _zc()
+    if g_zlib == nil then
+        g_zlib = Zlib()
+    end
+    return g_zlib
+end
+
+func _u16(v)
+    return char(v & 255) + char((v >> 8) & 255)
+end
+
+func _u32(v)
+    return char(v & 255) + char((v >> 8) & 255) + char((v >> 16) & 255) + char((v >> 24) & 255)
+end
+
+func _ru16(d, p)
+    return charCode(d[p]) | (charCode(d[p + 1]) << 8)
+end
+
+func _ru32(d, p)
+    return charCode(d[p]) | (charCode(d[p + 1]) << 8) | (charCode(d[p + 2]) << 16) | (charCode(d[p + 3]) << 24)
+end
+
+func writeEntries(entries)
+    out = ""
+    cd = ""
+    offset = 0
+    z = _zc()
+    i = 0
+    while i < len(entries)
+        e = entries[i]
+        name = e[0]
+        data = e[1]
+        crc = z.crc32(data, 0)
+        sz = len(data)
+        nl = len(name)
+        lh = _u32(67324752) + _u16(20) + _u16(0) + _u16(0) + _u16(0) + _u16(33) + _u32(crc) + _u32(sz) + _u32(sz) + _u16(nl) + _u16(0) + name + data
+        out = out + lh
+        cd = cd + _u32(33639248) + _u16(20) + _u16(20) + _u16(0) + _u16(0) + _u16(0) + _u16(33) + _u32(crc) + _u32(sz) + _u32(sz) + _u16(nl) + _u16(0) + _u16(0) + _u16(0) + _u16(0) + _u32(25165824) + _u32(offset) + name
+        offset = offset + len(lh)
+        i++
+    end
+    cdOffset = offset
+    out = out + cd
+    return out + _u32(101010256) + _u16(0) + _u16(0) + _u16(len(entries)) + _u16(len(entries)) + _u32(len(cd)) + _u32(cdOffset) + _u16(0)
+end
+
+func readEntries(data)
+    entries = []
+    pos = 0
+    z = _zc()
+    while pos + 4 <= len(data)
+        sig = _ru32(data, pos)
+        if sig != 67324752 then
+            return entries
+        end
+        method = _ru16(data, pos + 8)
+        if method != 0 then
+            raise "zip: metodo no soportado " + str(method)
+        end
+        crc = _ru32(data, pos + 14)
+        csz = _ru32(data, pos + 18)
+        nl = _ru16(data, pos + 26)
+        el = _ru16(data, pos + 28)
+        name = data.substring(pos + 30, pos + 30 + nl)
+        dataStart = pos + 30 + nl + el
+        content = data.substring(dataStart, dataStart + csz)
+        if z.crc32(content, 0) != crc then
+            raise "zip: crc invalido en " + name
+        end
+        entries.append([name, content])
+        pos = dataStart + csz
+    end
+    return entries
+end

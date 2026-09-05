@@ -1,0 +1,58 @@
+import uuid
+
+g_n = 0
+g_fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+print("== formato v4 ==")
+u = v4()
+mark(check(g_n + 1, 36, len(u)))
+mark(check(g_n + 1, true, isValid(u)))
+mark(check(g_n + 1, "4", u.substring(14, 15)))
+mark(check(g_n + 1, true, "89ab".indexOf(u.substring(19, 20)) >= 0))
+mark(check(g_n + 1, "-", u.substring(8, 9)))
+mark(check(g_n + 1, "-", u.substring(13, 14)))
+mark(check(g_n + 1, "-", u.substring(18, 19)))
+mark(check(g_n + 1, "-", u.substring(23, 24)))
+
+print("== variante del nibble ==")
+mark(check(g_n + 1, true, "89ab".indexOf(u.substring(19, 20)) >= 0))
+
+print("== unicidad ==")
+seen = {}
+i = 0
+while i < 200
+    seen[v4()] = 1
+    i++
+end
+mark(check(g_n + 1, 200, len(keys(seen))))
+
+print("== isValid ==")
+mark(check(g_n + 1, true, isValid("12345678-1234-4123-8123-123456789abc")))
+mark(check(g_n + 1, false, isValid("12345678-1234-4123-8123-123456789ab")))
+mark(check(g_n + 1, false, isValid("12345678-1234-4123-8123-123456789abz")))
+mark(check(g_n + 1, false, isValid("123456781234-4123-8123-123456789abc")))
+mark(check(g_n + 1, true, isValid(NIL_UUID)))
+mark(check(g_n + 1, false, isValid("")))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST UUID FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST UUID: TODO OK")

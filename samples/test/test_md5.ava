@@ -1,0 +1,36 @@
+import md5
+
+g_n = 0
+g_fails = 0
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+        return true
+    end
+    print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    return false
+end
+
+func mark(ok)
+    g_n = g_n + 1
+    if not ok then
+        g_fails = g_fails + 1
+    end
+end
+
+print("== Vectores RFC 1321 ==")
+mark(check(g_n + 1, "d41d8cd98f00b204e9800998ecf8427e", hash("")))
+mark(check(g_n + 1, "0cc175b9c0f1b6a831c399e269772661", hash("a")))
+mark(check(g_n + 1, "900150983cd24fb0d6963f7d28e17f72", hash("abc")))
+mark(check(g_n + 1, "f96b697d7cb7938d525a2f31aaf161d0", hash("message digest")))
+mark(check(g_n + 1, "c3fcd3d76192e4007dfb496cca67e13b", hash("abcdefghijklmnopqrstuvwxyz")))
+mark(check(g_n + 1, "d174ab98d277d9f5a5611c2c9f419d9f", hash("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")))
+mark(check(g_n + 1, "57edf4a22be3c955ac49da2e2107b67a", hash("12345678901234567890123456789012345678901234567890123456789012345678901234567890")))
+
+print("")
+print("RESULTADO: " + str(g_n) + " checks, " + str(g_fails) + " FAIL")
+if g_fails > 0 then
+    raise "TEST MD5 FALLIDO: " + str(g_fails) + " checks en rojo"
+end
+print("TEST MD5: TODO OK")

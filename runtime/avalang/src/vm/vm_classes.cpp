@@ -114,7 +114,7 @@ void OpGetAttr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K
                 // `this.total` dentro de un método nunca encontraba un
                 // `static total = ...` declarado en la clase y devolvía
                 // Nil incluso cuando `Contador.total` sí funcionaba.
-                // NOTA (corregida, ver bug #15 en AvaLang_Bugs_Encontrados.md):
+                // NOTA (corregida, ver bug #15 en BUGS_ENCONTRADOS.md):
                 // una nota anterior de esta misma línea decía que había un
                 // bug "distinto y aún abierto" con `this.total` DENTRO de
                 // un método -- primero se afirmó que GETATTR nunca se
@@ -159,7 +159,7 @@ void OpGetAttr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K
             }
         }
     } else if (obj.type == ValueType::Module) {
-        // Namespace de un bloque `extern` (ver EXTERN_FFI_DESIGN.md / Fase 2).
+        // Namespace de un bloque `extern`.
         // No hay herencia ni "this": es solo un mapa nombre -> Native.
         auto* mod = static_cast<ModuleObj*>(obj.obj);
         auto it = mod->attrs.find(attr_name->data);

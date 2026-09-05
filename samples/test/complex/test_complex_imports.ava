@@ -1,0 +1,88 @@
+# test_complex_imports.ava
+# Combina imports de varios modulos (constantes, clases) en un solo
+# programa que los usa de forma cruzada. Evita a proposito BUG 1
+# (funciones que se auto-referencien dentro de un modulo importado).
+
+import lib.data.config
+import lib.algo.structs
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+# --- Usar constantes del modulo config ---
+check(1, "AvaLang", lib.data.config.CONFIG_APP)
+check(2, "1.0", lib.data.config.CONFIG_VERSION)
+check(3, 100, lib.data.config.CONFIG_MAX_ITEMS)
+
+# --- Instanciar Config (clase del modulo) y usar metodos ---
+cfg = lib.data.config.Config()
+check(4, "localhost:8080", cfg.url())
+cfg.update("server.prod", 9090)
+check(5, "server.prod:9090", cfg.url())
+check(6, 100, cfg.maxItems)
+
+# --- Usar Stack del modulo structs ---
+st = lib.algo.structs.Stack()
+st.push(1)
+st.push(2)
+st.push(3)
+check(7, 3, st.size())
+check(8, 3, st.pop())
+check(9, 2, st.pop())
+check(10, 1, st.pop())
+check(11, nil, st.pop())
+
+# --- Usar Queue del modulo structs ---
+q = lib.algo.structs.Queue()
+q.enqueue("a")
+q.enqueue("b")
+q.enqueue("c")
+check(12, 3, q.size())
+check(13, "a", q.dequeue())
+check(14, "b", q.dequeue())
+q.enqueue("d")
+check(15, "c", q.dequeue())
+check(16, "d", q.dequeue())
+check(17, 0, q.size())
+
+# --- Combinar clases de ambos modulos: Stack de Configs ---
+stackCfg = lib.algo.structs.Stack()
+c1 = lib.data.config.Config()
+c1.update("h1", 1)
+c2 = lib.data.config.Config()
+c2.update("h2", 2)
+stackCfg.push(c1)
+stackCfg.push(c2)
+check(18, 2, stackCfg.size())
+top = stackCfg.pop()
+check(19, "h2:2", top.url())
+bottom = stackCfg.pop()
+check(20, "h1:1", bottom.url())
+
+# --- Cola de Configs + Stack de Stacks (composicion profunda) ---
+qCfg = lib.algo.structs.Queue()
+qCfg.enqueue(c1)
+qCfg.enqueue(c2)
+check(21, 2, qCfg.size())
+check(22, "h1:1", qCfg.dequeue().url())
+
+s1 = lib.algo.structs.Stack()
+s1.push(10)
+s1.push(20)
+s2 = lib.algo.structs.Stack()
+s2.push(30)
+s2.push(40)
+outer = lib.algo.structs.Stack()
+outer.push(s1)
+outer.push(s2)
+inner = outer.pop()
+check(23, 2, inner.size())
+check(24, 40, inner.pop())
+check(25, 20, outer.pop().pop())
+
+print("=== test_complex_imports.ava terminado ===")

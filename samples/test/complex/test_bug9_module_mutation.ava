@@ -1,0 +1,51 @@
+# test_bug9_module_mutation.ava
+# Reproduce BUG 9: variables de nivel modulo no se mutan correctamente
+# dentro de funciones.
+#
+# Antes del fix: cada llamada a increment() veia el valor original (0),
+# porque el compilador creaba un local sombreado en vez de emitir
+# SETGLOBAL. Despues del fix, la mutacion persiste entre llamadas.
+
+import lib.data.counter
+
+func check(n, expected, actual)
+    if expected == actual then
+        print("OK " + str(n))
+    else
+        print("FAIL " + str(n) + ": esperado=" + str(expected) + " real=" + str(actual))
+    end
+end
+
+# --- Test 1: incrementar y verificar que persiste ---
+lib.data.counter.reset_counter()
+lib.data.counter.increment()
+lib.data.counter.increment()
+lib.data.counter.increment()
+check(1, 3, lib.data.counter.get_counter())
+
+# --- Test 2: reset y volver a incrementar ---
+lib.data.counter.reset_counter()
+check(2, 0, lib.data.counter.get_counter())
+lib.data.counter.increment()
+check(3, 1, lib.data.counter.get_counter())
+
+# --- Test 3: BUG 9 exacto del documento ---
+# Pattern: variable de modulo, funcion que la muta, verificar entre llamadas
+pos = 0
+tokens = ["(", "+", "3"]
+
+func nextToken()
+    if pos < len(tokens) then
+        t = tokens[pos]
+        pos = pos + 1
+        return t
+    end
+    return nil
+end
+
+check(4, "(", nextToken())
+check(5, "+", nextToken())
+check(6, "3", nextToken())
+check(7, nil, nextToken())
+
+print("=== test_bug9_module_mutation.ava terminado ===")
