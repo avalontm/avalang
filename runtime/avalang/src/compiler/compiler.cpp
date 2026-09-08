@@ -713,10 +713,33 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
     }
 
     if (auto* c = dynamic_cast<CallExpr*>(expr.get())) {
+        int err_line = c->line != 0 ? c->line : current_line_;
+        int err_col = c->col != 0 ? c->col : current_col_;
         if (auto* callee_name = dynamic_cast<NameExpr*>(c->callee.get())) {
+            bool is_class = compiled_classes_.count(callee_name->name) != 0;
+            if (is_class && !c->is_new) {
+                throw AvaError(
+                    "class '" + callee_name->name + "' requires 'new' to instantiate -- use 'new " +
+                        callee_name->name + "(...)' instead of '" + callee_name->name + "(...)'",
+                    err_line, err_col, source_name_);
+            }
+            if (!is_class && c->is_new) {
+                throw AvaError(
+                    "'" + callee_name->name + "' is not a class -- 'new' can only be used to instantiate classes",
+                    err_line, err_col, source_name_);
+            }
             CheckCallArgs(callee_name->name, c);
         } else if (auto* callee_attr = dynamic_cast<AttrExpr*>(c->callee.get())) {
+            if (c->is_new) {
+                throw AvaError(
+                    "'new' requires a plain class name -- use 'new ClassName(...)'",
+                    err_line, err_col, source_name_);
+            }
             CheckMethodCallArgs(callee_attr, c);
+        } else if (c->is_new) {
+            throw AvaError(
+                "'new' requires a plain class name -- use 'new ClassName(...)'",
+                err_line, err_col, source_name_);
         }
         auto callee_val_reg = CompileExpr(c->callee);
         auto callee_reg = AllocReg();
@@ -3100,6 +3123,9 @@ void Compiler::CompileClass(const ClassDef* cls) {
         for (auto& [mname, mproto] : base_class->methods) {
             if (mname != "__init__" && mname != "__base__") {
                 class_obj->methods[mname] = mproto;
+                if (base_class->static_methods.count(mname)) {
+                    class_obj->static_methods.insert(mname);
+                }
             }
         }
 
@@ -3290,6 +3316,9 @@ void Compiler::CompileClass(const ClassDef* cls) {
             bool is_constructor = f->name == cls->name;
             std::string method_name = is_constructor ? "__init__" : f->name;
             class_obj->methods[method_name] = sub.proto_;
+            if (f->is_static && !is_constructor) {
+                class_obj->static_methods.insert(method_name);
+            }
             if (f->is_private) {
                 class_obj->private_members.insert(method_name);
             }

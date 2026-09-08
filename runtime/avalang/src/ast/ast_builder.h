@@ -93,6 +93,7 @@ public:
     std::any visitDictLiteral(AvaLangParser::DictLiteralContext* ctx) override;
     std::any visitGroupAtom(AvaLangParser::GroupAtomContext* ctx) override;
     std::any visitBaseAtom(AvaLangParser::BaseAtomContext* ctx) override;
+    std::any visitNewInstanceAtom(AvaLangParser::NewInstanceAtomContext* ctx) override;
     std::any visitSliceTrailer(AvaLangParser::SliceTrailerContext* ctx) override;
 
 private:

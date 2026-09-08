@@ -1,33 +1,21 @@
-// AvaLang for VS Code -- run support.
-//
-// This is the one file in the extension that isn't pure declarative JSON.
-// It wires an actual "Run" command (play button + F5) that shells out to
-// ava_cli, the same way you'd run it from a terminal:
-//   ava_cli [--modules <dir>] <script.ava> [extra args...]
-// (see runtime/avacli/src/main.cpp -- there's no separate "run" subcommand,
-// `build` is the only subcommand and it's for packaging, not for this).
-//
-// Everything the user can configure (which ava_cli binary, which working
-// directory, extra --modules override, extra script args) lives under the
-// "avalang.*" settings contributed in package.json, scoped as "resource" so
-// they can be set per-workspace/per-folder, not just globally.
-
 const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
+const { completionProvider, hoverProvider, signatureHelpProvider } = require('./providers');
+const { definitionProvider, referenceProvider, renameProvider } = require('./navigation');
+const { createDiagnosticsManager } = require('./diagnostics');
+const { documentSymbolProvider, foldingRangeProvider } = require('./structure');
+const { createStatusBarManager } = require('./statusbar');
+const { codeActionProvider, createLintManager } = require('./codeactions');
+const { inlayHintsProvider } = require('./inlayhints');
+const { documentFormattingProvider } = require('./formatter');
 
-// One shared terminal, reused across runs (recreated if the user closes it),
-// same UX as most "run current file" extensions.
 let terminal;
 
 function getConfig(resource) {
     return vscode.workspace.getConfiguration('avalang', resource);
 }
 
-// Expands the handful of VS Code-style path variables our settings support.
-// Deliberately a small subset (not the full launch.json variable set) --
-// just enough to point at a binary/working dir relative to the workspace or
-// the file being run.
 function resolveVariables(value, fileUri) {
     if (!value) return value;
 
@@ -46,8 +34,6 @@ function resolveVariables(value, fileUri) {
         .replace(/\$\{file\}/g, filePath);
 }
 
-// Quotes a path/arg only if it actually needs it, so simple values in the
-// terminal stay readable instead of always wrapped in quotes.
 function quoteIfNeeded(value) {
     if (value === '') return '""';
     if (/\s/.test(value) && !(value.startsWith('"') && value.endsWith('"'))) {
@@ -72,8 +58,6 @@ async function runFile(uriArg) {
         return;
     }
 
-    // Save first so ava_cli always runs what's actually on disk, not a stale
-    // version -- same expectation as VS Code's own "Run" for other languages.
     const dirtyEditor = vscode.window.visibleTextEditors.find(
         (e) => e.document.uri.toString() === targetUri.toString() && e.document.isDirty
     );
@@ -115,10 +99,6 @@ function looksLikeRepoRoot(dir) {
            fs.existsSync(path.join(dir, 'runtime', 'avapack', 'CMakeLists.txt'));
 }
 
-// Same walk-up-from-here logic as DetectRepoRoot() in
-// runtime/avastudio/src/panels/build_panel.cpp -- kept in sync deliberately
-// so "repo root" means the same thing whether you build from Ava Studio or
-// from this extension.
 function detectRepoRoot(startDir) {
     let dir = startDir;
     for (let i = 0; i < 8 && dir; i++) {
@@ -130,10 +110,6 @@ function detectRepoRoot(startDir) {
     return undefined;
 }
 
-// "AvaLang: Build Executable..." -- packages the current .ava file with
-// `ava_cli build` (runtime/avacli/src/build_command.cpp), the same
-// subcommand the Build panel in Ava Studio shells out to. No .bat/.sh
-// scripts involved, same as runFile above.
 async function buildExecutable(uriArg) {
     const editor = vscode.window.activeTextEditor;
     const targetUri = uriArg instanceof vscode.Uri ? uriArg : (editor && editor.document.uri);
@@ -163,9 +139,6 @@ async function buildExecutable(uriArg) {
     const executablePath = config.get('executablePath') || 'ava_cli';
     const outDirSetting = config.get('build.outDir') || '${workspaceFolder}/dist';
     const repoRootSetting = config.get('build.repoRoot') || '';
-    // One setting per target -- picked automatically below based on
-    // `target.label`, so switching the QuickPick selection uses the right
-    // path without overwriting the other one.
     const compilerPathSetting = target.label === 'barekernel'
         ? (config.get('build.compilerPathBarekernel') || '')
         : (config.get('build.compilerPathDesktop') || '');
@@ -209,9 +182,7 @@ async function buildExecutable(uriArg) {
         '--repo-root', quoteIfNeeded(resolvedRepoRoot),
         '--target', target.label,
     ];
-    // Same flag for both targets -- see ava_cli build --help: prepended to
-    // PATH for 'desktop', used as the i686-elf toolchain root for
-    // 'barekernel'. Just one path either way.
+
     if (resolvedCompilerPath) {
         commandParts.push('--compiler-path', quoteIfNeeded(resolvedCompilerPath));
     }
@@ -237,6 +208,56 @@ function activate(context) {
             if (closed === terminal) terminal = undefined;
         })
     );
+
+    context.subscriptions.push(
+        vscode.languages.registerCompletionItemProvider('avalang', completionProvider, '.')
+    );
+
+    context.subscriptions.push(
+        vscode.languages.registerHoverProvider('avalang', hoverProvider)
+    );
+
+    context.subscriptions.push(
+        vscode.languages.registerSignatureHelpProvider('avalang', signatureHelpProvider, '(', ',')
+    );
+
+    context.subscriptions.push(
+        vscode.languages.registerDefinitionProvider('avalang', definitionProvider)
+    );
+
+    context.subscriptions.push(
+        vscode.languages.registerReferenceProvider('avalang', referenceProvider)
+    );
+
+    context.subscriptions.push(
+        vscode.languages.registerRenameProvider('avalang', renameProvider)
+    );
+
+    context.subscriptions.push(
+        vscode.languages.registerDocumentSymbolProvider('avalang', documentSymbolProvider)
+    );
+
+    context.subscriptions.push(
+        vscode.languages.registerFoldingRangeProvider('avalang', foldingRangeProvider)
+    );
+
+    context.subscriptions.push(
+        vscode.languages.registerCodeActionsProvider('avalang', codeActionProvider, {
+            providedCodeActionKinds: [vscode.CodeActionKind.QuickFix, vscode.CodeActionKind.RefactorExtract],
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.languages.registerInlayHintsProvider('avalang', inlayHintsProvider)
+    );
+
+    context.subscriptions.push(
+        vscode.languages.registerDocumentFormattingEditProvider('avalang', documentFormattingProvider)
+    );
+
+    createDiagnosticsManager(context);
+    createLintManager(context);
+    createStatusBarManager(context);
 }
 
 function deactivate() {

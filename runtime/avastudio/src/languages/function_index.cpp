@@ -255,6 +255,7 @@ void FunctionIndex::ScanText(const std::string& text, const std::string& source_
             SkipInlineWhitespace(text, i);
             if (i >= text.size() || !IsIdentStart(text[i])) { i = save; pending_doc.clear(); continue; }
 
+            const size_t name_start = i;
             std::string name = ReadIdent(text, i);
             SkipInlineWhitespace(text, i);
             if (i >= text.size() || text[i] != '(') { i = save; pending_doc.clear(); continue; }
@@ -272,6 +273,7 @@ void FunctionIndex::ScanText(const std::string& text, const std::string& source_
             sig.name = name;
             sig.params = SplitParams(text.substr(open + 1, j - open - 1));
             sig.source_file = source_file;
+            sig.line = LineAt(text, name_start);
             for (const auto& p : sig.params) {
                 if (!p.empty() && p[0] == '*') { sig.has_var_args = true; continue; }
                 if (p.find('=') == std::string::npos) sig.min_args++;

@@ -13,6 +13,7 @@
     { "include": "#member-modifiers" },
     { "include": "#async-modifier" },
     { "include": "#await-keyword" },
+    { "include": "#new-expression" },
     { "include": "#keywords-control" },
     { "include": "#keywords-other" },
     { "include": "#type-annotation" },
@@ -135,6 +136,14 @@
       "comment": "`await` de awaitAtom ('await' expr, dentro de primary -- ver AvaLang.g4). Solo es valido dentro del cuerpo de un asyncFuncDeclaration; eso lo valida el compilador (Compiler::in_async_func_), no la gramatica ni este resaltado. Va antes que #function-call en el arreglo de patterns de la raiz para que 'await(x)' (sin espacio) no se interprete como una llamada a una funcion llamada 'await'.",
       "match": "\\bawait\\b",
       "name": "keyword.control.flow.await.avalang"
+    },
+
+    "new-expression": {
+      "match": "\\b(new)\\b\\s*([a-zA-Z_][a-zA-Z_0-9]*)\\b(?=\\s*\\()",
+      "captures": {
+        "1": { "name": "keyword.operator.new.avalang" },
+        "2": { "name": "entity.name.type.class.avalang" }
+      }
     },
 
     "keywords-control": {
@@ -297,6 +306,7 @@
             { "include": "#comments" },
             { "include": "#async-modifier" },
             { "include": "#await-keyword" },
+            { "include": "#new-expression" },
             { "include": "#keywords-control" },
             { "include": "#keywords-other" },
             { "include": "#operators-logical" },

@@ -495,6 +495,7 @@ primary
     | dictLiteral                   # dictAtom
     | '(' NEWLINE* expr NEWLINE* ')'      # groupAtom
     | 'base' ('.' NAME)? '(' argList? ')' trailer*  # baseAtom
+    | 'new' NAME '(' NEWLINE* argList? NEWLINE* ')' # newInstanceAtom
     | 'yield' exprList?             # yieldAtom
     | 'await' expr                  # awaitAtom
     ;

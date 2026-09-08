@@ -1306,6 +1306,25 @@ std::any AstBuilder::visitBaseAtom(AvaLangParser::BaseAtomContext* ctx) {
     return expr;
 }
 
+std::any AstBuilder::visitNewInstanceAtom(AvaLangParser::NewInstanceAtomContext* ctx) {
+    std::vector<std::shared_ptr<ExprNode>> args;
+    if (ctx->argList()) {
+        for (auto* a : ctx->argList()->arg()) {
+            if (auto* named = dynamic_cast<AvaLangParser::NamedArgContext*>(a)) {
+                args.push_back(exprFromAny(named->expr()->accept(this)));
+            } else if (auto* pos = dynamic_cast<AvaLangParser::PositionalArgContext*>(a)) {
+                args.push_back(exprFromAny(pos->expr()->accept(this)));
+            }
+        }
+    }
+    auto callee = std::make_shared<NameExpr>(ctx->NAME()->getText());
+    auto call = std::make_shared<CallExpr>(callee, args);
+    call->is_new = true;
+    call->line = static_cast<int>(ctx->getStart()->getLine());
+    call->col = static_cast<int>(ctx->getStart()->getCharPositionInLine()) + 1;
+    return call;
+}
+
 std::any AstBuilder::visitImportStatement(AvaLangParser::ImportStatementContext* ctx) {
     std::vector<std::string> module_path;
     size_t name_count = ctx->NAME().size();

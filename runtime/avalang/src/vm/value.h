@@ -156,6 +156,7 @@ struct ClassObj : Object {
     // §6 del documento de diseño -- el enforcement de `private` queda
     // para Ava Studio en la Fase E, no para el VM).
     avastd::unordered_set<avastd::string> private_members;
+    avastd::unordered_set<avastd::string> static_methods;
     avastd::vector<avastd::string> param_names;
     ClassObj* base_class = nullptr;
 };

@@ -102,6 +102,7 @@ struct TernaryExpr : ExprNode {
 struct CallExpr : ExprNode {
     std::shared_ptr<ExprNode> callee;
     std::vector<std::shared_ptr<ExprNode>> args;
+    bool is_new = false;
     CallExpr(std::shared_ptr<ExprNode> c, std::vector<std::shared_ptr<ExprNode>> a)
         : callee(std::move(c)), args(std::move(a)) {}
 };

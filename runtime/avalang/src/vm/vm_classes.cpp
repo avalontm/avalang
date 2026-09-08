@@ -1,5 +1,6 @@
 #include "vm.h"
 #include "vm_internal.h"
+#include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 
 
 namespace ava {
@@ -12,6 +13,7 @@ void OpNewClass(CallFrame& frame, const Instr& in, const avastd::vector<Value>& 
     cls->instance_defaults = class_proto->instance_defaults;
     cls->methods = class_proto->methods;
     cls->private_members = class_proto->private_members;
+    cls->static_methods = class_proto->static_methods;
     cls->param_names = class_proto->param_names;
     // v recien creado: ref_count=1 propio; la asignacion de abajo ya
     // Retiene (RAII). El Retain(v) manual dejaba una referencia de mas.
@@ -145,6 +147,12 @@ void OpGetAttr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K
         auto* cls = static_cast<ClassObj*>(obj.obj);
         auto method_it = cls->methods.find(attr_name->data);
         if (method_it != cls->methods.end()) {
+            if (!cls->static_methods.count(attr_name->data)) {
+                AVA_THROW(MakeFrameError(frame,
+                    "'" + attr_name->data + "' is an instance method of class '" + cls->name +
+                        "' -- '" + cls->name + "' has not been instantiated (use 'new " + cls->name +
+                        "(...)' to create an instance first)"));
+            }
             auto* bound = new BoundMethod();
             bound->proto = method_it->second;
             bound->instance = Value::Nil();
@@ -154,6 +162,11 @@ void OpGetAttr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K
             auto* owner = FindClassOwningAttr(cls, attr_name->data);
             if (owner) {
                 frame.registers[in.a] = owner->attrs.at(attr_name->data);
+            } else if (cls->instance_defaults.count(attr_name->data)) {
+                AVA_THROW(MakeFrameError(frame,
+                    "'" + attr_name->data + "' is an instance member of class '" + cls->name +
+                        "' -- '" + cls->name + "' has not been instantiated (use 'new " + cls->name +
+                        "(...)' to create an instance first)"));
             } else {
                 frame.registers[in.a] = Value::Nil();
             }
@@ -213,6 +226,12 @@ void OpSetAttr(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K
     } else if (obj.type == ValueType::Class) {
         auto* cls = static_cast<ClassObj*>(obj.obj);
         auto* owner = FindClassOwningAttr(cls, attr_name->data);
+        if (!owner && cls->instance_defaults.count(attr_name->data)) {
+            AVA_THROW(MakeFrameError(frame,
+                "'" + attr_name->data + "' is an instance member of class '" + cls->name +
+                    "' -- '" + cls->name + "' has not been instantiated (use 'new " + cls->name +
+                    "(...)' to create an instance first)"));
+        }
         auto& target_attrs = owner ? owner->attrs : cls->attrs;
         auto it = target_attrs.find(attr_name->data);
         if (it != target_attrs.end()) {

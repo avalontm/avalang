@@ -1,5 +1,6 @@
 #include "languages/block_scanner.h"
 
+#include <algorithm>
 #include <cctype>
 
 namespace studio {
@@ -15,6 +16,11 @@ std::string ReadIdent(const std::string& text, size_t& i) {
     return text.substr(start, i - start);
 }
 
+}
+
+int LineAt(const std::string& text, size_t offset) {
+    const size_t clamped = offset > text.size() ? text.size() : offset;
+    return static_cast<int>(std::count(text.begin(), text.begin() + static_cast<long>(clamped), '\n'));
 }
 
 bool IsBlockKeyword(const std::string& word) {

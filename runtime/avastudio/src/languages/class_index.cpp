@@ -194,11 +194,15 @@ void ClassIndex::Rebuild(const std::string& text, const std::string& current_fil
 namespace {
 
 void RecordAttribute(ClassInfo& info, const std::string& attr_name, bool is_static, bool is_private,
-                      const std::string& declared_type = "") {
+                      int line, const std::string& declared_type = "") {
     auto& attr = info.attributes[attr_name];
     attr.is_static = attr.is_static || is_static;
     attr.is_private = attr.is_private || is_private;
     if (!declared_type.empty()) attr.declared_type = declared_type;
+    // First sighting wins (matches methods/classes: "if not already present,
+    // insert") -- a class-body declaration should win the jump target over a
+    // later `this.x = ...` assignment inside a constructor for the same name.
+    if (attr.line == 0 && line > 0) attr.line = line;
 }
 
 void ConsumeModifiers(const std::string& body, size_t& i, bool& is_static, bool& is_private) {
@@ -217,7 +221,7 @@ void ConsumeModifiers(const std::string& body, size_t& i, bool& is_static, bool&
     }
 }
 
-void ScanClassBody(const std::string& body, ClassInfo& info) {
+void ScanClassBody(const std::string& body, ClassInfo& info, int base_line) {
     size_t i = 0;
     int body_depth = 0;
     std::vector<std::string> pending_doc;
@@ -249,6 +253,7 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
         }
 
         if (IsIdentStart(c)) {
+            const size_t word_start = i;
             std::string word = ReadIdent(body, i);
 
             if (word == "end") {
@@ -274,11 +279,13 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                 SkipInlineWhitespace(body, k);
 
                 if (k < body.size() && IsIdentStart(body[k])) {
+                    const size_t next_word_start = k;
                     std::string next_word = ReadIdent(body, k);
 
                     if (next_word == "func") {
                         SkipInlineWhitespace(body, k);
                         if (k < body.size() && IsIdentStart(body[k])) {
+                            const size_t name_start = k;
                             std::string name = ReadIdent(body, k);
                             SkipInlineWhitespace(body, k);
                             if (k < body.size() && body[k] == '(') {
@@ -296,6 +303,7 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                                     method_info.signature.name = name;
                                     method_info.signature.params = SplitParams(body.substr(open + 1, j - open - 1));
                                     method_info.signature.source_file = info.source_file;
+                                    method_info.signature.line = base_line + LineAt(body, name_start);
                                     for (const auto& p : method_info.signature.params) {
                                         if (!p.empty() && p[0] == '*') { method_info.signature.has_var_args = true; continue; }
                                         if (p.find('=') == std::string::npos) method_info.signature.min_args++;
@@ -357,7 +365,8 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                         }
 
                         if (is_assignment || !declared_type.empty()) {
-                            RecordAttribute(info, next_word, is_static, is_private, declared_type);
+                            RecordAttribute(info, next_word, is_static, is_private,
+                                             base_line + LineAt(body, next_word_start), declared_type);
                             i = is_assignment ? m : type_check;
                             pending_doc.clear();
                             continue;
@@ -376,6 +385,7 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                 SkipInlineWhitespace(body, i);
                 if (i >= body.size() || !IsIdentStart(body[i])) { i = save; pending_doc.clear(); continue; }
 
+                const size_t name_start = i;
                 std::string name = ReadIdent(body, i);
                 SkipInlineWhitespace(body, i);
                 if (i >= body.size() || body[i] != '(') { i = save; pending_doc.clear(); continue; }
@@ -393,6 +403,7 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                 method_info.signature.name = name;
                 method_info.signature.params = SplitParams(body.substr(open + 1, j - open - 1));
                 method_info.signature.source_file = info.source_file;
+                method_info.signature.line = base_line + LineAt(body, name_start);
                 for (const auto& p : method_info.signature.params) {
                     if (!p.empty() && p[0] == '*') { method_info.signature.has_var_args = true; continue; }
                     if (p.find('=') == std::string::npos) method_info.signature.min_args++;
@@ -428,6 +439,7 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                     ++k;
                     SkipInlineWhitespace(body, k);
                     if (k < body.size() && IsIdentStart(body[k])) {
+                        const size_t attr_name_start = k;
                         std::string attr_name = ReadIdent(body, k);
                         size_t after_attr = k;
                         SkipInlineWhitespace(body, k);
@@ -441,7 +453,9 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                             is_assignment = true;
                         }
 
-                        if (is_assignment) RecordAttribute(info, attr_name, false, false);
+                        if (is_assignment) {
+                            RecordAttribute(info, attr_name, false, false, base_line + LineAt(body, attr_name_start));
+                        }
 
                         i = after_attr;
                         pending_doc.clear();
@@ -481,7 +495,7 @@ void ScanClassBody(const std::string& body, ClassInfo& info) {
                 }
 
                 if (is_assignment || !declared_type.empty()) {
-                    RecordAttribute(info, word, false, false, declared_type);
+                    RecordAttribute(info, word, false, false, base_line + LineAt(body, word_start), declared_type);
                     i = is_assignment ? m : type_check;
                     pending_doc.clear();
                     continue;
@@ -527,6 +541,7 @@ void ClassIndex::ScanText(const std::string& text, const std::string& source_fil
             SkipInlineWhitespace(text, i);
             if (i >= text.size() || !IsIdentStart(text[i])) { i = save; continue; }
 
+            const size_t class_name_start = i;
             std::string class_name = ReadIdent(text, i);
             SkipInlineWhitespace(text, i);
 
@@ -553,7 +568,8 @@ void ClassIndex::ScanText(const std::string& text, const std::string& source_fil
             info.name = class_name;
             info.base_class_name = base_name;
             info.source_file = source_file;
-            ScanClassBody(text.substr(body_start, body_end - body_start), info);
+            info.line = LineAt(text, class_name_start);
+            ScanClassBody(text.substr(body_start, body_end - body_start), info, LineAt(text, body_start));
 
             if (classes_.find(class_name) == classes_.end())
                 classes_[class_name] = std::move(info);
@@ -654,6 +670,7 @@ std::vector<ClassMember> ClassIndex::FlattenedMembers(const std::string& class_n
                 member.is_private = method_info.is_private;
                 member.signature = &method_info.signature;
                 member.declared_in = info->name;
+                member.line = method_info.signature.line;
                 result.push_back(std::move(member));
             }
         }
@@ -667,6 +684,7 @@ std::vector<ClassMember> ClassIndex::FlattenedMembers(const std::string& class_n
                 member.signature = nullptr;
                 member.declared_in = info->name;
                 member.declared_type = attr_info.declared_type;
+                member.line = attr_info.line;
                 result.push_back(std::move(member));
             }
         }

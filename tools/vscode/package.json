@@ -2,7 +2,7 @@
   "name": "avalang",
   "displayName": "AvaLang",
   "description": "Syntax highlighting for the AvaLang scripting language (.ava files)",
-  "version": "0.3.3",
+  "version": "0.12.0",
   "publisher": "avalontm",
   "license": "MIT",
   "engines": {
@@ -78,6 +78,10 @@
         "command": "avalang.buildExecutable",
         "title": "AvaLang: Build Executable...",
         "icon": "$(package)"
+      },
+      {
+        "command": "avalang.showRuntimeInfo",
+        "title": "AvaLang: Show Runtime Info"
       }
     ],
     "menus": {
@@ -100,6 +104,10 @@
         },
         {
           "command": "avalang.buildExecutable",
+          "when": "resourceLangId == avalang"
+        },
+        {
+          "command": "avalang.showRuntimeInfo",
           "when": "resourceLangId == avalang"
         }
       ]
@@ -174,6 +182,55 @@
           "default": "",
           "scope": "resource",
           "description": "Optional path to a 32-byte AES-256 key file (ava_cli build --key-file, desktop target only). Empty = a random key is generated per build."
+        },
+        "avalang.diagnostics.enable": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Show compile errors as red squiggly lines in the editor, using `ava_cli --check`. Disable if ava_cli isn't reachable and the noise from failed checks is unwanted."
+        },
+        "avalang.diagnostics.runOn": {
+          "type": "string",
+          "enum": ["onSave", "onType", "off"],
+          "default": "onSave",
+          "scope": "resource",
+          "description": "When to re-check the file for errors: \"onSave\" (default, checks the real file on disk), \"onType\" (checks a temporary copy of the buffer as you type, debounced by diagnostics.debounceMs), or \"off\"."
+        },
+        "avalang.diagnostics.debounceMs": {
+          "type": "number",
+          "default": 600,
+          "scope": "resource",
+          "description": "Milliseconds to wait after the last keystroke before re-checking, when avalang.diagnostics.runOn is \"onType\"."
+        },
+        "avalang.inlayHints.enable": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Master switch for inline hints (inferred/annotated types and parameter names). Disable to turn off all AvaLang inlay hints."
+        },
+        "avalang.inlayHints.types": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Show inline type hints for variables/attributes whose type was inferred (not written with \"as Type\"), and for function/method return types inferred from their return statements."
+        },
+        "avalang.inlayHints.parameterNames": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Show inline parameter name hints at call sites (functions, methods, constructors, and builtins), skipped when the call already uses named-argument syntax or the argument is a variable with the same name as the parameter."
+        },
+        "avalang.completion.constructorSnippets": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "When completing a class name, insert a snippet with tab stops for the constructor's real parameters (e.g. Robot(name)) instead of just the class name."
+        },
+        "avalang.format.enable": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Enable AvaLang's basic document formatter (re-indents every line based on if/while/for/func/class/try/select/extern nesting and their then/end/elif/else/catch/finally/case clauses). Disable if you use another tool to format .ava files."
         }
       }
     }

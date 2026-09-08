@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iterator>
 #include <sstream>
+#include <unordered_set>
 
 #include "branding/logo_texture.h"
 #include "fonts/embedded_font.h"
@@ -60,6 +61,16 @@ void RebuildAutocompleteTrie(EditorTab& tab) {
     });
 
     for (const auto& [name, sig] : tab.function_index.Signatures()) {
+        tab.autocomplete_trie.insert(name);
+    }
+
+    // Class names used to only make it into the trie by accident, via
+    // IterateIdentifiers picking up a stray token that happened to match --
+    // e.g. `Persona` wouldn't suggest until it was typed somewhere else in
+    // the buffer first. Insert them explicitly (this also covers classes
+    // that only exist in an imported file, same as function_index above).
+    for (const auto& [name, info] : tab.class_index.Classes()) {
+        (void)info;
         tab.autocomplete_trie.insert(name);
     }
 }
@@ -118,7 +129,9 @@ bool ResolveVisibleMembers(EditorTab& tab, int cursor_line, const std::string& b
 }
 
 std::string MemberSuggestionLabel(const ClassMember& member) {
-    return member.is_method && member.signature ? member.signature->display : member.name;
+    if (member.is_method && member.signature) return member.signature->display;
+    if (!member.declared_type.empty()) return member.name + " : " + member.declared_type;
+    return member.name;
 }
 
 std::string ToLowerAscii(const std::string& text) {
@@ -126,6 +139,47 @@ std::string ToLowerAscii(const std::string& text) {
     std::transform(result.begin(), result.end(), result.begin(),
                     [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return result;
+}
+
+// TextEditor::Trie::findSuggestions with maxSkippedLetters > 0 lets it skip
+// letters *inside the candidate word* to tolerate typos, VSCode-style. The
+// problem: with a maxSkip of 2 (the default used before this change) and a
+// short searchTerm (1-2 chars, the common case while typing), almost every
+// identifier in the file can be reached within that skip budget, so the
+// list fills up with unrelated words instead of the thing being typed --
+// this is what read as "imprecise" / different from VSCode.
+//
+// Fix: two-pass lookup.
+//   1. Exact-prefix pass (maxSkippedLetters = 0). With skip disabled, the
+//      Trie can only walk down letters that are actually in searchTerm, in
+//      order, from the root -- i.e. genuine prefix matches, sorted by how
+//      many extra letters remain (shortest completion first), same as
+//      VSCode's top-of-list ordering.
+//   2. Fuzzy fallback, only if the prefix pass didn't fill the list AND the
+//      user has typed enough (>= kAutocompleteFuzzyMinChars) for
+//      letter-skipping to carry real signal. Results already present from
+//      pass 1 are not duplicated.
+constexpr size_t kAutocompleteLimit = 20;
+constexpr size_t kAutocompleteFuzzyMinChars = 3;
+
+void PopulateGeneralSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& ac_state) {
+    std::vector<std::string> prefix_matches;
+    tab.autocomplete_trie.findSuggestions(prefix_matches, ac_state.searchTerm, kAutocompleteLimit,
+                                           /*maxSkippedLetters=*/0);
+    ac_state.suggestions = prefix_matches;
+
+    if (ac_state.suggestions.size() < kAutocompleteLimit &&
+        ac_state.searchTerm.size() >= kAutocompleteFuzzyMinChars) {
+        std::vector<std::string> fuzzy_matches;
+        tab.autocomplete_trie.findSuggestions(fuzzy_matches, ac_state.searchTerm, kAutocompleteLimit,
+                                               /*maxSkippedLetters=*/2);
+
+        std::unordered_set<std::string> seen(prefix_matches.begin(), prefix_matches.end());
+        for (auto& word : fuzzy_matches) {
+            if (ac_state.suggestions.size() >= kAutocompleteLimit) break;
+            if (seen.insert(word).second) ac_state.suggestions.push_back(std::move(word));
+        }
+    }
 }
 
 bool PopulateMemberSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& ac_state) {
@@ -191,6 +245,85 @@ std::string WordEndingAtCursor(const std::string& line_before_cursor) {
     size_t start = end;
     while (start > 0 && IsIdentChar(line_before_cursor[start - 1])) --start;
     return line_before_cursor.substr(start, end - start);
+}
+
+// "Go to Definition" (F12 / Ctrl+Click) target. `same_file` mirrors the
+// FunctionSignature::source_file / ClassInfo::source_file convention: empty
+// means "the buffer currently being edited", not literally "no file".
+struct DefinitionTarget {
+    bool same_file = true;
+    std::string file_path;
+    int line = 0;
+    int column = 0;
+};
+
+// Resolves the symbol at `pos` (the identifier ending there -- same
+// "word ending at cursor" convention DrawKeywordHint already uses, so this
+// works both for F12 with the caret parked after a symbol and for
+// Ctrl+Click, whose click has already moved the real caret there by the
+// time this runs). Tries, in order: a member access (`obj.algo`, `this.algo`,
+// `ClassName.algo`), a bare class name, then a bare (non-builtin) function
+// name. Returns false if the word isn't a resolvable declaration -- e.g. a
+// local variable, a builtin, or plain text.
+bool ResolveDefinitionTarget(EditorTab& tab, const TextEditor::CursorPosition& pos, DefinitionTarget& out) {
+    const std::string before = TextBeforeCursor(tab, pos);
+    const std::string word = WordEndingAtCursor(before);
+    if (word.empty() || !IsIdentStart(word[0])) return false;
+
+    const std::string before_word = before.substr(0, before.size() - word.size());
+    if (!before_word.empty() && before_word.back() == '.') {
+        MemberAccessContext ctx;
+        std::vector<ClassMember> members;
+        if (ResolveVisibleMembers(tab, pos.line, before_word, ctx, members)) {
+            for (const auto& member : members) {
+                if (member.name != word || member.line <= 0) continue;
+                const ClassInfo* owner = tab.class_index.Find(member.declared_in);
+                if (!owner) return false;
+                out.file_path = member.is_method && member.signature ? member.signature->source_file
+                                                                      : owner->source_file;
+                out.same_file = out.file_path.empty();
+                out.line = member.line;
+                out.column = 0;
+                return true;
+            }
+        }
+    }
+
+    if (const ClassInfo* cls = tab.class_index.Find(word)) {
+        out.file_path = cls->source_file;
+        out.same_file = out.file_path.empty();
+        out.line = cls->line;
+        out.column = 0;
+        return true;
+    }
+
+    if (const FunctionSignature* sig = tab.function_index.Find(word)) {
+        if (sig->is_builtin) return false;
+        out.file_path = sig->source_file;
+        out.same_file = out.file_path.empty();
+        out.line = sig->line;
+        out.column = 0;
+        return true;
+    }
+
+    return false;
+}
+
+// Jumps to `target`, either right away (same file -- no need to touch
+// `state.tabs`, safe to call from inside DrawEditorPanel's tab bar loop) or
+// by queuing it for main.cpp to pick up next frame (different file --
+// opening/creating a tab mid-loop could desync which tab ImGui thinks is
+// selected this frame, see EditorState::goto_definition_requested).
+void JumpToDefinition(EditorState& state, EditorTab& tab, const DefinitionTarget& target) {
+    if (target.same_file) {
+        tab.editor.SetCursor(target.line, target.column);
+        tab.editor.ScrollToLine(target.line, TextEditor::Scroll::alignMiddle);
+        return;
+    }
+    state.goto_definition_requested = true;
+    state.goto_definition_file = target.file_path;
+    state.goto_definition_line = target.line + 1;      // SelectMatchInEditor is 1-based
+    state.goto_definition_column = target.column + 1;
 }
 
 constexpr float kHintContentWidth = 380.0f;
@@ -475,7 +608,7 @@ void InitTab(EditorTab& tab) {
 
     tab.autocomplete_config.callback = [&tab](TextEditor::AutoCompleteState& ac_state) {
         if (PopulateMemberSuggestions(tab, ac_state)) return;
-        tab.autocomplete_trie.findSuggestions(ac_state.suggestions, ac_state.searchTerm);
+        PopulateGeneralSuggestions(tab, ac_state);
     };
     tab.editor.SetAutoCompleteConfig(&tab.autocomplete_config);
 
@@ -993,6 +1126,23 @@ void DrawEditorPanel(EditorState& state) {
                     // to that child (same "query the item after End*()" pattern
                     // ImGui uses for IsItemHovered() after EndChild()).
                     state.code_editor_has_focus = ImGui::IsItemFocused();
+
+                    // Go to Definition: F12 (caret already where the user
+                    // wants -- typed or navigated there) or Ctrl+Click
+                    // (Render() above already moved the real caret to the
+                    // click position this same frame, same assumption
+                    // DrawKeywordHint below relies on for its own hover).
+                    const bool goto_def_key =
+                        state.code_editor_has_focus && ImGui::IsKeyPressed(ImGuiKey_F12, false);
+                    const bool goto_def_click = ImGui::IsMouseHoveringRect(editor_min, editor_max) &&
+                                                 ImGui::GetIO().KeyCtrl &&
+                                                 ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+                    if (goto_def_key || goto_def_click) {
+                        DefinitionTarget target;
+                        if (ResolveDefinitionTarget(tab, tab.editor.GetCursorPosition(0), target)) {
+                            JumpToDefinition(state, tab, target);
+                        }
+                    }
 
                     if (ImGui::IsMouseHoveringRect(editor_min, editor_max)) {
                         if (!DrawParameterHint(tab)) {

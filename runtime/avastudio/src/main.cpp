@@ -645,6 +645,21 @@ int main() {
                                                                  : studio::PropertiesState{};
         }
 
+        // Go to Definition (F12/Ctrl+Click in the code editor) targeting a
+        // symbol declared in a *different* file (an import): DrawEditorPanel
+        // only records the request (see EditorState::goto_definition_requested)
+        // instead of opening the tab itself, since doing that mid-tab-bar-loop
+        // risks desyncing which tab ImGui thinks is selected this frame.
+        // Consumed here, one frame later, the same way Problems/Find in
+        // Project file-clicks already are just below.
+        if (editor_state.goto_definition_requested) {
+            editor_state.goto_definition_requested = false;
+            studio::OpenFileInTab(editor_state, editor_state.goto_definition_file);
+            studio::SelectMatchInEditor(editor_state, editor_state.goto_definition_file,
+                                         editor_state.goto_definition_line, editor_state.goto_definition_column,
+                                         editor_state.goto_definition_column);
+        }
+
         ImGuiIO& io = ImGui::GetIO();
         const bool want_save    = io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S);
         const bool want_save_as = io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S);

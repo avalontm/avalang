@@ -15,6 +15,12 @@ struct FunctionSignature {
     std::string source_file;
     std::string display;
 
+    // 0-based line of the `func name(...)` declaration in source_file (or in
+    // the current buffer when source_file is empty). 0 for builtins/unknown
+    // -- callers that care (Go to Definition) also check is_builtin/is_empty
+    // source_file first, same convention already used for those.
+    int line = 0;
+
     int min_args = 0;
     bool has_var_args = false;
 

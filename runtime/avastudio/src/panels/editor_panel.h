@@ -119,6 +119,21 @@ struct EditorState {
     // collision as want_run/Shift+F5 in Fase 1 and want_build/Ctrl+Shift+B in
     // Fase 2, just gated on focus instead of a modifier key.
     bool code_editor_has_focus = false;
+
+    // Go to Definition (F12 / Ctrl+Click) on a symbol defined in a
+    // *different* file (an imported class/function). Same-file jumps are
+    // handled inline inside DrawEditorPanel via tab.editor.SetCursor, since
+    // those don't need to touch `tabs` at all. Cross-file jumps are riskier
+    // to do mid-frame (DrawEditorPanel is already iterating `tabs` in a tab
+    // bar loop when the click happens), so instead this just records the
+    // request; main.cpp opens the target file and selects the line on the
+    // next frame, the same way it already handles file clicks coming from
+    // the Problems / Find in Project panels (OpenFileInTab +
+    // SelectMatchInEditor, both 1-based line/column).
+    bool goto_definition_requested = false;
+    std::string goto_definition_file;
+    int goto_definition_line = 0;
+    int goto_definition_column = 0;
 };
 
 void InitEditorPanel(EditorState& state);

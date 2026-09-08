@@ -141,6 +141,13 @@
     ],
     "description": "class Name: Parent ... end"
   },
+  "new-instance": {
+    "prefix": "new",
+    "body": [
+      "new ${1:Class}(${0})"
+    ],
+    "description": "new Class(args) -- crea una instancia y corre su constructor"
+  },
   "try-catch": {
     "prefix": "try",
     "body": [
