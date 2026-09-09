@@ -29,7 +29,7 @@ const std::vector<std::string> kKeywords = {
     "func", "class", "try", "catch", "finally",
     "return", "break", "continue", "pass", "import", "local",
     "raise", "yield", "not", "and", "or", "true", "false", "nil",
-    "base", "as",
+    "base", "as", "this", "override", "new", "static", "private",
 };
 
 const std::vector<std::string> kTypes = {

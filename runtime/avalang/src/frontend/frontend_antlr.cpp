@@ -202,16 +202,16 @@ std::shared_ptr<Proto> CompileSource(const std::string& source, const std::strin
     }
 }
 
-avastd::unordered_map<avastd::string, ClassObj*> HarvestImportedClasses(
+HarvestedClassInfo HarvestImportedClasses(
         const std::string& source, const std::string& source_name,
         std::unordered_set<std::string>& chain,
-        std::unordered_map<std::string, std::unordered_map<std::string, ClassObj*>>& cache) {
+        std::unordered_map<std::string, HarvestedClassInfo>& cache) {
     try {
         auto chunk = ParseToChunk(source, source_name);
         Compiler compiler;
         compiler.SetImportHarvestContext(&chain, &cache);
         compiler.Compile(chunk, source_name);
-        return compiler.CompiledClasses();
+        return compiler.SnapshotClassInfo();
     } catch (...) {
         return {};
     }

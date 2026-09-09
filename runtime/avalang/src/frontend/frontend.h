@@ -3,6 +3,7 @@
 
 #include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 #include "../common/ava_error.h"
+#include "../compiler/compiler.h"
 #include "../vm/proto.h"
 #include <unordered_set>
 
@@ -22,10 +23,10 @@ avastd::shared_ptr<Proto> CompileSource(const avastd::string& source, const avas
 // Reads the file and calls CompileSource.
 avastd::shared_ptr<Proto> CompileFile(const avastd::string& file_path);
 
-avastd::unordered_map<avastd::string, ClassObj*> HarvestImportedClasses(
+HarvestedClassInfo HarvestImportedClasses(
     const avastd::string& source, const avastd::string& source_name,
     avastd::unordered_set<avastd::string>& chain,
-    avastd::unordered_map<avastd::string, avastd::unordered_map<avastd::string, ClassObj*>>& cache);
+    avastd::unordered_map<avastd::string, HarvestedClassInfo>& cache);
 
 } // namespace ava
 

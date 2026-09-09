@@ -316,6 +316,16 @@ struct FuncDef : StmtNode {
     // el compilador debe rechazarlo (Fase C).
     bool is_static = false;
     bool is_private = false;
+    // `override func x() ... end` (memberModifier, grammar/AvaLang.g4).
+    // Purely a compile-time assertion -- AvaLang already lets a subclass
+    // method shadow a base-class one of the same name with no keyword at
+    // all (CompileClass copies base methods into the ClassObj first, then
+    // overwrites with the subclass's own), so this flag changes no
+    // codegen. It only tells CompileClass to verify a base method by this
+    // name actually exists (catches typos like `overide`/renamed base
+    // methods producing a silent new method instead of the intended
+    // override) -- see CompileClass's is_override check in compiler.cpp.
+    bool is_override = false;
     // `async func x() ... end` (ver grammar/AvaLang.g4, asyncFuncDeclaration).
     // Habilita `await` en el cuerpo léxico directo de esta función -- ver
     // Compiler::in_async_func_. No anidado: un `func` normal declarado

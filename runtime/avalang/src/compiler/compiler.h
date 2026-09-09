@@ -12,6 +12,28 @@
 
 namespace ava {
 
+// Bundles everything CompileClass needs to know about a class that was
+// declared in another file and pulled in via `import` -- not just the
+// runtime ClassObj*, but the same compile-time bookkeeping CompileClass
+// itself fills in for locally-declared classes (class_field_types_,
+// class_dynamic_attrs_, class_method_returns_, class_method_params_).
+// Without this, a class imported from another file can be used as a base
+// class at the ClassObj level (CompileClass's own method-inheritance loop
+// reads compiled_classes_, so instance methods resolve fine at runtime),
+// but CheckMethodCallArgs -- which validates obj.method(...) calls at
+// compile time -- only ever sees the importing compiler's own
+// class_method_params_, never the imported class's, so an inherited
+// method looks undefined and throws even though it will run correctly.
+struct HarvestedClassInfo {
+    std::unordered_map<std::string, ClassObj*> classes;
+    std::unordered_map<std::string, std::unordered_map<std::string, TypeRef>> field_types;
+    std::unordered_map<std::string, std::unordered_set<std::string>> dynamic_attrs;
+    std::unordered_map<std::string, std::unordered_map<std::string, TypeRef>> method_returns;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<std::pair<std::string, Type>>>>
+        method_params;
+    std::vector<Value> keepalive;
+};
+
 class Compiler {
 public:
     std::shared_ptr<Proto> Compile(const std::shared_ptr<Chunk>& chunk,
@@ -19,11 +41,33 @@ public:
 
     const std::unordered_map<std::string, ClassObj*>& CompiledClasses() const { return compiled_classes_; }
 
+    // Snapshot of this compiler's class bookkeeping, for a sub-compiler
+    // used to harvest classes from an imported file (see HarvestedClassInfo).
+    HarvestedClassInfo SnapshotClassInfo() const {
+        HarvestedClassInfo info{compiled_classes_, class_field_types_, class_dynamic_attrs_,
+                                 class_method_returns_, class_method_params_, {}};
+        info.keepalive.reserve(compiled_classes_.size());
+        for (auto& [name, obj] : compiled_classes_) {
+            (void)name;
+            if (!obj) continue;
+            Value v;
+            v.type = ValueType::Class;
+            v.obj = obj;
+            Retain(v);
+            info.keepalive.push_back(std::move(v));
+        }
+        return info;
+    }
+
     void SetImportHarvestContext(
         std::unordered_set<std::string>* chain,
-        std::unordered_map<std::string, std::unordered_map<std::string, ClassObj*>>* cache) {
+        std::unordered_map<std::string, HarvestedClassInfo>* cache) {
         import_chain_ = chain;
         import_class_cache_ = cache;
+    }
+
+    void AdoptImportedClassRefs(const std::vector<Value>& refs) {
+        imported_class_keepalive_.insert(imported_class_keepalive_.end(), refs.begin(), refs.end());
     }
 
 private:
@@ -50,7 +94,9 @@ private:
     std::string source_name_;
     std::string current_file_dir_;
     std::unordered_set<std::string>* import_chain_ = nullptr;
-    std::unordered_map<std::string, std::unordered_map<std::string, ClassObj*>>* import_class_cache_ = nullptr;
+    std::unordered_map<std::string, HarvestedClassInfo>* import_class_cache_ = nullptr;
+
+    std::vector<Value> imported_class_keepalive_;
     uint16_t next_reg_ = 0;
     uint16_t max_reg_ = 0;
     uint16_t result_reg_ = 0;

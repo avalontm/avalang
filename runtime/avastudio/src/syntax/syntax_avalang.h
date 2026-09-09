@@ -14,9 +14,9 @@ inline TextEditor::LanguageDefinition AvaLangLanguageDef() {
 
         "if", "elif", "else", "while", "for", "then", "end", "in",
 
-        "func", "class", "return", "base",
+        "func", "class", "return", "base", "this",
 
-        "static", "private",
+        "static", "private", "override",
 
         "async", "await",
 

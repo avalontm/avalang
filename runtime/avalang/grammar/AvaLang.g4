@@ -113,10 +113,16 @@ compoundStatement
 memberModifier
     : 'static'
     | 'private'
+    | 'override'
     ;
 
 // func con modificador(es): `static func x() ... end`,
-// `private func x() ... end`, `static private func x() ... end`.
+// `private func x() ... end`, `override func x() ... end`,
+// `static private func x() ... end`. `override` solo tiene sentido en un
+// método dentro de una clase con base -- igual que static/private, la
+// gramática no distingue contexto; lo valida el compilador (ver
+// CompileClass en compiler.cpp: exige que exista un método del mismo
+// nombre en la cadena de clases base).
 modifiedFuncDeclaration
     : memberModifier+ funcDeclaration
     ;
@@ -463,6 +469,7 @@ postfix
 
 trailer
     : '.' NAME                     # attrTrailer
+    | '.' 'base' ('.' NAME)? '(' argList? ')'  # baseCallTrailer
     | '[' expr ']'                 # indexTrailer
     | '[' sliceRange ']'           # sliceTrailer
     | '(' NEWLINE* argList? NEWLINE* ')'  # callTrailer

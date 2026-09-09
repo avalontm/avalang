@@ -3283,6 +3283,38 @@ void Compiler::CompileClass(const ClassDef* cls) {
         bool is_ctor = f->name == cls->name;
         std::string method_name = is_ctor ? "__init__" : f->name;
 
+        // `override` (memberModifier, grammar/AvaLang.g4): purely a
+        // compile-time assertion that a base method by this name actually
+        // exists -- AvaLang already lets a same-named subclass method
+        // shadow the base one with no keyword (base methods are copied
+        // into class_obj->methods above, then this loop's own entries
+        // overwrite them), so this doesn't change what gets compiled.
+        // class_method_params_[cls->name] was seeded from base_class's
+        // entries a few lines above (still holds only inherited names at
+        // this point in the loop, since this loop is what starts
+        // overwriting/adding to it), so checking it here tells us whether
+        // an inherited method by this name exists.
+        if (f->is_override) {
+            if (is_ctor) {
+                throw AvaError("constructor '" + f->name + "' cannot be marked 'override' -- " +
+                                    "constructors are never inherited",
+                                f->line, f->col, source_name_);
+            }
+            if (!cls->base_class) {
+                throw AvaError("method '" + f->name + "' is marked 'override' but class '" + cls->name +
+                                    "' has no base class",
+                                f->line, f->col, source_name_);
+            }
+            auto inherited = class_method_params_.find(cls->name);
+            bool found_in_base = inherited != class_method_params_.end() &&
+                                  inherited->second.count(method_name);
+            if (!found_in_base) {
+                throw AvaError("method '" + f->name + "' is marked 'override' but '" + base_class->name +
+                                    "' (and its base classes) define no method '" + f->name + "' to override",
+                                f->line, f->col, source_name_);
+            }
+        }
+
         bool explicit_self_param = !f->params.empty() && f->params[0].first == "this";
         std::vector<std::pair<std::string, Type>> sig;
         for (size_t i = explicit_self_param ? 1 : 0; i < f->params.size(); ++i) {
@@ -3447,20 +3479,46 @@ std::string ResolveSiblingImportFile(const std::string& module_name, const std::
 }
 }
 
+namespace {
+
+void MergeHarvestedClassInfo(Compiler& self, const HarvestedClassInfo& info,
+                              std::unordered_map<std::string, ClassObj*>& compiled_classes,
+                              std::unordered_map<std::string, std::unordered_map<std::string, TypeRef>>& field_types,
+                              std::unordered_map<std::string, std::unordered_set<std::string>>& dynamic_attrs,
+                              std::unordered_map<std::string, std::unordered_map<std::string, TypeRef>>& method_returns,
+                              std::unordered_map<std::string, std::unordered_map<std::string, std::vector<std::pair<std::string, Type>>>>& method_params) {
+    self.AdoptImportedClassRefs(info.keepalive);
+    for (auto& [name, obj] : info.classes) {
+        if (!compiled_classes.count(name)) compiled_classes[name] = obj;
+    }
+    for (auto& [name, fields] : info.field_types) {
+        if (!field_types.count(name)) field_types[name] = fields;
+    }
+    for (auto& [name, attrs] : info.dynamic_attrs) {
+        if (!dynamic_attrs.count(name)) dynamic_attrs[name] = attrs;
+    }
+    for (auto& [name, rets] : info.method_returns) {
+        if (!method_returns.count(name)) method_returns[name] = rets;
+    }
+    for (auto& [name, params] : info.method_params) {
+        if (!method_params.count(name)) method_params[name] = params;
+    }
+}
+}  // namespace
+
 void Compiler::RegisterImportedClasses(const std::string& module_name) {
     std::string resolved = ResolveSiblingImportFile(module_name, current_file_dir_);
     if (resolved.empty()) return;
 
     std::unordered_set<std::string> owned_chain;
-    std::unordered_map<std::string, std::unordered_map<std::string, ClassObj*>> owned_cache;
+    std::unordered_map<std::string, HarvestedClassInfo> owned_cache;
     std::unordered_set<std::string>& chain = import_chain_ ? *import_chain_ : owned_chain;
     auto& cache = import_class_cache_ ? *import_class_cache_ : owned_cache;
 
     auto cached = cache.find(resolved);
     if (cached != cache.end()) {
-        for (auto& [name, obj] : cached->second) {
-            if (!compiled_classes_.count(name)) compiled_classes_[name] = obj;
-        }
+        MergeHarvestedClassInfo(*this, cached->second, compiled_classes_, class_field_types_,
+                                 class_dynamic_attrs_, class_method_returns_, class_method_params_);
         return;
     }
 
@@ -3471,18 +3529,17 @@ void Compiler::RegisterImportedClasses(const std::string& module_name) {
     std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 
     chain.insert(resolved);
-    std::unordered_map<std::string, ClassObj*> harvested;
+    HarvestedClassInfo harvested;
     try {
         harvested = HarvestImportedClasses(source, resolved, chain, cache);
     } catch (...) {
-        harvested.clear();
+        harvested = {};
     }
     chain.erase(resolved);
 
     cache[resolved] = harvested;
-    for (auto& [name, obj] : harvested) {
-        if (!compiled_classes_.count(name)) compiled_classes_[name] = obj;
-    }
+    MergeHarvestedClassInfo(*this, harvested, compiled_classes_, class_field_types_,
+                             class_dynamic_attrs_, class_method_returns_, class_method_params_);
 }
 
 void Compiler::CompileExtern(const ExternStmt* stmt) {

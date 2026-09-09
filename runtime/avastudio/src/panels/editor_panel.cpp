@@ -726,7 +726,7 @@ void InitTab(EditorTab& tab) {
     TextEditor::Palette palette = TextEditor::GetDarkPalette();
 
     palette[static_cast<size_t>(TextEditor::Color::keyword)] = palette::U32FromHex(palette::kSynKeyword);
-    palette[static_cast<size_t>(TextEditor::Color::declaration)] = palette::U32FromHex(palette::kSynKeyword);
+    palette[static_cast<size_t>(TextEditor::Color::declaration)] = palette::U32FromHex(palette::kSynFunction);
     palette[static_cast<size_t>(TextEditor::Color::comment)] = palette::U32FromHex(palette::kSynComment);
     palette[static_cast<size_t>(TextEditor::Color::docComment)] = palette::U32FromHex(palette::kSynDocComment);
     palette[static_cast<size_t>(TextEditor::Color::docParamTag)] = palette::U32FromHex(palette::kSynDocParamTag);
@@ -734,6 +734,7 @@ void InitTab(EditorTab& tab) {
     palette[static_cast<size_t>(TextEditor::Color::interpolation)] = palette::U32FromHex(palette::kSynInterpolation);
     palette[static_cast<size_t>(TextEditor::Color::knownIdentifier)] = palette::U32FromHex(palette::kSynKnownIdentifier);
     palette[static_cast<size_t>(TextEditor::Color::punctuation)] = palette::U32FromHex(palette::kSynPunctuation);
+    palette[static_cast<size_t>(TextEditor::Color::preprocessor)] = palette::U32FromHex(palette::kSynClass);
 
     tab.editor.SetPalette(palette);
     tab.editor.SetShowLineNumbersEnabled(true);

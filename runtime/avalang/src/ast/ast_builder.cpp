@@ -81,15 +81,19 @@ static BinOp augOpToBinOp(const std::string& op) {
     throw std::runtime_error("unknown augop: " + op);
 }
 
-// Resuelve `memberModifier+` (ver grammar/AvaLang.g4, Fase A) a los dos
-// flags booleanos que terminan viviendo en AssignStmt/FuncDef. Rechaza el
-// mismo modificador repetido dos veces (`private private x = 1`) -- es
-// una validación semántica simple, no algo que la gramática necesite
-// resolver por sí sola.
+// Resuelve `memberModifier+` (ver grammar/AvaLang.g4, Fase A) a los flags
+// booleanos que terminan viviendo en AssignStmt/FuncDef. Rechaza el mismo
+// modificador repetido dos veces (`private private x = 1`) -- es una
+// validación semántica simple, no algo que la gramática necesite resolver
+// por sí sola. `is_override` es opcional (nullptr) porque solo FuncDef lo
+// tiene -- modifiedAssignStatement (atributos) no acepta 'override' y pasa
+// nullptr para que cualquier aparición explote con un mensaje claro en vez
+// de guardarse en un flag que nadie va a leer.
 static void ResolveMemberModifiers(const std::vector<AvaLangParser::MemberModifierContext*>& mods,
-                                    bool& is_static, bool& is_private) {
+                                    bool& is_static, bool& is_private, bool* is_override = nullptr) {
     is_static = false;
     is_private = false;
+    if (is_override) *is_override = false;
     for (auto* mod : mods) {
         auto text = mod->getText();
         if (text == "static") {
@@ -98,6 +102,12 @@ static void ResolveMemberModifiers(const std::vector<AvaLangParser::MemberModifi
         } else if (text == "private") {
             if (is_private) throw std::runtime_error("modificador 'private' repetido en la misma declaracion");
             is_private = true;
+        } else if (text == "override") {
+            if (!is_override) {
+                throw std::runtime_error("modificador 'override' solo es valido en un metodo (func), no en un atributo");
+            }
+            if (*is_override) throw std::runtime_error("modificador 'override' repetido en la misma declaracion");
+            *is_override = true;
         }
     }
 }
@@ -731,11 +741,13 @@ std::any AstBuilder::visitClassDeclaration(AvaLangParser::ClassDeclarationContex
 std::any AstBuilder::visitModifiedFuncDeclaration(AvaLangParser::ModifiedFuncDeclarationContext* ctx) {
     bool is_static = false;
     bool is_private = false;
-    ResolveMemberModifiers(ctx->memberModifier(), is_static, is_private);
+    bool is_override = false;
+    ResolveMemberModifiers(ctx->memberModifier(), is_static, is_private, &is_override);
 
     auto func = std::any_cast<std::shared_ptr<FuncDef>>(visitFuncDeclaration(ctx->funcDeclaration()));
     func->is_static = is_static;
     func->is_private = is_private;
+    func->is_override = is_override;
     return func;
 }
 
@@ -1105,6 +1117,19 @@ std::any AstBuilder::visitPostfix(AvaLangParser::PostfixContext* ctx) {
     for (auto* t : ctx->trailer()) {
         if (auto* attr = dynamic_cast<AvaLangParser::AttrTrailerContext*>(t)) {
             expr = std::make_shared<AttrExpr>(expr, attr->NAME()->getText());
+        } else if (auto* base_call = dynamic_cast<AvaLangParser::BaseCallTrailerContext*>(t)) {
+            std::vector<std::shared_ptr<ExprNode>> args;
+            if (base_call->argList()) {
+                for (auto* a : base_call->argList()->arg()) {
+                    if (auto* named = dynamic_cast<AvaLangParser::NamedArgContext*>(a)) {
+                        args.push_back(exprFromAny(named->expr()->accept(this)));
+                    } else if (auto* pos = dynamic_cast<AvaLangParser::PositionalArgContext*>(a)) {
+                        args.push_back(exprFromAny(pos->expr()->accept(this)));
+                    }
+                }
+            }
+            std::string method_name = base_call->NAME() ? base_call->NAME()->getText() : "__init__";
+            expr = std::make_shared<BaseExpr>(args, method_name);
         } else if (auto* idx = dynamic_cast<AvaLangParser::IndexTrailerContext*>(t)) {
             auto idx_expr = exprFromAny(idx->expr()->accept(this));
             expr = std::make_shared<IndexExpr>(expr, idx_expr);

@@ -40,7 +40,7 @@ constexpr unsigned int kSynKeyword  = 0xFF8F1F;
 constexpr unsigned int kSynFunction = 0xFFD166;
 constexpr unsigned int kSynType     = 0x59C3FF;
 constexpr unsigned int kSynVariable = 0xF8FAFC;
-constexpr unsigned int kSynString   = 0x98E06A;
+constexpr unsigned int kSynString   = 0xCE9178;
 constexpr unsigned int kSynNumber   = 0x7CC6FE;
 constexpr unsigned int kSynComment  = 0x6B7280;
 constexpr unsigned int kSynOperator = 0xF8FAFC;
@@ -50,5 +50,6 @@ constexpr unsigned int kSynDocParamTag     = 0xC792EA;
 constexpr unsigned int kSynInterpolation   = 0xE064F0;
 constexpr unsigned int kSynKnownIdentifier = 0xE0C884;
 constexpr unsigned int kSynPunctuation     = 0xC8BAAB;
+constexpr unsigned int kSynClass           = 0x4EC9B0;
 
 }
