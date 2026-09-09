@@ -4,58 +4,14 @@
 #include <vector>
 
 #include "languages/block_scanner.h"
+#include "languages/lexer_utils.h"
 
 namespace studio {
 
+using namespace lexer;
+
 namespace {
 
-bool IsIdentStart(char c) { return std::isalpha(static_cast<unsigned char>(c)) || c == '_'; }
-bool IsIdentChar(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
-
-std::string ReadIdent(const std::string& text, size_t& i) {
-    size_t start = i;
-    while (i < text.size() && IsIdentChar(text[i])) ++i;
-    return text.substr(start, i - start);
-}
-
-void SkipInlineWhitespace(const std::string& text, size_t& i) {
-    while (i < text.size() && (text[i] == ' ' || text[i] == '\t')) ++i;
-}
-
-std::vector<std::string> SplitParams(const std::string& raw) {
-    std::vector<std::string> params;
-    int depth = 0;
-    char in_string = '\0';
-    std::string current;
-
-    for (size_t i = 0; i < raw.size(); ++i) {
-        char c = raw[i];
-        if (in_string) {
-            current += c;
-            if (c == '\\' && i + 1 < raw.size()) { current += raw[++i]; continue; }
-            if (c == in_string) in_string = '\0';
-            continue;
-        }
-        if (c == '\'' || c == '"') { in_string = c; current += c; continue; }
-        if (c == '(' || c == '[' || c == '{') { ++depth; current += c; continue; }
-        if (c == ')' || c == ']' || c == '}') { --depth; current += c; continue; }
-        if (c == ',' && depth == 0) { params.push_back(current); current.clear(); continue; }
-        current += c;
-    }
-    if (!current.empty() || !params.empty()) params.push_back(current);
-
-    std::vector<std::string> trimmed;
-    for (auto& p : params) {
-        size_t b = p.find_first_not_of(" \t\r\n");
-        if (b == std::string::npos) continue;
-        size_t e = p.find_last_not_of(" \t\r\n");
-        trimmed.push_back(p.substr(b, e - b + 1));
-    }
-    return trimmed;
-}
-
-// Tries to parse "as Type" starting at `i` (which is left untouched if it
-// doesn't match). On success advances `i` past the type name and returns it.
 std::string TryParseAsType(const std::string& text, size_t& i, size_t end) {
     size_t save = i;
     SkipInlineWhitespace(text, i);
@@ -151,6 +107,24 @@ bool ExtractDotAccess(const std::string& before, std::string& identifier) {
     return true;
 }
 
+std::string BuildLinePrefix(const std::string& full_text, int cursor_line,
+                             const std::string& text_before_cursor_on_line) {
+    std::string prefix;
+    if (cursor_line > 0) {
+        size_t pos = 0;
+        int line = 0;
+        while (line < cursor_line && pos <= full_text.size()) {
+            size_t nl = full_text.find('\n', pos);
+            if (nl == std::string::npos) { pos = full_text.size(); break; }
+            prefix.append(full_text, pos, nl - pos + 1);
+            pos = nl + 1;
+            ++line;
+        }
+    }
+    prefix += text_before_cursor_on_line;
+    return prefix;
+}
+
 }
 
 std::string VariableTypeIndex::LookupInScope(const Scope& current, const std::string& name) const {
@@ -185,16 +159,11 @@ void VariableTypeIndex::ScanRange(const std::string& text, size_t start, size_t 
 
         std::string word = ReadIdent(text, i);
 
-        // `class ... end`: recurse into its body (in a throwaway scope) so
-        // methods inside get their own function scope pushed onto
-        // `scopes_`, but stray class-body-level statements (attribute
-        // declarations) don't leak into whichever scope is currently
-        // active around the class definition.
         if (word == "class") {
             size_t save = i;
             SkipInlineWhitespace(text, i);
             if (i >= end || !IsIdentStart(text[i])) { i = save; continue; }
-            ReadIdent(text, i);  // class name, not needed here
+            ReadIdent(text, i);
             SkipInlineWhitespace(text, i);
             if (i < end && text[i] == ':') {
                 size_t colon = i;
@@ -218,14 +187,11 @@ void VariableTypeIndex::ScanRange(const std::string& text, size_t start, size_t 
             continue;
         }
 
-        // `func name(params) [as Type] ... end`: everything assigned inside
-        // gets its own scope (seeded with the parameter types), pushed onto
-        // `scopes_` so TypeOf() can find it later by cursor offset.
         if (word == "func") {
             size_t save = i;
             SkipInlineWhitespace(text, i);
             if (i >= end || !IsIdentStart(text[i])) { i = save; continue; }
-            ReadIdent(text, i);  // function/method name, not needed here
+            ReadIdent(text, i);
             SkipInlineWhitespace(text, i);
             if (i >= end || text[i] != '(') { i = save; continue; }
 
@@ -242,7 +208,7 @@ void VariableTypeIndex::ScanRange(const std::string& text, size_t start, size_t 
 
             size_t after_params = j + 1;
             size_t body_scan_start = after_params;
-            TryParseAsType(text, body_scan_start, end);  // skip an optional return type
+            TryParseAsType(text, body_scan_start, end);
 
             size_t scan_pos = body_scan_start;
             size_t body_end = 0;
@@ -263,13 +229,6 @@ void VariableTypeIndex::ScanRange(const std::string& text, size_t start, size_t 
             continue;
         }
 
-        // `word.member[.more]` (e.g. `this.attr = ...`, `perro.nombre = ...`,
-        // `Clase.staticAttr = ...`) is a member access, not a bare local
-        // variable -- ClassIndex already tracks attribute types. Consume
-        // the whole dotted chain here so `member` doesn't fall through to
-        // the generic identifier handling below and get misread as a bare
-        // local assignment target (it would otherwise poison this scope
-        // with a fake local named `member` for every `obj.member = Clase(...)`).
         {
             size_t dot_check = i;
             SkipInlineWhitespace(text, dot_check);
@@ -290,9 +249,6 @@ void VariableTypeIndex::ScanRange(const std::string& text, size_t start, size_t 
             }
         }
 
-        // `word as Type` (declared type, with or without an initializer)
-        // and `word = expr` (plain assignment) are the two patterns that
-        // can teach us `word`'s type.
         size_t decl_pos = i;
         std::string declared_type = TryParseAsType(text, decl_pos, end);
 
@@ -312,22 +268,30 @@ void VariableTypeIndex::ScanRange(const std::string& text, size_t start, size_t 
         size_t rhs = eq_check + 1;
         SkipInlineWhitespace(text, rhs);
 
-        std::string resolved_type = declared_type;  // "x as Tipo = expr" -> declared type wins
+        std::string resolved_type = declared_type;
         if (resolved_type.empty() && rhs < end && IsIdentStart(text[rhs])) {
             size_t ident_pos = rhs;
             std::string rhs_name = ReadIdent(text, ident_pos);
+
+            if (rhs_name == "new") {
+                size_t after_new = ident_pos;
+                SkipInlineWhitespace(text, after_new);
+                if (after_new < end && IsIdentStart(text[after_new])) {
+                    ident_pos = after_new;
+                    rhs_name = ReadIdent(text, ident_pos);
+                }
+            }
+
             size_t after_ident = ident_pos;
             SkipInlineWhitespace(text, ident_pos);
 
             if (ident_pos < end && text[ident_pos] == '(') {
-                // `rhs_name(...)`: either a class constructor or a function call.
                 if (class_index.Find(rhs_name) != nullptr) {
                     resolved_type = rhs_name;
                 } else if (const FunctionSignature* fn = function_index.Find(rhs_name)) {
                     resolved_type = fn->EffectiveReturnType();
                 }
             } else if (ident_pos < end && text[ident_pos] == '.') {
-                // `obj.metodo(...)`: one dot level, no chained access.
                 size_t k = ident_pos + 1;
                 SkipInlineWhitespace(text, k);
                 if (k < end && IsIdentStart(text[k])) {
@@ -383,6 +347,24 @@ std::string VariableTypeIndex::TypeOf(const std::string& variable, size_t cursor
     return it == module_scope_.var_types.end() ? "" : it->second;
 }
 
+std::vector<std::string> VariableTypeIndex::VisibleVariables(size_t cursor_offset) const {
+    const Scope* best = nullptr;
+    for (const auto& s : scopes_) {
+        if (cursor_offset >= s.start && cursor_offset <= s.end) {
+            if (!best || (s.end - s.start) < (best->end - best->start)) best = &s;
+        }
+    }
+
+    std::vector<std::string> names;
+    if (best) {
+        for (const auto& [name, type] : best->var_types) names.push_back(name);
+    }
+    for (const auto& [name, type] : module_scope_.var_types) {
+        if (!best || best->var_types.find(name) == best->var_types.end()) names.push_back(name);
+    }
+    return names;
+}
+
 bool ResolveMemberAccess(const std::string& full_text, int cursor_line,
                           const std::string& text_before_cursor_on_line,
                           const ClassIndex& class_index, const VariableTypeIndex& var_types,
@@ -390,20 +372,7 @@ bool ResolveMemberAccess(const std::string& full_text, int cursor_line,
     std::string identifier;
     if (!ExtractDotAccess(text_before_cursor_on_line, identifier)) return false;
 
-    std::string prefix;
-    if (cursor_line > 0) {
-        size_t pos = 0;
-        int line = 0;
-        while (line < cursor_line && pos <= full_text.size()) {
-            size_t nl = full_text.find('\n', pos);
-            if (nl == std::string::npos) { pos = full_text.size(); break; }
-            prefix.append(full_text, pos, nl - pos + 1);
-            pos = nl + 1;
-            ++line;
-        }
-    }
-    prefix += text_before_cursor_on_line;
-
+    std::string prefix = BuildLinePrefix(full_text, cursor_line, text_before_cursor_on_line);
     std::string viewer_class = FindEnclosingClass(prefix);
 
     if (identifier == "this") {
@@ -430,6 +399,27 @@ bool ResolveMemberAccess(const std::string& full_text, int cursor_line,
     }
 
     return false;
+}
+
+bool ResolveOwnScopeSuggestions(const std::string& full_text, int cursor_line,
+                                 const std::string& text_before_cursor_on_line,
+                                 const ClassIndex& class_index, const VariableTypeIndex& var_types,
+                                 std::vector<std::string>& out_variable_names,
+                                 std::vector<ClassMember>& out_own_members) {
+    std::string prefix = BuildLinePrefix(full_text, cursor_line, text_before_cursor_on_line);
+    out_variable_names = var_types.VisibleVariables(prefix.size());
+
+    std::string viewer_class = FindEnclosingClass(prefix);
+    if (!viewer_class.empty()) {
+        std::vector<ClassMember> members = class_index.FlattenedMembers(viewer_class);
+        members = ClassIndex::FilterForAccess(members, MemberAccessKind::kThis, viewer_class);
+        for (auto& member : members) {
+            if (member.is_method && member.name == member.declared_in) continue;
+            out_own_members.push_back(std::move(member));
+        }
+    }
+
+    return !out_variable_names.empty() || !out_own_members.empty();
 }
 
 }

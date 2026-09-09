@@ -11,8 +11,12 @@
 #include "branding/logo_texture.h"
 #include "fonts/embedded_font.h"
 #include "imgui.h"
+// For ImGuiWindow/GImGui (popup hit-testing) and ImGuiKeyData (key suppression) --
+// already used the same way by src/main.cpp.
+#include "imgui_internal.h"
 #include "languages/avalang_language.h"
 #include "languages/keyword_docs.h"
+#include "languages/lexer_utils.h"
 #include "languages/member_access_resolver.h"
 #include "palette.h"
 #include "panels/designer_canvas.h"
@@ -20,6 +24,8 @@
 #include "util/i18n.h"
 
 namespace studio {
+
+using namespace lexer;
 
 namespace {
 
@@ -64,11 +70,6 @@ void RebuildAutocompleteTrie(EditorTab& tab) {
         tab.autocomplete_trie.insert(name);
     }
 
-    // Class names used to only make it into the trie by accident, via
-    // IterateIdentifiers picking up a stray token that happened to match --
-    // e.g. `Persona` wouldn't suggest until it was typed somewhere else in
-    // the buffer first. Insert them explicitly (this also covers classes
-    // that only exist in an imported file, same as function_index above).
     for (const auto& [name, info] : tab.class_index.Classes()) {
         (void)info;
         tab.autocomplete_trie.insert(name);
@@ -78,8 +79,8 @@ void RebuildAutocompleteTrie(EditorTab& tab) {
 void RebuildIndexAndTrie(EditorTab& tab) {
     ImportFileCache import_cache;
     const std::string dir = DirOf(tab.file_path);
-    tab.function_index.Rebuild(tab.GetText(), dir, &import_cache);
-    tab.class_index.Rebuild(tab.GetText(), dir, &import_cache);
+    tab.function_index.Rebuild(tab.GetText(), dir, &import_cache, tab.modules_path);
+    tab.class_index.Rebuild(tab.GetText(), dir, &import_cache, tab.modules_path);
 
     tab.variable_type_index.Rebuild(tab.GetText(), tab.class_index, tab.function_index);
     tab.fold_index.Rebuild(tab.GetText());
@@ -141,45 +142,53 @@ std::string ToLowerAscii(const std::string& text) {
     return result;
 }
 
-// TextEditor::Trie::findSuggestions with maxSkippedLetters > 0 lets it skip
-// letters *inside the candidate word* to tolerate typos, VSCode-style. The
-// problem: with a maxSkip of 2 (the default used before this change) and a
-// short searchTerm (1-2 chars, the common case while typing), almost every
-// identifier in the file can be reached within that skip budget, so the
-// list fills up with unrelated words instead of the thing being typed --
-// this is what read as "imprecise" / different from VSCode.
-//
-// Fix: two-pass lookup.
-//   1. Exact-prefix pass (maxSkippedLetters = 0). With skip disabled, the
-//      Trie can only walk down letters that are actually in searchTerm, in
-//      order, from the root -- i.e. genuine prefix matches, sorted by how
-//      many extra letters remain (shortest completion first), same as
-//      VSCode's top-of-list ordering.
-//   2. Fuzzy fallback, only if the prefix pass didn't fill the list AND the
-//      user has typed enough (>= kAutocompleteFuzzyMinChars) for
-//      letter-skipping to carry real signal. Results already present from
-//      pass 1 are not duplicated.
 constexpr size_t kAutocompleteLimit = 20;
 constexpr size_t kAutocompleteFuzzyMinChars = 3;
 
 void PopulateGeneralSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& ac_state) {
+    std::unordered_set<std::string> seen;
+    std::vector<std::string> ordered;
+
+    const std::string search_term_lower = ToLowerAscii(ac_state.searchTerm);
+
+    auto add_filtered = [&](const std::string& name) {
+        if (ordered.size() >= kAutocompleteLimit) return;
+        if (!search_term_lower.empty()) {
+            const std::string name_lower = ToLowerAscii(name);
+            if (name_lower.compare(0, search_term_lower.size(), search_term_lower) != 0) return;
+        }
+        if (seen.insert(name).second) ordered.push_back(name);
+    };
+
+    auto add_raw = [&](const std::string& name) {
+        if (ordered.size() >= kAutocompleteLimit) return;
+        if (seen.insert(name).second) ordered.push_back(name);
+    };
+
+    TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
+    std::string before = TextBeforeCursor(tab, pos);
+
+    std::vector<std::string> own_variables;
+    std::vector<ClassMember> own_members;
+    ResolveOwnScopeSuggestions(tab.GetText(), pos.line, before, tab.class_index, tab.variable_type_index,
+                                own_variables, own_members);
+
+    for (const auto& name : own_variables) add_filtered(name);
+    for (const auto& member : own_members) add_filtered(member.name);
+
     std::vector<std::string> prefix_matches;
     tab.autocomplete_trie.findSuggestions(prefix_matches, ac_state.searchTerm, kAutocompleteLimit,
                                            /*maxSkippedLetters=*/0);
-    ac_state.suggestions = prefix_matches;
+    for (const auto& word : prefix_matches) add_raw(word);
 
-    if (ac_state.suggestions.size() < kAutocompleteLimit &&
-        ac_state.searchTerm.size() >= kAutocompleteFuzzyMinChars) {
+    if (ordered.size() < kAutocompleteLimit && ac_state.searchTerm.size() >= kAutocompleteFuzzyMinChars) {
         std::vector<std::string> fuzzy_matches;
         tab.autocomplete_trie.findSuggestions(fuzzy_matches, ac_state.searchTerm, kAutocompleteLimit,
                                                /*maxSkippedLetters=*/2);
-
-        std::unordered_set<std::string> seen(prefix_matches.begin(), prefix_matches.end());
-        for (auto& word : fuzzy_matches) {
-            if (ac_state.suggestions.size() >= kAutocompleteLimit) break;
-            if (seen.insert(word).second) ac_state.suggestions.push_back(std::move(word));
-        }
+        for (const auto& word : fuzzy_matches) add_raw(word);
     }
+
+    ac_state.suggestions = std::move(ordered);
 }
 
 bool PopulateMemberSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& ac_state) {
@@ -198,7 +207,14 @@ bool PopulateMemberSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& ac
             const std::string name_lower = ToLowerAscii(member.name);
             if (name_lower.compare(0, search_term_lower.size(), search_term_lower) != 0) continue;
         }
-        suggestions.push_back(MemberSuggestionLabel(member));
+        // NOTE: this feeds the editor widget's own built-in suggestion popup (used once the
+        // user types a filter letter after the dot -- see DrawDotCompletionPopup, which only
+        // covers the bare "just typed a dot" moment). That popup inserts whatever string is
+        // selected verbatim on Tab/Enter/click, so this must be plain insertable text, not the
+        // decorated "name : Type" / full signature label used for on-screen display elsewhere.
+        std::string insert_text = member.name;
+        if (member.is_method) insert_text += "()";
+        suggestions.push_back(insert_text);
     }
 
     if (suggestions.empty()) return false;
@@ -237,9 +253,6 @@ bool FindEnclosingCall(const std::string& line_before_cursor, CallContext& out) 
     return false;
 }
 
-bool IsIdentStart(char c) { return std::isalpha(static_cast<unsigned char>(c)) || c == '_'; }
-bool IsIdentChar(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
-
 std::string WordEndingAtCursor(const std::string& line_before_cursor) {
     size_t end = line_before_cursor.size();
     size_t start = end;
@@ -247,9 +260,6 @@ std::string WordEndingAtCursor(const std::string& line_before_cursor) {
     return line_before_cursor.substr(start, end - start);
 }
 
-// "Go to Definition" (F12 / Ctrl+Click) target. `same_file` mirrors the
-// FunctionSignature::source_file / ClassInfo::source_file convention: empty
-// means "the buffer currently being edited", not literally "no file".
 struct DefinitionTarget {
     bool same_file = true;
     std::string file_path;
@@ -257,20 +267,27 @@ struct DefinitionTarget {
     int column = 0;
 };
 
-// Resolves the symbol at `pos` (the identifier ending there -- same
-// "word ending at cursor" convention DrawKeywordHint already uses, so this
-// works both for F12 with the caret parked after a symbol and for
-// Ctrl+Click, whose click has already moved the real caret there by the
-// time this runs). Tries, in order: a member access (`obj.algo`, `this.algo`,
-// `ClassName.algo`), a bare class name, then a bare (non-builtin) function
-// name. Returns false if the word isn't a resolvable declaration -- e.g. a
-// local variable, a builtin, or plain text.
 bool ResolveDefinitionTarget(EditorTab& tab, const TextEditor::CursorPosition& pos, DefinitionTarget& out) {
-    const std::string before = TextBeforeCursor(tab, pos);
-    const std::string word = WordEndingAtCursor(before);
+    // Use the *full* identifier the cursor sits inside -- scanning both left and right from the
+    // column, not just backward from it. A plain left click places the caret wherever the pixel
+    // under the mouse lands, which is very often in the *middle* of a word, not at its end.
+    // Scanning backward-only from there (the old behavior) grabbed just the prefix up to the
+    // click point -- e.g. clicking between the 't' and 'e' of "test" produced the word "t", not
+    // "test" -- so whether F12 worked at all depended on exactly which pixel/column inside the
+    // word you happened to click. That's the "a veces se traba" behavior: a right-click (whose
+    // column gets rounded to the nearest character, see ScreenPosToCursor) or a second click
+    // would often land differently and happen to hit the end of the word, while a first plain
+    // click landing mid-word would not.
+    const std::string line = tab.editor.GetLineText(pos.line);
+    const int column = std::clamp(pos.column, 0, static_cast<int>(line.size()));
+    int word_start = column;
+    int word_end = column;
+    while (word_start > 0 && IsIdentChar(line[word_start - 1])) --word_start;
+    while (word_end < static_cast<int>(line.size()) && IsIdentChar(line[word_end])) ++word_end;
+    const std::string word = line.substr(word_start, word_end - word_start);
     if (word.empty() || !IsIdentStart(word[0])) return false;
 
-    const std::string before_word = before.substr(0, before.size() - word.size());
+    const std::string before_word = line.substr(0, word_start);
     if (!before_word.empty() && before_word.back() == '.') {
         MemberAccessContext ctx;
         std::vector<ClassMember> members;
@@ -309,11 +326,6 @@ bool ResolveDefinitionTarget(EditorTab& tab, const TextEditor::CursorPosition& p
     return false;
 }
 
-// Jumps to `target`, either right away (same file -- no need to touch
-// `state.tabs`, safe to call from inside DrawEditorPanel's tab bar loop) or
-// by queuing it for main.cpp to pick up next frame (different file --
-// opening/creating a tab mid-loop could desync which tab ImGui thinks is
-// selected this frame, see EditorState::goto_definition_requested).
 void JumpToDefinition(EditorState& state, EditorTab& tab, const DefinitionTarget& target) {
     if (target.same_file) {
         tab.editor.SetCursor(target.line, target.column);
@@ -322,7 +334,7 @@ void JumpToDefinition(EditorState& state, EditorTab& tab, const DefinitionTarget
     }
     state.goto_definition_requested = true;
     state.goto_definition_file = target.file_path;
-    state.goto_definition_line = target.line + 1;      // SelectMatchInEditor is 1-based
+    state.goto_definition_line = target.line + 1;
     state.goto_definition_column = target.column + 1;
 }
 
@@ -520,17 +532,155 @@ ImVec2 EstimateCaretScreenPos(EditorTab& tab, const TextEditor::CursorPosition& 
     return ImVec2(x, y);
 }
 
-bool DrawDotCompletionPopup(EditorTab& tab, const ImVec2& editor_screen_min) {
+// Inverse of EstimateCaretScreenPos: which line/column is under a given screen point. Used so
+// the right-click context menu ("Ir a la definición" etc.) acts on whatever the user actually
+// clicked on, not on the blinking text cursor -- the vendored TextEditor only moves that cursor
+// on left clicks (see its handling of ImGuiMouseButton_Right in TextEditor.cpp), so reading
+// GetCursorPosition() after a right click reports a stale, unrelated position.
+TextEditor::CursorPosition ScreenPosToCursor(EditorTab& tab, const ImVec2& screen_pos,
+                                              const ImVec2& editor_screen_min) {
+    const float line_height = tab.editor.GetLineHeight();
+    const float glyph_width = tab.editor.GetGlyphWidth();
+    const int first_visible_line = tab.editor.GetFirstVisibleLine();
+    const int first_visible_column = tab.editor.GetFirstVisibleColumn();
+    const float gutter_width = EstimateGutterWidth(tab, glyph_width);
+
+    const int line =
+        first_visible_line + std::max(0, static_cast<int>((screen_pos.y - editor_screen_min.y) / line_height));
+    const int column =
+        first_visible_column +
+        std::max(0, static_cast<int>((screen_pos.x - editor_screen_min.x - gutter_width + glyph_width * 0.5f) /
+                                      glyph_width));
+    return TextEditor::CursorPosition(line, column);
+}
+
+// Everything DrawDotCompletionPopup needs to know, computed *before* tab.editor.Render() runs
+// for this frame -- see the long comment on kDotCompletionNavKeys below for why the split
+// matters (in short: by the time Render() returns, it has already consumed Up/Down/Enter/Tab
+// itself if we don't claim them first).
+struct DotCompletionPending {
+    bool active = false;
+    TextEditor::CursorPosition pos{};
+    std::vector<ClassMember> members;
+};
+
+DotCompletionPending PrepareDotCompletion(EditorTab& tab) {
+    DotCompletionPending pending;
+
     TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
     std::string before = TextBeforeCursor(tab, pos);
-    if (before.empty() || before.back() != '.') return false;
+    if (before.empty() || before.back() != '.') return pending;
 
     MemberAccessContext ctx;
-    std::vector<ClassMember> members;
-    if (!ResolveVisibleMembers(tab, pos.line, before, ctx, members)) return false;
+    if (!ResolveVisibleMembers(tab, pos.line, before, ctx, pending.members)) return pending;
+    if (pending.members.empty()) return pending;
+
+    pending.active = true;
+    pending.pos = pos;
+    return pending;
+}
+
+// Keys the popup wants for itself instead of the code underneath it: list navigation
+// (Up/Down), accepting a suggestion (Enter/Tab), and dismissing the popup (Escape).
+constexpr ImGuiKey kDotCompletionNavKeys[] = {
+    ImGuiKey_DownArrow, ImGuiKey_UpArrow, ImGuiKey_Enter, ImGuiKey_KeypadEnter,
+    ImGuiKey_Tab,       ImGuiKey_Escape,
+};
+
+// The popup is drawn *after* tab.editor.Render() (so it can position itself against the
+// editor's current scroll/caret and paint on top of the text), but Render() is a black box
+// from the vendored TextEditor library -- it has no idea this popup exists and will happily
+// treat Down/Up as "move the caret a line", Enter as "insert a newline", Tab as "insert a
+// tab", all *before* our code below even runs. Reading IsKeyPressed() after the fact would
+// still report "yes, Down was pressed" (ImGui doesn't consume key reads), but the caret would
+// already have jumped a line by then. So: while the popup is (or is about to be) showing, zero
+// out these keys' state in ImGui's own key table *before* calling Render(), so the editor
+// widget sees them as not-pressed, and only *we* act on the edge we captured beforehand.
+void ClaimDotCompletionKeys() {
+    for (ImGuiKey key : kDotCompletionNavKeys) {
+        if (ImGuiKeyData* data = ImGui::GetKeyData(key)) {
+            data->Down = false;
+            data->DownDuration = -1.0f;
+            data->DownDurationPrev = -1.0f;
+        }
+    }
+}
+
+struct DotCompletionKeys {
+    bool nav_down = false;
+    bool nav_up = false;
+    bool accept = false;
+    bool dismiss = false;
+};
+
+// Unlike DrawParameterHint/DrawKeywordHint (plain tooltips, never interactive), this draws a
+// real ImGui window with clickable *and* keyboard-navigable rows -- see keys.* for how Up/Down/
+// Enter/Tab/Escape reach here despite the editor widget being rendered first.
+bool DrawDotCompletionPopup(EditorTab& tab, const ImVec2& editor_screen_min,
+                            const DotCompletionPending& pending, const DotCompletionKeys& keys) {
+    const int count = static_cast<int>(pending.members.size());
+
+    // Reset the selection whenever the popup starts covering a different spot (a new '.', or
+    // the member list changed because the filter after it grew/shrank) so a stale index never
+    // lands on an out-of-range or unrelated row.
+    if (tab.dot_popup_line != pending.pos.line || tab.dot_popup_column != pending.pos.column) {
+        tab.dot_popup_selected = 0;
+        tab.dot_popup_line = pending.pos.line;
+        tab.dot_popup_column = pending.pos.column;
+    }
+
+    if (keys.dismiss) {
+        // Remember this exact caret spot so re-resolving the same members next frame (caret
+        // hasn't moved yet) doesn't just reopen the popup the user just closed.
+        tab.dot_popup_line = -1;
+        tab.dot_popup_column = -1;
+        return false;
+    }
+
+    tab.dot_popup_selected = std::clamp(tab.dot_popup_selected, 0, count - 1);
+    if (keys.nav_down) tab.dot_popup_selected = (tab.dot_popup_selected + 1) % count;
+    if (keys.nav_up) tab.dot_popup_selected = (tab.dot_popup_selected - 1 + count) % count;
+
+    auto accept_member = [&](const ClassMember& member) {
+        std::string insert_text = member.name;
+        int caret_offset = static_cast<int>(insert_text.size());
+        if (member.is_method) {
+            insert_text += "()";
+
+            bool has_params = member.signature && !member.signature->params.empty();
+            caret_offset = static_cast<int>(insert_text.size()) - (has_params ? 1 : 0);
+        }
+        tab.editor.ReplaceSectionText(pending.pos.line, pending.pos.column, pending.pos.line,
+                                        pending.pos.column, insert_text);
+        tab.editor.SetCursor(pending.pos.line, pending.pos.column + caret_offset);
+    };
+
+    if (keys.accept) {
+        accept_member(pending.members[tab.dot_popup_selected]);
+        return true;
+    }
+
+    const std::string window_id = "##dot_completion_popup_" + std::to_string(tab.id);
+
+    // Only hide the popup while a mouse press is happening *outside* of it -- e.g. a click to
+    // move the caret elsewhere, or a drag-to-select in the code above/below. If the press
+    // lands inside the popup's own rect (the user clicking a suggestion), keep it open so the
+    // click can land on the Selectable below: unconditionally hiding the window mid-press used
+    // to eat that exact click, because the row's mouse-down had no window left to register
+    // against by the time the mouse went up.
+    const bool any_mouse_down = ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
+                                 ImGui::IsMouseDown(ImGuiMouseButton_Middle) ||
+                                 ImGui::IsMouseDown(ImGuiMouseButton_Right);
+    if (any_mouse_down) {
+        ImGuiWindow* existing = ImGui::FindWindowByName(window_id.c_str());
+        const bool press_inside_popup =
+            existing && existing->WasActive &&
+            ImGui::IsMouseHoveringRect(existing->Rect().Min, existing->Rect().Max, false);
+        if (!press_inside_popup) return false;
+    }
 
     const float line_height = tab.editor.GetLineHeight();
-    const ImVec2 caret_pos = EstimateCaretScreenPos(tab, pos, editor_screen_min);
+    const ImVec2 caret_pos = EstimateCaretScreenPos(tab, pending.pos, editor_screen_min);
     ImGui::SetNextWindowPos(ImVec2(caret_pos.x, caret_pos.y + line_height), ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.97f);
     constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
@@ -538,11 +688,12 @@ bool DrawDotCompletionPopup(EditorTab& tab, const ImVec2& editor_screen_min) {
                                          ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                                          ImGuiWindowFlags_AlwaysAutoResize;
 
-    const std::string window_id = "##dot_completion_popup_" + std::to_string(tab.id);
     if (ImGui::Begin(window_id.c_str(), nullptr, kFlags)) {
-        for (const auto& member : members) {
+        for (int i = 0; i < count; ++i) {
+            const ClassMember& member = pending.members[i];
             ImGui::PushID(member.name.c_str());
 
+            const bool row_selected = (i == tab.dot_popup_selected);
             const ImU32 dot_color = member.is_method
                                          ? palette::U32FromHex(palette::kSynFunction)
                                          : palette::U32FromHex(palette::kInfo);
@@ -555,19 +706,13 @@ bool DrawDotCompletionPopup(EditorTab& tab, const ImVec2& editor_screen_min) {
             ImGui::Dummy(ImVec2(kDotRadius * 2.0f + 8.0f, 0.0f));
             ImGui::SameLine(0.0f, 0.0f);
 
-            if (ImGui::Selectable(MemberSuggestionLabel(member).c_str())) {
+            if (row_selected) ImGui::SetScrollHereY();
 
-                std::string insert_text = member.name;
-                int caret_offset = static_cast<int>(insert_text.size());
-                if (member.is_method) {
-                    insert_text += "()";
-
-                    bool has_params = member.signature && !member.signature->params.empty();
-                    caret_offset = static_cast<int>(insert_text.size()) - (has_params ? 1 : 0);
-                }
-                tab.editor.ReplaceSectionText(pos.line, pos.column, pos.line, pos.column, insert_text);
-                tab.editor.SetCursor(pos.line, pos.column + caret_offset);
+            if (ImGui::Selectable(MemberSuggestionLabel(member).c_str(), row_selected)) {
+                accept_member(member);
             }
+            if (ImGui::IsItemHovered()) tab.dot_popup_selected = i;
+
             ImGui::PopID();
         }
     }
@@ -579,15 +724,15 @@ void InitTab(EditorTab& tab) {
     tab.editor.SetLanguage(languages::AvaLang());
     TextEditor::Palette palette = TextEditor::GetDarkPalette();
 
-    palette[static_cast<size_t>(TextEditor::Color::keyword)] = IM_COL32(217, 122, 61, 255);
-    palette[static_cast<size_t>(TextEditor::Color::declaration)] = IM_COL32(217, 122, 61, 255);
-    palette[static_cast<size_t>(TextEditor::Color::comment)] = IM_COL32(106, 153, 78, 255);
-    palette[static_cast<size_t>(TextEditor::Color::docComment)] = IM_COL32(77, 182, 172, 255);
-    palette[static_cast<size_t>(TextEditor::Color::docParamTag)] = IM_COL32(199, 146, 234, 255);
-    palette[static_cast<size_t>(TextEditor::Color::string)] = IM_COL32(212, 163, 115, 255);
-    palette[static_cast<size_t>(TextEditor::Color::interpolation)] = IM_COL32(224, 100, 240, 255);
-    palette[static_cast<size_t>(TextEditor::Color::knownIdentifier)] = IM_COL32(224, 200, 132, 255);
-    palette[static_cast<size_t>(TextEditor::Color::punctuation)] = IM_COL32(200, 186, 171, 255);
+    palette[static_cast<size_t>(TextEditor::Color::keyword)] = palette::U32FromHex(palette::kSynKeyword);
+    palette[static_cast<size_t>(TextEditor::Color::declaration)] = palette::U32FromHex(palette::kSynKeyword);
+    palette[static_cast<size_t>(TextEditor::Color::comment)] = palette::U32FromHex(palette::kSynComment);
+    palette[static_cast<size_t>(TextEditor::Color::docComment)] = palette::U32FromHex(palette::kSynDocComment);
+    palette[static_cast<size_t>(TextEditor::Color::docParamTag)] = palette::U32FromHex(palette::kSynDocParamTag);
+    palette[static_cast<size_t>(TextEditor::Color::string)] = palette::U32FromHex(palette::kSynString);
+    palette[static_cast<size_t>(TextEditor::Color::interpolation)] = palette::U32FromHex(palette::kSynInterpolation);
+    palette[static_cast<size_t>(TextEditor::Color::knownIdentifier)] = palette::U32FromHex(palette::kSynKnownIdentifier);
+    palette[static_cast<size_t>(TextEditor::Color::punctuation)] = palette::U32FromHex(palette::kSynPunctuation);
 
     tab.editor.SetPalette(palette);
     tab.editor.SetShowLineNumbersEnabled(true);
@@ -689,6 +834,7 @@ EditorTab& OpenFileInTab(EditorState& state, const std::string& path) {
 
     auto tab = std::make_unique<EditorTab>();
     tab->id = state.next_tab_id++;
+    tab->modules_path = state.modules_path;
     InitTab(*tab);
 
     if (!path.empty()) {
@@ -1061,7 +1207,6 @@ void DrawEditorPanel(EditorState& state) {
             EditorTab& tab = *state.tabs[i];
 
             std::string label = tab.DisplayName();
-            if (tab.dirty) label += " *";
             char id_buf[320];
             std::snprintf(id_buf, sizeof(id_buf), "%s###tab%d", label.c_str(), tab.id);
 
@@ -1070,6 +1215,15 @@ void DrawEditorPanel(EditorState& state) {
             const ImGuiTabItemFlags item_flags =
                 (tab.id == state.focus_tab_id) ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
             const bool selected = ImGui::BeginTabItem(id_buf, &tab_open, item_flags);
+
+            if (tab.dirty) {
+                const ImVec2 dot_p0 = ImGui::GetItemRectMin();
+                const ImVec2 dot_p1 = ImGui::GetItemRectMax();
+                const float radius = 3.0f;
+                const ImVec2 center(dot_p1.x - radius - 8.0f, (dot_p0.y + dot_p1.y) * 0.5f);
+                ImGui::GetWindowDrawList()->AddCircleFilled(center, radius, palette::U32FromHex(palette::kTextMuted));
+            }
+
             if (selected) {
 
                 const ImVec2 p0 = ImGui::GetItemRectMin();
@@ -1120,33 +1274,86 @@ void DrawEditorPanel(EditorState& state) {
 
                     const ImVec2 editor_min = ImGui::GetCursorScreenPos();
                     const ImVec2 editor_max = ImVec2(editor_min.x + avail.x, editor_min.y + avail.y);
+
+                    // Must be computed, and the keys it wants must be claimed, *before*
+                    // Render() below -- see the comments on ClaimDotCompletionKeys().
+                    const DotCompletionPending dot_pending = PrepareDotCompletion(tab);
+                    DotCompletionKeys dot_keys;
+                    if (dot_pending.active) {
+                        dot_keys.nav_down = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
+                        dot_keys.nav_up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
+                        dot_keys.accept = ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                                          ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
+                                          ImGui::IsKeyPressed(ImGuiKey_Tab, false);
+                        dot_keys.dismiss = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+                        ClaimDotCompletionKeys();
+                    }
+
                     tab.editor.Render("##editor", avail, false);
-                    // Render() submits the code area as a child window of this
-                    // tab item, so IsItemFocused() right after it still refers
-                    // to that child (same "query the item after End*()" pattern
-                    // ImGui uses for IsItemHovered() after EndChild()).
                     state.code_editor_has_focus = ImGui::IsItemFocused();
 
-                    // Go to Definition: F12 (caret already where the user
-                    // wants -- typed or navigated there) or Ctrl+Click
-                    // (Render() above already moved the real caret to the
-                    // click position this same frame, same assumption
-                    // DrawKeywordHint below relies on for its own hover).
                     const bool goto_def_key =
                         state.code_editor_has_focus && ImGui::IsKeyPressed(ImGuiKey_F12, false);
                     const bool goto_def_click = ImGui::IsMouseHoveringRect(editor_min, editor_max) &&
                                                  ImGui::GetIO().KeyCtrl &&
                                                  ImGui::IsMouseClicked(ImGuiMouseButton_Left);
-                    if (goto_def_key || goto_def_click) {
-                        DefinitionTarget target;
-                        if (ResolveDefinitionTarget(tab, tab.editor.GetCursorPosition(0), target)) {
-                            JumpToDefinition(state, tab, target);
+                    DefinitionTarget hover_target;
+                    const bool has_definition_here =
+                        ResolveDefinitionTarget(tab, tab.editor.GetCursorPosition(0), hover_target);
+                    if ((goto_def_key || goto_def_click) && has_definition_here) {
+                        JumpToDefinition(state, tab, hover_target);
+                    }
+
+                    // The vendored editor only moves its own text cursor on left clicks (see its
+                    // handling of ImGuiMouseButton_Right in TextEditor.cpp) -- record where a
+                    // right click actually landed ourselves, on the exact frame it happens, so
+                    // the context menu below can resolve "Ir a la definición" against the word
+                    // under the cursor the user right-clicked, not wherever the blinking text
+                    // cursor was last left (typically wherever they were previously typing).
+                    if (ImGui::IsMouseHoveringRect(editor_min, editor_max) &&
+                        ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                        tab.context_menu_click_valid = true;
+                        tab.context_menu_click_pos = ScreenPosToCursor(tab, ImGui::GetMousePos(), editor_min);
+                    }
+                    const TextEditor::CursorPosition menu_pos = tab.context_menu_click_valid
+                                                                      ? tab.context_menu_click_pos
+                                                                      : tab.editor.GetCursorPosition(0);
+                    DefinitionTarget menu_target;
+                    const bool menu_has_definition = ResolveDefinitionTarget(tab, menu_pos, menu_target);
+
+                    // Right-click context menu, VS/VS Code style. BeginPopupContextItem
+                    // attaches to the last item, i.e. the "##editor" child Render() just drew.
+                    if (ImGui::BeginPopupContextItem("##editor_context_menu")) {
+                        if (ImGui::MenuItem(util::Tr("editor.context.goto_definition").c_str(), "F12",
+                                            false, menu_has_definition)) {
+                            JumpToDefinition(state, tab, menu_target);
                         }
+                        ImGui::Separator();
+                        const bool has_selection = tab.editor.AnyCursorHasSelection();
+                        if (ImGui::MenuItem(util::Tr("editor.context.cut").c_str(), "Ctrl+X", false,
+                                            has_selection)) {
+                            tab.editor.Cut();
+                        }
+                        if (ImGui::MenuItem(util::Tr("editor.context.copy").c_str(), "Ctrl+C", false,
+                                            has_selection)) {
+                            tab.editor.Copy();
+                        }
+                        if (ImGui::MenuItem(util::Tr("editor.context.paste").c_str(), "Ctrl+V")) {
+                            tab.editor.Paste();
+                        }
+                        ImGui::Separator();
+                        if (ImGui::MenuItem(util::Tr("editor.context.select_all").c_str(), "Ctrl+A")) {
+                            tab.editor.SelectAll();
+                        }
+                        ImGui::EndPopup();
                     }
 
                     if (ImGui::IsMouseHoveringRect(editor_min, editor_max)) {
                         if (!DrawParameterHint(tab)) {
-                            if (!DrawDotCompletionPopup(tab, editor_min)) DrawKeywordHint(tab);
+                            const bool dot_popup_drawn =
+                                dot_pending.active &&
+                                DrawDotCompletionPopup(tab, editor_min, dot_pending, dot_keys);
+                            if (!dot_popup_drawn) DrawKeywordHint(tab);
                         }
                     }
                 }

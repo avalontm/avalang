@@ -53,6 +53,7 @@
 #include "platform/win32_titlebar.h"
 #include "theme.h"
 #include "util/ava_cli_locator.h"
+#include "util/data_dir.h"
 #include "util/i18n.h"
 #include "util/log_bridge.h"
 #include "util/project_utils.h"
@@ -187,6 +188,8 @@ int main() {
     studio::InitEditorPanel(editor_state);
 
     editor_state.project_root = explorer_state.root_dir;
+    editor_state.modules_path =
+        settings.modules_path.empty() ? studio::util::ResolveDefaultModulesDir() : settings.modules_path;
     studio::OpenWelcomeTab(editor_state);
 
     studio::TerminalState terminal_state;
@@ -1026,6 +1029,12 @@ int main() {
             }
             if (settings_dirty) {
                 engine.SetModulesPath(settings.modules_path);
+                editor_state.modules_path = settings.modules_path.empty()
+                    ? studio::util::ResolveDefaultModulesDir() : settings.modules_path;
+                for (const auto& tab_ptr : editor_state.tabs) {
+                    tab_ptr->modules_path = editor_state.modules_path;
+                    tab_ptr->index_dirty = true;
+                }
                 studio::SaveSettings(settings);
             }
             persist_if_closed("Settings###settings", open);

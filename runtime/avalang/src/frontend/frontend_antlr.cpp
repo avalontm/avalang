@@ -94,7 +94,7 @@ static std::string formatError(const std::string& source_name, const SourceError
     return out.str();
 }
 
-std::shared_ptr<Proto> CompileSource(const std::string& source, const std::string& source_name) {
+static std::shared_ptr<Chunk> ParseToChunk(const std::string& source, const std::string& source_name) {
     std::string normalized_source = source;
     if (normalized_source.empty() || normalized_source.back() != '\n') {
         normalized_source += '\n';
@@ -177,11 +177,17 @@ std::shared_ptr<Proto> CompileSource(const std::string& source, const std::strin
         if (!chunk) {
             throw CompileError("AST chunk is null", 0, 0, source_name);
         }
-        Compiler compiler;
-        auto proto = compiler.Compile(chunk, source_name);
-        return proto;
+        return chunk;
     } catch (const std::bad_any_cast& e) {
         throw CompileError("Bad any_cast during compilation: " + std::string(e.what()), 0, 0, source_name);
+    }
+}
+
+std::shared_ptr<Proto> CompileSource(const std::string& source, const std::string& source_name) {
+    auto chunk = ParseToChunk(source, source_name);
+    try {
+        Compiler compiler;
+        return compiler.Compile(chunk, source_name);
     } catch (const AvaError& e) {
         // Semantic checks in Compiler (duplicate func defs, static/private
         // outside a class, etc.) already know the offending line and throw
@@ -193,6 +199,21 @@ std::shared_ptr<Proto> CompileSource(const std::string& source, const std::strin
                             e.source.empty() ? source_name : e.source);
     } catch (const std::exception& e) {
         throw CompileError(std::string(e.what()), 0, 0, source_name);
+    }
+}
+
+avastd::unordered_map<avastd::string, ClassObj*> HarvestImportedClasses(
+        const std::string& source, const std::string& source_name,
+        std::unordered_set<std::string>& chain,
+        std::unordered_map<std::string, std::unordered_map<std::string, ClassObj*>>& cache) {
+    try {
+        auto chunk = ParseToChunk(source, source_name);
+        Compiler compiler;
+        compiler.SetImportHarvestContext(&chain, &cache);
+        compiler.Compile(chunk, source_name);
+        return compiler.CompiledClasses();
+    } catch (...) {
+        return {};
     }
 }
 

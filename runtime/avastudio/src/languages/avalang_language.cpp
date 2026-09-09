@@ -49,7 +49,7 @@ const TextEditor::Language* AvaLang() {
         lang.keywords = {
             "if", "then", "elif", "else", "end",
             "while", "for", "in",
-            "func", "class", "base",
+            "func", "class", "base", "new",
             "return", "break", "continue", "pass",
             "import", "as", "local", "extern",
             "raise", "try", "catch", "finally",

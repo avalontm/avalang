@@ -2,9 +2,12 @@
 #include "../vm/vm_extern.h"
 #include "../common/ava_error.h"
 #include "../builtins/builtin_names.h"
+#include "../frontend/frontend.h"
 #include <stdexcept>
 #include <cstdio>
 #include <unordered_set>
+#include <filesystem>
+#include <fstream>
 
 namespace ava {
 
@@ -836,6 +839,10 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
     }
 
     if (auto* a = dynamic_cast<AttrExpr*>(expr.get())) {
+        TypeRef obj_type = InferExprTypeRef(a->obj);
+        if (obj_type.type == Type::Object) {
+            CheckPrivateAccess(obj_type.class_name, a->attr, current_line_, current_col_);
+        }
         auto obj_reg = CompileExpr(a->obj);
         auto attr_idx = AddConstant(MakeString(a->attr));
         auto result_reg = AllocReg();
@@ -900,6 +907,7 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
         sub.extern_func_returns_ = extern_func_returns_;
         sub.has_wildcard_import_ = has_wildcard_import_;
         sub.current_base_class_ = current_base_class_;
+        sub.current_class_name_ = current_class_name_;
 
         sub.next_reg_ = 1;
         sub.max_reg_ = sub.next_reg_;
@@ -1264,6 +1272,19 @@ void Compiler::CheckCallArgs(const std::string& func_name, const CallExpr* c) {
     CheckCallArgsAgainst(init_it->second, "class '" + func_name + "' constructor", c);
 }
 
+void Compiler::CheckPrivateAccess(const std::string& class_name, const std::string& member,
+                                   int line, int col) {
+    if (class_name.empty()) return;
+    auto cit = compiled_classes_.find(class_name);
+    if (cit == compiled_classes_.end()) return;
+    ClassObj* cls_obj = cit->second;
+    if (!cls_obj->private_members.count(member)) return;
+    if (current_class_name_ == class_name) return;
+    throw AvaError("'" + member + "' is private in class '" + class_name +
+                        "' and cannot be accessed from outside it",
+                    line, col, source_name_);
+}
+
 void Compiler::CheckMethodCallArgs(const AttrExpr* callee, const CallExpr* c) {
 
     if (auto* obj_name = dynamic_cast<NameExpr*>(callee->obj.get())) {
@@ -1283,6 +1304,7 @@ void Compiler::CheckMethodCallArgs(const AttrExpr* callee, const CallExpr* c) {
     if (cit != class_method_params_.end()) {
         auto mit = cit->second.find(callee->attr);
         if (mit != cit->second.end()) {
+            CheckPrivateAccess(obj_type.class_name, callee->attr, current_line_, current_col_);
             CheckCallArgsAgainst(mit->second, "method '" + obj_type.class_name + "." + callee->attr + "'", c);
             return;
         }
@@ -1468,6 +1490,12 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
             }
 
             auto attr_idx = AddConstant(MakeString(a_expr->attr));
+            if (!is_this) {
+                TypeRef target_type = InferExprTypeRef(a_expr->obj);
+                if (target_type.type == Type::Object) {
+                    CheckPrivateAccess(target_type.class_name, a_expr->attr, current_line_, current_col_);
+                }
+            }
             Emit(OpCode::SETATTR, obj_reg, attr_idx, val_reg);
 
             FreeRegs(next_reg_ - regs_before);
@@ -1518,6 +1546,12 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
             }
 
             auto attr_idx = AddConstant(MakeString(a_expr->attr));
+            if (!is_this) {
+                TypeRef target_type = InferExprTypeRef(a_expr->obj);
+                if (target_type.type == Type::Object) {
+                    CheckPrivateAccess(target_type.class_name, a_expr->attr, current_line_, current_col_);
+                }
+            }
             Emit(OpCode::SETATTR, obj_reg, attr_idx, result_reg);
 
             FreeRegs(next_reg_ - regs_before);
@@ -2698,6 +2732,7 @@ void Compiler::CompileFunc(const FuncDef* func) {
     sub.extern_func_returns_ = extern_func_returns_;
     sub.has_wildcard_import_ = has_wildcard_import_;
     sub.current_base_class_ = current_base_class_;
+    sub.current_class_name_ = current_class_name_;
 
     sub.next_reg_ = 1;
     sub.max_reg_ = sub.next_reg_;
@@ -2800,6 +2835,11 @@ std::shared_ptr<Proto> Compiler::Compile(const std::shared_ptr<Chunk>& chunk,
     Reset();
     source_name_ = source_name;
     proto_->source_name = source_name_;
+    {
+        std::error_code ec;
+        current_file_dir_ = std::filesystem::path(source_name_).parent_path().string();
+        (void)ec;
+    }
     CompileChunk(chunk->statements);
     if (result_reg_ > 0 || next_reg_ > 0) {
         Emit(OpCode::RETURN, result_reg_ > 0 ? result_reg_ : 0, result_reg_ > 0 ? 1 : 0);
@@ -2939,6 +2979,12 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
             }
 
             auto attr_idx = AddConstant(MakeString(a_expr->attr));
+            if (!is_this) {
+                TypeRef target_type = InferExprTypeRef(a_expr->obj);
+                if (target_type.type == Type::Object) {
+                    CheckPrivateAccess(target_type.class_name, a_expr->attr, current_line_, current_col_);
+                }
+            }
             Emit(OpCode::SETATTR, obj_reg, attr_idx, val_reg);
 
             FreeRegs(next_reg_ - regs_before);
@@ -2988,6 +3034,12 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
             }
 
             auto attr_idx = AddConstant(MakeString(a_expr->attr));
+            if (!is_this) {
+                TypeRef target_type = InferExprTypeRef(a_expr->obj);
+                if (target_type.type == Type::Object) {
+                    CheckPrivateAccess(target_type.class_name, a_expr->attr, current_line_, current_col_);
+                }
+            }
             Emit(OpCode::SETATTR, obj_reg, attr_idx, result_reg);
 
             FreeRegs(next_reg_ - regs_before);
@@ -3252,6 +3304,7 @@ void Compiler::CompileClass(const ClassDef* cls) {
             sub.proto_->source_name = source_name_;
             sub.proto_->debug_name = cls->name + "." + f->name;
             sub.current_base_class_ = base_class;
+            sub.current_class_name_ = cls->name;
             sub.compiled_classes_ = compiled_classes_;
             sub.class_field_types_ = class_field_types_;
             sub.class_dynamic_attrs_ = class_dynamic_attrs_;
@@ -3372,6 +3425,64 @@ void Compiler::CompileImport(const ImportStmt* stmt) {
     Emit(OpCode::CALL, import_reg, 2, 1);
 
     FreeRegs(4);
+
+    if (stmt->alias.empty() && stmt->module_path.size() == 1) {
+        RegisterImportedClasses(stmt->module_path[0]);
+    }
+}
+
+namespace {
+std::string ResolveSiblingImportFile(const std::string& module_name, const std::string& current_dir) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path base = current_dir.empty() ? fs::current_path(ec) : fs::path(current_dir);
+
+    fs::path candidate = base / (module_name + ".ava");
+    if (fs::exists(candidate, ec)) return candidate.string();
+
+    candidate = base / module_name / "index.ava";
+    if (fs::exists(candidate, ec)) return candidate.string();
+
+    return "";
+}
+}
+
+void Compiler::RegisterImportedClasses(const std::string& module_name) {
+    std::string resolved = ResolveSiblingImportFile(module_name, current_file_dir_);
+    if (resolved.empty()) return;
+
+    std::unordered_set<std::string> owned_chain;
+    std::unordered_map<std::string, std::unordered_map<std::string, ClassObj*>> owned_cache;
+    std::unordered_set<std::string>& chain = import_chain_ ? *import_chain_ : owned_chain;
+    auto& cache = import_class_cache_ ? *import_class_cache_ : owned_cache;
+
+    auto cached = cache.find(resolved);
+    if (cached != cache.end()) {
+        for (auto& [name, obj] : cached->second) {
+            if (!compiled_classes_.count(name)) compiled_classes_[name] = obj;
+        }
+        return;
+    }
+
+    if (chain.count(resolved)) return;
+
+    std::ifstream file(resolved, std::ios::binary);
+    if (!file.is_open()) return;
+    std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+    chain.insert(resolved);
+    std::unordered_map<std::string, ClassObj*> harvested;
+    try {
+        harvested = HarvestImportedClasses(source, resolved, chain, cache);
+    } catch (...) {
+        harvested.clear();
+    }
+    chain.erase(resolved);
+
+    cache[resolved] = harvested;
+    for (auto& [name, obj] : harvested) {
+        if (!compiled_classes_.count(name)) compiled_classes_[name] = obj;
+    }
 }
 
 void Compiler::CompileExtern(const ExternStmt* stmt) {

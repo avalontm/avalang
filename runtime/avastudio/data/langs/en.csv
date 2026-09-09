@@ -65,6 +65,11 @@ editor.hint.option_n,Option %s
 editor.hint.example,EXAMPLE
 editor.hint.defined_in,Defined in %s
 editor.hint.builtin_overridable_note,Comes with AvaLang. You can define your own func %s(...) to override it.
+editor.context.goto_definition,Go to Definition
+editor.context.cut,Cut
+editor.context.copy,Copy
+editor.context.paste,Paste
+editor.context.select_all,Select All
 editor.avaui.read_error,"Could not read %s: %s"
 editor.avaui.blank_page_note,Showing a blank page -- saving will overwrite the original file.
 editor.avaui.parse_error,"Could not parse %s: %s"

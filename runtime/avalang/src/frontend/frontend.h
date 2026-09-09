@@ -4,6 +4,7 @@
 #include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
 #include "../common/ava_error.h"
 #include "../vm/proto.h"
+#include <unordered_set>
 
 namespace ava {
 
@@ -20,6 +21,11 @@ avastd::shared_ptr<Proto> CompileSource(const avastd::string& source, const avas
 // Compiles an AvaLang source file into a top-level Proto ready for VM::Run.
 // Reads the file and calls CompileSource.
 avastd::shared_ptr<Proto> CompileFile(const avastd::string& file_path);
+
+avastd::unordered_map<avastd::string, ClassObj*> HarvestImportedClasses(
+    const avastd::string& source, const avastd::string& source_name,
+    avastd::unordered_set<avastd::string>& chain,
+    avastd::unordered_map<avastd::string, avastd::unordered_map<avastd::string, ClassObj*>>& cache);
 
 } // namespace ava
 

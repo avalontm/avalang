@@ -45,4 +45,10 @@ constexpr unsigned int kSynNumber   = 0x7CC6FE;
 constexpr unsigned int kSynComment  = 0x6B7280;
 constexpr unsigned int kSynOperator = 0xF8FAFC;
 
+constexpr unsigned int kSynDocComment      = 0x4DB6AC;
+constexpr unsigned int kSynDocParamTag     = 0xC792EA;
+constexpr unsigned int kSynInterpolation   = 0xE064F0;
+constexpr unsigned int kSynKnownIdentifier = 0xE0C884;
+constexpr unsigned int kSynPunctuation     = 0xC8BAAB;
+
 }

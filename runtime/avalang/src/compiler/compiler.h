@@ -17,6 +17,15 @@ public:
     std::shared_ptr<Proto> Compile(const std::shared_ptr<Chunk>& chunk,
                                     const std::string& source_name = "");
 
+    const std::unordered_map<std::string, ClassObj*>& CompiledClasses() const { return compiled_classes_; }
+
+    void SetImportHarvestContext(
+        std::unordered_set<std::string>* chain,
+        std::unordered_map<std::string, std::unordered_map<std::string, ClassObj*>>* cache) {
+        import_chain_ = chain;
+        import_class_cache_ = cache;
+    }
+
 private:
     struct JmpPatch {
         size_t instr_idx;
@@ -39,6 +48,9 @@ private:
     // free function, class method) so runtime errors can report the
     // correct file, including inside imported modules.
     std::string source_name_;
+    std::string current_file_dir_;
+    std::unordered_set<std::string>* import_chain_ = nullptr;
+    std::unordered_map<std::string, std::unordered_map<std::string, ClassObj*>>* import_class_cache_ = nullptr;
     uint16_t next_reg_ = 0;
     uint16_t max_reg_ = 0;
     uint16_t result_reg_ = 0;
@@ -273,6 +285,14 @@ private:
     // de funciones/métodos/lambdas anidados en el mismo chunk.
     bool has_wildcard_import_ = false;
     ClassObj* current_base_class_ = nullptr;
+    // Name of the class whose method/lambda body is currently being
+    // compiled ("" outside any class). Used to enforce 'private': a
+    // member listed in ClassObj::private_members can only be read,
+    // written or called from code compiling with current_class_name_
+    // equal to the member's declaring class. Propagated to nested
+    // lambdas/functions so they keep the access their enclosing method
+    // has; a fresh class method compile overwrites it with cls->name.
+    std::string current_class_name_;
     bool is_init_ = false;
     std::unordered_set<std::string> instance_attrs_;
     std::vector<std::pair<std::string, uint16_t>> parent_locals_;
@@ -450,6 +470,14 @@ private:
     // class_method_params_'s comment. Shared argument-checking loop
     // between the two lives in CheckCallArgsAgainst.
     void CheckMethodCallArgs(const AttrExpr* callee, const CallExpr* c);
+
+    // Throws AvaError if 'member' is a private member of 'class_name'
+    // (per ClassObj::private_members) and current_class_name_ isn't
+    // exactly that class. No-op if class_name is unknown/not a compiled
+    // class, or if the member isn't private -- same "don't false
+    // positive when the type is unknown" stance as CheckMethodCallArgs.
+    void CheckPrivateAccess(const std::string& class_name, const std::string& member,
+                             int line, int col);
     void CheckCallArgsAgainst(const std::vector<std::pair<std::string, Type>>& params,
                                const std::string& label, const CallExpr* c);
 
@@ -489,6 +517,7 @@ private:
                                uint16_t param_reg_base);
     void CompileClass(const ClassDef* cls);
     void CompileImport(const ImportStmt* stmt);
+    void RegisterImportedClasses(const std::string& module_name);
     void CompileExtern(const ExternStmt* stmt);
     void CompileTry(const TryStmt* stmt);
     void CompileRaise(const RaiseStmt* stmt);

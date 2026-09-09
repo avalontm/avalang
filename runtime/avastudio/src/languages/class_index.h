@@ -21,10 +21,6 @@ struct ClassAttributeInfo {
     bool is_private = false;
     std::string declared_type;
 
-    // 0-based line of the first declaration/assignment seen for this
-    // attribute (class-body declaration wins over a later `this.x = ...`
-    // in a constructor, since RecordAttribute only sets this once). Used by
-    // "Go to Definition" -- see ClassMember::line below.
     int line = 0;
 };
 
@@ -33,8 +29,6 @@ struct ClassInfo {
     std::string base_class_name;
     std::string source_file;
 
-    // 0-based line of the `class Name` declaration in source_file (or the
-    // current buffer when source_file is empty).
     int line = 0;
 
     std::unordered_map<std::string, ClassMethodInfo> methods;
@@ -51,10 +45,6 @@ struct ClassMember {
     std::string declared_in;
     std::string declared_type;
 
-    // 0-based declaration line, copied from ClassMethodInfo::signature.line
-    // or ClassAttributeInfo::line by FlattenedMembers -- lets editor_panel's
-    // "Go to Definition" jump straight to this member without a second
-    // lookup into ClassIndex.
     int line = 0;
 };
 
@@ -68,7 +58,7 @@ class ClassIndex {
 public:
 
     void Rebuild(const std::string& text, const std::string& current_file_dir,
-                 ImportFileCache* shared_cache = nullptr);
+                 ImportFileCache* shared_cache = nullptr, const std::string& stdlib_dir = "");
 
     const std::unordered_map<std::string, ClassInfo>& Classes() const { return classes_; }
 
@@ -89,10 +79,12 @@ private:
     void ScanText(const std::string& text, const std::string& source_file);
 
     void ScanImports(const std::string& text, const std::string& current_file_dir,
-                      std::unordered_set<std::string>& visited, ImportFileCache& cache);
+                      std::unordered_set<std::string>& visited, ImportFileCache& cache,
+                      const std::string& stdlib_dir);
 
     static std::string ResolveImportPath(const std::vector<std::string>& module_path,
-                                          const std::string& current_file_dir);
+                                          const std::string& current_file_dir,
+                                          const std::string& stdlib_dir);
 };
 
 }

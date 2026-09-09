@@ -91,6 +91,11 @@ const std::unordered_map<std::string, KeywordDoc>& DefaultKeywordDocs() {
                  "class Dog : Animal\n    func Dog(name)\n        base(name)\n    end\nend",
                  "Inside a subclass, calls the superclass's constructor or method with args."));
 
+        add(Make("new",
+                 {"new ClassName(args)"},
+                 "class Dog\n    func Dog(name)\n        this.name = name\n    end\nend\n\nd = new Dog(\"Rex\")",
+                 "Instantiates a class, calling its constructor with args and producing a new instance."));
+
         add(Make("return",
                  {"return", "return value"},
                  "func double(n)\n    return n * 2\nend",

@@ -65,6 +65,11 @@ editor.hint.option_n,Opción %s
 editor.hint.example,EJEMPLO
 editor.hint.defined_in,Definida en %s
 editor.hint.builtin_overridable_note,Viene con AvaLang. Podés definir tu propia func %s(...) para reemplazarla.
+editor.context.goto_definition,Ir a la definición
+editor.context.cut,Cortar
+editor.context.copy,Copiar
+editor.context.paste,Pegar
+editor.context.select_all,Seleccionar todo
 editor.avaui.read_error,"No se pudo leer %s: %s"
 editor.avaui.blank_page_note,Mostrando una página en blanco -- guardar sobrescribe el archivo original.
 editor.avaui.parse_error,"No se pudo interpretar %s: %s"

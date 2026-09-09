@@ -47,7 +47,7 @@ class FunctionIndex {
 public:
 
     void Rebuild(const std::string& text, const std::string& current_file_dir,
-                 ImportFileCache* shared_cache = nullptr);
+                 ImportFileCache* shared_cache = nullptr, const std::string& stdlib_dir = "");
 
     const std::unordered_map<std::string, FunctionSignature>& Signatures() const {
         return signatures_;
@@ -64,10 +64,12 @@ private:
     void ScanText(const std::string& text, const std::string& source_file);
 
     void ScanImports(const std::string& text, const std::string& current_file_dir,
-                      std::unordered_set<std::string>& visited, ImportFileCache& cache);
+                      std::unordered_set<std::string>& visited, ImportFileCache& cache,
+                      const std::string& stdlib_dir);
 
     static std::string ResolveImportPath(const std::vector<std::string>& module_path,
-                                          const std::string& current_file_dir);
+                                          const std::string& current_file_dir,
+                                          const std::string& stdlib_dir);
 };
 
 }
