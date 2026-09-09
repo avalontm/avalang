@@ -147,6 +147,7 @@ set(STUDIO_SOURCES
     src/design/live_render_bridge.cpp
     src/design/imgui_renderer.cpp
     src/engine/engine_bridge.cpp
+    src/shortcuts/shortcut_registry.cpp
     src/panels/explorer_panel.cpp
     src/panels/editor_panel.cpp
     src/panels/properties_panel.cpp

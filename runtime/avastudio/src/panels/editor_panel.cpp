@@ -21,6 +21,7 @@
 #include "palette.h"
 #include "panels/designer_canvas.h"
 #include "parser/AvauiWriter.h"
+#include "shortcuts/shortcut_registry.h"
 #include "util/i18n.h"
 
 namespace studio {
@@ -1292,14 +1293,45 @@ void DrawEditorPanel(EditorState& state) {
                     tab.editor.Render("##editor", avail, false);
                     state.code_editor_has_focus = ImGui::IsItemFocused();
 
-                    const bool goto_def_key =
-                        state.code_editor_has_focus && ImGui::IsKeyPressed(ImGuiKey_F12, false);
-                    const bool goto_def_click = ImGui::IsMouseHoveringRect(editor_min, editor_max) &&
+                    // F12 (goto_def_key) and Ctrl+Click (goto_def_click) are meant to be two
+                    // triggers for the exact same action, but they used two different focus
+                    // checks: Ctrl+Click only requires the mouse to be hovering the editor rect,
+                    // while F12 went through ShortcutRegistry's EditorFocused scope, which
+                    // requires ImGui::IsItemFocused() (line ~1294) to be true. The vendored
+                    // editor doesn't always register a cleanly focusable "last item" the way a
+                    // plain widget would, so IsItemFocused() can read false even while the
+                    // caret is visibly blinking inside it -- which is exactly why Ctrl+Click
+                    // kept working (it never checked focus) while F12 silently did nothing.
+                    // OR in the same hover signal Ctrl+Click already relies on, so F12 fires
+                    // under the same real-world conditions Ctrl+Click does.
+                    const bool goto_def_hover = ImGui::IsMouseHoveringRect(editor_min, editor_max);
+                    const bool goto_def_key = ShortcutRegistry::Instance().Pressed(
+                        ShortcutId::GotoDefinition, state.code_editor_has_focus || goto_def_hover);
+                    const bool goto_def_click = goto_def_hover &&
                                                  ImGui::GetIO().KeyCtrl &&
                                                  ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+                    const TextEditor::CursorPosition hover_pos =
+                        goto_def_click ? ScreenPosToCursor(tab, ImGui::GetMousePos(), editor_min)
+                                        : tab.editor.GetCursorPosition(0);
+                    if (goto_def_click) {
+                        // ImGuiColorTextEdit treats Ctrl+Click as "add a cursor" (see
+                        // TextEditor.cpp's cursors.addCursor(...)), not "move cursor 0". We
+                        // already stopped relying on its cursor state to resolve *which* word
+                        // was clicked (that's what ScreenPosToCursor above is for), but the
+                        // stray extra cursor the library just created is still sitting in the
+                        // editor's cursor list -- cursor 0 hasn't moved. Left unfixed, the next
+                        // plain F12 press (keyboard only, no click) reads
+                        // tab.editor.GetCursorPosition(0) and gets that stale pre-click
+                        // position instead of wherever the user last Ctrl+Clicked, which is
+                        // exactly what makes F12 look like it "only works right after a precise
+                        // click": really it works off a cursor 0 that Ctrl+Click never updated.
+                        // SetCursor() collapses back down to a single cursor at the resolved
+                        // position, keeping cursor 0 -- and therefore keyboard-only F12 -- in
+                        // sync with whatever the user actually clicked.
+                        tab.editor.SetCursor(hover_pos.line, hover_pos.column);
+                    }
                     DefinitionTarget hover_target;
-                    const bool has_definition_here =
-                        ResolveDefinitionTarget(tab, tab.editor.GetCursorPosition(0), hover_target);
+                    const bool has_definition_here = ResolveDefinitionTarget(tab, hover_pos, hover_target);
                     if ((goto_def_key || goto_def_click) && has_definition_here) {
                         JumpToDefinition(state, tab, hover_target);
                     }
@@ -1324,7 +1356,8 @@ void DrawEditorPanel(EditorState& state) {
                     // Right-click context menu, VS/VS Code style. BeginPopupContextItem
                     // attaches to the last item, i.e. the "##editor" child Render() just drew.
                     if (ImGui::BeginPopupContextItem("##editor_context_menu")) {
-                        if (ImGui::MenuItem(util::Tr("editor.context.goto_definition").c_str(), "F12",
+                        const std::string goto_def_label = ShortcutRegistry::Instance().Label(ShortcutId::GotoDefinition);
+                        if (ImGui::MenuItem(util::Tr("editor.context.goto_definition").c_str(), goto_def_label.c_str(),
                                             false, menu_has_definition)) {
                             JumpToDefinition(state, tab, menu_target);
                         }

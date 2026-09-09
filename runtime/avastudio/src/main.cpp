@@ -51,6 +51,7 @@
 #include "plugins/plugin_host.h"
 #include "plugins/plugin_ui_bridge.h"
 #include "platform/win32_titlebar.h"
+#include "shortcuts/shortcut_registry.h"
 #include "theme.h"
 #include "util/ava_cli_locator.h"
 #include "util/data_dir.h"
@@ -663,39 +664,22 @@ int main() {
                                          editor_state.goto_definition_column);
         }
 
-        ImGuiIO& io = ImGui::GetIO();
-        const bool want_save    = io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S);
-        const bool want_save_as = io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S);
-        const bool want_new     = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N);
-        const bool want_open    = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O);
-        const bool want_close_tab = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_W);
-        const bool want_run     = !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_F5);
-        const bool want_run_project = io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_F5);
-        const bool want_build   = io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_B);
-        const bool want_check   = io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_B);
-        const bool want_toggle_view = ImGui::IsKeyPressed(ImGuiKey_F7);
-        // Gated on !code_editor_has_focus: the ImGuiColorTextEdit widget
-        // already binds Ctrl+Shift+F to "select all occurrences in this
-        // file" internally (only while its own child window has focus), so
-        // without this guard both would fire together -- same collision
-        // category as want_run/Shift+F5 (Fase 1) and want_build/Ctrl+Shift+B
-        // (Fase 2), gated on focus here instead of a modifier key since the
-        // conflicting binding lives inside a third-party widget we don't
-        // own. When the editor does have focus, Ctrl+Shift+F still reaches
-        // the widget's own "select all occurrences" -- the Edit menu item
-        // and this global shortcut both still work whenever it doesn't.
-        const bool want_find_in_project =
-            !editor_state.code_editor_has_focus && io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_F);
-        // No focus-gating needed here the way Find in Project's Ctrl+Shift+F
-        // needed one against ImGuiColorTextEdit -- the palettes/patches
-        // vendored under avastudio/patches don't touch 'P', and nothing else
-        // in this codebase binds Ctrl+Shift+P today.
-        const bool want_command_palette = io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_P);
-        // Same no-focus-gating reasoning as want_command_palette above --
-        // nothing vendored under avastudio/patches binds plain Ctrl+P, and
-        // no other shortcut in this codebase uses it. !io.KeyShift keeps
-        // this from also firing alongside Ctrl+Shift+P.
-        const bool want_quick_open = io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_P);
+        studio::ShortcutRegistry& shortcuts = studio::ShortcutRegistry::Instance();
+        const bool editor_has_focus = editor_state.code_editor_has_focus;
+
+        const bool want_save = shortcuts.Pressed(studio::ShortcutId::Save, editor_has_focus);
+        const bool want_save_as = shortcuts.Pressed(studio::ShortcutId::SaveAs, editor_has_focus);
+        const bool want_new = shortcuts.Pressed(studio::ShortcutId::NewFile, editor_has_focus);
+        const bool want_open = shortcuts.Pressed(studio::ShortcutId::OpenFile, editor_has_focus);
+        const bool want_close_tab = shortcuts.Pressed(studio::ShortcutId::CloseTab, editor_has_focus);
+        const bool want_run = shortcuts.Pressed(studio::ShortcutId::Run, editor_has_focus);
+        const bool want_run_project = shortcuts.Pressed(studio::ShortcutId::RunProject, editor_has_focus);
+        const bool want_build = shortcuts.Pressed(studio::ShortcutId::Build, editor_has_focus);
+        const bool want_check = shortcuts.Pressed(studio::ShortcutId::Check, editor_has_focus);
+        const bool want_toggle_view = shortcuts.Pressed(studio::ShortcutId::ToggleView, editor_has_focus);
+        const bool want_find_in_project = shortcuts.Pressed(studio::ShortcutId::FindInProject, editor_has_focus);
+        const bool want_command_palette = shortcuts.Pressed(studio::ShortcutId::CommandPalette, editor_has_focus);
+        const bool want_quick_open = shortcuts.Pressed(studio::ShortcutId::QuickOpen, editor_has_focus);
 
         if (titlebar_result.new_requested || want_new || editor_state.new_tab_requested) {
             studio::NewUntitledTab(editor_state);
@@ -1180,23 +1164,35 @@ int main() {
                                                     std::move(action)});
             };
 
+            const studio::ShortcutRegistry& shortcut_labels = studio::ShortcutRegistry::Instance();
+
             add(category_file, "menu.file.new_project", "", [&] { editor_state.new_project_requested = true; });
-            add(category_file, "menu.file.new_file", "Ctrl+N", [&] { editor_state.new_tab_requested = true; });
-            add(category_file, "menu.file.open", "Ctrl+O", [&] { editor_state.open_requested = true; });
+            add(category_file, "menu.file.new_file", shortcut_labels.Label(studio::ShortcutId::NewFile),
+                [&] { editor_state.new_tab_requested = true; });
+            add(category_file, "menu.file.open", shortcut_labels.Label(studio::ShortcutId::OpenFile),
+                [&] { editor_state.open_requested = true; });
             add(category_file, "menu.file.open_folder", "", [&] { editor_state.open_folder_requested = true; });
-            add(category_file, "menu.file.save", "Ctrl+S", [&] { editor_state.save_requested = true; });
-            add(category_file, "menu.file.save_as", "Ctrl+Shift+S", [&] { editor_state.save_as_requested = true; });
-            add(category_file, "menu.file.close_tab", "Ctrl+W", [&] { editor_state.close_tab_requested = true; });
+            add(category_file, "menu.file.save", shortcut_labels.Label(studio::ShortcutId::Save),
+                [&] { editor_state.save_requested = true; });
+            add(category_file, "menu.file.save_as", shortcut_labels.Label(studio::ShortcutId::SaveAs),
+                [&] { editor_state.save_as_requested = true; });
+            add(category_file, "menu.file.close_tab", shortcut_labels.Label(studio::ShortcutId::CloseTab),
+                [&] { editor_state.close_tab_requested = true; });
             add(category_file, "menu.file.exit", "Alt+F4", [&] { g_native_close_requested = true; });
 
-            add(category_edit, "menu.edit.quick_open", "Ctrl+P", [&] { editor_state.quick_open_requested = true; });
-            add(category_edit, "menu.edit.find_in_project", "Ctrl+Shift+F",
+            add(category_edit, "menu.edit.quick_open", shortcut_labels.Label(studio::ShortcutId::QuickOpen),
+                [&] { editor_state.quick_open_requested = true; });
+            add(category_edit, "menu.edit.find_in_project", shortcut_labels.Label(studio::ShortcutId::FindInProject),
                 [&] { editor_state.find_in_project_requested = true; });
 
-            add(category_run, "menu.run.run_script", "F5", [&] { editor_state.run_requested = true; });
-            add(category_run, "menu.run.run_project", "Shift+F5", [&] { editor_state.run_project_requested = true; });
-            add(category_run, "menu.run.check", "Ctrl+Shift+B", [&] { editor_state.check_requested = true; });
-            add(category_run, "menu.run.build", "Ctrl+B", [&] { editor_state.build_requested = true; });
+            add(category_run, "menu.run.run_script", shortcut_labels.Label(studio::ShortcutId::Run),
+                [&] { editor_state.run_requested = true; });
+            add(category_run, "menu.run.run_project", shortcut_labels.Label(studio::ShortcutId::RunProject),
+                [&] { editor_state.run_project_requested = true; });
+            add(category_run, "menu.run.check", shortcut_labels.Label(studio::ShortcutId::Check),
+                [&] { editor_state.check_requested = true; });
+            add(category_run, "menu.run.build", shortcut_labels.Label(studio::ShortcutId::Build),
+                [&] { editor_state.build_requested = true; });
 
             add(category_preferences, "menu.file.settings", "Ctrl+,",
                 [&] { editor_state.open_settings_panel_requested = true; });
@@ -1211,7 +1207,8 @@ int main() {
                 const studio::EditorTab* active = editor_state.Active();
                 const bool showing_design =
                     active && active->is_avaui && active->view_mode == studio::TabViewMode::Design;
-                add(category_view, showing_design ? "menu.file.view_code" : "menu.file.view_design", "F7", [&] {
+                add(category_view, showing_design ? "menu.file.view_code" : "menu.file.view_design",
+                    shortcut_labels.Label(studio::ShortcutId::ToggleView), [&] {
                     if (studio::EditorTab* mutable_active = editor_state.Active()) {
                         studio::ToggleTabViewMode(*mutable_active);
                     }
