@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iterator>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "branding/logo_texture.h"
@@ -77,13 +78,95 @@ void RebuildAutocompleteTrie(EditorTab& tab) {
     }
 }
 
+// True if `member_name` is reachable by walking `start`'s own heritage graph
+// (start itself, then its heritage_names, recursively) -- i.e. whether
+// `start`, as directly listed on a class's header line, is the one actually
+// responsible for requiring `member_name`. Used to attribute each abstract
+// member MissingInterfaceMembers reports (which only knows the closest
+// declared_in, possibly several `interface IB : IA` hops away) back to the
+// interface name written in the class's own heritage clause, since that's
+// where VS/Roslyn puts the squiggle.
+bool HeritageChainDeclares(const ClassIndex& class_index, const std::string& start,
+                            const std::string& member_name, std::unordered_set<std::string>& visited) {
+    if (!visited.insert(start).second) return false;
+    const ClassInfo* info = class_index.Find(start);
+    if (!info) return false;
+    if (info->methods.count(member_name)) return true;
+    for (const auto& parent : info->heritage_names) {
+        if (HeritageChainDeclares(class_index, parent, member_name, visited)) return true;
+    }
+    return false;
+}
+
+// Recomputes tab.incomplete_interfaces from the freshly-rebuilt class_index.
+// Only classes actually declared in this buffer are considered -- flagging a
+// class defined in an imported file would point the squiggle/quick-fix at
+// the wrong file (or nowhere, since ImplementMissingInterfaceMembers only
+// knows how to edit the currently open tab). One IncompleteInterface is
+// produced per directly-listed heritage name that's still missing at least
+// one member, not per class, so `class C : IShape, IColor` with only IColor
+// incomplete squiggles just IColor.
+void RebuildIncompleteInterfaces(EditorTab& tab) {
+    tab.incomplete_interfaces.clear();
+    for (const auto& [name, info] : tab.class_index.Classes()) {
+        if (info.is_interface || !info.source_file.empty()) continue;
+        std::vector<ClassMember> missing = tab.class_index.MissingInterfaceMembers(name);
+        if (missing.empty()) continue;
+
+        std::vector<std::string> order;
+        std::unordered_map<std::string, std::vector<ClassMember>> by_heritage;
+        for (auto& member : missing) {
+            for (const auto& heritage : info.heritage_names) {
+                std::unordered_set<std::string> visited;
+                if (!HeritageChainDeclares(tab.class_index, heritage, member.name, visited)) continue;
+                if (by_heritage.find(heritage) == by_heritage.end()) order.push_back(heritage);
+                by_heritage[heritage].push_back(member);
+                break;
+            }
+        }
+
+        for (const auto& heritage : order) {
+            tab.incomplete_interfaces.push_back({name, heritage, info.line, std::move(by_heritage[heritage])});
+        }
+    }
+}
+
 void RebuildIndexAndTrie(EditorTab& tab) {
     ImportFileCache import_cache;
     const std::string dir = DirOf(tab.file_path);
     tab.function_index.Rebuild(tab.GetText(), dir, &import_cache, tab.modules_path);
     tab.class_index.Rebuild(tab.GetText(), dir, &import_cache, tab.modules_path);
+    RebuildIncompleteInterfaces(tab);
+
+    std::unordered_set<std::string> interface_names;
+    for (const auto& [name, info] : tab.class_index.Classes()) {
+        if (info.is_interface) interface_names.insert(name);
+    }
+    std::unordered_set<std::string> removed_interface_names;
+    for (const auto& name : tab.known_interface_names) {
+        if (!interface_names.count(name)) removed_interface_names.insert(name);
+    }
+    std::unordered_set<std::string> added_interface_names;
+    for (const auto& name : interface_names) {
+        if (!tab.known_interface_names.count(name)) added_interface_names.insert(name);
+    }
+    languages::UpdateKnownInterfaceNames(removed_interface_names, added_interface_names);
+    tab.known_interface_names = std::move(interface_names);
 
     tab.variable_type_index.Rebuild(tab.GetText(), tab.class_index, tab.function_index);
+
+    std::unordered_set<std::string> variable_names = tab.variable_type_index.AllVariableNames();
+    std::unordered_set<std::string> removed_variable_names;
+    for (const auto& name : tab.known_variable_names) {
+        if (!variable_names.count(name)) removed_variable_names.insert(name);
+    }
+    std::unordered_set<std::string> added_variable_names;
+    for (const auto& name : variable_names) {
+        if (!tab.known_variable_names.count(name)) added_variable_names.insert(name);
+    }
+    languages::UpdateKnownVariableNames(removed_variable_names, added_variable_names);
+    tab.known_variable_names = std::move(variable_names);
+
     tab.fold_index.Rebuild(tab.GetText());
     for (auto it = tab.folded_lines.begin(); it != tab.folded_lines.end();) {
         it = tab.fold_index.RangeStartingAt(*it) ? std::next(it) : tab.folded_lines.erase(it);
@@ -555,6 +638,162 @@ TextEditor::CursorPosition ScreenPosToCursor(EditorTab& tab, const ImVec2& scree
     return TextEditor::CursorPosition(line, column);
 }
 
+// Column (0-based, in glyphs) where `interface_name` starts in the
+// comma-separated heritage clause after the ':' on `line_text`, e.g. the
+// "IShape" in `class Circle : IShape, IColor`. class_index only keeps the
+// line, not per-name columns, so this re-finds it the same cheap way
+// ScreenPosToCursor's caller already re-derives things from GetLineText
+// rather than growing ClassInfo for a couple of rendering-only callers.
+// Returns -1 if not found (heritage clause missing, or edited since the
+// index was last rebuilt).
+int HeritageNameColumnOnLine(const std::string& line_text, const std::string& interface_name) {
+    const size_t colon = line_text.find(':');
+    if (colon == std::string::npos) return -1;
+    auto is_ident_start = [](char c) { return std::isalpha(static_cast<unsigned char>(c)) || c == '_'; };
+    auto is_ident_char = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
+    size_t i = colon + 1;
+    while (i < line_text.size()) {
+        while (i < line_text.size() && (line_text[i] == ' ' || line_text[i] == '\t' || line_text[i] == ',')) ++i;
+        if (i >= line_text.size() || !is_ident_start(line_text[i])) break;
+        const size_t word_start = i;
+        while (i < line_text.size() && is_ident_char(line_text[i])) ++i;
+        if (line_text.compare(word_start, i - word_start, interface_name) == 0) {
+            return static_cast<int>(word_start);
+        }
+    }
+    return -1;
+}
+
+// Picks which IncompleteInterface (if any) a right-click at `pos` should act
+// on. Several interfaces can be incomplete on the same class header line
+// (`class C : IShape, IColor`), so a click landing inside one name's own
+// squiggle span wins that one specifically; otherwise this falls back to the
+// first incomplete interface on the line, same as clicking anywhere else on
+// a Roslyn squiggle line does.
+const EditorTab::IncompleteInterface* FindIncompleteInterfaceAtLine(const EditorTab& tab,
+                                                                     const TextEditor::CursorPosition& pos) {
+    const EditorTab::IncompleteInterface* line_match = nullptr;
+    const std::string line_text = tab.editor.GetLineText(pos.line);
+    for (const auto& entry : tab.incomplete_interfaces) {
+        if (entry.line != pos.line) continue;
+        if (!line_match) line_match = &entry;
+        const int col = HeritageNameColumnOnLine(line_text, entry.interface_name);
+        if (col >= 0 && pos.column >= col &&
+            pos.column <= col + static_cast<int>(entry.interface_name.size())) {
+            return &entry;
+        }
+    }
+    return line_match;
+}
+
+// Draws a VS-Code-style wavy amber underline under the name of every
+// currently-incomplete interface in a class's heritage clause -- matching
+// Roslyn (`class Circle : IShape` underlines IShape, not Circle, and the
+// interface's own file is left untouched since the interface itself is
+// valid) -- plus a tooltip listing what's missing when the mouse hovers it.
+// Purely a rendering overlay -- it never touches the buffer, so it's cheap
+// enough to run every frame off the cached tab.incomplete_interfaces rather
+// than only when hovering.
+void DrawIncompleteInterfaceSquiggles(EditorTab& tab, const ImVec2& editor_min, const ImVec2& editor_max) {
+    if (tab.incomplete_interfaces.empty()) return;
+
+    const float line_height = tab.editor.GetLineHeight();
+    const float glyph_width = tab.editor.GetGlyphWidth();
+    const int first_visible_line = tab.editor.GetFirstVisibleLine();
+    const int last_visible_line = first_visible_line + static_cast<int>((editor_max.y - editor_min.y) / line_height) + 1;
+
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    const ImU32 color = palette::U32FromHex(palette::kWarning);
+    const ImVec2 mouse = ImGui::GetMousePos();
+
+    for (const auto& entry : tab.incomplete_interfaces) {
+        if (entry.line < first_visible_line || entry.line > last_visible_line) continue;
+
+        const std::string line_text = tab.editor.GetLineText(entry.line);
+        const int name_col = HeritageNameColumnOnLine(line_text, entry.interface_name);
+        const int name_len = static_cast<int>(entry.interface_name.size());
+        if (name_col < 0 || name_len == 0) continue;
+
+        const ImVec2 start = EstimateCaretScreenPos(tab, TextEditor::CursorPosition(entry.line, name_col), editor_min);
+        const float width = glyph_width * static_cast<float>(name_len);
+        if (start.x + width < editor_min.x || start.x > editor_max.x) continue;
+
+        const float y = start.y + line_height - 3.0f;
+        draw_list->PushClipRect(editor_min, editor_max, true);
+        const float amplitude = 1.6f;
+        const float step = 3.0f;
+        ImVec2 prev(start.x, y);
+        bool up = false;
+        for (float x = step; x <= width + step; x += step) {
+            up = !up;
+            ImVec2 next(start.x + std::min(x, width), y - (up ? amplitude : 0.0f));
+            draw_list->AddLine(prev, next, color, 1.3f);
+            prev = next;
+        }
+        draw_list->PopClipRect();
+
+        const ImVec2 hover_min(start.x, start.y);
+        const ImVec2 hover_max(start.x + width, start.y + line_height);
+        if (mouse.x >= hover_min.x && mouse.x <= hover_max.x && mouse.y >= hover_min.y && mouse.y <= hover_max.y &&
+            ImGui::IsMouseHoveringRect(editor_min, editor_max)) {
+            ImGui::BeginTooltip();
+            ImGui::TextColored(palette::FromHex(palette::kWarning), "%s",
+                                TrFormat("editor.hint.missing_interface_members",
+                                         {entry.class_name, entry.interface_name})
+                                    .c_str());
+            for (const auto& member : entry.missing_members) {
+                const std::string sig = member.signature ? member.signature->display : member.name;
+                ImGui::BulletText("%s", sig.c_str());
+            }
+            ImGui::EndTooltip();
+        }
+    }
+}
+
+// Builds the stub body inserted for one missing interface method, e.g.:
+//     func Area(x, y) as float
+//         # TODO: implementar
+//     end
+// `indent` is the class body's own indentation (whatever the class already
+// uses), so generated stubs match the surrounding code instead of hardcoding
+// a width the project might not use.
+std::string BuildMethodStub(const ClassMember& member, const std::string& indent) {
+    std::string params;
+    if (member.signature) {
+        for (size_t i = 0; i < member.signature->params.size(); ++i) {
+            if (i > 0) params += ", ";
+            params += member.signature->params[i];
+        }
+    }
+    std::string header = indent + "func " + member.name + "(" + params + ")";
+    if (member.signature && !member.signature->declared_return_type.empty()) {
+        header += " as " + member.signature->declared_return_type;
+    }
+    return header + "\n" + indent + "    # TODO: implementar\n" + indent + "end\n";
+}
+
+// Inserts a stub for every still-missing member of `entry` right before the
+// class's closing `end`, then rebuilds the index so the squiggle clears once
+// the newly-inserted stubs make the class complete.
+void ImplementMissingInterfaceMembers(EditorTab& tab, const EditorTab::IncompleteInterface& entry) {
+    const FoldRange* range = tab.fold_index.RangeStartingAt(entry.line);
+    if (!range) return;
+
+    const std::string header_text = tab.editor.GetLineText(entry.line);
+    std::string indent;
+    for (char c : header_text) {
+        if (c != ' ' && c != '\t') break;
+        indent += c;
+    }
+    const std::string body_indent = indent + "    ";
+
+    std::string insertion;
+    for (const auto& member : entry.missing_members) insertion += BuildMethodStub(member, body_indent);
+
+    tab.editor.ReplaceSectionText(range->end_line, 0, range->end_line, 0, insertion);
+    RebuildIndexAndTrie(tab);
+}
+
 // Everything DrawDotCompletionPopup needs to know, computed *before* tab.editor.Render() runs
 // for this frame -- see the long comment on kDotCompletionNavKeys below for why the split
 // matters (in short: by the time Render() returns, it has already consumed Up/Down/Enter/Tab
@@ -732,9 +971,18 @@ void InitTab(EditorTab& tab) {
     palette[static_cast<size_t>(TextEditor::Color::docParamTag)] = palette::U32FromHex(palette::kSynDocParamTag);
     palette[static_cast<size_t>(TextEditor::Color::string)] = palette::U32FromHex(palette::kSynString);
     palette[static_cast<size_t>(TextEditor::Color::interpolation)] = palette::U32FromHex(palette::kSynInterpolation);
+    palette[static_cast<size_t>(TextEditor::Color::importPath)] = palette::U32FromHex(palette::kSynImportPath);
     palette[static_cast<size_t>(TextEditor::Color::knownIdentifier)] = palette::U32FromHex(palette::kSynKnownIdentifier);
     palette[static_cast<size_t>(TextEditor::Color::punctuation)] = palette::U32FromHex(palette::kSynPunctuation);
     palette[static_cast<size_t>(TextEditor::Color::preprocessor)] = palette::U32FromHex(palette::kSynClass);
+    // Color::identifier is the engine's own default color for any plain
+    // identifier the colorizer doesn't otherwise recognize (variables,
+    // parameters, anything you type) -- keep it the normal editor text
+    // color. Known interface names get their own slot below instead of
+    // hijacking this one (see patches/imguicolortextedit_interface_name.patch).
+    palette[static_cast<size_t>(TextEditor::Color::identifier)] = palette::U32FromHex(palette::kSynIdentifier);
+    palette[static_cast<size_t>(TextEditor::Color::interfaceName)] = palette::U32FromHex(palette::kSynInterface);
+    palette[static_cast<size_t>(TextEditor::Color::variableName)] = palette::U32FromHex(palette::kSynVariable);
 
     tab.editor.SetPalette(palette);
     tab.editor.SetShowLineNumbersEnabled(true);
@@ -789,6 +1037,12 @@ void CloseTabNow(EditorState& state, int index) {
     if (index < 0 || index >= static_cast<int>(state.tabs.size())) return;
 
     InvalidateDesignerVmCache(state.tabs[index]->id);
+    // Release this tab's contribution to the shared, reference-counted
+    // interface-name table (see UpdateKnownInterfaceNames) -- if some other
+    // open tab still declares the same interface name, its own entry keeps
+    // the refcount above zero and the color survives.
+    languages::UpdateKnownInterfaceNames(state.tabs[index]->known_interface_names, {});
+    languages::UpdateKnownVariableNames(state.tabs[index]->known_variable_names, {});
     state.tabs.erase(state.tabs.begin() + index);
 
     if (state.tabs.empty()) {
@@ -1291,8 +1545,22 @@ void DrawEditorPanel(EditorState& state) {
                         ClaimDotCompletionKeys();
                     }
 
+                    // The known-interface-names table is shared across every open tab and
+                    // can change from some *other* tab's index rebuild (a newly opened
+                    // interface, a rename, a tab closing) -- but the vendored editor only
+                    // colorizes on SetText()/typed edits, so catch up here before drawing
+                    // whenever this tab's own last colorize predates the current
+                    // generation (see KnownInterfaceNamesGeneration()'s header comment).
+                    if (tab.colored_interface_generation != languages::KnownInterfaceNamesGeneration() ||
+                        tab.colored_variable_generation != languages::KnownVariableNamesGeneration()) {
+                        tab.editor.SetLanguage(languages::AvaLang());
+                        tab.colored_interface_generation = languages::KnownInterfaceNamesGeneration();
+                        tab.colored_variable_generation = languages::KnownVariableNamesGeneration();
+                    }
+
                     tab.editor.Render("##editor", avail, false);
                     state.code_editor_has_focus = ImGui::IsItemFocused();
+                    DrawIncompleteInterfaceSquiggles(tab, editor_min, editor_max);
 
                     // F12 (goto_def_key) and Ctrl+Click (goto_def_click) are meant to be two
                     // triggers for the exact same action, but they used two different focus
@@ -1353,6 +1621,8 @@ void DrawEditorPanel(EditorState& state) {
                                                                       : tab.editor.GetCursorPosition(0);
                     DefinitionTarget menu_target;
                     const bool menu_has_definition = ResolveDefinitionTarget(tab, menu_pos, menu_target);
+                    const EditorTab::IncompleteInterface* menu_incomplete_interface =
+                        FindIncompleteInterfaceAtLine(tab, menu_pos);
 
                     // Right-click context menu, VS/VS Code style. BeginPopupContextItem
                     // attaches to the last item, i.e. the "##editor" child Render() just drew.
@@ -1361,6 +1631,11 @@ void DrawEditorPanel(EditorState& state) {
                         if (ImGui::MenuItem(util::Tr("editor.context.goto_definition").c_str(), goto_def_label.c_str(),
                                             false, menu_has_definition)) {
                             JumpToDefinition(state, tab, menu_target);
+                        }
+                        if (menu_incomplete_interface) {
+                            if (ImGui::MenuItem(util::Tr("editor.context.implement_interface").c_str())) {
+                                ImplementMissingInterfaceMembers(tab, *menu_incomplete_interface);
+                            }
                         }
                         ImGui::Separator();
                         const bool has_selection = tab.editor.AnyCursorHasSelection();

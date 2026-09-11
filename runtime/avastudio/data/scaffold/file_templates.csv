@@ -4,6 +4,10 @@ class,.ava,"class {ClassName}
     end
 end
 "
+interface,.ava,"interface {ClassName}
+    func Method()
+end
+"
 screen,.avaui,"properties
     title = ""{DisplayName}""
 end

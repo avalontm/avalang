@@ -37,6 +37,7 @@ smallStatement
     | modifiedAssignStatement
     | typedAssignStatement
     | typedDeclStatement
+    | interfaceMethodSignature
     ;
 
 // --- type annotations (`as Type`) ---------------------------------------
@@ -90,6 +91,7 @@ compoundStatement
     | forStatement
     | funcDeclaration
     | classDeclaration
+    | interfaceDeclaration
     | tryStatement
     | modifiedFuncDeclaration
     | asyncFuncDeclaration
@@ -278,8 +280,44 @@ classDeclaration
     : 'class' NAME classHeritage? block 'end'
     ;
 
+// Fase 1 del plan de interfaces (AvaLang_Plan_Interfaces.md): lista en vez
+// de un solo NAME, para soportar `class Circle : Shape, IShape, IMovable`
+// (base class + multiples interfaces, estilo C#). El AST (ClassDef::heritage)
+// conserva la lista completa tal cual se escribio; CompileClass (Fase 2)
+// decide, mirando compiled_classes_ vs. compiled_interfaces_, cual de estos
+// NAME es la base class (a lo sumo una, y si esta presente debe ser la
+// primera) y cuales son interfaces a implementar.
 classHeritage
-    : ':' NAME
+    : ':' NAME (',' NAME)*
+    ;
+
+// --- interfaces -----------------------------------------------------------
+//
+// Diseño: ver AvaLang_Plan_Interfaces.md, Fase 1. `interfaceDeclaration`
+// reutiliza `block` tal cual (igual que `classDeclaration`) -- su cuerpo
+// mezcla `interfaceMethodSignature` (firma sin cuerpo, obligatoria para
+// quien implemente la interfaz) y `funcDeclaration` normal (método con
+// cuerpo = implementación por defecto, estilo C# 8+ default interface
+// methods). `interfaceHeritage` (una interfaz que extiende otra) reusa el
+// mismo molde de lista que `classHeritage`.
+interfaceDeclaration
+    : 'interface' NAME interfaceHeritage? block 'end'
+    ;
+
+interfaceHeritage
+    : ':' NAME (',' NAME)*
+    ;
+
+// Firma de método sin cuerpo dentro de una interfaz (`func Area() as
+// float`). Agregada a `smallStatement` en vez de restringida sintacticamente
+// a `interfaceDeclaration` -- mismo criterio ya documentado arriba para
+// `memberModifier`: sintacticamente valida en cualquier lugar donde ya vale
+// un statement; la restriccion real (solo tiene sentido dentro de un cuerpo
+// de interfaz) la valida el compilador (Fase 2). Mismo molde que
+// `externFuncDeclaration`: sin `block`/`end` propio, parametros vía
+// `externParamList` reutilizado tal cual.
+interfaceMethodSignature
+    : 'func' NAME '(' externParamList? ')' returnType? (NEWLINE)*
     ;
 
 // --- extern (FFI) -------------------------------------------------------
@@ -403,9 +441,17 @@ andExpr
     : notExpr ('and' NEWLINE* notExpr)*
     ;
 
+// `expr is TypeName` (Fase 1 del plan de interfaces): chequeo de tipo en
+// runtime, funciona tanto contra el nombre de una clase como de una
+// interfaz implementada (ver AvaLang_Plan_Interfaces.md, seccion 1.4).
+// Agregado como sufijo opcional de `comparison`, mismo nivel de precedencia
+// que ==/</>/etc. No hay ambiguedad con el 'is' que ya usa
+// `caseItemRelational` ('is' compOp expr): ese vive en una posicion
+// sintactica distinta -- primer token de esa alternativa de `caseItem` --
+// nunca como sufijo de una expresion ya formada.
 notExpr
     : 'not' notExpr
-    | comparison
+    | comparison ('is' NAME)?
     ;
 
 comparison

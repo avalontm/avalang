@@ -52,10 +52,11 @@ const std::unordered_map<std::string, KeywordDoc>& DefaultKeywordDocs() {
                  "must be the last clause before end."));
 
         add(Make("end",
-                 {"if / while / for / func / class / try\n    ...\nend"},
+                 {"if / while / for / func / class / interface / try\n    ...\nend"},
                  "",
-                 "Closes the block started by if, while, for, func, class, or try. Every one "
-                 "of those needs a matching end."));
+                 "Closes the block started by if, while, for, func, class, interface, or try. "
+                 "Every one of those needs a matching end (an interface method with no body, "
+                 "just a signature, is the one exception)."));
 
         add(Make("while",
                  {"while condition\n    ...\nend", "while (condition)\n    ...\nend"},
@@ -81,10 +82,22 @@ const std::unordered_map<std::string, KeywordDoc>& DefaultKeywordDocs() {
                  "an anonymous one. (params) => expr is the short single-expression form."));
 
         add(Make("class",
-                 {"class Name\n    ...\nend", "class Name : Base\n    ...\nend"},
+                 {"class Name\n    ...\nend", "class Name : Base\n    ...\nend",
+                  "class Name : Base, IA, IB\n    ...\nend"},
                  "class Animal\n    func speak()\n        print(\"...\")\n    end\nend\n\nclass Dog : Animal\n    "
                  "func speak()\n        print(\"Woof!\")\n    end\nend",
-                 "Declares a class. : Base is optional and gives it a single superclass."));
+                 "Declares a class. After the optional : comes at most one base class plus any "
+                 "number of interfaces to implement (comma-separated); if a base class is given "
+                 "it must come first."));
+
+        add(Make("interface",
+                 {"interface Name\n    ...\nend", "interface Name : Base1, Base2\n    ...\nend"},
+                 "interface IShape\n    func Area() as float\nend\n\nclass Circle : IShape\n    "
+                 "func Area() as float\n        return 3.14159 * this.radius * this.radius\n    end\nend",
+                 "Declares an interface: a set of method signatures (no body, just "
+                 "func Name(params)) that any implementing class must define, plus optional "
+                 "default methods (with a body) that implementers get for free. : Base1, Base2 "
+                 "is optional and lets one interface extend others."));
 
         add(Make("base",
                  {"base(args)"},
@@ -186,10 +199,13 @@ const std::unordered_map<std::string, KeywordDoc>& DefaultKeywordDocs() {
                  "and b inclusive."));
 
         add(Make("is",
-                 {"case is compOp value then ..."},
-                 "case is >= 60 then\n    print(\"passing\")",
-                 "Inside a select's case, compares the select's value against value using "
-                 "compOp (==, !=, <, <=, >, >=)."));
+                 {"case is compOp value then ...", "expr is TypeName"},
+                 "case is >= 60 then\n    print(\"passing\")\n\nif shape is ICircle then\n    "
+                 "print(\"it's a circle\")\nend",
+                 "Two different uses: inside a select's case, \"is compOp value\" compares the "
+                 "select's value using compOp (==, !=, <, <=, >, >=). Anywhere else, "
+                 "\"expr is TypeName\" checks whether expr's class is (or implements) "
+                 "TypeName, returning true/false."));
 
         add(Make("static",
                  {"static func name(...) ... end"},

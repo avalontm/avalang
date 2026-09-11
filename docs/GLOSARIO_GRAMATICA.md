@@ -141,6 +141,7 @@ end
 |---|---|
 | Aritméticos | `+`  `-`  `*`  `/`  `%`  `//` (división entera)  `**` (potencia) |
 | Comparación | `==`  `!=`  `<`  `>`  `<=`  `>=` |
+| Chequeo de tipo | `is` (`expr is NombreDeClaseOInterfaz` -- ver [§6](#6-clases)) |
 | Lógicos (como palabra, no símbolo) | `and`  `or`  `not` |
 | Asignación aumentada | `+=`  `-=`  `*=`  `/=`  `%=`  `//=` |
 | Incremento/decremento | `++`  `--` |
@@ -359,6 +360,68 @@ print(perro.speak())
 - `base.metodo(...)` — llama a la implementación del método en la clase padre.
 - Atributos con anotación de tipo dentro de la clase: `nombre as string`.
 
+### Interfaces
+
+```ava
+interface IShape
+    func Area() as float
+    func Perimeter() as float
+
+    func Describe() as string      # con cuerpo = implementación por defecto
+        return "shape, area=" + this.Area()
+    end
+end
+
+interface IMovable: IShape         # una interfaz puede extender otra
+    func Move(dx as float, dy as float)
+end
+
+class Shape
+    func Shape()
+    end
+end
+
+class Circle: Shape, IShape, IMovable   # base class primero, luego interfaces
+    radius = 0.0
+
+    func Circle(r as float)
+        this.radius = r
+    end
+
+    func Area() as float
+        return 3.14159 * this.radius * this.radius
+    end
+
+    func Perimeter() as float
+        return 2 * 3.14159 * this.radius
+    end
+
+    func Move(dx as float, dy as float)
+    end
+end
+
+c = Circle(2.0)
+if c is IShape then
+    print(c.Describe())
+end
+
+n = typeof(c)   # "Circle" -- nombre de la clase concreta en runtime
+```
+
+- Una firma sin cuerpo (`func Area() as float`) es obligatoria: toda clase que implemente la
+  interfaz (directa o por herencia) tiene que definir ese método, o el compilador la rechaza.
+- Una firma con cuerpo es un *default method* (estilo C# 8+): si ninguna clase de la cadena lo
+  sobreescribe, se usa esa implementación.
+- Una clase puede implementar varias interfaces a la vez, además de heredar de una única base
+  class (que si está presente, va primero en la lista).
+- Si dos interfaces implementadas aportan un default method con el mismo nombre desde orígenes
+  distintos y la clase no lo resuelve explícitamente, es error de compilación (conflicto tipo
+  "diamond").
+- `expr is NombreDeClaseOInterfaz` (operador de tipo, ver [§3](#3-operadores)) da `true` si
+  `expr` es instancia de esa clase o de cualquier clase/interfaz de su cadena.
+- `typeof(obj)` (ver [§9](#9-módulos-extern-y-funciones-incorporadas)) devuelve el nombre de la
+  clase concreta en runtime, a diferencia de `type(obj)` que devuelve `"instance"`/`"class"`.
+
 ---
 
 ## 7. Manejo de errores
@@ -479,6 +542,8 @@ ahora as int = K.GetTickCount()
 | `print(...)` | imprime en consola |
 | `str(x)` | convierte a string |
 | `len(x)` | longitud de una lista/string/dict |
+| `type(x)` | tipo runtime genérico (`"instance"`, `"class"`, `"number"`, ...) |
+| `typeof(x)` | nombre de la clase concreta de una instancia/clase (`"Circle"`), ver [§6](#6-clases) |
 
 ### Módulo `System.*`
 
@@ -526,11 +591,11 @@ solo sirve para poner más de un statement simple en la misma línea.
 | Palabra clave | Sección |
 |---|---|
 | `if` `elif` `else` `then` `end` | [§4](#4-control-de-flujo) |
-| `select` `case` `is` | [§4](#4-control-de-flujo) |
+| `select` `case` `is` | [§4](#4-control-de-flujo) (`case`) y [§3](#3-operadores) (`is` como chequeo de tipo fuera de `case`) |
 | `while` `for` `in` | [§4](#4-control-de-flujo) |
 | `break` `continue` `pass` | [§4](#4-control-de-flujo) |
 | `func` `return` `async` `await` | [§5](#5-funciones-y-lambdas) |
-| `class` `this` `base` `static` `private` | [§6](#6-clases) |
+| `class` `interface` `this` `base` `static` `private` | [§6](#6-clases) |
 | `try` `catch` `finally` `raise` | [§7](#7-manejo-de-errores) |
 | `true` `false` `nil` | [§8](#8-literales-strings-y-colecciones) |
 | `import` `extern` `as` | [§9](#9-módulos-extern-y-funciones-incorporadas) |

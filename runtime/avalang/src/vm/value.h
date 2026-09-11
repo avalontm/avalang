@@ -159,6 +159,15 @@ struct ClassObj : Object {
     avastd::unordered_set<avastd::string> static_methods;
     avastd::vector<avastd::string> param_names;
     ClassObj* base_class = nullptr;
+    // Fase 4 del plan de interfaces (AvaLang_Plan_Interfaces.md): nombres
+    // de TODAS las interfaces que esta clase implementa directamente, mas
+    // -- transitivo -- las que esas interfaces extienden a su vez (ver
+    // InterfaceInfo::base_interfaces en compiler.h, ya aplanado ahi).
+    // NO incluye las interfaces que solo llegan via `base_class`/
+    // `__base__` -- OpIs camina esa cadena por separado, mirando el
+    // propio implemented_interfaces de cada ClassObj ancestro (mismo
+    // patron que FindClassOwningAttr usa para atributos estaticos).
+    avastd::unordered_set<avastd::string> implemented_interfaces;
 };
 
 struct InstanceObj : Object {

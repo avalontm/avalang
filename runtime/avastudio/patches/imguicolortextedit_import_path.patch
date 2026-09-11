@@ -1,0 +1,34 @@
+diff --git a/TextEditor.cpp b/TextEditor.cpp
+index a25a42b..0000000 100644
+--- a/TextEditor.cpp
++++ b/TextEditor.cpp
+@@ -2325,6 +2325,7 @@ const TextEditor::Palette& TextEditor::GetDarkPalette() {
+ 		IM_COL32(106, 153,  85, 255),	// comment
+ 		IM_COL32(77, 182, 172, 255),	// docComment ("##" block, custom AvaLang addition) -- turquoise, distinct from plain "#" comment green and from every other token color
+ 		IM_COL32(199, 146, 234, 255),	// docParamTag ("@param name" tag, custom AvaLang addition) -- purple, stands out from both comment colors above
++		IM_COL32(255, 110, 199, 255),	// importPath (module path in `import x.y as z`, custom AvaLang addition) -- fuchsia, distinct from the purple-magenta interpolation color and the teal/purple doc-comment colors above
+ 		IM_COL32( 30,  30,  30, 255),	// background
+ 		IM_COL32(224, 224, 224, 255),	// cursor
+ 		IM_COL32( 32,  96, 160, 255),	// selection
+@@ -2357,6 +2358,7 @@ const TextEditor::Palette& TextEditor::GetLightPalette()
+ 		IM_COL32( 35, 135,   5, 255),	// comment
+ 		IM_COL32( 26, 130, 120, 255),	// docComment ("##" block, custom AvaLang addition) -- turquoise, distinct from plain "#" comment green and from every other token color
+ 		IM_COL32(124,  58, 237, 255),	// docParamTag ("@param name" tag, custom AvaLang addition) -- purple, stands out from both comment colors above
++		IM_COL32(199,   0, 130, 255),	// importPath (module path in `import x.y as z`, custom AvaLang addition) -- fuchsia, distinct from the purple-magenta interpolation color and the teal/purple doc-comment colors above
+ 		IM_COL32(255, 255, 255, 255),	// background
+ 		IM_COL32(  0,   0,   0, 255),	// cursor
+ 		IM_COL32(  0,   0,  96,  64),	// selection
+diff --git a/TextEditor.h b/TextEditor.h
+index ba41bd8..0000000 100644
+--- a/TextEditor.h
++++ b/TextEditor.h
+@@ -337,6 +337,7 @@ public:
+ 		identifier,
+ 		knownIdentifier,
+ 		comment,
+ 		docComment,	// "##" doc-comment block (custom AvaLang addition, see patches/)
+ 		docParamTag,	// "@param name" tag inside a doc-comment block (custom AvaLang addition, see patches/)
++		importPath,	// module path segment (`x` in `import x.y as z`, custom AvaLang addition, see patches/)
+ 		background,
+ 		cursor,
+ 		selection,

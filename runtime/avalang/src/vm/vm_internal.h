@@ -46,6 +46,7 @@ void OpLt(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM&
 void OpLe(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 void OpGt(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 void OpGe(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
+void OpIs(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 
 void OpNewList(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);
 void OpListAppend(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm);

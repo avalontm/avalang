@@ -15,6 +15,7 @@ void OpNewClass(CallFrame& frame, const Instr& in, const avastd::vector<Value>& 
     cls->private_members = class_proto->private_members;
     cls->static_methods = class_proto->static_methods;
     cls->param_names = class_proto->param_names;
+    cls->implemented_interfaces = class_proto->implemented_interfaces;
     // v recien creado: ref_count=1 propio; la asignacion de abajo ya
     // Retiene (RAII). El Retain(v) manual dejaba una referencia de mas.
     Value v; v.type = ValueType::Class; v.obj = cls;

@@ -52,7 +52,25 @@ void ConsumeModifiers(const std::string& body, size_t& i, bool& is_static, bool&
     }
 }
 
-void ScanClassBody(const std::string& body, ClassInfo& info, int base_line) {
+// Skips whitespace, newlines and `#` comments starting at i (without
+// mutating i) and returns the identifier word found there, or "" if the
+// next meaningful token isn't an identifier (e.g. `end` of an outer block,
+// EOF, or punctuation).
+std::string PeekNextWord(const std::string& body, size_t i) {
+    for (;;) {
+        while (i < body.size() && (body[i] == ' ' || body[i] == '\t' || body[i] == '\r' || body[i] == '\n')) ++i;
+        if (i < body.size() && body[i] == '#') {
+            while (i < body.size() && body[i] != '\n') ++i;
+            continue;
+        }
+        break;
+    }
+    if (i >= body.size() || !IsIdentStart(body[i])) return "";
+    size_t j = i;
+    return ReadIdent(body, j);
+}
+
+void ScanClassBody(const std::string& body, ClassInfo& info, int base_line, bool is_interface) {
     size_t i = 0;
     int body_depth = 0;
     std::vector<std::string> pending_doc;
@@ -247,13 +265,25 @@ void ScanClassBody(const std::string& body, ClassInfo& info, int base_line) {
                 method_info.signature.declared_return_type =
                     ParseReturnTypeAnnotation(body, after_params, body.size());
 
-                size_t scan_pos = after_params;
-                size_t method_body_end = 0;
-                bool has_body = FindMatchingEnd(body, scan_pos, method_body_end);
-                if (has_body && method_info.signature.declared_return_type.empty()) {
-                    method_info.signature.inferred_return_type =
-                        InferReturnTypeFromBody(body, after_params, method_body_end);
+                bool signature_only = false;
+                if (is_interface) {
+                    std::string next_word = PeekNextWord(body, after_params);
+                    signature_only = next_word.empty() || next_word == "end" || next_word == "func" ||
+                                      next_word == "static" || next_word == "private";
                 }
+
+                bool has_body = false;
+                size_t method_body_end = 0;
+                if (!signature_only) {
+                    size_t scan_pos = after_params;
+                    has_body = FindMatchingEnd(body, scan_pos, method_body_end);
+                    if (has_body && method_info.signature.declared_return_type.empty()) {
+                        method_info.signature.inferred_return_type =
+                            InferReturnTypeFromBody(body, after_params, method_body_end);
+                    }
+                }
+
+                method_info.is_abstract = signature_only;
 
                 if (info.methods.find(name) == info.methods.end())
                     info.methods[name] = std::move(method_info);
@@ -366,7 +396,8 @@ void ClassIndex::ScanText(const std::string& text, const std::string& source_fil
 
         if (IsIdentStart(c)) {
             std::string word = ReadIdent(text, i);
-            if (word != "class") continue;
+            bool is_interface = word == "interface";
+            if (word != "class" && !is_interface) continue;
 
             size_t save = i;
             SkipInlineWhitespace(text, i);
@@ -376,13 +407,31 @@ void ClassIndex::ScanText(const std::string& text, const std::string& source_fil
             std::string class_name = ReadIdent(text, i);
             SkipInlineWhitespace(text, i);
 
-            std::string base_name;
+            // `class Name : Base, IA, IB` / `interface Name : IA, IB`: a
+            // comma-separated heritage list (AvaLang_Plan_Interfaces.md,
+            // Fase 1). Keep the full list so implemented/extended interfaces
+            // contribute members too, not just a single base class.
+            std::vector<std::string> heritage_names;
             if (i < text.size() && text[i] == ':') {
                 size_t colon = i;
                 ++i;
                 SkipInlineWhitespace(text, i);
                 if (i < text.size() && IsIdentStart(text[i])) {
-                    base_name = ReadIdent(text, i);
+                    heritage_names.push_back(ReadIdent(text, i));
+                    for (;;) {
+                        size_t before_comma = i;
+                        SkipInlineWhitespace(text, i);
+                        if (i >= text.size() || text[i] != ',') { i = before_comma; break; }
+                        size_t comma = i;
+                        ++i;
+                        SkipInlineWhitespace(text, i);
+                        if (i < text.size() && IsIdentStart(text[i])) {
+                            heritage_names.push_back(ReadIdent(text, i));
+                        } else {
+                            i = comma;
+                            break;
+                        }
+                    }
                 } else {
                     i = colon;
                 }
@@ -390,17 +439,20 @@ void ClassIndex::ScanText(const std::string& text, const std::string& source_fil
 
             size_t body_start = i;
             size_t body_end = 0;
-            if (!FindMatchingEnd(text, i, body_end)) {
+            if (!FindMatchingEnd(text, i, body_end, is_interface)) {
 
                 continue;
             }
 
             ClassInfo info;
             info.name = class_name;
-            info.base_class_name = base_name;
+            info.is_interface = is_interface;
+            info.heritage_names = heritage_names;
+            info.base_class_name = heritage_names.empty() ? "" : heritage_names.front();
             info.source_file = source_file;
             info.line = LineAt(text, class_name_start);
-            ScanClassBody(text.substr(body_start, body_end - body_start), info, LineAt(text, body_start));
+            ScanClassBody(text.substr(body_start, body_end - body_start), info, LineAt(text, body_start),
+                          is_interface);
 
             if (classes_.find(class_name) == classes_.end())
                 classes_[class_name] = std::move(info);
@@ -468,16 +520,34 @@ std::string ClassIndex::ResolveImportPath(const std::vector<std::string>& module
 
 std::vector<ClassMember> ClassIndex::FlattenedMembers(const std::string& class_name) const {
     std::vector<ClassMember> result;
-    std::unordered_set<std::string> seen;
+    // Maps member name -> index into `result`. Normally "first sighting
+    // wins" (see below), but a concrete method encountered later must still
+    // replace an earlier abstract interface signature of the same name --
+    // otherwise `class C : IArea, Base` where only Base actually implements
+    // Area() would incorrectly report Area() as unimplemented just because
+    // the interface happened to be listed first in the heritage clause.
+    std::unordered_map<std::string, size_t> seen;
     std::unordered_set<std::string> visited_classes;
 
-    std::string current = class_name;
-    while (!current.empty() && visited_classes.insert(current).second) {
+    // BFS over the whole heritage graph, not just a single base chain: a
+    // class can implement several interfaces (`class C : Base, IA, IB`) and
+    // an interface can extend several more (`interface IB : IA, IC`), with
+    // diamonds allowed (AvaLang_Plan_Interfaces.md, Fase 1 "diamond").
+    // visited_classes dedups so a diamond is only walked once; closest
+    // declaration wins for any given member name via the `seen` set below,
+    // same "first sighting wins" rule used inside a single class body.
+    std::vector<std::string> queue = {class_name};
+    size_t head = 0;
+    while (head < queue.size()) {
+        std::string current = queue[head++];
+        if (current.empty() || !visited_classes.insert(current).second) continue;
+
         const ClassInfo* info = Find(current);
-        if (!info) break;
+        if (!info) continue;
 
         for (const auto& [name, method_info] : info->methods) {
-            if (seen.insert(name).second) {
+            auto it = seen.find(name);
+            if (it == seen.end()) {
                 ClassMember member;
                 member.name = name;
                 member.is_method = true;
@@ -485,12 +555,26 @@ std::vector<ClassMember> ClassIndex::FlattenedMembers(const std::string& class_n
                 member.is_private = method_info.is_private;
                 member.signature = &method_info.signature;
                 member.declared_in = info->name;
+                member.is_abstract = method_info.is_abstract;
                 member.line = method_info.signature.line;
+                seen[name] = result.size();
                 result.push_back(std::move(member));
+            } else if (result[it->second].is_abstract && !method_info.is_abstract) {
+                // A later, more distant declaration turned out to actually
+                // implement what an earlier one only declared -- overwrite in
+                // place so MissingInterfaceMembers below doesn't flag it.
+                ClassMember& member = result[it->second];
+                member.is_method = true;
+                member.is_static = method_info.is_static;
+                member.is_private = method_info.is_private;
+                member.signature = &method_info.signature;
+                member.declared_in = info->name;
+                member.is_abstract = false;
+                member.line = method_info.signature.line;
             }
         }
         for (const auto& [name, attr_info] : info->attributes) {
-            if (seen.insert(name).second) {
+            if (seen.find(name) == seen.end()) {
                 ClassMember member;
                 member.name = name;
                 member.is_method = false;
@@ -500,13 +584,28 @@ std::vector<ClassMember> ClassIndex::FlattenedMembers(const std::string& class_n
                 member.declared_in = info->name;
                 member.declared_type = attr_info.declared_type;
                 member.line = attr_info.line;
+                seen[name] = result.size();
                 result.push_back(std::move(member));
             }
         }
 
-        current = info->base_class_name;
+        for (const auto& parent : info->heritage_names) queue.push_back(parent);
     }
 
+    return result;
+}
+
+std::vector<ClassMember> ClassIndex::MissingInterfaceMembers(const std::string& class_name) const {
+    std::vector<ClassMember> result;
+
+    const ClassInfo* info = Find(class_name);
+    // An interface is itself allowed to leave signatures unimplemented --
+    // only a concrete `class` is expected to close them all out.
+    if (!info || info->is_interface) return result;
+
+    for (auto& member : FlattenedMembers(class_name)) {
+        if (member.is_method && member.is_abstract) result.push_back(std::move(member));
+    }
     return result;
 }
 

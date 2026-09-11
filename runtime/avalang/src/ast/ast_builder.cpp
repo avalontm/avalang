@@ -258,6 +258,15 @@ std::shared_ptr<StmtNode> AstBuilder::stmtFromAny(const std::any& a) {
         auto extern_stmt = std::any_cast<std::shared_ptr<ExternStmt>>(a);
         return extern_stmt;
     } catch (...) {}
+    // Fase 1 del plan de interfaces (AvaLang_Plan_Interfaces.md).
+    try {
+        auto interface_def = std::any_cast<std::shared_ptr<InterfaceDef>>(a);
+        return interface_def;
+    } catch (...) {}
+    try {
+        auto sig_stmt = std::any_cast<std::shared_ptr<InterfaceMethodSigStmt>>(a);
+        return sig_stmt;
+    } catch (...) {}
     return nullptr;
 }
 
@@ -433,6 +442,8 @@ std::any AstBuilder::visitSmallStatement(AvaLangParser::SmallStatementContext* c
     if (ctx->modifiedAssignStatement()) return visitModifiedAssignStatement(ctx->modifiedAssignStatement());
     if (ctx->typedAssignStatement()) return visitTypedAssignStatement(ctx->typedAssignStatement());
     if (ctx->typedDeclStatement())   return visitTypedDeclStatement(ctx->typedDeclStatement());
+    if (ctx->interfaceMethodSignature())
+        return visitInterfaceMethodSignature(ctx->interfaceMethodSignature());
     throw std::runtime_error("unsupported small statement");
 }
 
@@ -460,6 +471,7 @@ std::any AstBuilder::visitCompoundStatement(AvaLangParser::CompoundStatementCont
     if (ctx->forStatement())    return visitForStatement(ctx->forStatement());
     if (ctx->funcDeclaration()) return visitFuncDeclaration(ctx->funcDeclaration());
     if (ctx->classDeclaration()) return visitClassDeclaration(ctx->classDeclaration());
+    if (ctx->interfaceDeclaration()) return visitInterfaceDeclaration(ctx->interfaceDeclaration());
     if (ctx->tryStatement())   return visitTryStatement(ctx->tryStatement());
     if (ctx->modifiedFuncDeclaration()) return visitModifiedFuncDeclaration(ctx->modifiedFuncDeclaration());
     if (ctx->asyncFuncDeclaration()) return visitAsyncFuncDeclaration(ctx->asyncFuncDeclaration());
@@ -728,14 +740,77 @@ std::any AstBuilder::visitFuncDeclaration(AvaLangParser::FuncDeclarationContext*
 std::any AstBuilder::visitClassDeclaration(AvaLangParser::ClassDeclarationContext* ctx) {
     auto name = ctx->NAME()->getText();
 
+    // Fase 1 del plan de interfaces: `classHeritage` ahora es una lista
+    // (`':' NAME (',' NAME)*`). `heritage` guarda todos los nombres en el
+    // orden escrito; `base_class` sigue poblandose solo para el caso de un
+    // unico nombre, para que CompileClass (sin tocar en esta fase) siga
+    // compilando exactamente igual que antes los programas existentes
+    // (`class X : Y`). Con mas de un nombre, `base_class` queda en
+    // nullptr hasta Fase 2 -- ver el comentario de ClassDef::heritage en
+    // ast.h para el porqué.
     std::shared_ptr<ExprNode> base_class = nullptr;
+    std::vector<std::shared_ptr<ExprNode>> heritage;
     if (ctx->classHeritage()) {
-        auto base_name = ctx->classHeritage()->NAME()->getText();
-        base_class = std::make_shared<NameExpr>(base_name);
+        for (auto* name_tok : ctx->classHeritage()->NAME()) {
+            heritage.push_back(std::make_shared<NameExpr>(name_tok->getText()));
+        }
+        if (heritage.size() == 1) {
+            base_class = heritage[0];
+        }
     }
 
     auto body = stmtsFromAny(visitBlock(ctx->block()));
-    return std::make_shared<ClassDef>(name, base_class, body);
+    auto cls = std::make_shared<ClassDef>(name, base_class, body);
+    cls->heritage = std::move(heritage);
+    return cls;
+}
+
+// Fase 1 del plan de interfaces (AvaLang_Plan_Interfaces.md).
+std::any AstBuilder::visitInterfaceMethodSignature(AvaLangParser::InterfaceMethodSignatureContext* ctx) {
+    InterfaceMethodSig sig;
+    sig.name = ctx->NAME()->getText();
+    if (ctx->externParamList()) {
+        for (auto* p : ctx->externParamList()->externParam()) {
+            sig.params.push_back(p->NAME()->getText());
+            sig.param_types.push_back(p->typeAnnotation() ? p->typeAnnotation()->NAME()->getText() : "");
+        }
+    }
+    sig.return_type = ctx->returnType() ? ctx->returnType()->typeAnnotation()->NAME()->getText() : "";
+    sig.line = static_cast<int>(ctx->getStart()->getLine());
+    sig.col = static_cast<int>(ctx->getStart()->getCharPositionInLine()) + 1;
+    return std::make_shared<InterfaceMethodSigStmt>(sig);
+}
+
+// Recorre el `block` de una interfaz (mismo contenedor generico que ya usa
+// classDeclaration) y separa sus statements en firmas sin cuerpo
+// (InterfaceMethodSigStmt, producidas arriba) y métodos con cuerpo
+// (FuncDef normal -- implementación por defecto). Cualquier otro tipo de
+// statement dentro del cuerpo se ignora en esta fase; validar que no
+// aparezca nada mas ahi es trabajo del compilador (Fase 2), no del AST
+// builder.
+std::any AstBuilder::visitInterfaceDeclaration(AvaLangParser::InterfaceDeclarationContext* ctx) {
+    auto name = ctx->NAME()->getText();
+
+    std::vector<std::shared_ptr<ExprNode>> heritage;
+    if (ctx->interfaceHeritage()) {
+        for (auto* name_tok : ctx->interfaceHeritage()->NAME()) {
+            heritage.push_back(std::make_shared<NameExpr>(name_tok->getText()));
+        }
+    }
+
+    auto body = stmtsFromAny(visitBlock(ctx->block()));
+    std::vector<InterfaceMethodSig> signatures;
+    std::vector<std::shared_ptr<FuncDef>> default_methods;
+    for (auto& stmt : body) {
+        if (auto* sig_stmt = dynamic_cast<InterfaceMethodSigStmt*>(stmt.get())) {
+            signatures.push_back(sig_stmt->sig);
+        } else if (auto func = std::dynamic_pointer_cast<FuncDef>(stmt)) {
+            default_methods.push_back(func);
+        }
+    }
+
+    return std::make_shared<InterfaceDef>(name, std::move(heritage), std::move(signatures),
+                                           std::move(default_methods));
 }
 
 std::any AstBuilder::visitModifiedFuncDeclaration(AvaLangParser::ModifiedFuncDeclarationContext* ctx) {
@@ -969,6 +1044,14 @@ std::any AstBuilder::visitNotExpr(AvaLangParser::NotExprContext* ctx) {
     if (ctx->notExpr()) {
         auto operand = exprFromAny(ctx->notExpr()->accept(this));
         return std::make_shared<UnOpExpr>(UnOp::Not, operand);
+    }
+    // Fase 1 del plan de interfaces: `comparison ('is' NAME)?` -- el NAME
+    // solo esta presente cuando el sufijo `is TypeName` aparecio (ver
+    // grammar/AvaLang.g4). Sin sufijo, se comporta exactamente igual que
+    // antes (pass-through al chain de comparison).
+    if (ctx->NAME()) {
+        auto value = exprFromAny(visitComparison(ctx->comparison()));
+        return std::make_shared<IsExpr>(value, ctx->NAME()->getText());
     }
     return visitComparison(ctx->comparison());
 }

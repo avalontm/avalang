@@ -37,6 +37,7 @@
 // ninguna dependencia de la VM.
 #define AVA_BUILTIN_GLOBALS(X) \
     X(type, builtin_type) \
+    X(typeof, builtin_typeof) \
     X(str, builtin_str) \
     X(int, builtin_int) \
     X(float, builtin_float) \

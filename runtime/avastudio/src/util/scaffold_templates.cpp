@@ -14,6 +14,7 @@ const char* KindKey(ScaffoldKind kind) {
     switch (kind) {
         case ScaffoldKind::kClass: return "class";
         case ScaffoldKind::kScreen: return "screen";
+        case ScaffoldKind::kInterface: return "interface";
     }
     return "class";
 }

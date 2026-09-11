@@ -236,6 +236,9 @@ Value VM::ExecuteFrame(size_t frame_idx) {
             case OpCode::GE:
                 OpGe(frames_[frame_idx], in, K, *this);
                 break;
+            case OpCode::IS:
+                OpIs(frames_[frame_idx], in, K, *this);
+                break;
 
             case OpCode::JMP: 
                 frames_[frame_idx].pc = static_cast<uint32_t>(

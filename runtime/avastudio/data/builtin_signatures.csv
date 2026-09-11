@@ -19,3 +19,4 @@ sqrt,number,Returns the square root of number.
 str,value,Converts value to its display string (the same formatting print() uses).
 sum,*values,"Returns the numeric total. Same two calling forms as min(): sum(a, b, ...) or sum(list); non-numeric items coerce to 0."
 type,value,"Returns the type name of value as a string: ""nil"", ""bool"", ""number"", ""string"", ""list"", ""dict"", ""function"", ""instance"", ""class"", ""coroutine"", ""native"", ""bound"", or ""exception""."
+typeof,value,"Like type(), but for an instance or a class returns the concrete class name instead of the generic ""instance""/""class"". Anything else falls back to the same result as type()."

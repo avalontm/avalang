@@ -86,6 +86,31 @@ target_link_libraries(imgui_docking PUBLIC glfw)
 #     or description that follows) inside a doc
 #     block gets its own color too (upstream only has one flat
 #     Color::comment for the whole singleLineComment match).
+#  4. patches/imguicolortextedit_import_path.patch -- adds
+#     Color::importPath (plus default dark/light palette entries) so the
+#     module path in `import x.y as z` can be colored separately from the
+#     `import`/`as` keywords. Unlike the other three patches, this one
+#     doesn't touch the colorizer state machine at all -- AvaLang's own
+#     customTokenizer (avalang_language.cpp) assigns the new color
+#     directly, the same way it already does for Color::identifier /
+#     Color::preprocessor on class/interface names, so the patch is just
+#     the enum entry + palette entries needed for the color to exist.
+#  5. patches/imguicolortextedit_interface_name.patch -- adds
+#     Color::interfaceName (plus default dark/light palette entries) so a
+#     known interface name (`class X : IFoo`, `interface IFoo`) can be
+#     colored without hijacking Color::identifier, which upstream uses as
+#     the default color for any plain identifier the colorizer doesn't
+#     otherwise recognize (variables, parameters, anything you type).
+#     AvaLang previously reused Color::identifier for known-interface
+#     names, which colored ALL plain text (not just interfaces) with
+#     whatever editor_panel.cpp mapped Color::identifier to. Same shape
+#     as patch 4 -- no colorizer changes, just the new slot; AvaLang's
+#     own customTokenizer assigns it directly.
+#  6. patches/imguicolortextedit_variable_name.patch -- adds
+#     Color::variableName (plus default dark/light palette entries), same
+#     shape as patches 4/5, for a variable being declared or assigned
+#     (avalang_language.cpp's AvaLangTokenizer detects assignment,
+#     augmented assignment, `NAME as Type`, and `for NAME in ...`).
 # See patches/README.md for why these are patches and not a fork. git
 # apply fails loudly (breaks the CMake configure step) if any patch
 # can't apply cleanly, rather than silently falling back to the
@@ -109,6 +134,9 @@ FetchContent_Declare(
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_interpolation.patch
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_bold_keywords.patch
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_doc_comment.patch
+                   ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_import_path.patch
+                   ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_interface_name.patch
+                   ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_variable_name.patch
     UPDATE_DISCONNECTED TRUE
 )
 FetchContent_MakeAvailable(imguicolortextedit)

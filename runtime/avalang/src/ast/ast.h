@@ -88,6 +88,19 @@ struct UnOpExpr : ExprNode {
     UnOpExpr(UnOp o, std::shared_ptr<ExprNode> e) : op(o), operand(std::move(e)) {}
 };
 
+// `expr is TypeName` (Fase 1 del plan de interfaces, seccion 1.4). Chequeo
+// de tipo en runtime contra el nombre de una clase o de una interfaz
+// implementada -- ver grammar/AvaLang.g4 (`notExpr`) para el porqué de la
+// posicion sintactica elegida. `type_name` es el NAME crudo tal cual se
+// escribio; resolverlo contra compiled_classes_/compiled_interfaces_ y
+// emitir el opcode correspondiente es trabajo de Fase 4 (VM), no de esta.
+struct IsExpr : ExprNode {
+    std::shared_ptr<ExprNode> value;
+    std::string type_name;
+    IsExpr(std::shared_ptr<ExprNode> v, std::string t)
+        : value(std::move(v)), type_name(std::move(t)) {}
+};
+
 // Fase 3 del plan break/continue/operadores: `cond ? then_expr : else_expr`.
 // Azucar sintactico -- Compiler::CompileExpr lo compila con el mismo
 // patron TEST+JMP que ya usa CompileIf, sin opcode nuevo en la VM.
@@ -340,10 +353,69 @@ struct FuncDef : StmtNode {
 struct ClassDef : StmtNode {
     std::string name;
     std::shared_ptr<ExprNode> base_class;
+    // Fase 1 del plan de interfaces (AvaLang_Plan_Interfaces.md): lista
+    // completa de `classHeritage` tal cual se escribio (`class X : A, B, C`
+    // -> [A, B, C] en orden), como NameExpr. `base_class` arriba se sigue
+    // poblando solo para el caso de un unico nombre (`class X : Y`), para
+    // no tocar CompileClass en esta fase -- sigue leyendo `base_class`
+    // exactamente igual que antes y compila los programas existentes sin
+    // cambios. Con mas de un nombre, `base_class` queda en nullptr (ningun
+    // heredero implicito) hasta que CompileClass (Fase 2) aprenda a
+    // resolver esta lista completa contra compiled_classes_/
+    // compiled_interfaces_ (a lo sumo un elemento es clase base, y si esta
+    // presente debe ser el primero; el resto deben ser interfaces).
+    std::vector<std::shared_ptr<ExprNode>> heritage;
     std::vector<std::shared_ptr<StmtNode>> body;
     ClassDef(std::string n, std::shared_ptr<ExprNode> b,
              std::vector<std::shared_ptr<StmtNode>> s)
         : name(std::move(n)), base_class(std::move(b)), body(std::move(s)) {}
+};
+
+// Firma de método sin cuerpo dentro de una `interface` (`func Area() as
+// float`). Mismo shape que ExternFuncDecl (ver ese struct mas abajo) --
+// mismo motivo: nombre, params paralelos a param_types (misma convencion
+// "" = sin anotacion), return_type crudo. Sin `is_vararg`: una firma de
+// interfaz no tiene body que pueda usar `*args`, asi que no hace falta
+// (a diferencia de ExternFuncDecl, que sí declara contra una lib nativa
+// variadica).
+struct InterfaceMethodSig {
+    std::string name;
+    std::vector<std::string> params;
+    std::vector<std::string> param_types;
+    std::string return_type;
+    int line = 0;
+    int col = 0;
+};
+
+// Envoltorio StmtNode de InterfaceMethodSig -- lo que produce
+// AstBuilder::visitInterfaceMethodSignature para que una firma sin cuerpo
+// pueda vivir dentro de la lista `body`/`block` normal (mismo tipo de
+// contenedor que ClassDef::body ya usa para FuncDef). Fuera de una
+// interfaz, CompileStmt (Fase 2) lo rechaza -- no hace nada por si solo,
+// igual que `static`/`private` a nivel de módulo (ver comentario de
+// FuncDef::is_static más arriba).
+struct InterfaceMethodSigStmt : StmtNode {
+    InterfaceMethodSig sig;
+    explicit InterfaceMethodSigStmt(InterfaceMethodSig s) : sig(std::move(s)) {}
+};
+
+// `interface IShape : IBase ... end` (Fase 1 del plan de interfaces).
+// `signatures` son los métodos sin cuerpo (obligatorios para quien
+// implemente); `default_methods` son los métodos con cuerpo (`func X()
+// ... end` dentro de la interfaz) -- implementación por defecto, estilo
+// C# 8+. `heritage` es la lista de interfaces que esta extiende, mismo
+// shape/convencion que ClassDef::heritage (NameExpr, en orden, resuelta
+// recien en CompileInterface -- Fase 2/3).
+struct InterfaceDef : StmtNode {
+    std::string name;
+    std::vector<std::shared_ptr<ExprNode>> heritage;
+    std::vector<InterfaceMethodSig> signatures;
+    std::vector<std::shared_ptr<FuncDef>> default_methods;
+    InterfaceDef(std::string n, std::vector<std::shared_ptr<ExprNode>> h,
+                 std::vector<InterfaceMethodSig> sigs,
+                 std::vector<std::shared_ptr<FuncDef>> defaults)
+        : name(std::move(n)), heritage(std::move(h)), signatures(std::move(sigs)),
+          default_methods(std::move(defaults)) {}
 };
 
 struct ImportStmt : StmtNode {

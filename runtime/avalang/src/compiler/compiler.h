@@ -24,6 +24,17 @@ namespace ava {
 // compile time -- only ever sees the importing compiler's own
 // class_method_params_, never the imported class's, so an inherited
 // method looks undefined and throws even though it will run correctly.
+struct InterfaceInfo {
+    std::string name;
+    std::vector<std::string> base_interfaces;
+    std::unordered_map<std::string, InterfaceMethodSig> signatures;
+    std::vector<std::string> signature_order;
+    std::unordered_map<std::string, std::shared_ptr<Proto>> default_methods;
+    std::unordered_map<std::string, std::string> default_method_origin;
+    std::unordered_map<std::string, std::vector<std::pair<std::string, Type>>> method_params;
+    std::unordered_map<std::string, TypeRef> method_returns;
+};
+
 struct HarvestedClassInfo {
     std::unordered_map<std::string, ClassObj*> classes;
     std::unordered_map<std::string, std::unordered_map<std::string, TypeRef>> field_types;
@@ -31,6 +42,7 @@ struct HarvestedClassInfo {
     std::unordered_map<std::string, std::unordered_map<std::string, TypeRef>> method_returns;
     std::unordered_map<std::string, std::unordered_map<std::string, std::vector<std::pair<std::string, Type>>>>
         method_params;
+    std::unordered_map<std::string, InterfaceInfo> interfaces;
     std::vector<Value> keepalive;
 };
 
@@ -45,7 +57,7 @@ public:
     // used to harvest classes from an imported file (see HarvestedClassInfo).
     HarvestedClassInfo SnapshotClassInfo() const {
         HarvestedClassInfo info{compiled_classes_, class_field_types_, class_dynamic_attrs_,
-                                 class_method_returns_, class_method_params_, {}};
+                                 class_method_returns_, class_method_params_, compiled_interfaces_, {}};
         info.keepalive.reserve(compiled_classes_.size());
         for (auto& [name, obj] : compiled_classes_) {
             (void)name;
@@ -227,6 +239,7 @@ private:
     // de la función async que lo contiene). Ver CompileExpr(AwaitExpr).
     bool in_async_func_ = false;
     std::unordered_map<std::string, ClassObj*> compiled_classes_;
+    std::unordered_map<std::string, InterfaceInfo> compiled_interfaces_;
     // Phase 13 ("Clases y objetos").
     // className -> fieldName -> resolved TypeRef. Populated in
     // CompileClass from AssignStmt::explicit_type when a class-body field
@@ -562,6 +575,7 @@ private:
     void EmitDefaultsPrologue(const std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>>& params,
                                uint16_t param_reg_base);
     void CompileClass(const ClassDef* cls);
+    void CompileInterface(const InterfaceDef* iface);
     void CompileImport(const ImportStmt* stmt);
     void RegisterImportedClasses(const std::string& module_name);
     void CompileExtern(const ExternStmt* stmt);

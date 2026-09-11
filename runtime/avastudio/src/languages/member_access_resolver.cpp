@@ -365,6 +365,15 @@ std::vector<std::string> VariableTypeIndex::VisibleVariables(size_t cursor_offse
     return names;
 }
 
+std::unordered_set<std::string> VariableTypeIndex::AllVariableNames() const {
+    std::unordered_set<std::string> names;
+    for (const auto& [name, type] : module_scope_.var_types) names.insert(name);
+    for (const auto& s : scopes_) {
+        for (const auto& [name, type] : s.var_types) names.insert(name);
+    }
+    return names;
+}
+
 bool ResolveMemberAccess(const std::string& full_text, int cursor_line,
                           const std::string& text_before_cursor_on_line,
                           const ClassIndex& class_index, const VariableTypeIndex& var_types,

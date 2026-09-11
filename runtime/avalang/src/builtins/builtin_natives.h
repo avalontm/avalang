@@ -22,6 +22,7 @@ extern "C" {
 // three names).
 
 ava_value_t builtin_type(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+ava_value_t builtin_typeof(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_str(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_int(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_float(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);

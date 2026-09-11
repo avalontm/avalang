@@ -26,7 +26,7 @@ const std::unordered_set<std::string>& TypeSet() {
 
 const std::vector<std::string> kKeywords = {
     "if", "then", "elif", "else", "end", "while", "for", "in",
-    "func", "class", "try", "catch", "finally",
+    "func", "class", "interface", "try", "catch", "finally",
     "return", "break", "continue", "pass", "import", "local",
     "raise", "yield", "not", "and", "or", "true", "false", "nil",
     "base", "as", "this", "override", "new", "static", "private",
@@ -38,7 +38,7 @@ const std::vector<std::string> kTypes = {
 };
 
 const std::vector<std::string> kBuiltinFunctions = {
-    "print", "len", "range", "type", "abs", "min", "max", "pow", "sqrt",
+    "print", "len", "range", "type", "typeof", "abs", "min", "max", "pow", "sqrt",
     "round", "floor", "ceil", "sorted", "reversed", "sum", "all", "any", "resume",
     "list_append", "list_push", "list_pop", "list_insert", "list_remove",
     "list_contains", "list_length",
@@ -109,7 +109,7 @@ std::vector<Token> Tokenize(const std::string& text) {
                 kind = TokenKind::Keyword;
             } else if (prev_keyword == "func") {
                 kind = TokenKind::Function;
-            } else if (prev_keyword == "class") {
+            } else if (prev_keyword == "class" || prev_keyword == "interface") {
                 kind = TokenKind::Type;
             } else if (TypeSet().count(word)) {
                 kind = TokenKind::Type;
@@ -120,7 +120,7 @@ std::vector<Token> Tokenize(const std::string& text) {
             }
             push(s, i, kind);
 
-            prev_keyword = (word == "func" || word == "class") ? word : "";
+            prev_keyword = (word == "func" || word == "class" || word == "interface") ? word : "";
             continue;
         }
 

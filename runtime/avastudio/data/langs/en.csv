@@ -38,6 +38,7 @@ panel.explorer.title,Explorer
 explorer.new_file,New File
 explorer.new_folder,New Folder
 explorer.new_file_kind_class,Class (.ava)
+explorer.new_file_kind_interface,Interface (.ava)
 explorer.new_file_kind_screen,Screen (.avaui)
 explorer.create,Create
 explorer.open_in_file_manager,Open in File Manager
@@ -219,3 +220,6 @@ new_project.error_destination_required,Choose a destination folder.
 new_project.error_destination_missing,Destination folder does not exist.
 new_project.error_already_exists,"A folder with that name already exists there."
 new_project.error_create_failed,Could not create the project folder.
+editor.context.implement_interface,Implement Interface
+editor.hint.missing_interface_members,%s does not implement %s:
+explorer.new_item_name_label,Name:

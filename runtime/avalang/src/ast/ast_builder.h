@@ -42,6 +42,9 @@ public:
     std::any visitForStatement(AvaLangParser::ForStatementContext* ctx) override;
     std::any visitFuncDeclaration(AvaLangParser::FuncDeclarationContext* ctx) override;
     std::any visitClassDeclaration(AvaLangParser::ClassDeclarationContext* ctx) override;
+    // Fase 1 del plan de interfaces (AvaLang_Plan_Interfaces.md).
+    std::any visitInterfaceDeclaration(AvaLangParser::InterfaceDeclarationContext* ctx) override;
+    std::any visitInterfaceMethodSignature(AvaLangParser::InterfaceMethodSignatureContext* ctx) override;
     std::any visitImportStatement(AvaLangParser::ImportStatementContext* ctx) override;
     std::any visitRaiseStatement(AvaLangParser::RaiseStatementContext* ctx) override;
     std::any visitYieldAtom(AvaLangParser::YieldAtomContext* ctx) override;

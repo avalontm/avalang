@@ -233,6 +233,10 @@ static void WalkExprForLambdas(const std::shared_ptr<ExprNode>& expr,
         WalkExprForLambdas(t->else_expr, out);
         return;
     }
+    if (auto* ie = dynamic_cast<IsExpr*>(expr.get())) {
+        WalkExprForLambdas(ie->value, out);
+        return;
+    }
     if (auto* c = dynamic_cast<CallExpr*>(expr.get())) {
         WalkExprForLambdas(c->callee, out);
         for (auto& arg : c->args) WalkExprForLambdas(arg, out);
@@ -715,6 +719,18 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
         return result_reg;
     }
 
+    if (auto* ie = dynamic_cast<IsExpr*>(expr.get())) {
+        if (!compiled_classes_.count(ie->type_name) && !compiled_interfaces_.count(ie->type_name)) {
+            throw AvaError("'is' checks against unknown class or interface '" + ie->type_name + "'",
+                            current_line_, current_col_, source_name_);
+        }
+        auto val_reg = CompileExpr(ie->value);
+        auto result_reg = AllocReg();
+        auto name_idx = AddConstant(MakeString(ie->type_name));
+        Emit(OpCode::IS, result_reg, val_reg, name_idx);
+        return result_reg;
+    }
+
     if (auto* c = dynamic_cast<CallExpr*>(expr.get())) {
         int err_line = c->line != 0 ? c->line : current_line_;
         int err_col = c->col != 0 ? c->col : current_col_;
@@ -1098,6 +1114,7 @@ Type Compiler::InferExprType(const std::shared_ptr<ExprNode>& expr) {
     }
 
     if (dynamic_cast<ListExpr*>(expr.get())) return Type::List;
+    if (dynamic_cast<IsExpr*>(expr.get())) return Type::Bool;
     if (dynamic_cast<DictExpr*>(expr.get())) return Type::Dict;
     if (dynamic_cast<IndexExpr*>(expr.get())) return InferExprTypeRef(expr).type;
     if (dynamic_cast<SliceExpr*>(expr.get())) return InferExprTypeRef(expr).type;
@@ -1626,6 +1643,17 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
     if (auto* c = dynamic_cast<ClassDef*>(stmt.get())) {
         CompileClass(c);
         return;
+    }
+
+    if (auto* iface = dynamic_cast<InterfaceDef*>(stmt.get())) {
+        CompileInterface(iface);
+        return;
+    }
+
+    if (auto* sig_stmt = dynamic_cast<InterfaceMethodSigStmt*>(stmt.get())) {
+        throw AvaError("method signature '" + sig_stmt->sig.name +
+                            "' without a body is only valid inside an interface",
+                        sig_stmt->sig.line, sig_stmt->sig.col, source_name_);
     }
 
     if (auto* i = dynamic_cast<ImportStmt*>(stmt.get())) {
@@ -3112,6 +3140,15 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
         CompileClass(class_def);
         return 0;
     }
+    if (auto* iface_def = dynamic_cast<InterfaceDef*>(stmt.get())) {
+        CompileInterface(iface_def);
+        return 0;
+    }
+    if (auto* sig_stmt = dynamic_cast<InterfaceMethodSigStmt*>(stmt.get())) {
+        throw AvaError("method signature '" + sig_stmt->sig.name +
+                            "' without a body is only valid inside an interface",
+                        sig_stmt->sig.line, sig_stmt->sig.col, source_name_);
+    }
     if (auto* import_stmt = dynamic_cast<ImportStmt*>(stmt.get())) {
         CompileImport(import_stmt);
         return 0;
@@ -3148,30 +3185,239 @@ void Compiler::CompileMultiAssign(const MultiAssignStmt* stmt) {
     }
 }
 
+void Compiler::CompileInterface(const InterfaceDef* iface) {
+    if (compiled_classes_.count(iface->name) || compiled_interfaces_.count(iface->name)) {
+        throw AvaError("'" + iface->name + "' is already defined", iface->line, iface->col, source_name_);
+    }
+
+    InterfaceInfo info;
+    info.name = iface->name;
+
+    std::vector<InterfaceInfo*> base_interfaces;
+    for (size_t i = 0; i < iface->heritage.size(); ++i) {
+        auto* name_expr = dynamic_cast<NameExpr*>(iface->heritage[i].get());
+        if (!name_expr) {
+            throw AvaError("interface '" + iface->name + "': base interface must be a plain name",
+                            iface->line, iface->col, source_name_);
+        }
+        const std::string& hname = name_expr->name;
+        if (hname == iface->name) {
+            throw AvaError("interface '" + iface->name + "' cannot extend itself",
+                            iface->line, iface->col, source_name_);
+        }
+        auto iface_it = compiled_interfaces_.find(hname);
+        if (iface_it == compiled_interfaces_.end()) {
+            if (compiled_classes_.count(hname)) {
+                throw AvaError("interface '" + iface->name + "' cannot extend '" + hname +
+                                    "' -- '" + hname + "' is a class, not an interface",
+                                iface->line, iface->col, source_name_);
+            }
+            throw AvaError("interface '" + iface->name + "' extends unknown interface '" + hname +
+                                "' -- '" + hname +
+                                "' must be defined earlier in the file, and the name must be spelled exactly right",
+                            iface->line, iface->col, source_name_);
+        }
+        base_interfaces.push_back(&iface_it->second);
+        info.base_interfaces.push_back(hname);
+    }
+
+    std::unordered_map<std::string, std::string> default_method_owner;
+    std::string diamond_name, diamond_a, diamond_b;
+    for (auto* base : base_interfaces) {
+        for (auto& sig_name : base->signature_order) {
+            if (!info.signatures.count(sig_name) && !info.default_methods.count(sig_name)) {
+                info.signature_order.push_back(sig_name);
+            }
+            info.signatures[sig_name] = base->signatures.at(sig_name);
+        }
+        for (auto& [mname, mparams] : base->method_params) info.method_params[mname] = mparams;
+        for (auto& [mname, mret] : base->method_returns) info.method_returns[mname] = mret;
+        for (auto& transitive : base->base_interfaces) {
+            bool already = false;
+            for (auto& existing : info.base_interfaces) {
+                if (existing == transitive) { already = true; break; }
+            }
+            if (!already) info.base_interfaces.push_back(transitive);
+        }
+
+        for (auto& [mname, proto] : base->default_methods) {
+            std::string origin = base->default_method_origin.count(mname)
+                ? base->default_method_origin.at(mname) : base->name;
+            auto owner_it = default_method_owner.find(mname);
+            if (owner_it != default_method_owner.end() && owner_it->second != origin &&
+                diamond_name.empty()) {
+                diamond_name = mname;
+                diamond_a = owner_it->second;
+                diamond_b = origin;
+            }
+            default_method_owner[mname] = origin;
+            info.default_methods[mname] = proto;
+            info.default_method_origin[mname] = origin;
+        }
+    }
+
+    std::unordered_set<std::string> seen_names;
+    std::unordered_set<std::string> own_touched;
+    for (auto& sig : iface->signatures) {
+        if (!seen_names.insert(sig.name).second) {
+            throw AvaError("interface '" + iface->name + "' declares method '" + sig.name +
+                                "' more than once",
+                            sig.line, sig.col, source_name_);
+        }
+        if (!info.signatures.count(sig.name) && !info.default_methods.count(sig.name)) {
+            info.signature_order.push_back(sig.name);
+        }
+        info.signatures[sig.name] = sig;
+        info.default_methods.erase(sig.name);
+        info.default_method_origin.erase(sig.name);
+        own_touched.insert(sig.name);
+
+        std::vector<std::pair<std::string, Type>> sig_params;
+        for (size_t i = 0; i < sig.params.size(); ++i) {
+            Type t = i < sig.param_types.size() ? TypeFromName(sig.param_types[i]) : Type::Unknown;
+            sig_params.push_back({sig.params[i], t});
+        }
+        info.method_params[sig.name] = std::move(sig_params);
+        info.method_returns[sig.name] = ResolveTypeName(sig.return_type);
+    }
+
+    for (auto& method : iface->default_methods) {
+        if (!seen_names.insert(method->name).second) {
+            throw AvaError("interface '" + iface->name + "' declares method '" + method->name +
+                                "' more than once",
+                            method->line, method->col, source_name_);
+        }
+        own_touched.insert(method->name);
+        info.default_method_origin[method->name] = iface->name;
+
+        std::vector<std::pair<std::string, Type>> sig_params;
+        for (size_t i = 0; i < method->params.size(); ++i) {
+            Type t = i < method->param_types.size() ? TypeFromName(method->param_types[i]) : Type::Unknown;
+            sig_params.push_back({method->params[i].first, t});
+        }
+        info.method_params[method->name] = std::move(sig_params);
+        info.method_returns[method->name] = ResolveTypeName(method->return_type);
+    }
+
+    if (!diamond_name.empty() && !own_touched.count(diamond_name)) {
+        throw AvaError("interface '" + iface->name + "' inherits conflicting default implementations of '" +
+                            diamond_name + "' from '" + diamond_a + "' and '" + diamond_b +
+                            "' -- provide an explicit override",
+                        iface->line, iface->col, source_name_);
+    }
+
+    for (auto& method : iface->default_methods) {
+        if (!method->params.empty() && method->params[0].first == "self") {
+            throw AvaError(
+                "'self' does not exist in AvaLang -- the instance reference is implicit: "
+                "don't declare it as a parameter. If you need to name it explicitly, use 'this'.",
+                method->line, method->col, source_name_);
+        }
+        bool explicit_self_param = !method->params.empty() && method->params[0].first == "this";
+        size_t real_param_count = method->params.size() - (explicit_self_param ? 1 : 0);
+
+        Compiler sub;
+        sub.is_top_level_ = false;
+        sub.proto_ = std::make_shared<Proto>();
+        sub.source_name_ = source_name_;
+        sub.proto_->source_name = source_name_;
+        sub.proto_->debug_name = iface->name + "." + method->name;
+        sub.current_class_name_ = iface->name;
+        sub.compiled_classes_ = compiled_classes_;
+        sub.compiled_interfaces_ = compiled_interfaces_;
+        sub.class_method_params_ = class_method_params_;
+        sub.class_method_params_[iface->name] = info.method_params;
+        sub.class_method_returns_ = class_method_returns_;
+        sub.class_method_returns_[iface->name] = info.method_returns;
+        sub.known_funcs_ = known_funcs_;
+        sub.known_func_returns_ = known_func_returns_;
+        sub.known_top_level_globals_ = known_top_level_globals_;
+        sub.extern_func_params_ = extern_func_params_;
+        sub.extern_func_returns_ = extern_func_returns_;
+        sub.has_wildcard_import_ = has_wildcard_import_;
+
+        sub.proto_->num_params = static_cast<uint8_t>(real_param_count + 1);
+        sub.proto_->is_vararg = method->is_vararg;
+        sub.proto_->is_method = true;
+
+        sub.next_reg_ = static_cast<uint16_t>(real_param_count + 1);
+        sub.max_reg_ = sub.next_reg_;
+
+        sub.locals_["this"] = 0;
+        Symbol this_sym;
+        this_sym.name = "this";
+        this_sym.declaredType = Type::Object;
+        this_sym.declaredClassName = iface->name;
+        this_sym.inferredType = Type::Object;
+        this_sym.inferredClassName = iface->name;
+        this_sym.RefreshEffectiveType();
+        sub.symbols_["this"] = this_sym;
+
+        std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> real_params;
+        for (size_t i = explicit_self_param ? 1 : 0; i < method->params.size(); ++i) {
+            auto& pname = method->params[i].first;
+            sub.locals_[pname] = static_cast<uint16_t>(real_params.size() + 1);
+            real_params.push_back(method->params[i]);
+        }
+
+        sub.EmitDefaultsPrologue(real_params, 1);
+        sub.current_return_type_ = ResolveTypeName(method->return_type);
+        sub.CompileChunk(method->body);
+        sub.Emit(OpCode::RETURN);
+
+        uint16_t min_registers = static_cast<uint16_t>(real_param_count + 1);
+        sub.proto_->num_registers = std::max<uint16_t>(sub.max_reg_ + 1, min_registers);
+
+        info.default_methods[method->name] = sub.proto_;
+    }
+
+    compiled_interfaces_[iface->name] = std::move(info);
+}
+
 void Compiler::CompileClass(const ClassDef* cls) {
     auto* class_obj = new ClassObj();
     class_obj->name = cls->name;
 
     ClassObj* base_class = nullptr;
-    if (cls->base_class) {
-        auto* base_name = dynamic_cast<NameExpr*>(cls->base_class.get());
-        if (!base_name) {
-            throw AvaError("class '" + cls->name + "': base class must be a plain class name",
-                            cls->line, cls->col, source_name_);
+    std::vector<InterfaceInfo*> interfaces;
+    {
+        for (size_t i = 0; i < cls->heritage.size(); ++i) {
+            auto* name_expr = dynamic_cast<NameExpr*>(cls->heritage[i].get());
+            if (!name_expr) {
+                throw AvaError("class '" + cls->name + "': base class/interface must be a plain name",
+                                cls->line, cls->col, source_name_);
+            }
+            const std::string& hname = name_expr->name;
+            if (hname == cls->name) {
+                throw AvaError("class '" + cls->name + "' cannot inherit from itself",
+                                cls->line, cls->col, source_name_);
+            }
+            auto class_it = compiled_classes_.find(hname);
+            auto iface_it = compiled_interfaces_.find(hname);
+            if (class_it != compiled_classes_.end()) {
+                if (base_class) {
+                    throw AvaError("class '" + cls->name + "' cannot have more than one base class ('" +
+                                        base_class->name + "' and '" + hname + "')",
+                                    cls->line, cls->col, source_name_);
+                }
+                if (i != 0) {
+                    throw AvaError("class '" + cls->name + "': base class '" + hname +
+                                        "' must be listed first, before any interfaces",
+                                    cls->line, cls->col, source_name_);
+                }
+                base_class = class_it->second;
+            } else if (iface_it != compiled_interfaces_.end()) {
+                interfaces.push_back(&iface_it->second);
+            } else {
+                throw AvaError("class '" + cls->name + "' extends unknown class or interface '" + hname +
+                                    "' -- '" + hname +
+                                    "' must be defined earlier in the file, and the name must be spelled exactly right",
+                                cls->line, cls->col, source_name_);
+            }
         }
-        if (base_name->name == cls->name) {
-            throw AvaError("class '" + cls->name + "' cannot inherit from itself",
-                            cls->line, cls->col, source_name_);
-        }
-        auto it = compiled_classes_.find(base_name->name);
-        if (it == compiled_classes_.end()) {
-            throw AvaError("class '" + cls->name + "' extends unknown class '" + base_name->name +
-                                "' -- '" + base_name->name +
-                                "' must be defined earlier in the file, and the name must be spelled exactly right",
-                            cls->line, cls->col, source_name_);
-        }
-        base_class = it->second;
+    }
 
+    if (base_class) {
         for (auto& [mname, mproto] : base_class->methods) {
             if (mname != "__init__" && mname != "__base__") {
                 class_obj->methods[mname] = mproto;
@@ -3207,14 +3453,14 @@ void Compiler::CompileClass(const ClassDef* cls) {
         }
     }
 
-    if (cls->base_class) {
+    if (base_class) {
         auto bit = class_field_types_.find(base_class->name);
         if (bit != class_field_types_.end()) {
             class_field_types_[cls->name] = bit->second;
         }
     }
 
-    if (cls->base_class) {
+    if (base_class) {
         auto dit = class_dynamic_attrs_.find(base_class->name);
         if (dit != class_dynamic_attrs_.end()) {
             class_dynamic_attrs_[cls->name] = dit->second;
@@ -3263,7 +3509,7 @@ void Compiler::CompileClass(const ClassDef* cls) {
         }
     }
 
-    if (cls->base_class) {
+    if (base_class) {
         auto rit = class_method_returns_.find(base_class->name);
         if (rit != class_method_returns_.end()) {
             for (auto& [mname, mret] : rit->second) {
@@ -3274,6 +3520,18 @@ void Compiler::CompileClass(const ClassDef* cls) {
         if (pit != class_method_params_.end()) {
             for (auto& [mname, mparams] : pit->second) {
                 if (mname != "__init__") class_method_params_[cls->name][mname] = mparams;
+            }
+        }
+    }
+    for (auto* iface : interfaces) {
+        for (auto& [mname, mparams] : iface->method_params) {
+            if (!class_method_params_[cls->name].count(mname)) {
+                class_method_params_[cls->name][mname] = mparams;
+            }
+        }
+        for (auto& [mname, mret] : iface->method_returns) {
+            if (!class_method_returns_[cls->name].count(mname)) {
+                class_method_returns_[cls->name][mname] = mret;
             }
         }
     }
@@ -3300,12 +3558,12 @@ void Compiler::CompileClass(const ClassDef* cls) {
                                     "constructors are never inherited",
                                 f->line, f->col, source_name_);
             }
-            if (!cls->base_class) {
+            if (!base_class) {
                 throw AvaError("method '" + f->name + "' is marked 'override' but class '" + cls->name +
                                     "' has no base class",
                                 f->line, f->col, source_name_);
             }
-            auto inherited = class_method_params_.find(cls->name);
+            auto inherited = class_method_params_.find(base_class->name);
             bool found_in_base = inherited != class_method_params_.end() &&
                                   inherited->second.count(method_name);
             if (!found_in_base) {
@@ -3410,7 +3668,42 @@ void Compiler::CompileClass(const ClassDef* cls) {
         }
     }
 
-    if (cls->base_class) {
+    if (!interfaces.empty()) {
+        std::unordered_map<std::string, std::string> default_method_owner;
+        for (auto* iface : interfaces) {
+            for (auto& [mname, proto] : iface->default_methods) {
+                if (class_obj->methods.count(mname)) continue;
+                std::string origin = iface->default_method_origin.count(mname)
+                    ? iface->default_method_origin.at(mname) : iface->name;
+                auto owner_it = default_method_owner.find(mname);
+                if (owner_it != default_method_owner.end() && owner_it->second != origin) {
+                    throw AvaError("class '" + cls->name + "' inherits conflicting default implementations of '" +
+                                        mname + "' from '" + owner_it->second + "' and '" + origin +
+                                        "' -- provide an explicit override",
+                                    cls->line, cls->col, source_name_);
+                }
+                default_method_owner[mname] = origin;
+                class_obj->methods[mname] = proto;
+            }
+        }
+        for (auto* iface : interfaces) {
+            for (auto& sig_name : iface->signature_order) {
+                if (!class_obj->methods.count(sig_name)) {
+                    throw AvaError("class '" + cls->name + "' implements interface '" + iface->name +
+                                        "' but does not define method '" + sig_name + "'",
+                                    cls->line, cls->col, source_name_);
+                }
+            }
+        }
+    }
+    for (auto* iface : interfaces) {
+        class_obj->implemented_interfaces.insert(iface->name);
+        for (auto& base_name : iface->base_interfaces) {
+            class_obj->implemented_interfaces.insert(base_name);
+        }
+    }
+
+    if (base_class) {
         Value base_val;
         base_val.type = ValueType::Class;
         base_val.obj = base_class;
@@ -3486,7 +3779,8 @@ void MergeHarvestedClassInfo(Compiler& self, const HarvestedClassInfo& info,
                               std::unordered_map<std::string, std::unordered_map<std::string, TypeRef>>& field_types,
                               std::unordered_map<std::string, std::unordered_set<std::string>>& dynamic_attrs,
                               std::unordered_map<std::string, std::unordered_map<std::string, TypeRef>>& method_returns,
-                              std::unordered_map<std::string, std::unordered_map<std::string, std::vector<std::pair<std::string, Type>>>>& method_params) {
+                              std::unordered_map<std::string, std::unordered_map<std::string, std::vector<std::pair<std::string, Type>>>>& method_params,
+                              std::unordered_map<std::string, InterfaceInfo>& interfaces) {
     self.AdoptImportedClassRefs(info.keepalive);
     for (auto& [name, obj] : info.classes) {
         if (!compiled_classes.count(name)) compiled_classes[name] = obj;
@@ -3503,6 +3797,9 @@ void MergeHarvestedClassInfo(Compiler& self, const HarvestedClassInfo& info,
     for (auto& [name, params] : info.method_params) {
         if (!method_params.count(name)) method_params[name] = params;
     }
+    for (auto& [name, iface_info] : info.interfaces) {
+        if (!interfaces.count(name)) interfaces[name] = iface_info;
+    }
 }
 }  // namespace
 
@@ -3518,7 +3815,8 @@ void Compiler::RegisterImportedClasses(const std::string& module_name) {
     auto cached = cache.find(resolved);
     if (cached != cache.end()) {
         MergeHarvestedClassInfo(*this, cached->second, compiled_classes_, class_field_types_,
-                                 class_dynamic_attrs_, class_method_returns_, class_method_params_);
+                                 class_dynamic_attrs_, class_method_returns_, class_method_params_,
+                                 compiled_interfaces_);
         return;
     }
 
@@ -3539,7 +3837,8 @@ void Compiler::RegisterImportedClasses(const std::string& module_name) {
 
     cache[resolved] = harvested;
     MergeHarvestedClassInfo(*this, harvested, compiled_classes_, class_field_types_,
-                             class_dynamic_attrs_, class_method_returns_, class_method_params_);
+                             class_dynamic_attrs_, class_method_returns_, class_method_params_,
+                             compiled_interfaces_);
 }
 
 void Compiler::CompileExtern(const ExternStmt* stmt) {

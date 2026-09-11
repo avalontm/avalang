@@ -1,0 +1,32 @@
+diff --git a/TextEditor.cpp b/TextEditor.cpp
+index bb389fb..a2a252b 100644
+--- a/TextEditor.cpp
++++ b/TextEditor.cpp
+@@ -2334,6 +2334,7 @@ const TextEditor::Palette& TextEditor::GetDarkPalette() {
+ 		IM_COL32(199, 146, 234, 255),	// docParamTag ("@param name" tag, custom AvaLang addition) -- purple, stands out from both comment colors above
+ 		IM_COL32(255, 110, 199, 255),	// importPath (module path in `import x.y as z`, custom AvaLang addition) -- fuchsia, distinct from the purple-magenta interpolation color and the teal/purple doc-comment colors above
+ 		IM_COL32(184, 215, 163, 255),	// interfaceName (known interface name in `class X : IFoo` / `interface IFoo`, custom AvaLang addition) -- sage green, distinct from every color above; kept off Color::identifier since that slot is the engine's own default color for plain identifier text (see patches/README.md)
++		IM_COL32(156, 220, 254, 255),	// variableName (a variable being declared or assigned, custom AvaLang addition) -- soft light blue, distinct from every color above; kept off Color::identifier since that slot is the engine's own default color for plain identifier text (see patches/README.md)
+ 		IM_COL32( 30,  30,  30, 255),	// background
+ 		IM_COL32(224, 224, 224, 255),	// cursor
+ 		IM_COL32( 32,  96, 160, 255),	// selection
+@@ -2369,6 +2370,7 @@ const TextEditor::Palette& TextEditor::GetLightPalette()
+ 		IM_COL32(124,  58, 237, 255),	// docParamTag ("@param name" tag, custom AvaLang addition) -- purple, stands out from both comment colors above
+ 		IM_COL32(199,   0, 130, 255),	// importPath (module path in `import x.y as z`, custom AvaLang addition) -- fuchsia, distinct from the purple-magenta interpolation color and the teal/purple doc-comment colors above
+ 		IM_COL32( 60, 110,  40, 255),	// interfaceName (known interface name, custom AvaLang addition) -- darker sage green for the light palette, same rationale as above
++		IM_COL32( 14,  99, 156, 255),	// variableName (a variable being declared or assigned, custom AvaLang addition) -- darker blue for the light palette, same rationale as above
+ 		IM_COL32(255, 255, 255, 255),	// background
+ 		IM_COL32(  0,   0,   0, 255),	// cursor
+ 		IM_COL32(  0,   0,  96,  64),	// selection
+diff --git a/TextEditor.h b/TextEditor.h
+index c5da0e4..3ff13de 100644
+--- a/TextEditor.h
++++ b/TextEditor.h
+@@ -340,6 +340,7 @@ public:
+ 		docParamTag,	// "@param name" tag inside a doc-comment block (custom AvaLang addition, see patches/)
+ 		importPath,	// module path segment (`x` in `import x.y as z`, custom AvaLang addition, see patches/)
+ 		interfaceName,	// known interface name in `class X : IFoo` / `interface IFoo` (custom AvaLang addition, see patches/) -- kept separate from `identifier` (the engine's own default color for plain identifier text) so mapping one doesn't recolor the other; see patches/README.md
++		variableName,	// a variable being declared or assigned (custom AvaLang addition, see patches/) -- kept separate from `identifier` (the engine's own default color for plain identifier text) so only assignment targets get this color
+ 		background,
+ 		cursor,
+ 		selection,

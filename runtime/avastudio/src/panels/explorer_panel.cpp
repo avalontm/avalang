@@ -110,31 +110,52 @@ void DrawCreatePopup(ExplorerResult& result) {
         g_new_file_kind = util::ScaffoldKind::kClass;
         g_create_request.open = false;
     }
+    ImGui::SetNextWindowSize(ImVec2(320.0f, 0.0f), ImGuiCond_Appearing);
     if (ImGui::BeginPopup("##CreateEntry")) {
         ImGui::TextDisabled(
             "%s", (g_create_request.is_folder ? util::Tr("explorer.new_folder") : util::Tr("explorer.new_file"))
                       .c_str());
+        ImGui::Separator();
 
-        // Only meaningful for files -- a folder has no boilerplate to pick.
-        // Two radios rather than a combo: same reasoning as the Obfuscate/
-        // Zero-disk checkboxes in Build, this is a two-way, always-visible
-        // choice, not a longer list that would benefit from collapsing.
+        // Visual Studio "Add New Item" style: a selectable template list up
+        // top (only meaningful for files -- a folder has no boilerplate to
+        // pick), with the item's name pinned in its own field at the bottom
+        // instead of the previous single row of three radio buttons.
         if (!g_create_request.is_folder) {
-            bool is_class = g_new_file_kind == util::ScaffoldKind::kClass;
-            if (ImGui::RadioButton(util::Tr("explorer.new_file_kind_class").c_str(), is_class)) {
-                g_new_file_kind = util::ScaffoldKind::kClass;
+            struct TemplateOption { util::ScaffoldKind kind; const char* label_key; unsigned int color; };
+            static const TemplateOption kOptions[] = {
+                {util::ScaffoldKind::kClass, "explorer.new_file_kind_class", palette::kPrimary},
+                {util::ScaffoldKind::kInterface, "explorer.new_file_kind_interface", palette::kSynClass},
+                {util::ScaffoldKind::kScreen, "explorer.new_file_kind_screen", palette::kAccentGold},
+            };
+            ImGui::BeginChild("##template_list", ImVec2(0.0f, 76.0f), true);
+            for (const auto& opt : kOptions) {
+                ImGui::PushID(static_cast<int>(opt.kind));
+                DrawIcon(palette::U32FromHex(opt.color));
+                const bool selected = g_new_file_kind == opt.kind;
+                if (ImGui::Selectable(util::Tr(opt.label_key).c_str(), selected)) {
+                    g_new_file_kind = opt.kind;
+                }
+                ImGui::PopID();
             }
-            ImGui::SameLine();
-            if (ImGui::RadioButton(util::Tr("explorer.new_file_kind_screen").c_str(), !is_class)) {
-                g_new_file_kind = util::ScaffoldKind::kScreen;
-            }
+            ImGui::EndChild();
+            ImGui::Spacing();
         }
 
-        ImGui::SetNextItemWidth(200.0f);
+        ImGui::TextUnformatted(util::Tr("explorer.new_item_name_label").c_str());
+        ImGui::SetNextItemWidth(-1.0f);
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
         const bool enter =
             ImGui::InputText("##name", g_name_buf, sizeof(g_name_buf), ImGuiInputTextFlags_EnterReturnsTrue);
-        const bool create_clicked = ImGui::Button(util::Tr("explorer.create").c_str());
+
+        ImGui::Spacing();
+        const float button_w = 84.0f;
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - button_w * 2.0f - spacing);
+        const bool cancel_clicked = ImGui::Button(util::Tr("common.cancel").c_str(), ImVec2(button_w, 0.0f));
+        ImGui::SameLine();
+        const bool create_clicked = ImGui::Button(util::Tr("explorer.create").c_str(), ImVec2(button_w, 0.0f));
+        if (cancel_clicked) ImGui::CloseCurrentPopup();
         if ((enter || create_clicked) && g_name_buf[0] != '\0') {
             std::error_code ec;
             fs::path target = fs::path(g_create_request.target_dir) / g_name_buf;

@@ -45,6 +45,10 @@ const std::unordered_map<std::string, FunctionSignature>& DefaultBuiltinSignatur
                  "Returns the type name of value as a string: \"nil\", \"bool\", \"number\", "
                  "\"string\", \"list\", \"dict\", \"function\", \"instance\", \"class\", "
                  "\"coroutine\", \"native\", \"bound\", or \"exception\"."));
+        add(Make("typeof", {"value"}, false,
+                 "Like type(), but for an instance or a class returns the concrete class name "
+                 "instead of the generic \"instance\"/\"class\". Anything else falls back to "
+                 "the same result as type()."));
         add(Make("str", {"value"}, false,
                  "Converts value to its display string (the same formatting print() uses)."));
         add(Make("int", {"value"}, false,

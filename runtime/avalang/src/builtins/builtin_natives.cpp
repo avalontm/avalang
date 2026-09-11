@@ -17,6 +17,18 @@ ava_value_t builtin_type(AvaVM*, const ava_value_t* args, size_t count, void*) {
     return ToCNew(Value::String(TypeName(FromC(args[0]))));
 }
 
+ava_value_t builtin_typeof(AvaVM*, const ava_value_t* args, size_t count, void*) {
+    if (count < 1) return ToCNew(Value::String("nil"));
+    Value v = FromC(args[0]);
+    if (v.type == ValueType::Instance) {
+        return ToCNew(Value::String(static_cast<InstanceObj*>(v.obj)->cls->name));
+    }
+    if (v.type == ValueType::Class) {
+        return ToCNew(Value::String(static_cast<ClassObj*>(v.obj)->name));
+    }
+    return ToCNew(Value::String(TypeName(v)));
+}
+
 ava_value_t builtin_str(AvaVM*, const ava_value_t* args, size_t count, void*) {
     if (count < 1) return ToCNew(Value::String(""));
     return ToCNew(Value::String(ToDisplayString(FromC(args[0]))));

@@ -166,4 +166,30 @@ void OpGe(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM&
     }
 }
 
+namespace {
+bool ClassMatchesTypeName(ClassObj* cls, const avastd::string& name) {
+    ClassObj* cur = cls;
+    while (cur) {
+        if (cur->name == name) return true;
+        if (cur->implemented_interfaces.count(name)) return true;
+        auto base_it = cur->attrs.find("__base__");
+        if (base_it == cur->attrs.end() || base_it->second.type != ValueType::Class) break;
+        cur = static_cast<ClassObj*>(base_it->second.obj);
+    }
+    return false;
+}
+}  // namespace
+
+void OpIs(CallFrame& frame, const Instr& in, const avastd::vector<Value>& K, VM& vm) {
+    auto& Rb = frame.registers[in.b];
+    auto* type_name = static_cast<StringObj*>(K[in.c].obj);
+    bool result = false;
+    if (Rb.type == ValueType::Instance) {
+        result = ClassMatchesTypeName(static_cast<InstanceObj*>(Rb.obj)->cls, type_name->data);
+    } else if (Rb.type == ValueType::Class) {
+        result = ClassMatchesTypeName(static_cast<ClassObj*>(Rb.obj), type_name->data);
+    }
+    frame.registers[in.a] = Value::Bool(result);
+}
+
 } // namespace ava

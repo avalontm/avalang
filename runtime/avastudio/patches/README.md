@@ -24,6 +24,98 @@ This patch:
   interpolation no longer closes the string early.
 - Along the way, fixes the bug above (`comment` -> `string` color).
 
+## imguicolortextedit_import_path.patch
+
+`ImGuiColorTextEdit` has no `Color::...` value for "a module path in an
+import statement" -- upstream (and our other patches) don't need one,
+so there's nowhere to point AvaLang's `import x.y as z` path segments
+if we want them colored differently from the `import`/`as` keywords
+and from plain identifiers.
+
+This patch:
+- Adds `Color::importPath` to the enum and to the default dark/light
+  palettes (Ava Studio overrides them anyway in `InitEditorPanel`, same
+  as `interpolation`).
+
+That's it -- no colorizer changes. Unlike `interpolation` or
+`docComment`/`docParamTag`, this one doesn't need a state machine
+inside `TextEditor::Colorizer::update()`: AvaLang's own
+`customTokenizer` (`avalang_language.cpp`) already runs for every
+plain-text token and can return `Color::importPath` directly for the
+`NAME ('.' NAME)*` segments after `import`, the same way it already
+returns `Color::identifier`/`Color::preprocessor` for interface/class
+names in a heritage clause. See `AvaLangTokenizer`'s
+`kExpectImportPath`/`kExpectMoreImportPath` states.
+
+## imguicolortextedit_interface_name.patch
+
+Reported bug: text typed in the editor defaulted to green instead of
+white, and only turned another color once the tokenizer recognized
+it as something specific.
+
+Root cause: `Color::identifier` is upstream's own default color for
+*any* plain identifier the colorizer doesn't otherwise recognize --
+every variable, parameter, or name you type falls through to this
+slot when nothing more specific claims it (see `renderText()`'s
+fallback). AvaLang's `customTokenizer`
+(`avalang_language.cpp::AvaLangTokenizer`) was *also* returning
+`Color::identifier` for a known interface name (`class X : IFoo`,
+`interface IFoo`), and `InitEditorPanel()` mapped that single slot to
+`kSynInterface` (green). Same slot, two different meanings -- so
+everything you typed inherited the green meant only for interfaces.
+
+This patch:
+- Adds `Color::interfaceName` to the enum and to the default
+  dark/light palettes (Ava Studio overrides them anyway in
+  `InitEditorPanel`, same as `importPath`).
+
+No colorizer changes, same shape as `imguicolortextedit_import_path.patch`:
+`AvaLangTokenizer` already runs for every plain-text token, so its
+`kExpectClassName`/`kExpectBaseName` states now return
+`Color::interfaceName` instead of `Color::identifier` for interface
+names, leaving `Color::identifier` free to mean what upstream
+intended -- the default text color -- and `InitEditorPanel()` now
+maps `Color::identifier` to `kSynIdentifier` (plain white,
+`palette::kSynVariable`) and `Color::interfaceName` to
+`kSynInterface` (green) separately.
+
+## imguicolortextedit_variable_name.patch
+
+Follow-up to `imguicolortextedit_interface_name.patch`: `Color::identifier`
+was freed to mean "plain default text" (white), but AvaLang had no slot to
+point to for "this identifier is a variable being declared or assigned" --
+so a variable and a plain, unanalyzed identifier looked identical.
+
+This patch:
+- Adds `Color::variableName` to the enum and to the default dark/light
+  palettes, same shape as `interfaceName`/`importPath`.
+
+No colorizer changes -- `AvaLangTokenizer` (`avalang_language.cpp`) now
+returns `Color::variableName` instead of leaving the token unhandled
+(falling through to `Color::identifier`) when it recognizes one of these
+patterns, tracked with a `paren_depth_` counter (incremented/decremented
+on `(`/`)`) so a named call argument (`foo(x = 1)`) isn't mistaken for a
+declaration:
+- `NAME '='` (not `==`), at paren depth 0 -- `assignStatement`.
+- `NAME` followed by `+=`, `-=`, `*=`, `/=`, `%=`, or `//=` -- `augAssignStatement`.
+- `NAME 'as' NAME` -- `typedAssignStatement`/`typedDeclStatement`, at any
+  paren depth (this pattern is unambiguous even inside a parameter list,
+  since call-site named args never use `as`).
+- `NAME 'in'` -- the loop variable in `for NAME in exprList`.
+
+### Known limitations of this detection
+- Only the last name before `=`/`in` is caught in `a, b = 1, 2` or
+  `for a, b in items` (multi-target assignment/for) -- the earlier names
+  stay the default color.
+- A parameter default without a type annotation (`func foo(x = 1)`) is
+  indistinguishable from a named call argument with the same syntax
+  (`foo(x = 1)`) under a single-token lookahead, so it's left uncolored
+  (default) rather than risk miscoloring call sites. Typed parameters
+  (`func foo(x as int = 1)`) are still caught via the `as` check.
+- `obj.attr = x` colors `attr` as a variable too (the tokenizer doesn't
+  track that a `.` preceded it) -- harmless, since it's still an
+  assignment target.
+
 ## Known limitations (documented, not surprise bugs)
 - `{}` counting is per line (it resets on every new line). An
   f-string with an interpolation that spans a line break without
@@ -179,12 +271,16 @@ moved..." section above for an example of how this was
 diagnosed/fixed last time.
 
 ## Application order
-`CMakeLists.txt` applies the two patches in a single call to
+`CMakeLists.txt` applies all six patches in a single call to
 `git apply` (it accepts multiple files and applies them in order on
-the clean clone): first `imguicolortextedit_interpolation.patch`,
-then `imguicolortextedit_bold_keywords.patch`. They don't overlap --
-they touch different parts of the file (colorizer/palette for the
-first, `renderText()` and the `TextEditor` class for the second) --
-but if a third patch is ever added, keep the order and test
-`git apply patch1 patch2 patch3` by hand on a clean clone before
-pushing it (see AvaStudio.md).
+the clean clone): `imguicolortextedit_interpolation.patch`,
+`imguicolortextedit_bold_keywords.patch`,
+`imguicolortextedit_doc_comment.patch`,
+`imguicolortextedit_import_path.patch`,
+`imguicolortextedit_interface_name.patch`, then
+`imguicolortextedit_variable_name.patch`. They don't overlap -- each
+touches a distinct part of the file (or, for the last four, appends
+its own enum entry and palette lines right after the previous
+patch's) -- but if another patch is ever added, keep the order and
+test `git apply patch1 patch2 patch3 patch4 patch5 patch6` by hand on
+a clean clone before pushing it (see AvaStudio.md).

@@ -64,6 +64,47 @@ struct EditorTab {
     bool context_menu_click_valid = false;
     TextEditor::CursorPosition context_menu_click_pos;
 
+    // One entry per interface, in a class heritage clause declared in *this*
+    // buffer (ClassInfo::source_file.empty()), that the class doesn't fully
+    // implement, recomputed alongside class_index in RebuildIndexAndTrie.
+    // Drives the yellow "missing interface members" squiggle under that
+    // interface's name (VS/Roslyn style: `class C : IShape` underlines
+    // IShape, not C) and the right-click "Implementar interfaz" quick-fix --
+    // see DrawIncompleteInterfaceSquiggles and ImplementMissingInterfaceMembers
+    // in editor_panel.cpp.
+    struct IncompleteInterface {
+        std::string class_name;
+        std::string interface_name;
+        int line = 0;
+        std::vector<ClassMember> missing_members;
+    };
+    std::vector<IncompleteInterface> incomplete_interfaces;
+
+    // Interface names this tab contributed to languages::KnownInterfaceNames
+    // (the tokenizer's shared, reference-counted table) as of the last
+    // RebuildIndexAndTrie. Diffed against the freshly computed set on the
+    // next rebuild -- and handed to languages::UpdateKnownInterfaceNames as
+    // "release everything" on tab close -- so one tab renaming, deleting, or
+    // closing an interface never steals its color out from under another
+    // open tab that still declares it. See RebuildIndexAndTrie and
+    // CloseTabNow in editor_panel.cpp.
+    std::unordered_set<std::string> known_interface_names;
+
+    // Generation of languages::KnownInterfaceNamesGeneration() this tab's
+    // editor was last colorized against. -1 so the very first render always
+    // forces a colorize (see the staleness check next to tab.editor.Render()
+    // in DrawEditorPanel). Kept per-tab, not global, because each tab's
+    // editor caches its own colorization -- one tab catching up doesn't mean
+    // another one has.
+    int colored_interface_generation = -1;
+
+    // Same mechanism as known_interface_names/colored_interface_generation
+    // above, for variable names contributed to
+    // languages::KnownVariableRefCounts (see RebuildIndexAndTrie and
+    // CloseTabNow in editor_panel.cpp).
+    std::unordered_set<std::string> known_variable_names;
+    int colored_variable_generation = -1;
+
     std::string GetText() const { return editor.GetText(); }
     void SetText(const std::string& text) { editor.SetText(text); }
 

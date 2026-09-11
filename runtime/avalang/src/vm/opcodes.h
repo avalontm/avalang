@@ -63,6 +63,10 @@ enum class OpCode : avastd::uint8_t {
     CATCH,       // sBx(32)  if exception active, jump (32-bit)
     RAISE,       // A         raise exception from R[A]
     ARGC,        // A        R[A] = number of args the current call actually received (Number)
+    // Fase 4 del plan de interfaces: `obj is TypeName`. Camina obj's
+    // ClassObj (concreto, y luego su cadena __base__) comparando el
+    // nombre de cada nivel + su implemented_interfaces contra K[Bx].
+    IS,          // A, B, Bx R[A] = R[B] is K[Bx]
 };
 
 // iABC-style fixed-width instruction, same family as Lua's own encoding.
