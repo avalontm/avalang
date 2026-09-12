@@ -12,6 +12,7 @@
 #include "languages/fold_index.h"
 #include "languages/function_index.h"
 #include "languages/member_access_resolver.h"
+#include "languages/workspace_index.h"
 #include "panels/properties_panel.h"
 #include "util/log_bridge.h"
 
@@ -149,6 +150,8 @@ struct EditorState {
 
     std::string modules_path;
 
+    WorkspaceIndex workspace_index;
+
     LogBridge* log_bridge = nullptr;
 
     EditorTab* Active();
@@ -174,7 +177,7 @@ EditorTab& OpenWelcomeTab(EditorState& state);
 
 void SaveActiveTab(EditorState& state);
 
-void SaveTab(EditorTab& tab);
+void SaveTab(EditorState& state, EditorTab& tab);
 
 bool HasUnsavedChanges(const EditorState& state);
 
@@ -194,7 +197,7 @@ void CloseTabForPath(EditorState& state, const std::string& path);
 
 void RenameTabPath(EditorState& state, const std::string& old_path, const std::string& new_path);
 
-void ToggleTabViewMode(EditorTab& tab);
+void ToggleTabViewMode(EditorState& state, EditorTab& tab);
 
 void ToggleFold(EditorTab& tab, int start_line);
 

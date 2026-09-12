@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <filesystem>
 #include <fstream>
+#include <algorithm>
 
 namespace ava {
 
@@ -975,7 +976,7 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
 
         for (size_t i = 0; i < parent_locals_.size(); ++i) {
             auto& pname = parent_locals_[i].first;
-            if (locals_.count(pname)) continue;  // el local propio del padre ya gana (loop de arriba)
+            if (locals_.count(pname)) continue; 
             sub.parent_locals_.push_back({pname, static_cast<uint16_t>(i)});
             sub.proto_->upvalue_descs.push_back({false, static_cast<uint16_t>(i)});
             sub.next_reg_++;
@@ -2839,16 +2840,11 @@ void Compiler::CompileFunc(const FuncDef* func) {
     Emit(OpCode::SETGLOBAL, reg, name_idx);
 }
 
-// Plan de anotaciones (AvaLang_Plan_Anotaciones.md), Fase 2. Ver el
-// comentario de la declaración en compiler.h para el contrato completo.
 void Compiler::ValidateEntryAttributes(const FuncDef* func, const std::string& owner_class) {
     if (func->attributes.empty()) return;
 
     for (auto& attr : func->attributes) {
-        // Whitelist de anotaciones reconocidas -- hoy solo "entry". Un
-        // nombre no reconocido (typo tipo `[mian]`, o una anotación de
-        // una fase futura que todavía no existe) es un error duro en vez
-        // de ignorarse en silencio, tal como pide el plan.
+
         if (attr != "entry") {
             std::string msg = "unknown annotation '[" + attr + "]'" +
                                (owner_class.empty()
@@ -2895,12 +2891,7 @@ void Compiler::ValidateEntryAttributes(const FuncDef* func, const std::string& o
 
 void Compiler::CompileChunk(const std::vector<std::shared_ptr<StmtNode>>& stmts) {
     RejectDuplicateFuncDefs(stmts, source_name_);
-    // Fase 2 de anotaciones: solo a nivel top-level -- CompileChunk
-    // también compila cuerpos de función (CompileFunc llama a
-    // sub.CompileChunk(func->body)), y `[entry]` no aplica a funciones
-    // anidadas dentro de otra función (decisión de diseño #1 del plan:
-    // solo funciones sueltas y métodos). CompileClass (abajo) cubre el
-    // otro caso válido -- métodos.
+
     if (is_top_level_) {
         for (auto& stmt : stmts) {
             if (auto* f = dynamic_cast<FuncDef*>(stmt.get())) {
@@ -2971,6 +2962,7 @@ std::shared_ptr<Proto> Compiler::Compile(const std::shared_ptr<Chunk>& chunk,
         current_file_dir_ = std::filesystem::path(source_name_).parent_path().string();
         (void)ec;
     }
+    AutoImportSiblings(chunk->statements);
     CompileChunk(chunk->statements);
     if (result_reg_ > 0 || next_reg_ > 0) {
         Emit(OpCode::RETURN, result_reg_ > 0 ? result_reg_ : 0, result_reg_ > 0 ? 1 : 0);
@@ -2978,12 +2970,7 @@ std::shared_ptr<Proto> Compiler::Compile(const std::shared_ptr<Chunk>& chunk,
         Emit(OpCode::RETURN, 0, 0);
     }
     proto_->num_registers = max_reg_ + 1;
-    // Fase 2 de anotaciones: vuelca lo que haya encontrado
-    // ValidateEntryAttributes (CompileChunk a nivel top-level + todo
-    // CompileClass que corrió durante este Compile()) al Proto top-level
-    // que se devuelve acá. Vacío si el programa no usa `[entry]` --
-    // Fase 3 (VM) debe interpretar eso como "sin cambios de
-    // comportamiento", no como error.
+
     if (entry_found_) {
         proto_->entry_func_name = entry_func_name_;
         proto_->entry_class_name = entry_class_name_;
@@ -3486,6 +3473,7 @@ void Compiler::CompileInterface(const InterfaceDef* iface) {
     }
 
     compiled_interfaces_[iface->name] = std::move(info);
+    own_declared_types_.insert(iface->name);
 }
 
 void Compiler::CompileClass(const ClassDef* cls) {
@@ -3555,15 +3543,7 @@ void Compiler::CompileClass(const ClassDef* cls) {
         for (auto& stmt : cls->body) {
             auto* f = dynamic_cast<FuncDef*>(stmt.get());
             if (!f) continue;
-            // A method sharing its name with the class is normally the
-            // constructor (compiled below as `__init__`). Constructors are
-            // never `static` -- they exist to initialize `this` and run via
-            // `new ClassName()`, not `ClassName.methodName()` -- so if the
-            // author wrote `static` here it's ambiguous/almost certainly a
-            // mistake (e.g. copying a C#/Java `static void Main()` pattern
-            // without realizing it collides with the constructor name in
-            // AvaLang). Reject it up front with a clear message instead of
-            // silently guessing what was meant.
+
             if (f->name == cls->name && f->is_static) {
                 std::string msg = "constructor '" + cls->name + "' cannot be marked 'static' -- "
                                    "constructors always run against an instance (via 'new " + cls->name +
@@ -3609,10 +3589,7 @@ void Compiler::CompileClass(const ClassDef* cls) {
 
     RejectDuplicateFieldDefs(cls->body, source_name_);
     RejectDuplicateFuncDefs(cls->body, source_name_);
-    // Fase 2 de anotaciones: por cada método de esta clase (no
-    // recursivo -- cls->body son los métodos declarados directamente acá,
-    // no los heredados, que ya se validaron cuando se compiló la clase
-    // base).
+
     for (auto& stmt : cls->body) {
         if (auto* f = dynamic_cast<FuncDef*>(stmt.get())) {
             ValidateEntryAttributes(f, cls->name);
@@ -3690,23 +3667,10 @@ void Compiler::CompileClass(const ClassDef* cls) {
     for (auto& stmt : cls->body) {
         auto* f = dynamic_cast<FuncDef*>(stmt.get());
         if (!f) continue;
-        // A `static` method sharing the class's name was already rejected
-        // above with an explicit error, so by this point `is_ctor` being
-        // true always means a real (non-static) constructor.
+
         bool is_ctor = f->name == cls->name;
         std::string method_name = is_ctor ? "__init__" : f->name;
 
-        // `override` (memberModifier, grammar/AvaLang.g4): purely a
-        // compile-time assertion that a base method by this name actually
-        // exists -- AvaLang already lets a same-named subclass method
-        // shadow the base one with no keyword (base methods are copied
-        // into class_obj->methods above, then this loop's own entries
-        // overwrite them), so this doesn't change what gets compiled.
-        // class_method_params_[cls->name] was seeded from base_class's
-        // entries a few lines above (still holds only inherited names at
-        // this point in the loop, since this loop is what starts
-        // overwriting/adding to it), so checking it here tells us whether
-        // an inherited method by this name exists.
         if (f->is_override) {
             if (is_ctor) {
                 throw AvaError("constructor '" + f->name + "' cannot be marked 'override' -- " +
@@ -3811,10 +3775,6 @@ void Compiler::CompileClass(const ClassDef* cls) {
             uint16_t min_registers = static_cast<uint16_t>(real_param_count + 1);
             sub.proto_->num_registers = std::max<uint16_t>(sub.max_reg_ + 1, min_registers);
 
-            // A `static` method sharing the class's name is rejected earlier
-            // in this function with an explicit compile error (see the
-            // duplicate-methods loop above), so by the time we get here
-            // `f->name == cls->name` can only mean a real constructor.
             bool is_constructor = f->name == cls->name;
             std::string method_name = is_constructor ? "__init__" : f->name;
             class_obj->methods[method_name] = sub.proto_;
@@ -3862,6 +3822,15 @@ void Compiler::CompileClass(const ClassDef* cls) {
         }
     }
 
+    if (compiled_classes_.count(cls->name)) {
+        auto owner_it = imported_type_owner_.find(cls->name);
+        std::string other = owner_it != imported_type_owner_.end() ? owner_it->second : "another file in the same namespace";
+        throw AvaError("'" + cls->name + "' is declared as a class in two files of the same namespace:\n  " +
+                            other + "\n  " + source_name_ +
+                            "\n-- rename one of them, or move it to a separate subfolder.",
+                        cls->line, cls->col, source_name_);
+    }
+
     if (base_class) {
         Value base_val;
         base_val.type = ValueType::Class;
@@ -3871,6 +3840,7 @@ void Compiler::CompileClass(const ClassDef* cls) {
         compiled_classes_[cls->name + ".__base__"] = class_obj;
     }
     compiled_classes_[cls->name] = class_obj;
+    own_declared_types_.insert(cls->name);
 
     Value class_val;
     class_val.type = ValueType::Class;
@@ -3916,52 +3886,107 @@ void Compiler::CompileImport(const ImportStmt* stmt) {
 }
 
 namespace {
-// Bug nuevo (encontrado en esta pasada): esta funcion resolvia
-// "existe el sibling .ava?" con std::filesystem::exists, que solo ve
-// el disco real del SO -- bypaseando por completo la PAL
-// (VmPlatformAccessor, ver su propio comentario: "Provides VM,
-// Runtime, and Compiler with a single entry point to OS services").
-// VM::DoImport y ModuleResolver ya pasan por VmPlatformAccessor::Get()
-// (Fase 7, avapack, filesystem virtual en memoria) precisamente para
-// que un .exe empacado con MemoryOverridePlatform -- que nunca escribe
-// source/bytecode a disco real -- pueda resolver imports contra su
-// filesystem virtual. Esta funcion (el harvesting estatico de clases
-// para el chequeo de 'new', agregado despues de la Fase 7) se quedo
-// usando std::filesystem crudo: en un .exe empacado, el sibling .ava
-// jamas existe en disco real (por diseno), asi que esto siempre
-// devolvia "" -- la clase nunca se registraba en compiled_classes_ y
-// 'new Program()' fallaba con "'Program' is not a class" aunque el
-// modulo se resuelva perfectamente en runtime (DoImport si pasa por la
-// PAL). Fix: usar VmPlatformAccessor::Get().FileSystem() para Exists,
-// igual que ModuleResolver::ResolveModulePath (module.cpp). Fuera de
-// un .exe empacado, VmPlatformAccessor::Get() sin override devuelve el
-// IPlatform real (disco real), asi que el comportamiento para
-// ava_cli/avahost/AvaStudio no cambia.
-std::string ResolveSiblingImportFile(const std::string& module_name, const std::string& current_dir) {
+std::vector<std::string> ListLooseAvaFiles(const std::string& dir);
+}
+
+void Compiler::AutoImportSiblings(const std::vector<std::shared_ptr<StmtNode>>& statements) {
+    if (current_file_dir_.empty()) return;
+
+    std::string self_name = std::filesystem::path(source_name_).filename().string();
+
+    // When compiling a folder/namespace import, the VM already concatenates every
+    // loose .ava file in the directory into this single compilation unit under the
+    // synthetic name "(namespace).ava" (see vm_import.cpp). Since that name never
+    // matches a real sibling filename, the self-exclusion check below would fail to
+    // recognize any of them as "self" and would re-import each one as a sibling,
+    // redeclaring every class a second time. All siblings are already part of this
+    // source, so there is nothing left to auto-import.
+    if (self_name == "(namespace).ava") return;
+
+    std::unordered_set<std::string> already_imported;
+    for (auto& stmt : statements) {
+        if (auto* imp = dynamic_cast<ImportStmt*>(stmt.get())) {
+            if (imp->module_path.size() == 1) already_imported.insert(imp->module_path[0]);
+        }
+    }
+
+    std::vector<std::string> siblings;
+    for (auto& file : ListLooseAvaFiles(current_file_dir_)) {
+        std::string name = std::filesystem::path(file).filename().string();
+        if (name == self_name) continue;
+        std::string module_name = name.substr(0, name.size() - 4);
+        if (already_imported.count(module_name)) continue;
+        siblings.push_back(module_name);
+    }
+
+    for (auto& module_name : siblings) {
+        ImportStmt synthetic(std::vector<std::string>{module_name});
+        CompileImport(&synthetic);
+    }
+}
+
+namespace {
+
+std::string JoinDirPath(const std::string& a, const std::string& b) {
     namespace fs = std::filesystem;
+    if (a.empty()) return b;
+    char last = a.back();
+    if (last == '/' || last == '\\') return a + b;
+    return (fs::path(a) / b).string();
+}
+
+std::vector<std::string> ListLooseAvaFiles(const std::string& dir) {
+    avastd::vector<platform::DirEntry> entries;
+    std::vector<std::string> result;
+    if (!VmPlatformAccessor::Get().FileSystem().EnumerateDirectory(dir, entries)) return result;
+    for (auto& entry : entries) {
+        if (entry.is_directory) continue;
+        const std::string name(entry.name.c_str());
+        if (name.size() <= 4 || name.compare(name.size() - 4, 4, ".ava") != 0) continue;
+        result.push_back(JoinDirPath(dir, name));
+    }
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
+std::vector<std::string> ResolveSiblingImportFiles(const std::string& module_name, const std::string& current_dir) {
     auto& fsys = VmPlatformAccessor::Get().FileSystem();
-
     std::string base = current_dir.empty() ? std::string(".") : current_dir;
-    auto join = [](const std::string& a, const std::string& b) {
-        if (a.empty()) return b;
-        char last = a.back();
-        if (last == '/' || last == '\\') return a + b;
-        return (fs::path(a) / b).string();
-    };
 
-    std::string candidate = join(base, module_name + ".ava");
-    if (fsys.Exists(candidate)) return candidate;
+    std::string candidate = JoinDirPath(base, module_name + ".ava");
+    if (fsys.Exists(candidate)) return {candidate};
 
-    candidate = join(join(base, module_name), "index.ava");
-    if (fsys.Exists(candidate)) return candidate;
+    std::string module_dir = JoinDirPath(base, module_name);
+    candidate = JoinDirPath(module_dir, "index.ava");
+    if (fsys.Exists(candidate)) return {candidate};
 
-    return "";
+    if (fsys.IsDirectory(module_dir)) {
+        auto loose = ListLooseAvaFiles(module_dir);
+        if (!loose.empty()) return loose;
+    }
+
+    return {};
 }
 }
 
 namespace {
 
-void MergeHarvestedClassInfo(Compiler& self, const HarvestedClassInfo& info,
+void ClaimTypeOwner(std::unordered_map<std::string, std::string>& owner,
+                     const std::string& name, const std::string& source_file,
+                     const std::string& kind, const std::string& compiling_source) {
+    auto it = owner.find(name);
+    if (it != owner.end() && it->second != source_file) {
+        throw AvaError("'" + name + "' is declared as a " + kind + " in two files of the same namespace:\n  " +
+                            it->second + "\n  " + source_file +
+                            "\n-- rename one of them, or move it to a separate subfolder.",
+                        0, 0, compiling_source);
+    }
+    owner[name] = source_file;
+}
+
+void MergeHarvestedClassInfo(Compiler& self, const HarvestedClassInfo& info, const std::string& source_file,
+                              std::unordered_map<std::string, std::string>& type_owner,
+                              const std::string& compiling_source,
                               std::unordered_map<std::string, ClassObj*>& compiled_classes,
                               std::unordered_map<std::string, std::unordered_map<std::string, TypeRef>>& field_types,
                               std::unordered_map<std::string, std::unordered_set<std::string>>& dynamic_attrs,
@@ -3970,6 +3995,7 @@ void MergeHarvestedClassInfo(Compiler& self, const HarvestedClassInfo& info,
                               std::unordered_map<std::string, InterfaceInfo>& interfaces) {
     self.AdoptImportedClassRefs(info.keepalive);
     for (auto& [name, obj] : info.classes) {
+        ClaimTypeOwner(type_owner, name, source_file, "class", compiling_source);
         if (!compiled_classes.count(name)) compiled_classes[name] = obj;
     }
     for (auto& [name, fields] : info.field_types) {
@@ -3985,51 +4011,49 @@ void MergeHarvestedClassInfo(Compiler& self, const HarvestedClassInfo& info,
         if (!method_params.count(name)) method_params[name] = params;
     }
     for (auto& [name, iface_info] : info.interfaces) {
+        ClaimTypeOwner(type_owner, name, source_file, "interface", compiling_source);
         if (!interfaces.count(name)) interfaces[name] = iface_info;
     }
 }
 }  // namespace
 
 void Compiler::RegisterImportedClasses(const std::string& module_name) {
-    std::string resolved = ResolveSiblingImportFile(module_name, current_file_dir_);
-    if (resolved.empty()) return;
+    std::vector<std::string> resolved_files = ResolveSiblingImportFiles(module_name, current_file_dir_);
+    if (resolved_files.empty()) return;
 
     std::unordered_set<std::string> owned_chain;
     std::unordered_map<std::string, HarvestedClassInfo> owned_cache;
     std::unordered_set<std::string>& chain = import_chain_ ? *import_chain_ : owned_chain;
     auto& cache = import_class_cache_ ? *import_class_cache_ : owned_cache;
 
-    auto cached = cache.find(resolved);
-    if (cached != cache.end()) {
-        MergeHarvestedClassInfo(*this, cached->second, compiled_classes_, class_field_types_,
-                                 class_dynamic_attrs_, class_method_returns_, class_method_params_,
-                                 compiled_interfaces_);
-        return;
+    for (const std::string& resolved : resolved_files) {
+        auto cached = cache.find(resolved);
+        if (cached != cache.end()) {
+            MergeHarvestedClassInfo(*this, cached->second, resolved, imported_type_owner_, source_name_,
+                                     compiled_classes_, class_field_types_, class_dynamic_attrs_,
+                                     class_method_returns_, class_method_params_, compiled_interfaces_);
+            continue;
+        }
+
+        if (chain.count(resolved)) continue;
+
+        std::string source;
+        if (!VmPlatformAccessor::Get().FileSystem().ReadFile(resolved, source)) continue;
+
+        chain.insert(resolved);
+        HarvestedClassInfo harvested;
+        try {
+            harvested = HarvestImportedClasses(source, resolved, chain, cache);
+        } catch (...) {
+            harvested = {};
+        }
+        chain.erase(resolved);
+
+        cache[resolved] = harvested;
+        MergeHarvestedClassInfo(*this, harvested, resolved, imported_type_owner_, source_name_, compiled_classes_,
+                                 class_field_types_, class_dynamic_attrs_, class_method_returns_,
+                                 class_method_params_, compiled_interfaces_);
     }
-
-    if (chain.count(resolved)) return;
-
-    // Mismo motivo que en ResolveSiblingImportFile: leer con
-    // std::ifstream bypasea la PAL, asi que en un .exe empacado
-    // (MemoryOverridePlatform) esto nunca encontraba el contenido real
-    // del sibling. Ahora pasa por VmPlatformAccessor::Get().FileSystem(),
-    // igual que VM::DoImport (vm_import.cpp).
-    std::string source;
-    if (!VmPlatformAccessor::Get().FileSystem().ReadFile(resolved, source)) return;
-
-    chain.insert(resolved);
-    HarvestedClassInfo harvested;
-    try {
-        harvested = HarvestImportedClasses(source, resolved, chain, cache);
-    } catch (...) {
-        harvested = {};
-    }
-    chain.erase(resolved);
-
-    cache[resolved] = harvested;
-    MergeHarvestedClassInfo(*this, harvested, compiled_classes_, class_field_types_,
-                             class_dynamic_attrs_, class_method_returns_, class_method_params_,
-                             compiled_interfaces_);
 }
 
 void Compiler::CompileExtern(const ExternStmt* stmt) {

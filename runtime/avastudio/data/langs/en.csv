@@ -19,7 +19,7 @@ menu.edit,Edit
 menu.edit.find_in_project,Find in Project...
 menu.view,View
 menu.run,Run
-menu.run.run_script,Run Script
+menu.run.run_script,Run
 menu.run.run_project,Run Project
 menu.run.check,Check
 menu.run.build,Build Executable...
@@ -54,7 +54,7 @@ explorer.project_properties,Properties
 common.cancel,Cancel
 panel.editor.title,Code Editor
 editor.no_file_open,No file open. Use File > Open or double-click a file in Explorer.
-editor.welcome.open_file,Open File...
+editor.welcome.open_project,Open Project...
 editor.welcome.hint,Or double-click a file in Explorer to start editing.
 editor.tab.welcome,Welcome
 editor.tab.untitled,Untitled
@@ -237,12 +237,14 @@ new_project.section_location,Location
 new_project.name_label,Project name
 new_project.name_hint,MyProject
 new_project.destination_label,Destination folder
-new_project.section_template,Project type
+new_project.section_template,Project template
 new_project.template_console,Console
 new_project.template_console_desc,"A single main.ava -- ideal for scripts, tools and console programs."
 new_project.template_ui,UI
 new_project.template_ui_desc,"Adds app.ava, styles.ava and a starter screen under views/, ready to design interfaces."
-new_project.preview_header,Will create:
+new_project.search_hint,Search for templates
+new_project.filter_all,All categories
+new_project.no_results,No templates match your search.
 new_project.create_button,Create Project
 new_project.error_name_required,Enter a project name.
 new_project.error_destination_required,Choose a destination folder.

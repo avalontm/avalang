@@ -78,11 +78,40 @@ bool MemoryFileSystem::DeleteDirectory(const avastd::string& path) {
 }
 
 bool MemoryFileSystem::EnumerateDirectory(const avastd::string& path, avastd::vector<DirEntry>& out_entries) {
-    // No implementado sobre el mapa virtual (ModuleResolver/ModuleCache
-    // nunca lo necesitan -- solo usan ReadFile/Exists, ver module.cpp).
-    // Delega al fallback para no romper otros consumidores de IFileSystem
-    // (p.ej. el explorador de proyecto de avastudio) si alguna vez corren
-    // bajo este override.
+    avastd::string prefix = NormalizeKey(path);
+    if (!prefix.empty() && prefix.back() != '/') prefix += '/';
+
+    avastd::unordered_map<avastd::string, bool> children;  // name -> is_directory
+    {
+        avastd::lock_guard<avastd::mutex> lock(mutex_);
+        for (auto& [key, entry] : files_) {
+            (void)entry;
+            if (key.size() <= prefix.size() || key.compare(0, prefix.size(), prefix) != 0) continue;
+            avastd::string rest = key.substr(prefix.size());
+            size_t slash = rest.find('/');
+            if (slash == avastd::string::npos) {
+                children[rest] = false;
+            } else {
+                children[rest.substr(0, slash)] = true;
+            }
+        }
+    }
+
+    if (!children.empty()) {
+        for (auto& [name, is_dir] : children) {
+            DirEntry entry;
+            entry.name = name;
+            entry.is_directory = is_dir;
+            out_entries.push_back(avastd::move(entry));
+        }
+        return true;
+    }
+
+    // Ningun archivo registrado vive bajo `path` en el mapa virtual --
+    // ni siquiera como carpeta implicita. Delegar al fallback (real
+    // filesystem) si hay uno; un runtime empacado con fallback_ nulo
+    // simplemente no ve nada ahi, consistente con el resto de esta
+    // clase (Fase 7: "sin fallback, esas operaciones fallan").
     if (fallback_) return fallback_->EnumerateDirectory(path, out_entries);
     return false;
 }
@@ -97,9 +126,23 @@ bool MemoryFileSystem::Exists(const avastd::string& path) {
 }
 
 bool MemoryFileSystem::IsDirectory(const avastd::string& path) {
+    avastd::string normalized = NormalizeKey(path);
     {
         avastd::lock_guard<avastd::mutex> lock(mutex_);
-        if (files_.find(NormalizeKey(path)) != files_.end()) return false; // es un archivo, no un directorio
+        if (files_.find(normalized) != files_.end()) return false; // es un archivo, no un directorio
+
+        // Namespace-carpeta (module.cpp, ResolveModulePath): ningun
+        // archivo registrado se llama exactamente `path`, pero si algo
+        // vive "debajo" de `path/`, entonces `path` es una carpeta
+        // virtual aunque el mapa no la tenga como entrada propia (es
+        // plano, ver comentario de la clase).
+        avastd::string prefix = normalized.empty() ? avastd::string() : normalized + "/";
+        if (!prefix.empty()) {
+            for (auto& [key, entry] : files_) {
+                (void)entry;
+                if (key.size() > prefix.size() && key.compare(0, prefix.size(), prefix) == 0) return true;
+            }
+        }
     }
     if (fallback_) return fallback_->IsDirectory(path);
     return false;

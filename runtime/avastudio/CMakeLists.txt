@@ -168,6 +168,7 @@ set(STUDIO_SOURCES
     src/languages/fold_index.cpp
     src/languages/function_index.cpp
     src/languages/class_index.cpp
+    src/languages/workspace_index.cpp
     src/languages/member_access_resolver.cpp
     src/languages/lexer_utils.cpp
     src/languages/builtin_signatures.cpp

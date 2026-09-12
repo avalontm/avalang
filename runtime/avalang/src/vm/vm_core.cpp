@@ -160,6 +160,15 @@ void VM::SetGlobal(const avastd::string& name, Value value) {
 
 Value VM::Run(const avastd::shared_ptr<Proto>& main) {
     const size_t base = frames_.size();
+
+    avastd::string self_module_name = GetModuleBareName(main->source_name);
+    bool registered_self = !self_module_name.empty() &&
+                            !module_cache_.IsLoading(self_module_name) &&
+                            !module_cache_.HasModuleValue(self_module_name);
+    if (registered_self) {
+        module_cache_.BeginLoading(self_module_name);
+    }
+
     CallFrame frame;
     frame.proto = main;
     frame.registers.resize(main->num_registers);
@@ -168,32 +177,25 @@ Value VM::Run(const avastd::shared_ptr<Proto>& main) {
         Value result = ExecuteFrame(frames_.size() - 1);
         CloseUpvalues(frames_.back());
         frames_.pop_back();
-        // Plan de anotaciones, Fase 3: si el programa tiene un `[entry]`
-        // válido (Compiler::ValidateEntryAttributes ya lo garantizó en
-        // compile time -- a lo sumo uno, sin parámetros, static si es
-        // método), el chunk top-level de arriba ya corrió de punta a
-        // punta y dejó clases/funciones/globals registrados; ahora se
-        // invoca el `[entry]` y SU resultado es el que se devuelve, en
-        // vez del resultado del chunk top-level. Si no hay `[entry]`
-        // (caso más común hoy -- scripts existentes), `entry_func_name`
-        // está vacío y el comportamiento es exactamente el de antes.
+
         if (!main->entry_func_name.empty()) {
-            return InvokeEntryPoint(main);
+            Value entry_result = InvokeEntryPoint(main);
+            if (registered_self) module_cache_.EndLoading(self_module_name);
+            return entry_result;
         }
+        if (registered_self) module_cache_.EndLoading(self_module_name);
         return result;
     } AVA_CATCH(avastd::exception, e) {
         (void)e;
         frames_.resize(base);
+        if (registered_self) module_cache_.EndLoading(self_module_name);
         AVA_RETHROW();
     }
 }
 
 Value VM::InvokeEntryPoint(const avastd::shared_ptr<Proto>& main) {
     if (main->entry_class_name.empty()) {
-        // `[entry]` suelto (funcDeclaration a nivel de módulo): el chunk
-        // top-level ya lo dejó como global via SETGLOBAL (mismo camino
-        // que cualquier `func` suelto), así que alcanza con leerlo de
-        // ahí e invocarlo como cualquier función.
+
         Value fn = GetGlobal(main->entry_func_name);
         if (fn.type != ValueType::Function) {
             AVA_THROW(AvaError("internal error: '[entry]' function '" + main->entry_func_name +
@@ -202,12 +204,6 @@ Value VM::InvokeEntryPoint(const avastd::shared_ptr<Proto>& main) {
         return Call(fn, {});
     }
 
-    // `[entry]` como método static: la clase dueña también quedó como
-    // global (SETGLOBAL con el nombre de la clase, ver
-    // Compiler::CompileClass), así que se resuelve igual que
-    // `Clase.metodo` (OpGetAttr, vm_classes.cpp, rama ValueType::Class)
-    // -- un BoundMethod con `instance = Nil`, porque un método static no
-    // tiene `this`.
     Value cls_val = GetGlobal(main->entry_class_name);
     if (cls_val.type != ValueType::Class) {
         AVA_THROW(AvaError("internal error: '[entry]' class '" + main->entry_class_name +

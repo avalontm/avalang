@@ -179,7 +179,7 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
             const std::string& label = showing_design ? util::Tr("menu.file.view_code") : util::Tr("menu.file.view_design");
             if (ImGui::MenuItem(label.c_str(), "F7")) {
                 if (EditorTab* mutable_active = editor_state.Active()) {
-                    ToggleTabViewMode(*mutable_active);
+                    ToggleTabViewMode(editor_state, *mutable_active);
                 }
             }
         }

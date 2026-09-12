@@ -24,6 +24,10 @@ struct BuildPanelState {
 
     bool logged_to_output = false;
 
+    bool show_result_dialog = false;
+    bool dialog_success = false;
+    std::string dialog_result_path;
+
     std::string::size_type log_forwarded_upto = 0;
 
     // Set on the main thread right before the worker thread is launched

@@ -82,6 +82,8 @@ public:
     void Rebuild(const std::string& text, const std::string& current_file_dir,
                  ImportFileCache* shared_cache = nullptr, const std::string& stdlib_dir = "");
 
+    void ScanFile(const std::string& text, const std::string& source_file) { ScanText(text, source_file); }
+
     const std::unordered_map<std::string, ClassInfo>& Classes() const { return classes_; }
 
     const ClassInfo* Find(const std::string& class_name) const {
@@ -89,7 +91,8 @@ public:
         return it == classes_.end() ? nullptr : &it->second;
     }
 
-    std::vector<ClassMember> FlattenedMembers(const std::string& class_name) const;
+    std::vector<ClassMember> FlattenedMembers(const std::string& class_name,
+                                               const ClassIndex* fallback = nullptr) const;
 
     // Subset of FlattenedMembers(class_name) that are still unimplemented
     // interface method signatures (ClassMember::is_abstract) -- i.e. what a

@@ -139,6 +139,7 @@ std::string VariableTypeIndex::LookupInScope(const Scope& current, const std::st
 
 void VariableTypeIndex::ScanRange(const std::string& text, size_t start, size_t end,
                                    const ClassIndex& class_index, const FunctionIndex& function_index,
+                                   const ClassIndex* workspace_classes, const FunctionIndex* workspace_functions,
                                    Scope& current) {
     size_t i = start;
     while (i < end) {
@@ -157,7 +158,9 @@ void VariableTypeIndex::ScanRange(const std::string& text, size_t start, size_t 
 
         if (!IsIdentStart(c)) { ++i; continue; }
 
+        const size_t word_start = i;
         std::string word = ReadIdent(text, i);
+        const int word_line = LineAt(text, word_start);
 
         if (word == "class") {
             size_t save = i;
@@ -182,7 +185,8 @@ void VariableTypeIndex::ScanRange(const std::string& text, size_t start, size_t 
             if (!FindMatchingEnd(text, scan_pos, body_end)) continue;
 
             Scope class_body_scope;
-            ScanRange(text, body_start, body_end, class_index, function_index, class_body_scope);
+            ScanRange(text, body_start, body_end, class_index, function_index, workspace_classes,
+                      workspace_functions, class_body_scope);
             i = scan_pos;
             continue;
         }
@@ -220,11 +224,14 @@ void VariableTypeIndex::ScanRange(const std::string& text, size_t start, size_t 
             new_scope.end = body_end;
             for (const auto& raw : raw_params) {
                 std::string pname = ParamBaseName(raw);
+                if (pname.empty()) continue;
                 std::string ptype = ParamBaseType(raw);
-                if (!pname.empty() && !ptype.empty()) new_scope.var_types[pname] = ptype;
+                if (!ptype.empty()) new_scope.var_types[pname] = ptype;
+                new_scope.var_decl_lines[pname] = word_line;
             }
 
-            ScanRange(text, body_scan_start, body_end, class_index, function_index, new_scope);
+            ScanRange(text, body_scan_start, body_end, class_index, function_index, workspace_classes,
+                      workspace_functions, new_scope);
             i = scan_pos;
             continue;
         }
@@ -260,6 +267,8 @@ void VariableTypeIndex::ScanRange(const std::string& text, size_t start, size_t 
         if (!is_plain_assign) {
             if (!declared_type.empty()) {
                 current.var_types[word] = declared_type;
+                if (current.var_decl_lines.find(word) == current.var_decl_lines.end())
+                    current.var_decl_lines[word] = word_line;
                 i = decl_pos;
             }
             continue;
@@ -286,10 +295,15 @@ void VariableTypeIndex::ScanRange(const std::string& text, size_t start, size_t 
             SkipInlineWhitespace(text, ident_pos);
 
             if (ident_pos < end && text[ident_pos] == '(') {
-                if (class_index.Find(rhs_name) != nullptr) {
+                if (class_index.Find(rhs_name) != nullptr ||
+                    (workspace_classes && workspace_classes->Find(rhs_name) != nullptr)) {
                     resolved_type = rhs_name;
                 } else if (const FunctionSignature* fn = function_index.Find(rhs_name)) {
                     resolved_type = fn->EffectiveReturnType();
+                } else if (workspace_functions) {
+                    if (const FunctionSignature* fn = workspace_functions->Find(rhs_name)) {
+                        resolved_type = fn->EffectiveReturnType();
+                    }
                 }
             } else if (ident_pos < end && text[ident_pos] == '.') {
                 size_t k = ident_pos + 1;
@@ -300,7 +314,7 @@ void VariableTypeIndex::ScanRange(const std::string& text, size_t start, size_t 
                     if (k < end && text[k] == '(') {
                         std::string obj_type = LookupInScope(current, rhs_name);
                         if (!obj_type.empty()) {
-                            for (const auto& member : class_index.FlattenedMembers(obj_type)) {
+                            for (const auto& member : class_index.FlattenedMembers(obj_type, workspace_classes)) {
                                 if (member.is_method && member.name == method_name && member.signature) {
                                     resolved_type = member.signature->EffectiveReturnType();
                                     break;
@@ -319,17 +333,22 @@ void VariableTypeIndex::ScanRange(const std::string& text, size_t start, size_t 
         } else {
             current.var_types.erase(word);
         }
+        if (current.var_decl_lines.find(word) == current.var_decl_lines.end())
+            current.var_decl_lines[word] = word_line;
         continue;
     }
 }
 
 void VariableTypeIndex::Rebuild(const std::string& text, const ClassIndex& class_index,
-                                 const FunctionIndex& function_index) {
+                                 const FunctionIndex& function_index,
+                                 const ClassIndex* workspace_classes,
+                                 const FunctionIndex* workspace_functions) {
     scopes_.clear();
     module_scope_ = Scope{};
     module_scope_.start = 0;
     module_scope_.end = text.size();
-    ScanRange(text, 0, text.size(), class_index, function_index, module_scope_);
+    ScanRange(text, 0, text.size(), class_index, function_index, workspace_classes, workspace_functions,
+              module_scope_);
 }
 
 std::string VariableTypeIndex::TypeOf(const std::string& variable, size_t cursor_offset) const {
@@ -345,6 +364,21 @@ std::string VariableTypeIndex::TypeOf(const std::string& variable, size_t cursor
     }
     auto it = module_scope_.var_types.find(variable);
     return it == module_scope_.var_types.end() ? "" : it->second;
+}
+
+int VariableTypeIndex::DeclarationLine(const std::string& variable, size_t cursor_offset) const {
+    const Scope* best = nullptr;
+    for (const auto& s : scopes_) {
+        if (cursor_offset >= s.start && cursor_offset <= s.end) {
+            if (!best || (s.end - s.start) < (best->end - best->start)) best = &s;
+        }
+    }
+    if (best) {
+        auto it = best->var_decl_lines.find(variable);
+        if (it != best->var_decl_lines.end()) return it->second;
+    }
+    auto it = module_scope_.var_decl_lines.find(variable);
+    return it == module_scope_.var_decl_lines.end() ? -1 : it->second;
 }
 
 std::vector<std::string> VariableTypeIndex::VisibleVariables(size_t cursor_offset) const {
@@ -368,7 +402,7 @@ std::vector<std::string> VariableTypeIndex::VisibleVariables(size_t cursor_offse
 bool ResolveMemberAccess(const std::string& full_text, int cursor_line,
                           const std::string& text_before_cursor_on_line,
                           const ClassIndex& class_index, const VariableTypeIndex& var_types,
-                          MemberAccessContext& out) {
+                          MemberAccessContext& out, const ClassIndex* workspace_classes) {
     std::string identifier;
     if (!ExtractDotAccess(text_before_cursor_on_line, identifier)) return false;
 
@@ -391,7 +425,8 @@ bool ResolveMemberAccess(const std::string& full_text, int cursor_line,
         return true;
     }
 
-    if (class_index.Find(identifier) != nullptr) {
+    if (class_index.Find(identifier) != nullptr ||
+        (workspace_classes && workspace_classes->Find(identifier) != nullptr)) {
         out.kind = MemberAccessKind::kClassName;
         out.class_name = identifier;
         out.viewer_class = viewer_class;

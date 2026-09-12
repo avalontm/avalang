@@ -19,7 +19,7 @@ menu.edit,Editar
 menu.edit.find_in_project,Buscar en el proyecto...
 menu.view,Ver
 menu.run,Ejecutar
-menu.run.run_script,Ejecutar Script
+menu.run.run_script,Ejecutar
 menu.run.run_project,Ejecutar Proyecto
 menu.run.check,Verificar
 menu.run.build,Compilar Ejecutable...
@@ -54,7 +54,7 @@ explorer.project_properties,Propiedades
 common.cancel,Cancelar
 panel.editor.title,Editor de Código
 editor.no_file_open,No hay ningún archivo abierto. Usa Archivo > Abrir o doble clic en un archivo del Explorador.
-editor.welcome.open_file,Abrir Archivo...
+editor.welcome.open_project,Abrir Proyecto...
 editor.welcome.hint,O hacé doble clic en un archivo del Explorador para empezar a editar.
 editor.tab.welcome,Bienvenida
 editor.tab.untitled,Sin título
@@ -237,12 +237,14 @@ new_project.section_location,Ubicación
 new_project.name_label,Nombre del proyecto
 new_project.name_hint,MiProyecto
 new_project.destination_label,Carpeta destino
-new_project.section_template,Tipo de proyecto
+new_project.section_template,Plantilla de proyecto
 new_project.template_console,Consola
 new_project.template_console_desc,"Un solo main.ava -- ideal para scripts, herramientas y programas de consola."
 new_project.template_ui,UI
 new_project.template_ui_desc,"Agrega app.ava, styles.ava y una pantalla inicial en views/, lista para diseñar interfaces."
-new_project.preview_header,Se creará:
+new_project.search_hint,Buscar plantillas
+new_project.filter_all,Todas las categorías
+new_project.no_results,Ninguna plantilla coincide con tu búsqueda.
 new_project.create_button,Crear Proyecto
 new_project.error_name_required,Ingresá un nombre de proyecto.
 new_project.error_destination_required,Elegí una carpeta destino.

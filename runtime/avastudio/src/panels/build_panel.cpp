@@ -164,6 +164,7 @@ void StartBuild(BuildPanelState& state, std::vector<std::string> args, std::stri
         state.has_result = false;
     }
     state.logged_to_output = false;
+    state.show_result_dialog = false;
     state.building = true;
     state.build_started_at = std::chrono::steady_clock::now();
 
@@ -332,6 +333,9 @@ void PollBuild(BuildPanelState& state, LogBridge& log_bridge) {
     if (state.has_result && !state.logged_to_output) {
         log_bridge.Log(state.last_success ? "[build] succeeded -> " + state.result_path : "[build] failed:");
         state.logged_to_output = true;
+        state.dialog_success = state.last_success;
+        state.dialog_result_path = state.result_path;
+        state.show_result_dialog = true;
     }
 }
 

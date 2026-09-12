@@ -1,5 +1,7 @@
 #include "panels/explorer_panel.h"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 
@@ -46,6 +48,14 @@ struct RenameRequest {
 
 RenameRequest g_rename_request;
 char g_rename_buf[128] = "";
+
+bool IsExcluded(const fs::path& path, const std::vector<std::string>& excluded_names) {
+    const std::string name = path.filename().string();
+    for (const auto& excluded : excluded_names) {
+        if (!excluded.empty() && excluded == name) return true;
+    }
+    return false;
+}
 
 bool PathContains(const fs::path& parent, const fs::path& child) {
     auto pit = parent.begin();
@@ -279,6 +289,45 @@ void DrawEntryContextMenu(const std::string& entry_path, const std::string& dir,
     }
 }
 
+enum class EntryGroup {
+    kDirectory,
+    kFile,
+    kProjectOrDotfile,
+};
+
+EntryGroup GroupFor(const fs::directory_entry& entry) {
+    if (entry.is_directory()) return EntryGroup::kDirectory;
+    const std::string filename = entry.path().filename().string();
+    if (!filename.empty() && filename.front() == '.') return EntryGroup::kProjectOrDotfile;
+    if (filename.ends_with(".avaproj") || filename.ends_with(".avaproj.user")) return EntryGroup::kProjectOrDotfile;
+    return EntryGroup::kFile;
+}
+
+std::string LowerName(const fs::path& path) {
+    std::string name = path.filename().string();
+    std::transform(name.begin(), name.end(), name.begin(),
+                    [](unsigned char c) { return std::tolower(c); });
+    return name;
+}
+
+std::vector<fs::directory_entry> SortedEntries(const fs::path& dir, const std::vector<std::string>& excluded_names) {
+    std::error_code ec;
+    std::vector<fs::directory_entry> entries;
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        if (IsExcluded(entry.path(), excluded_names)) continue;
+        entries.push_back(entry);
+    }
+
+    std::sort(entries.begin(), entries.end(), [](const fs::directory_entry& a, const fs::directory_entry& b) {
+        const EntryGroup group_a = GroupFor(a);
+        const EntryGroup group_b = GroupFor(b);
+        if (group_a != group_b) return group_a < group_b;
+        return LowerName(a.path()) < LowerName(b.path());
+    });
+
+    return entries;
+}
+
 void DrawDirectory(const fs::path& dir, ExplorerState& state, ExplorerResult& result) {
     std::error_code ec;
     if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) {
@@ -286,7 +335,7 @@ void DrawDirectory(const fs::path& dir, ExplorerState& state, ExplorerResult& re
         return;
     }
 
-    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+    for (const auto& entry : SortedEntries(dir, state.excluded_names)) {
         const auto& path = entry.path();
         const std::string path_str = path.string();
         ImGui::PushID(path_str.c_str());

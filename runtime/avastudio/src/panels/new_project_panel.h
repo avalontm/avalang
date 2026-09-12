@@ -20,6 +20,12 @@ struct NewProjectState {
 
     NewProjectTemplateKind template_kind = NewProjectTemplateKind::kConsole;
 
+    // Visual Studio-style template browser: free-text search plus a
+    // category filter, both applied against the data-driven template list
+    // in new_project_panel.cpp. Empty search/category means "show all".
+    std::string template_search;
+    std::string template_category;
+
     std::string error_key;
 
     bool focus_name_field = false;

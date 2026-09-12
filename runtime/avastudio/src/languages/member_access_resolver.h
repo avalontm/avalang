@@ -14,9 +14,13 @@ namespace studio {
 class VariableTypeIndex {
 public:
     void Rebuild(const std::string& text, const ClassIndex& class_index,
-                 const FunctionIndex& function_index);
+                 const FunctionIndex& function_index,
+                 const ClassIndex* workspace_classes = nullptr,
+                 const FunctionIndex* workspace_functions = nullptr);
 
     std::string TypeOf(const std::string& variable, size_t cursor_offset) const;
+
+    int DeclarationLine(const std::string& variable, size_t cursor_offset) const;
 
     std::vector<std::string> VisibleVariables(size_t cursor_offset) const;
 
@@ -30,6 +34,7 @@ private:
         size_t start = 0;
         size_t end = 0;
         std::unordered_map<std::string, std::string> var_types;
+        std::unordered_map<std::string, int> var_decl_lines;
     };
 
     std::deque<Scope> scopes_;
@@ -37,6 +42,7 @@ private:
 
     void ScanRange(const std::string& text, size_t start, size_t end,
                    const ClassIndex& class_index, const FunctionIndex& function_index,
+                   const ClassIndex* workspace_classes, const FunctionIndex* workspace_functions,
                    Scope& current);
 
     std::string LookupInScope(const Scope& current, const std::string& name) const;
@@ -51,7 +57,7 @@ struct MemberAccessContext {
 bool ResolveMemberAccess(const std::string& full_text, int cursor_line,
                           const std::string& text_before_cursor_on_line,
                           const ClassIndex& class_index, const VariableTypeIndex& var_types,
-                          MemberAccessContext& out);
+                          MemberAccessContext& out, const ClassIndex* workspace_classes = nullptr);
 
 bool ResolveOwnScopeSuggestions(const std::string& full_text, int cursor_line,
                                  const std::string& text_before_cursor_on_line,

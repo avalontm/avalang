@@ -23,6 +23,21 @@ static bool FileExists(const avastd::string& path) {
     return VmPlatformAccessor::Get().FileSystem().Exists(path);
 }
 
+avastd::vector<avastd::string> ModuleResolver::ListLooseAvaFiles(const avastd::string& dir) {
+    avastd::vector<platform::DirEntry> entries;
+    avastd::vector<avastd::string> result;
+    if (!VmPlatformAccessor::Get().FileSystem().EnumerateDirectory(dir, entries)) return result;
+    for (auto& entry : entries) {
+        if (entry.is_directory) continue;
+        const avastd::string& name = entry.name;
+        if (name.size() <= 4) continue;
+        if (name.compare(name.size() - 4, 4, ".ava") != 0) continue;
+        result.push_back(JoinPath(dir, name));
+    }
+    avastd::sort(result.begin(), result.end());
+    return result;
+}
+
 ModuleResolver::ModuleResolver() {
     platform::IPlatform& plat = VmPlatformAccessor::Get();
     platform::IEnvironment& env = plat.Environment();
@@ -55,29 +70,36 @@ avastd::string ModuleResolver::PathToFilePath(const avastd::string& module_path)
 
 avastd::string ModuleResolver::ResolveModulePath(const avastd::string& module_path, const avastd::string& current_dir) {
     avastd::string file_path = PathToFilePath(module_path);
-    
-    avastd::string direct_path = JoinPath(current_dir, file_path + ".ava");
-    if (FileExists(direct_path)) return direct_path;
-    
-    avastd::string index_path = JoinPath(current_dir, file_path + PATH_SEPARATOR + "index.ava");
-    if (FileExists(index_path)) return index_path;
-    
+
+    auto try_base = [&](const avastd::string& base) -> avastd::string {
+        avastd::string direct_path = JoinPath(base, file_path + ".ava");
+        if (FileExists(direct_path)) return direct_path;
+
+        avastd::string module_dir = JoinPath(base, file_path);
+        avastd::string index_path = JoinPath(module_dir, "index.ava");
+        if (FileExists(index_path)) return index_path;
+
+        if (VmPlatformAccessor::Get().FileSystem().IsDirectory(module_dir) &&
+            !ListLooseAvaFiles(module_dir).empty()) {
+            return module_dir;
+        }
+
+        return avastd::string();
+    };
+
+    avastd::string found = try_base(current_dir);
+    if (!found.empty()) return found;
+
     for (const auto& search_path : search_paths_) {
-        avastd::string p = JoinPath(search_path, file_path + ".ava");
-        if (FileExists(p)) return p;
-        
-        p = JoinPath(search_path, file_path + PATH_SEPARATOR + "index.ava");
-        if (FileExists(p)) return p;
+        found = try_base(search_path);
+        if (!found.empty()) return found;
     }
-    
+
     if (!stdlib_path_.empty()) {
-        avastd::string p = JoinPath(stdlib_path_, file_path + ".ava");
-        if (FileExists(p)) return p;
-        
-        p = JoinPath(stdlib_path_, file_path + PATH_SEPARATOR + "index.ava");
-        if (FileExists(p)) return p;
+        found = try_base(stdlib_path_);
+        if (!found.empty()) return found;
     }
-    
+
     return "";
 }
 
@@ -86,10 +108,6 @@ bool ModuleResolver::ModuleExists(const avastd::string& module_path, const avast
 }
 
 void ModuleCache::Add(const avastd::string& module_name, avastd::shared_ptr<Proto> proto, const avastd::string& file_path) {
-    // `proto` llega por valor (el caller ya entregó su propia copia/
-    // ownership) -- moverlo adentro en vez de copiarlo evita un
-    // incremento+decremento atomico redundante del control block de
-    // shared_ptr en cada import de modulo (Fase 3, "Reducir std::shared_ptr").
     modules_[module_name] = avastd::move(proto);
     file_paths_[module_name] = file_path;
 }
@@ -107,12 +125,14 @@ bool ModuleCache::Exists(const avastd::string& module_name) {
 void ModuleCache::Remove(const avastd::string& module_name) {
     modules_.erase(module_name);
     file_paths_.erase(module_name);
+    module_values_.erase(module_name);
 }
 
 void ModuleCache::Clear() {
     modules_.clear();
     file_paths_.clear();
     loading_modules_.clear();
+    module_values_.clear();
 }
 
 void ModuleCache::BeginLoading(const avastd::string& module_name) {
@@ -131,6 +151,20 @@ avastd::string ModuleCache::GetFilePath(const avastd::string& module_name) {
     auto it = file_paths_.find(module_name);
     if (it != file_paths_.end()) return it->second;
     return "";
+}
+
+bool ModuleCache::HasModuleValue(const avastd::string& module_name) {
+    return module_values_.find(module_name) != module_values_.end();
+}
+
+Value ModuleCache::GetModuleValue(const avastd::string& module_name) {
+    auto it = module_values_.find(module_name);
+    if (it != module_values_.end()) return it->second;
+    return Value::Nil();
+}
+
+void ModuleCache::SetModuleValue(const avastd::string& module_name, Value module_dict) {
+    module_values_[module_name] = avastd::move(module_dict);
 }
 
 } // namespace ava

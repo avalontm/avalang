@@ -518,7 +518,8 @@ std::string ClassIndex::ResolveImportPath(const std::vector<std::string>& module
     return lexer::ResolveImportPath(module_path, current_file_dir, stdlib_dir);
 }
 
-std::vector<ClassMember> ClassIndex::FlattenedMembers(const std::string& class_name) const {
+std::vector<ClassMember> ClassIndex::FlattenedMembers(const std::string& class_name,
+                                                       const ClassIndex* fallback) const {
     std::vector<ClassMember> result;
     // Maps member name -> index into `result`. Normally "first sighting
     // wins" (see below), but a concrete method encountered later must still
@@ -543,6 +544,7 @@ std::vector<ClassMember> ClassIndex::FlattenedMembers(const std::string& class_n
         if (current.empty() || !visited_classes.insert(current).second) continue;
 
         const ClassInfo* info = Find(current);
+        if (!info && fallback) info = fallback->Find(current);
         if (!info) continue;
 
         for (const auto& [name, method_info] : info->methods) {

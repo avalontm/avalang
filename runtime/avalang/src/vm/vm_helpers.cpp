@@ -20,22 +20,21 @@ avastd::string GetFileDir(const avastd::string& path) {
     return path.substr(0, pos);
 }
 
+avastd::string GetModuleBareName(const avastd::string& path) {
+    size_t slash = path.find_last_of("/\\");
+    avastd::string filename = (slash == avastd::string::npos) ? path : path.substr(slash + 1);
+    const avastd::string ext = ".ava";
+    if (filename.size() <= ext.size() ||
+        filename.compare(filename.size() - ext.size(), ext.size(), ext) != 0) {
+        return avastd::string();
+    }
+    return filename.substr(0, filename.size() - ext.size());
+}
+
 avastd::string NumberToString(double n) {
     if (avastd::abs(n - avastd::round(n)) < 0.0000001)
         return avastd::to_string(static_cast<long long>(avastd::round(n)));
 
-    // Reemplaza el std::ostringstream + std::setprecision(15) original
-    // (ambos de libstdc++, no disponibles sin CKM_CAP_LIBSTDCPP). Formatea
-    // a mano hasta 15 digitos significativos totales, recortando ceros de
-    // cola -- mismo resultado visible que el codigo original para los
-    // rangos de numero que un script de AvaLang tipicamente produce.
-    // LIMITACION CONOCIDA: no es una implementacion "shortest round-trip"
-    // (tipo Ryu/Grisu) como la que usa una libstdc++ moderna por debajo;
-    // para floats en los limites de precision de double (muy grandes, muy
-    // chicos, o resultado de muchas operaciones acumuladas) puede diferir
-    // en el ultimo digito. Si eso se vuelve un problema real (bug de
-    // "0.1 + 0.2 se imprime distinto en barekernel vs Windows"), esta
-    // funcion es el lugar a revisar primero.
     bool neg = n < 0;
     double v = neg ? -n : n;
 
@@ -51,7 +50,7 @@ avastd::string NumberToString(double n) {
         for (int i = 0; i < max_frac_digits; ++i) {
             frac *= 10.0;
             int digit = static_cast<int>(frac);
-            if (digit > 9) digit = 9;  // guarda contra error de redondeo FP
+            if (digit > 9) digit = 9;
             if (digit < 0) digit = 0;
             frac_str += static_cast<char>('0' + digit);
             frac -= digit;
@@ -153,16 +152,7 @@ size_t ValidateIntegerIndex(double n, size_t len, const char* context) {
         AVA_THROW(avastd::runtime_error(avastd::string(context) + ": index too large: " + NumberToString(rounded)));
     }
     size_t pos = static_cast<size_t>(rounded);
-    // Bug #6 en BUGS_ENCONTRADOS.md ("escritura fuera de rango es
-    // no-op silencioso"): antes esta funcion solo validaba tipo/signo y
-    // dejaba que cada call site (OpGetIndex/OpSetIndex en
-    // vm_containers.cpp) decidiera por su cuenta que hacer con un indice
-    // positivo fuera de rango -- y todos decidian "nada" (silencio). Al
-    // mover el chequeo de limite superior aca (unico lugar que ya conoce
-    // el largo del contenedor via `len`), lectura y escritura quedan con
-    // el MISMO comportamiento uniforme que ya tenian indice negativo e
-    // indice no entero: excepcion dura, estilo VB6 "Subscript out of
-    // range" pero con el detalle moderno de indice y largo real.
+
     if (pos >= len) {
         AVA_THROW(avastd::runtime_error(avastd::string(context) + ": index out of range: " +
             NumberToString(rounded) + " (length " + avastd::to_string(len) + ")"));
@@ -182,12 +172,6 @@ avastd::string GetCurrentWorkingDir() {
     return VmPlatformAccessor::Get().Environment().GetCurrentDirectory();
 }
 
-// Static (non-instance) attrs live only on the class that declared them.
-// CompileClass no longer copies a subclass's base attrs into its own
-// `attrs` map (that made `Sub.x` and `Base.x` two independent copies as
-// soon as either was written to) -- instead a subclass just carries a
-// `__base__` link, and lookups walk it here to find the ClassObj that
-// actually owns `name`, so `Base.x` and `Sub.x` stay the same storage.
 ClassObj* FindClassOwningAttr(ClassObj* cls, const avastd::string& name) {
     ClassObj* cur = cls;
     while (cur) {
@@ -220,14 +204,6 @@ const char* ValueTypeName(ValueType t) {
     return "Unknown";
 }
 
-// Ver el comentario de la declaracion en vm_helpers.h. Vive ACA (no
-// duplicada en vm_arith.cpp y vm_compare.cpp) a proposito: es el mismo
-// tipo de decision que antes vivia repetida en dos lugares que tenian
-// que estar de acuerdo a mano (CompileStmt/CompileExprToReg con
-// current_line_, el fprintf duplicado de avacli) y terminaba
-// divergiendo. Con un solo helper compartido, los operadores
-// aritmeticos Y los relacionales usan la misma definicion de "esto
-// coerciona a numero".
 double CoerceToNumber(const Value& v, const char* op) {
     if (v.type == ValueType::Number) {
         return v.n;

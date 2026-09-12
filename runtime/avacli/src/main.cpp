@@ -185,7 +185,18 @@ void PrintFormattedError(AvaVM* vm, const char* script_path,
                          err_src ? err_src : script_path, err_line,
                          err_msg.c_str());
         }
-        std::ifstream src_file(script_path);
+        // Bug pre-existente, expuesto ahora por errores que cruzan de
+        // archivo (p.ej. colision de nombres entre hermanos, ver
+        // compiler.cpp): esto abria siempre `script_path` (el archivo que
+        // se le paso a `ava_cli` para correr) para sacar el snippet +
+        // caret, sin importar en que archivo haya ocurrido el error de
+        // verdad. El header de arriba ya usa `err_src` correctamente
+        // (por eso decia "error at app.ava:1:1" aunque uno corriera
+        // main.ava), pero el snippet abria main.ava y mostraba SU linea
+        // 1 -- coincidencia que hacia parecer que el error era sobre
+        // `import system` cuando en realidad estaba en otro archivo.
+        // Mismo archivo que ya elegimos para el header, para el snippet.
+        std::ifstream src_file(err_src ? err_src : script_path);
         if (src_file) {
             std::string src_line;
             int cur = 1;

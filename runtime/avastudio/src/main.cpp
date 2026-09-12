@@ -243,6 +243,7 @@ int main(int argc, char** argv) {
     editor_state.project_root = explorer_state.root_dir;
     editor_state.modules_path =
         settings.modules_path.empty() ? studio::util::ResolveDefaultModulesDir() : settings.modules_path;
+    editor_state.workspace_index.SetRoot(editor_state.project_root, editor_state.modules_path);
     studio::OpenWelcomeTab(editor_state);
 
     // Fix: helper unico para cambiar de proyecto/carpeta abierta que ademas
@@ -255,6 +256,7 @@ int main(int argc, char** argv) {
     auto set_project_root = [&](const std::string& path) {
         explorer_state.root_dir = path;
         editor_state.project_root = path;
+        editor_state.workspace_index.SetRoot(path, editor_state.modules_path);
         reload_project_config();
         settings.last_project_dir = path;
         studio::SaveSettings(settings);
@@ -642,6 +644,11 @@ int main(int argc, char** argv) {
 
         studio::ExplorerResult explorer_result;
         if (bool& open = panel_open.try_emplace("Explorer###explorer", true).first->second; open) {
+            // Mantenemos esto en cada frame (no solo al recargar el .avaproj)
+            // porque Project Properties edita project_config.proj.out_dir en
+            // el mismo objeto en vivo -- asi el explorador refleja el cambio
+            // apenas el usuario lo guarda, sin cablear otro punto de reload.
+            explorer_state.excluded_names.assign({project_config.proj.out_dir});
             explorer_result = studio::DrawExplorerPanel(explorer_state, &open);
             persist_if_closed("Explorer###explorer", open);
         }
@@ -749,19 +756,25 @@ int main(int argc, char** argv) {
         if (want_toggle_view) {
 
             if (studio::EditorTab* active = editor_state.Active()) {
-                studio::ToggleTabViewMode(*active);
+                studio::ToggleTabViewMode(editor_state, *active);
             }
         }
         if (editor_state.run_requested || want_run) {
 
-            if (studio::EditorTab* active = editor_state.Active(); active && !active->is_welcome) {
-                if (terminal_state.run.running.load()) {
+            if (terminal_state.run.running.load()) {
 
-                } else if (active->file_path.empty()) {
-                    engine.AppendConsoleLine(studio::ConsoleLine::Kind::Error,
-                        "save the file (Ctrl+S) before running it -- Run needs a .ava on disk.");
+            } else {
+                // Fix: F5 corria el archivo abierto en el tab activo, lo cual
+                // no tiene sentido una vez que existe un .avaproj -- si el
+                // usuario esta viendo models/User.ava y aprieta F5, esperaria
+                // que arranque el programa desde el entry point (main.ava),
+                // no que intente ejecutar User.ava como si fuera un script
+                // independiente. Ahora F5 siempre resuelve y corre el entry
+                // del proyecto, igual que RunProject (Ctrl+F5).
+                const ProjectEntryResolution resolved = resolve_project_entry();
+                if (!resolved.ok) {
+                    engine.AppendConsoleLine(studio::ConsoleLine::Kind::Error, resolved.error);
                 } else {
-                    studio::SaveTab(*active);
                     fs::path ava_cli = project_config.user.ava_cli_path.empty() ? studio::DetectAvaCliPath()
                                                                             : fs::path(project_config.user.ava_cli_path);
                     std::error_code ava_cli_ec;
@@ -769,7 +782,8 @@ int main(int argc, char** argv) {
                         engine.AppendConsoleLine(studio::ConsoleLine::Kind::Error,
                             "could not find ava_cli(.exe) -- set its path under Build > Advanced.");
                     } else {
-                        studio::StartScriptRun(terminal_state, engine, ava_cli.string(), active->file_path);
+                        studio::SaveAllTabs(editor_state);
+                        studio::StartScriptRun(terminal_state, engine, ava_cli.string(), resolved.entry_path.string());
                     }
                 }
             }
@@ -842,6 +856,7 @@ int main(int argc, char** argv) {
             const studio::TriggerBuildOutcome build_outcome = studio::TriggerBuild(
                 build_panel_state, project_config.proj, project_config.user, explorer_state.root_dir, log_bridge,
                 project_config.ambiguous_avaproj, project_config.avaproj_candidates);
+            open_panel_focused("Logs###logs");
 
             if (build_outcome.entry_file_missing) {
                 std::string path;
@@ -851,6 +866,7 @@ int main(int argc, char** argv) {
                     studio::TriggerBuild(build_panel_state, project_config.proj, project_config.user,
                                           explorer_state.root_dir, log_bridge, project_config.ambiguous_avaproj,
                                           project_config.avaproj_candidates);
+                    open_panel_focused("Logs###logs");
                 }
             }
         }
@@ -892,6 +908,51 @@ int main(int argc, char** argv) {
             }
         }
 
+        if (build_panel_state.show_result_dialog) {
+            build_panel_state.show_result_dialog = false;
+            ImGui::OpenPopup("Build Result##BuildResultDialog");
+        }
+
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(480.0f, 0.0f));
+        if (ImGui::BeginPopupModal("Build Result##BuildResultDialog", nullptr,
+                                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse)) {
+            if (build_panel_state.dialog_success) {
+                ImGui::PushStyleColor(ImGuiCol_Text, studio::palette::FromHex(studio::palette::kSuccess));
+                ImGui::TextUnformatted("Build succeeded");
+                ImGui::PopStyleColor();
+                ImGui::Spacing();
+                ImGui::TextWrapped("%s", build_panel_state.dialog_result_path.c_str());
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Text, studio::palette::FromHex(studio::palette::kError));
+                ImGui::TextUnformatted("Build failed");
+                ImGui::PopStyleColor();
+                ImGui::Spacing();
+                ImGui::TextWrapped("Check the Logs panel for details.");
+            }
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            const float spacing = ImGui::GetStyle().ItemSpacing.x;
+            const float button_w = build_panel_state.dialog_success
+                                        ? (ImGui::GetContentRegionAvail().x - spacing) / 2.0f
+                                        : ImGui::GetContentRegionAvail().x;
+
+            if (build_panel_state.dialog_success) {
+                if (ImGui::Button("Open Folder", ImVec2(button_w, 0.0f))) {
+                    studio::titlebar::RevealInFileExplorer(build_panel_state.dialog_result_path);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+            }
+            if (ImGui::Button("Close", ImVec2(button_w, 0.0f))) {
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+
         ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f));
         if (ImGui::BeginPopupModal("Unsaved Changes##ExitConfirm", nullptr,
@@ -918,7 +979,7 @@ int main(int argc, char** argv) {
                     std::string path;
                     if (studio::titlebar::SaveFileDialog(window, path, explorer_state.root_dir)) {
                         tab->file_path = path;
-                        studio::SaveTab(*tab);
+                        studio::SaveTab(editor_state, *tab);
                     } else {
                         all_saved = false;
                     }
@@ -1245,7 +1306,7 @@ int main(int argc, char** argv) {
                 add(category_view, showing_design ? "menu.file.view_code" : "menu.file.view_design",
                     shortcut_labels.Label(studio::ShortcutId::ToggleView), [&] {
                     if (studio::EditorTab* mutable_active = editor_state.Active()) {
-                        studio::ToggleTabViewMode(*mutable_active);
+                        studio::ToggleTabViewMode(editor_state, *mutable_active);
                     }
                 });
             }

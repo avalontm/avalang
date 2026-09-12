@@ -32,6 +32,7 @@ public:
     
     avastd::string GetStdlibPath() const { return stdlib_path_; }
     const avastd::vector<avastd::string>& GetSearchPaths() const { return search_paths_; }
+    static avastd::vector<avastd::string> ListLooseAvaFiles(const avastd::string& dir);
 
 private:
     avastd::string stdlib_path_;
@@ -54,11 +55,15 @@ public:
     void EndLoading(const avastd::string& module_name);
     
     avastd::string GetFilePath(const avastd::string& module_name);
+    bool HasModuleValue(const avastd::string& module_name);
+    Value GetModuleValue(const avastd::string& module_name);
+    void SetModuleValue(const avastd::string& module_name, Value module_dict);
 
 private:
     avastd::unordered_map<avastd::string, avastd::shared_ptr<Proto>> modules_;
     avastd::unordered_map<avastd::string, avastd::string> file_paths_;
     avastd::unordered_set<avastd::string> loading_modules_;
+    avastd::unordered_map<avastd::string, Value> module_values_;
 };
 
 } // namespace ava

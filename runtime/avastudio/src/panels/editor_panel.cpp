@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -16,6 +17,7 @@
 // already used the same way by src/main.cpp.
 #include "imgui_internal.h"
 #include "languages/avalang_language.h"
+#include "languages/block_scanner.h"
 #include "languages/keyword_docs.h"
 #include "languages/lexer_utils.h"
 #include "languages/member_access_resolver.h"
@@ -145,7 +147,7 @@ void RebuildIncompleteInterfaces(EditorTab& tab) {
     }
 }
 
-void RebuildIndexAndTrie(EditorTab& tab) {
+void RebuildIndexAndTrie(EditorState& state, EditorTab& tab) {
     ImportFileCache import_cache;
     const std::string dir = DirOf(tab.file_path);
     tab.function_index.Rebuild(tab.GetText(), dir, &import_cache, tab.modules_path);
@@ -167,7 +169,9 @@ void RebuildIndexAndTrie(EditorTab& tab) {
     languages::UpdateKnownInterfaceNames(removed_interface_names, added_interface_names);
     tab.known_interface_names = std::move(interface_names);
 
-    tab.variable_type_index.Rebuild(tab.GetText(), tab.class_index, tab.function_index);
+    std::shared_ptr<const WorkspaceIndex::Snapshot> workspace = state.workspace_index.CurrentSnapshot();
+    tab.variable_type_index.Rebuild(tab.GetText(), tab.class_index, tab.function_index, &workspace->classes,
+                                     &workspace->functions);
 
     std::unordered_set<std::string> variable_names = languages::ScanKnownVariableNames(tab.GetText());
     std::unordered_set<std::string> removed_variable_names;
@@ -191,10 +195,10 @@ void RebuildIndexAndTrie(EditorTab& tab) {
 
 constexpr double kIndexRebuildDebounceSeconds = 0.2;
 
-void MaybeRebuildIndex(EditorTab& tab) {
+void MaybeRebuildIndex(EditorState& state, EditorTab& tab) {
     if (!tab.index_dirty) return;
     if (ImGui::GetTime() - tab.last_edit_time < kIndexRebuildDebounceSeconds) return;
-    RebuildIndexAndTrie(tab);
+    RebuildIndexAndTrie(state, tab);
 }
 
 std::string TextBeforeCursor(EditorTab& tab, const TextEditor::CursorPosition& pos) {
@@ -208,14 +212,15 @@ std::string ParamHintTextBeforeCursor(EditorTab& tab, const TextEditor::CursorPo
     return tab.editor.GetSectionText(start_line, 0, pos.line, pos.column);
 }
 
-bool ResolveVisibleMembers(EditorTab& tab, int cursor_line, const std::string& before,
+bool ResolveVisibleMembers(EditorState& state, EditorTab& tab, int cursor_line, const std::string& before,
                            MemberAccessContext& out_ctx, std::vector<ClassMember>& out_members) {
-    if (!ResolveMemberAccess(tab.GetText(), cursor_line, before, tab.class_index,
-                              tab.variable_type_index, out_ctx)) {
+    std::shared_ptr<const WorkspaceIndex::Snapshot> workspace = state.workspace_index.CurrentSnapshot();
+    if (!ResolveMemberAccess(tab.GetText(), cursor_line, before, tab.class_index, tab.variable_type_index,
+                              out_ctx, &workspace->classes)) {
         return false;
     }
 
-    out_members = tab.class_index.FlattenedMembers(out_ctx.class_name);
+    out_members = tab.class_index.FlattenedMembers(out_ctx.class_name, &workspace->classes);
     if (out_members.empty()) return false;
     out_members = ClassIndex::FilterForAccess(out_members, out_ctx.kind, out_ctx.viewer_class);
     if (out_members.empty()) return false;
@@ -289,13 +294,13 @@ void PopulateGeneralSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& a
     ac_state.suggestions = std::move(ordered);
 }
 
-bool PopulateMemberSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& ac_state) {
+bool PopulateMemberSuggestions(EditorState& state, EditorTab& tab, TextEditor::AutoCompleteState& ac_state) {
     TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
     std::string before = TextBeforeCursor(tab, pos);
 
     MemberAccessContext ctx;
     std::vector<ClassMember> members;
-    if (!ResolveVisibleMembers(tab, pos.line, before, ctx, members)) return false;
+    if (!ResolveVisibleMembers(state, tab, pos.line, before, ctx, members)) return false;
 
     const std::string search_term_lower = ToLowerAscii(ac_state.searchTerm);
 
@@ -358,6 +363,52 @@ std::string WordEndingAtCursor(const std::string& line_before_cursor) {
     return line_before_cursor.substr(start, end - start);
 }
 
+bool FindExternalAttributeAssignment(EditorTab& tab, const std::string& class_name, const std::string& attr_name,
+                                      int& out_line) {
+    const std::string text = tab.GetText();
+    size_t i = 0;
+    while (i < text.size()) {
+        char c = text[i];
+
+        if (c == '#') { while (i < text.size() && text[i] != '\n') ++i; continue; }
+        if (c == '\'' || c == '"') {
+            char quote = c;
+            ++i;
+            while (i < text.size() && text[i] != quote) {
+                if (text[i] == '\\' && i + 1 < text.size()) i += 2; else ++i;
+            }
+            if (i < text.size()) ++i;
+            continue;
+        }
+        if (!IsIdentStart(c)) { ++i; continue; }
+
+        const size_t ident_start = i;
+        std::string ident = ReadIdent(text, i);
+        if (ident == "this") continue;
+
+        size_t k = i;
+        SkipInlineWhitespace(text, k);
+        if (k >= text.size() || text[k] != '.') continue;
+        ++k;
+        SkipInlineWhitespace(text, k);
+        if (k >= text.size() || !IsIdentStart(text[k])) continue;
+
+        std::string member = ReadIdent(text, k);
+        if (member != attr_name) continue;
+
+        size_t m = k;
+        SkipInlineWhitespace(text, m);
+        const bool is_assignment = m < text.size() && text[m] == '=' && (m + 1 >= text.size() || text[m + 1] != '=');
+        if (!is_assignment) continue;
+
+        if (tab.variable_type_index.TypeOf(ident, ident_start) != class_name) continue;
+
+        out_line = LineAt(text, ident_start);
+        return true;
+    }
+    return false;
+}
+
 struct DefinitionTarget {
     bool same_file = true;
     std::string file_path;
@@ -365,7 +416,20 @@ struct DefinitionTarget {
     int column = 0;
 };
 
-bool ResolveDefinitionTarget(EditorTab& tab, const TextEditor::CursorPosition& pos, DefinitionTarget& out) {
+size_t TextOffsetForPosition(const std::string& text, int line, int column) {
+    size_t offset = 0;
+    int current_line = 0;
+    while (current_line < line) {
+        size_t newline = text.find('\n', offset);
+        if (newline == std::string::npos) return text.size();
+        offset = newline + 1;
+        ++current_line;
+    }
+    return std::min(offset + static_cast<size_t>(std::max(0, column)), text.size());
+}
+
+bool ResolveDefinitionTarget(EditorState& state, EditorTab& tab, const TextEditor::CursorPosition& pos,
+                              DefinitionTarget& out) {
     // Use the *full* identifier the cursor sits inside -- scanning both left and right from the
     // column, not just backward from it. A plain left click places the caret wherever the pixel
     // under the mouse lands, which is very often in the *middle* of a word, not at its end.
@@ -385,14 +449,20 @@ bool ResolveDefinitionTarget(EditorTab& tab, const TextEditor::CursorPosition& p
     const std::string word = line.substr(word_start, word_end - word_start);
     if (word.empty() || !IsIdentStart(word[0])) return false;
 
+    std::shared_ptr<const WorkspaceIndex::Snapshot> workspace = state.workspace_index.CurrentSnapshot();
+
     const std::string before_word = line.substr(0, word_start);
     if (!before_word.empty() && before_word.back() == '.') {
         MemberAccessContext ctx;
-        std::vector<ClassMember> members;
-        if (ResolveVisibleMembers(tab, pos.line, before_word, ctx, members)) {
+        if (ResolveMemberAccess(tab.GetText(), pos.line, before_word, tab.class_index, tab.variable_type_index,
+                                 ctx, &workspace->classes)) {
+            std::vector<ClassMember> members =
+                ClassIndex::FilterForAccess(tab.class_index.FlattenedMembers(ctx.class_name, &workspace->classes),
+                                             ctx.kind, ctx.viewer_class);
             for (const auto& member : members) {
                 if (member.name != word || member.line <= 0) continue;
                 const ClassInfo* owner = tab.class_index.Find(member.declared_in);
+                if (!owner) owner = workspace->classes.Find(member.declared_in);
                 if (!owner) return false;
                 out.file_path = member.is_method && member.signature ? member.signature->source_file
                                                                       : owner->source_file;
@@ -401,7 +471,26 @@ bool ResolveDefinitionTarget(EditorTab& tab, const TextEditor::CursorPosition& p
                 out.column = 0;
                 return true;
             }
+
+            int external_line = 0;
+            if (FindExternalAttributeAssignment(tab, ctx.class_name, word, external_line)) {
+                out.file_path.clear();
+                out.same_file = true;
+                out.line = external_line;
+                out.column = 0;
+                return true;
+            }
         }
+    }
+
+    if (const int var_line = tab.variable_type_index.DeclarationLine(
+            word, TextOffsetForPosition(tab.GetText(), pos.line, pos.column));
+        var_line >= 0) {
+        out.file_path.clear();
+        out.same_file = true;
+        out.line = var_line;
+        out.column = 0;
+        return true;
     }
 
     if (const ClassInfo* cls = tab.class_index.Find(word)) {
@@ -416,6 +505,24 @@ bool ResolveDefinitionTarget(EditorTab& tab, const TextEditor::CursorPosition& p
         if (sig->is_builtin) return false;
         out.file_path = sig->source_file;
         out.same_file = out.file_path.empty();
+        out.line = sig->line;
+        out.column = 0;
+        return true;
+    }
+
+    if (const ClassInfo* cls = workspace->classes.Find(word)) {
+        if (cls->source_file.empty()) return false;
+        out.file_path = cls->source_file;
+        out.same_file = false;
+        out.line = cls->line;
+        out.column = 0;
+        return true;
+    }
+
+    if (const FunctionSignature* sig = workspace->functions.Find(word)) {
+        if (sig->is_builtin || sig->source_file.empty()) return false;
+        out.file_path = sig->source_file;
+        out.same_file = false;
         out.line = sig->line;
         out.column = 0;
         return true;
@@ -789,7 +896,8 @@ std::string BuildMethodStub(const ClassMember& member, const std::string& indent
 // Inserts a stub for every still-missing member of `entry` right before the
 // class's closing `end`, then rebuilds the index so the squiggle clears once
 // the newly-inserted stubs make the class complete.
-void ImplementMissingInterfaceMembers(EditorTab& tab, const EditorTab::IncompleteInterface& entry) {
+void ImplementMissingInterfaceMembers(EditorState& state, EditorTab& tab,
+                                       const EditorTab::IncompleteInterface& entry) {
     const FoldRange* range = tab.fold_index.RangeStartingAt(entry.line);
     if (!range) return;
 
@@ -805,7 +913,7 @@ void ImplementMissingInterfaceMembers(EditorTab& tab, const EditorTab::Incomplet
     for (const auto& member : entry.missing_members) insertion += BuildMethodStub(member, body_indent);
 
     tab.editor.ReplaceSectionText(range->end_line, 0, range->end_line, 0, insertion);
-    RebuildIndexAndTrie(tab);
+    RebuildIndexAndTrie(state, tab);
 }
 
 // Everything DrawDotCompletionPopup needs to know, computed *before* tab.editor.Render() runs
@@ -818,7 +926,7 @@ struct DotCompletionPending {
     std::vector<ClassMember> members;
 };
 
-DotCompletionPending PrepareDotCompletion(EditorTab& tab) {
+DotCompletionPending PrepareDotCompletion(EditorState& state, EditorTab& tab) {
     DotCompletionPending pending;
 
     TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
@@ -826,7 +934,7 @@ DotCompletionPending PrepareDotCompletion(EditorTab& tab) {
     if (before.empty() || before.back() != '.') return pending;
 
     MemberAccessContext ctx;
-    if (!ResolveVisibleMembers(tab, pos.line, before, ctx, pending.members)) return pending;
+    if (!ResolveVisibleMembers(state, tab, pos.line, before, ctx, pending.members)) return pending;
     if (pending.members.empty()) return pending;
 
     pending.active = true;
@@ -974,7 +1082,7 @@ bool DrawDotCompletionPopup(EditorTab& tab, const ImVec2& editor_screen_min,
     return true;
 }
 
-void InitTab(EditorTab& tab) {
+void InitTab(EditorState& state, EditorTab& tab) {
     tab.editor.SetLanguage(languages::AvaLang());
     TextEditor::Palette palette = TextEditor::GetDarkPalette();
 
@@ -1016,13 +1124,13 @@ void InitTab(EditorTab& tab) {
         tab.last_edit_time = ImGui::GetTime();
     }, 0);
 
-    tab.autocomplete_config.callback = [&tab](TextEditor::AutoCompleteState& ac_state) {
-        if (PopulateMemberSuggestions(tab, ac_state)) return;
+    tab.autocomplete_config.callback = [&state, &tab](TextEditor::AutoCompleteState& ac_state) {
+        if (PopulateMemberSuggestions(state, tab, ac_state)) return;
         PopulateGeneralSuggestions(tab, ac_state);
     };
     tab.editor.SetAutoCompleteConfig(&tab.autocomplete_config);
 
-    RebuildIndexAndTrie(tab);
+    RebuildIndexAndTrie(state, tab);
 }
 
 int FindTabForPath(EditorState& state, const std::string& path) {
@@ -1106,7 +1214,7 @@ EditorTab& OpenFileInTab(EditorState& state, const std::string& path) {
     auto tab = std::make_unique<EditorTab>();
     tab->id = state.next_tab_id++;
     tab->modules_path = state.modules_path;
-    InitTab(*tab);
+    InitTab(state, *tab);
 
     if (!path.empty()) {
         std::ifstream file(path, std::ios::binary);
@@ -1117,7 +1225,7 @@ EditorTab& OpenFileInTab(EditorState& state, const std::string& path) {
             tab->SetText(ss.str());
             tab->dirty = false;
 
-            RebuildIndexAndTrie(*tab);
+            RebuildIndexAndTrie(state, *tab);
         }
 
         if (std::filesystem::path(path).extension().string() == ".avaui") {
@@ -1155,10 +1263,10 @@ EditorTab& OpenWelcomeTab(EditorState& state) {
     return *state.tabs.back();
 }
 
-void SaveTab(EditorTab& tab) {
+void SaveTab(EditorState& state, EditorTab& tab) {
     if (tab.file_path.empty()) return;
 
-    if (tab.index_dirty) RebuildIndexAndTrie(tab);
+    if (tab.index_dirty) RebuildIndexAndTrie(state, tab);
 
     if (tab.is_avaui) {
         if (tab.view_mode == TabViewMode::Code) {
@@ -1190,7 +1298,7 @@ void SaveTab(EditorTab& tab) {
     tab.dirty = false;
 }
 
-void ToggleTabViewMode(EditorTab& tab) {
+void ToggleTabViewMode(EditorState& state, EditorTab& tab) {
     if (!tab.is_avaui) return;
 
     if (tab.view_mode == TabViewMode::Design) {
@@ -1205,7 +1313,7 @@ void ToggleTabViewMode(EditorTab& tab) {
             }
             return avalang::ui::parser::WriteAvaui(tab.design.Root(), opts);
         }());
-        RebuildIndexAndTrie(tab);
+        RebuildIndexAndTrie(state, tab);
         tab.avaui_load_error.clear();
         tab.view_mode = TabViewMode::Code;
         return;
@@ -1263,9 +1371,9 @@ int FindLineOf(const std::string& text, const std::string& needle) {
     return static_cast<int>(std::count(text.begin(), text.begin() + static_cast<long>(pos), '\n'));
 }
 
-void JumpToCodeBehindHandler(EditorTab& tab, const std::string& handler_name) {
+void JumpToCodeBehindHandler(EditorState& state, EditorTab& tab, const std::string& handler_name) {
     if (tab.view_mode == TabViewMode::Design) {
-        ToggleTabViewMode(tab);
+        ToggleTabViewMode(state, tab);
     }
     const int func_line = FindLineOf(tab.GetText(), "func " + handler_name + "(");
     if (func_line < 0) return;
@@ -1286,8 +1394,9 @@ bool HasUnsavedChanges(const EditorState& state) {
 void SaveAllTabs(EditorState& state) {
     for (auto& tab : state.tabs) {
 
-        if (!tab->is_welcome && tab->dirty) SaveTab(*tab);
+        if (!tab->is_welcome && tab->dirty) SaveTab(state, *tab);
     }
+    state.workspace_index.MarkDirty();
 }
 
 namespace {
@@ -1327,26 +1436,15 @@ void DrawWelcomeTab(EditorState& state) {
 
     ImGui::Dummy(ImVec2(0.0f, 28.0f));
 
-    const float button_w = 180.0f;
+    const float button_w = 200.0f;
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 10.0f));
-    ImGui::SetCursorPosX(center_x - (button_w + 90.0f) * 0.5f);
-    if (ImGui::Button(util::Tr("explorer.new_file").c_str(), ImVec2(button_w, 0.0f))) {
-        state.new_tab_requested = true;
+    ImGui::SetCursorPosX(center_x - button_w * 0.5f);
+    if (ImGui::Button(util::Tr("menu.file.new_project").c_str(), ImVec2(button_w, 0.0f))) {
+        state.new_project_requested = true;
     }
-    ImGui::SameLine();
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("Ctrl+N");
 
-    ImGui::SetCursorPosX(center_x - (button_w + 90.0f) * 0.5f);
-    if (ImGui::Button(util::Tr("editor.welcome.open_file").c_str(), ImVec2(button_w, 0.0f))) {
-        state.open_requested = true;
-    }
-    ImGui::SameLine();
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("Ctrl+O");
-
-    ImGui::SetCursorPosX(center_x - (button_w + 90.0f) * 0.5f);
-    if (ImGui::Button(util::Tr("menu.file.open_folder").c_str(), ImVec2(button_w, 0.0f))) {
+    ImGui::SetCursorPosX(center_x - button_w * 0.5f);
+    if (ImGui::Button(util::Tr("editor.welcome.open_project").c_str(), ImVec2(button_w, 0.0f))) {
         state.open_folder_requested = true;
     }
     ImGui::PopStyleVar();
@@ -1363,7 +1461,10 @@ void DrawWelcomeTab(EditorState& state) {
 }
 
 void SaveActiveTab(EditorState& state) {
-    if (EditorTab* tab = state.Active()) SaveTab(*tab);
+    if (EditorTab* tab = state.Active()) {
+        SaveTab(state, *tab);
+        state.workspace_index.MarkDirty();
+    }
 }
 
 void RequestCloseTab(EditorState& state, int index) {
@@ -1451,6 +1552,8 @@ void SelectMatchInEditor(EditorState& state, const std::string& file_path, int l
 }
 
 void DrawEditorPanel(EditorState& state) {
+    state.workspace_index.Poll();
+
     state.designer_selection.reset();
     state.code_editor_has_focus = false;
 
@@ -1508,7 +1611,7 @@ void DrawEditorPanel(EditorState& state) {
                 tab_open = false;
             }
             if (selected) {
-                MaybeRebuildIndex(tab);
+                MaybeRebuildIndex(state, tab);
 
                 if (tab.is_welcome) {
                     DrawWelcomeTab(state);
@@ -1530,7 +1633,7 @@ void DrawEditorPanel(EditorState& state) {
                     if (tab.design.dirty) tab.dirty = true;
 
                     if (!generated_handler.empty()) {
-                        JumpToCodeBehindHandler(tab, generated_handler);
+                        JumpToCodeBehindHandler(state, tab, generated_handler);
                     }
                 } else {
 
@@ -1548,7 +1651,7 @@ void DrawEditorPanel(EditorState& state) {
 
                     // Must be computed, and the keys it wants must be claimed, *before*
                     // Render() below -- see the comments on ClaimDotCompletionKeys().
-                    const DotCompletionPending dot_pending = PrepareDotCompletion(tab);
+                    const DotCompletionPending dot_pending = PrepareDotCompletion(state, tab);
                     DotCompletionKeys dot_keys;
                     if (dot_pending.active) {
                         dot_keys.nav_down = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
@@ -1602,23 +1705,12 @@ void DrawEditorPanel(EditorState& state) {
                     ImGui::SetWindowFontScale(tab.zoom);
 
                     tab.editor.Render("##editor", avail, false);
-                    state.code_editor_has_focus = ImGui::IsItemFocused();
+                    state.code_editor_has_focus = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
                     DrawIncompleteInterfaceSquiggles(tab, editor_min, editor_max);
 
-                    // F12 (goto_def_key) and Ctrl+Click (goto_def_click) are meant to be two
-                    // triggers for the exact same action, but they used two different focus
-                    // checks: Ctrl+Click only requires the mouse to be hovering the editor rect,
-                    // while F12 went through ShortcutRegistry's EditorFocused scope, which
-                    // requires ImGui::IsItemFocused() (line ~1294) to be true. The vendored
-                    // editor doesn't always register a cleanly focusable "last item" the way a
-                    // plain widget would, so IsItemFocused() can read false even while the
-                    // caret is visibly blinking inside it -- which is exactly why Ctrl+Click
-                    // kept working (it never checked focus) while F12 silently did nothing.
-                    // OR in the same hover signal Ctrl+Click already relies on, so F12 fires
-                    // under the same real-world conditions Ctrl+Click does.
                     const bool goto_def_hover = ImGui::IsMouseHoveringRect(editor_min, editor_max);
-                    const bool goto_def_key = ShortcutRegistry::Instance().Pressed(
-                        ShortcutId::GotoDefinition, state.code_editor_has_focus || goto_def_hover);
+                    const bool goto_def_key =
+                        ShortcutRegistry::Instance().Pressed(ShortcutId::GotoDefinition, state.code_editor_has_focus);
                     const bool goto_def_click = goto_def_hover &&
                                                  ImGui::GetIO().KeyCtrl &&
                                                  ImGui::IsMouseClicked(ImGuiMouseButton_Left);
@@ -1626,24 +1718,10 @@ void DrawEditorPanel(EditorState& state) {
                         goto_def_click ? ScreenPosToCursor(tab, ImGui::GetMousePos(), editor_min)
                                         : tab.editor.GetCursorPosition(0);
                     if (goto_def_click) {
-                        // ImGuiColorTextEdit treats Ctrl+Click as "add a cursor" (see
-                        // TextEditor.cpp's cursors.addCursor(...)), not "move cursor 0". We
-                        // already stopped relying on its cursor state to resolve *which* word
-                        // was clicked (that's what ScreenPosToCursor above is for), but the
-                        // stray extra cursor the library just created is still sitting in the
-                        // editor's cursor list -- cursor 0 hasn't moved. Left unfixed, the next
-                        // plain F12 press (keyboard only, no click) reads
-                        // tab.editor.GetCursorPosition(0) and gets that stale pre-click
-                        // position instead of wherever the user last Ctrl+Clicked, which is
-                        // exactly what makes F12 look like it "only works right after a precise
-                        // click": really it works off a cursor 0 that Ctrl+Click never updated.
-                        // SetCursor() collapses back down to a single cursor at the resolved
-                        // position, keeping cursor 0 -- and therefore keyboard-only F12 -- in
-                        // sync with whatever the user actually clicked.
                         tab.editor.SetCursor(hover_pos.line, hover_pos.column);
                     }
                     DefinitionTarget hover_target;
-                    const bool has_definition_here = ResolveDefinitionTarget(tab, hover_pos, hover_target);
+                    const bool has_definition_here = ResolveDefinitionTarget(state, tab, hover_pos, hover_target);
                     if ((goto_def_key || goto_def_click) && has_definition_here) {
                         JumpToDefinition(state, tab, hover_target);
                     }
@@ -1663,7 +1741,7 @@ void DrawEditorPanel(EditorState& state) {
                                                                       ? tab.context_menu_click_pos
                                                                       : tab.editor.GetCursorPosition(0);
                     DefinitionTarget menu_target;
-                    const bool menu_has_definition = ResolveDefinitionTarget(tab, menu_pos, menu_target);
+                    const bool menu_has_definition = ResolveDefinitionTarget(state, tab, menu_pos, menu_target);
                     const EditorTab::IncompleteInterface* menu_incomplete_interface =
                         FindIncompleteInterfaceAtLine(tab, menu_pos);
 
@@ -1677,7 +1755,7 @@ void DrawEditorPanel(EditorState& state) {
                         }
                         if (menu_incomplete_interface) {
                             if (ImGui::MenuItem(util::Tr("editor.context.implement_interface").c_str())) {
-                                ImplementMissingInterfaceMembers(tab, *menu_incomplete_interface);
+                                ImplementMissingInterfaceMembers(state, tab, *menu_incomplete_interface);
                             }
                         }
                         ImGui::Separator();
@@ -1755,7 +1833,7 @@ void DrawEditorPanel(EditorState& state) {
 
                     state.pending_close_index = -1;
                 } else {
-                    SaveTab(*state.tabs[idx]);
+                    SaveTab(state, *state.tabs[idx]);
                     CloseTabNow(state, idx);
                 }
                 ImGui::CloseCurrentPopup();
