@@ -92,6 +92,30 @@ std::string ToRelativePosix(const fs::path& temp_dir, const std::string& resolve
     return rel.generic_string();
 }
 
+// Descifra un archivo embebido y lo escribe en disco real bajo `out_path`,
+// exactamente la misma logica que ya usaba el lambda de
+// SetBeforeModuleReadHook mas abajo (factorizada aca para poder llamarla
+// tambien antes de compilar el entry -- ver comentario en
+// RunPackagedProgram sobre por que hace falta).
+void DecryptAndWriteFile(const avapack::EmbeddedFile& file, unsigned char key[32],
+                          bool debug_build, const fs::path& out_path) {
+    std::vector<unsigned char> plaintext = avapack::DecryptWith(file, key, debug_build);
+
+    std::error_code ec;
+    fs::create_directories(out_path.parent_path(), ec);
+
+    std::ofstream out(out_path, std::ios::binary);
+    if (out && !plaintext.empty()) {
+        out.write(reinterpret_cast<const char*>(plaintext.data()),
+                   static_cast<std::streamsize>(plaintext.size()));
+    }
+    out.close();
+    if (!plaintext.empty()) {
+        std::memset(plaintext.data(), 0, plaintext.size());
+    }
+    MarkTemporary(out_path);
+}
+
 void SetScriptArgsGlobal(ava::VM* raw_vm, int argc, char** argv) {
     auto* list = new ava::ListObj();
     for (int i = 1; i < argc; ++i) {
@@ -147,22 +171,7 @@ int RunPackagedProgram(int argc, char** argv, const PackagedManifest& manifest,
         if (it == file_map.end()) {
             return;
         }
-        std::vector<unsigned char> plaintext = DecryptWith(*it->second, key, manifest.debug_build);
-
-        fs::path out_path(resolved_path);
-        std::error_code ec;
-        fs::create_directories(out_path.parent_path(), ec);
-
-        std::ofstream out(out_path, std::ios::binary);
-        if (out && !plaintext.empty()) {
-            out.write(reinterpret_cast<const char*>(plaintext.data()),
-                       static_cast<std::streamsize>(plaintext.size()));
-        }
-        out.close();
-        if (!plaintext.empty()) {
-            std::memset(plaintext.data(), 0, plaintext.size());
-        }
-        MarkTemporary(out_path);
+        DecryptAndWriteFile(*it->second, key, manifest.debug_build, fs::path(resolved_path));
     });
 
     raw_vm->SetAfterModuleReadHook([](const std::string& resolved_path) {
@@ -185,9 +194,49 @@ int RunPackagedProgram(int argc, char** argv, const PackagedManifest& manifest,
             return 1;
         }
     } else {
+        // Bug real (encontrado esta sesion): Compiler::RegisterImportedClasses
+        // (compiler.cpp) -- el harvesting estatico de clases para el chequeo
+        // de 'new' -- corre DURANTE ava_compile() del entry, es decir ANTES
+        // de que el entry ejecute ningun `import` en runtime. Pero los
+        // siblings (ej. app.ava) solo se descifran y escriben a disco real
+        // de forma perezosa, en SetBeforeModuleReadHook, disparado recien
+        // cuando el VM resuelve ESE import durante la ejecucion -- que
+        // todavia no paso en este punto. Entonces ResolveSiblingImportFile
+        // (via VmPlatformAccessor, disco real en este target -- este
+        // ejecutable NO usa MemoryOverridePlatform, eso es exclusivo de
+        // --zero-disk/main_zerodisk.cpp) siempre encontraba "no existe" y
+        // `new app()` fallaba con "'app' is not a class" pese a que el
+        // import se resuelva perfecto despues.
+        //
+        // Ademas -- segundo bug independiente que este solo no alcanzaba
+        // para arreglar -- el `source_name` pasado a ava_compile era
+        // `manifest.entry_file` a secas ("main.ava", sin ruta), asi que
+        // Compiler::current_file_dir_ quedaba vacio y
+        // ResolveSiblingImportFile buscaba el sibling relativo al cwd real
+        // del proceso empacado (donde el usuario corrio el .exe), no
+        // relativo a `temp_dir` (donde los siblings realmente se
+        // materializan). Aunque los siblings ya hubiesen existido en disco,
+        // se los buscaba en el lugar equivocado.
+        //
+        // Fix: materializar TODOS los archivos embebidos en temp_dir de
+        // una sola vez, antes de compilar el entry (no cambia ninguna
+        // garantia de este modo -- a diferencia de --zero-disk, este
+        // camino siempre escribio plano a disco real para cada import; solo
+        // se adelanta el momento). Y pasar como source_name la ruta
+        // absoluta del entry YA DENTRO de temp_dir, para que
+        // current_file_dir_ apunte al lugar correcto. El hook de arriba
+        // sigue re-escribiendo/borrando cada archivo al importarlo de
+        // verdad en runtime (ver DecryptAndWriteFile/ZeroAndRemove) -- este
+        // adelanto no cambia ese comportamiento, solo el timing para el
+        // chequeo estatico de clases.
+        for (const auto& [rel, file] : file_map) {
+            DecryptAndWriteFile(*file, key, manifest.debug_build, temp_dir / rel);
+        }
+
         std::string entry_source(entry_plain.begin(), entry_plain.end());
         if (!entry_plain.empty()) std::memset(entry_plain.data(), 0, entry_plain.size());
-        module = ava_compile(vm, entry_source.c_str(), manifest.entry_file.c_str(), &error);
+        std::string entry_source_name = (temp_dir / manifest.entry_file).string();
+        module = ava_compile(vm, entry_source.c_str(), entry_source_name.c_str(), &error);
         entry_source.assign(entry_source.size(), '\0');
         if (!module) {
             std::fprintf(stderr, "compile error: %s\n", error ? error : "unknown error");

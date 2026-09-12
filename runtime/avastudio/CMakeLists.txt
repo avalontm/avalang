@@ -145,6 +145,18 @@ add_library(text_editor STATIC ${imguicolortextedit_SOURCE_DIR}/TextEditor.cpp)
 target_include_directories(text_editor PUBLIC ${imguicolortextedit_SOURCE_DIR})
 target_link_libraries(text_editor PUBLIC imgui_docking)
 
+# --- pugixml (parser/writer for the new .avaproj project file, see
+# src/project/avaproj_file.h) -- small, header+single .cpp, MIT license,
+# fetched the same way as the other Ava Studio-only deps above rather than
+# added to /libraries (which holds deps shared with the core avalang lib).
+FetchContent_Declare(
+    pugixml
+    GIT_REPOSITORY https://github.com/zeux/pugixml.git
+    GIT_TAG        v1.14
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(pugixml)
+
 # --- Ava Studio executable ---------------------------------------------
 set(STUDIO_SOURCES
     src/main.cpp
@@ -168,6 +180,9 @@ set(STUDIO_SOURCES
     src/util/process_log.cpp
     src/util/project_utils.cpp
     src/util/scaffold_templates.cpp
+    src/project/avaproj_file.cpp
+    src/project/avaproj_user_file.cpp
+    src/project/project_config.cpp
     src/design/component_catalog.cpp
     src/design/design_document.cpp
     src/design/component_resolver.cpp
@@ -181,6 +196,7 @@ set(STUDIO_SOURCES
     src/panels/properties_panel.cpp
     src/panels/settings_panel.cpp
     src/panels/build_panel.cpp
+    src/panels/project_properties_panel.cpp
     src/panels/preview_panel.cpp
     src/panels/terminal_panel.cpp
     src/panels/logs_panel.cpp
@@ -227,7 +243,7 @@ target_include_directories(ava_studio PRIVATE
     ${CMAKE_SOURCE_DIR}/runtime/avalang
 )
 
-target_link_libraries(ava_studio PRIVATE avalang imgui_docking text_editor avalang_ui)
+target_link_libraries(ava_studio PRIVATE avalang imgui_docking text_editor avalang_ui pugixml)
 
 # data/docs/keyword_docs.csv, data/docs/builtin_signatures.csv,
 # data/design/component_catalog.csv, data/langs/en.csv/es.csv and (Fase 5)

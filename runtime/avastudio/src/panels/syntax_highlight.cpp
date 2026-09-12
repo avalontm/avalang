@@ -124,6 +124,42 @@ std::vector<Token> Tokenize(const std::string& text) {
             continue;
         }
 
+        if (c == '[') {
+            // `[NAME]` es ambiguo en la gramatica real (AvaLang.g4): la
+            // misma forma la usan tanto `attribute` (anotaciones como
+            // `[entry]`) como `indexTrailer` (indexado de arrays, `arr[i]`).
+            // Un `[` que abre una anotacion real nunca esta pegado a un
+            // identificador/`)`/`]` anterior (siempre es standalone, al
+            // principio de una linea o justo despues de otra anotacion) --
+            // el mismo criterio que usa el lookbehind del grammar TextMate
+            // de la extension de VS Code, para que ambos editores coincidan.
+            int back = i - 1;
+            while (back >= 0 && text[back] != '\n' && std::isspace(static_cast<unsigned char>(text[back]))) back--;
+            const bool looks_like_index =
+                back >= 0 && (IsNameChar(text[back]) || text[back] == ')' || text[back] == ']');
+
+            if (!looks_like_index) {
+                int j = i + 1;
+                while (j < n && text[j] != '\n' && std::isspace(static_cast<unsigned char>(text[j]))) j++;
+                if (j < n && IsNameStart(text[j])) {
+                    int k = j;
+                    while (k < n && IsNameChar(text[k])) k++;
+                    int close = k;
+                    while (close < n && text[close] != '\n' &&
+                           std::isspace(static_cast<unsigned char>(text[close]))) {
+                        close++;
+                    }
+                    if (close < n && text[close] == ']') {
+                        const int end = close + 1;
+                        push(i, end, TokenKind::Annotation);
+                        i = end;
+                        prev_keyword.clear();
+                        continue;
+                    }
+                }
+            }
+        }
+
         {
             const int s = i;
             i++;
@@ -144,6 +180,7 @@ ImU32 ColorForToken(TokenKind kind) {
         case TokenKind::String:   return U32FromHex(kSynString);
         case TokenKind::Number:   return U32FromHex(kSynNumber);
         case TokenKind::Comment:  return U32FromHex(kSynComment);
+        case TokenKind::Annotation: return U32FromHex(kSynAnnotation);
         case TokenKind::Default:
         default:                 return U32FromHex(kSynVariable);
     }

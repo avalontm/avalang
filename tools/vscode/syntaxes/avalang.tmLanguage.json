@@ -6,6 +6,7 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#line-continuation" },
+    { "include": "#annotations" },
     { "include": "#extern-block" },
     { "include": "#class-declaration" },
     { "include": "#func-declaration" },
@@ -51,6 +52,16 @@
     "line-continuation": {
       "match": "\\\\\\s*$",
       "name": "constant.character.escape.line-continuation.avalang"
+    },
+
+    "annotations": {
+      "comment": "Anotaciones estilo `[entry]` (Fase 1/2 del plan de anotaciones). Usa scopes `*.decorator.*` -- no `keyword.*` ni `storage.*` -- a proposito: la mayoria de los temas populares (Dark+, Monokai, One Dark Pro, Dracula) ya traen una regla especifica para decoradores (heredada de sus grammars de TS/Python) y la pintan con un color propio, distinto del de las keywords (`static`/`func`/`class`) y de los tipos. Asi se distingue visualmente como metadata sobre la declaracion, no como parte de ella, sin necesitar un tema a medida. El lookbehind negativo es necesario porque la gramatica real (AvaLang.g4) usa exactamente la misma forma `[NAME]` para dos cosas distintas: la regla `attribute` (esto) Y `indexTrailer` (indexado de arrays, `arr[i]`) -- sin el lookbehind, `arr[i]` se pintaria tambien como si fuera una anotacion. Un `[` que abre una anotacion real nunca esta pegado a un identificador/`)`/`]` anterior (siempre es standalone, al principio de una linea o despues de otra anotacion), asi que excluir esos tres casos alcanza para separar ambos usos sin tocar el parser.",
+      "match": "(?<![a-zA-Z_0-9\\)\\]])(\\[)\\s*([a-zA-Z_][a-zA-Z_0-9]*)\\s*(\\])",
+      "captures": {
+        "1": { "name": "punctuation.decorator.avalang" },
+        "2": { "name": "entity.name.function.decorator.avalang" },
+        "3": { "name": "punctuation.decorator.avalang" }
+      }
     },
 
     "import-statement": {

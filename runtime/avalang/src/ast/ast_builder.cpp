@@ -4,6 +4,20 @@
 
 namespace ava {
 
+// Plan de anotaciones (AvaLang_Plan_Anotaciones.md), Fase 1: extrae los
+// nombres crudos de una `attributeList` (`[entry]`, `[foo]`, ...) en el
+// orden en que aparecen. `ctx` puede ser nullptr (declaración sin
+// anotaciones) -- devuelve vector vacío en ese caso, así los call sites
+// no necesitan chequear null antes de llamar.
+static std::vector<std::string> ExtractAttributeNames(AvaLangParser::AttributeListContext* ctx) {
+    std::vector<std::string> names;
+    if (!ctx) return names;
+    for (auto* attr : ctx->attribute()) {
+        names.push_back(attr->NAME()->getText());
+    }
+    return names;
+}
+
 static std::string stripQuotes(const std::string& s) {
     if (s.size() >= 2) {
         if ((s.front() == '"' && s.back() == '"') || (s.front() == '\'' && s.back() == '\'')) {
@@ -734,6 +748,12 @@ std::any AstBuilder::visitFuncDeclaration(AvaLangParser::FuncDeclarationContext*
     // Phase 9/10).
     func->param_types = param_types;
     func->return_type = ctx->returnType() ? ctx->returnType()->typeAnnotation()->NAME()->getText() : "";
+    // Fase 1 de anotaciones: cubre `[entry]\nfunc main() ... end` suelto
+    // (attributeList vive directamente en funcDeclaration). El caso
+    // `[entry]\nstatic func main() ... end` (attributeList antes de los
+    // memberModifier) lo completa visitModifiedFuncDeclaration abajo,
+    // porque esa posición vive en modifiedFuncDeclaration, no acá.
+    func->attributes = ExtractAttributeNames(ctx->attributeList());
     return func;
 }
 
@@ -823,6 +843,15 @@ std::any AstBuilder::visitModifiedFuncDeclaration(AvaLangParser::ModifiedFuncDec
     func->is_static = is_static;
     func->is_private = is_private;
     func->is_override = is_override;
+    // Fase 1 de anotaciones: la otra posición válida de `attributeList` es
+    // acá, antes de los memberModifier (`[entry]\nstatic func main() ...
+    // end`). visitFuncDeclaration ya puso las de su propia posición (si
+    // las hubiera, aunque gramaticalmente no se combinan en la práctica);
+    // agregamos las de esta posición sin pisarlas.
+    auto outer_attrs = ExtractAttributeNames(ctx->attributeList());
+    if (!outer_attrs.empty()) {
+        func->attributes.insert(func->attributes.end(), outer_attrs.begin(), outer_attrs.end());
+    }
     return func;
 }
 

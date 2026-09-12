@@ -168,12 +168,65 @@ Value VM::Run(const avastd::shared_ptr<Proto>& main) {
         Value result = ExecuteFrame(frames_.size() - 1);
         CloseUpvalues(frames_.back());
         frames_.pop_back();
+        // Plan de anotaciones, Fase 3: si el programa tiene un `[entry]`
+        // válido (Compiler::ValidateEntryAttributes ya lo garantizó en
+        // compile time -- a lo sumo uno, sin parámetros, static si es
+        // método), el chunk top-level de arriba ya corrió de punta a
+        // punta y dejó clases/funciones/globals registrados; ahora se
+        // invoca el `[entry]` y SU resultado es el que se devuelve, en
+        // vez del resultado del chunk top-level. Si no hay `[entry]`
+        // (caso más común hoy -- scripts existentes), `entry_func_name`
+        // está vacío y el comportamiento es exactamente el de antes.
+        if (!main->entry_func_name.empty()) {
+            return InvokeEntryPoint(main);
+        }
         return result;
     } AVA_CATCH(avastd::exception, e) {
         (void)e;
         frames_.resize(base);
         AVA_RETHROW();
     }
+}
+
+Value VM::InvokeEntryPoint(const avastd::shared_ptr<Proto>& main) {
+    if (main->entry_class_name.empty()) {
+        // `[entry]` suelto (funcDeclaration a nivel de módulo): el chunk
+        // top-level ya lo dejó como global via SETGLOBAL (mismo camino
+        // que cualquier `func` suelto), así que alcanza con leerlo de
+        // ahí e invocarlo como cualquier función.
+        Value fn = GetGlobal(main->entry_func_name);
+        if (fn.type != ValueType::Function) {
+            AVA_THROW(AvaError("internal error: '[entry]' function '" + main->entry_func_name +
+                                "' was not found as a global after running the top-level chunk"));
+        }
+        return Call(fn, {});
+    }
+
+    // `[entry]` como método static: la clase dueña también quedó como
+    // global (SETGLOBAL con el nombre de la clase, ver
+    // Compiler::CompileClass), así que se resuelve igual que
+    // `Clase.metodo` (OpGetAttr, vm_classes.cpp, rama ValueType::Class)
+    // -- un BoundMethod con `instance = Nil`, porque un método static no
+    // tiene `this`.
+    Value cls_val = GetGlobal(main->entry_class_name);
+    if (cls_val.type != ValueType::Class) {
+        AVA_THROW(AvaError("internal error: '[entry]' class '" + main->entry_class_name +
+                            "' was not found as a global after running the top-level chunk"));
+    }
+    auto* cls = static_cast<ClassObj*>(cls_val.obj);
+    auto method_it = cls->methods.find(main->entry_func_name);
+    if (method_it == cls->methods.end()) {
+        AVA_THROW(AvaError("internal error: '[entry]' static method '" + main->entry_class_name +
+                            "." + main->entry_func_name + "' was not found on class '" +
+                            main->entry_class_name + "' after compiling"));
+    }
+    auto* bound = new BoundMethod();
+    bound->proto = method_it->second;
+    bound->instance = Value::Nil();
+    Value bound_val;
+    bound_val.type = ValueType::Bound;
+    bound_val.obj = bound;
+    return Call(bound_val, {});
 }
 
 void VM::RaiseException(const Value& exc) {

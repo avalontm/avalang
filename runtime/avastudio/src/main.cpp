@@ -41,6 +41,7 @@
 #include "panels/preview_panel.h"
 #include "panels/problems_panel.h"
 #include "panels/properties_panel.h"
+#include "panels/project_properties_panel.h"
 #include "panels/quick_open_panel.h"
 #include "panels/build_panel.h"
 #include "panels/settings_panel.h"
@@ -59,6 +60,7 @@
 #include "util/log_bridge.h"
 #include "util/project_utils.h"
 #include "util/settings.h"
+#include "project/project_config.h"
 
 namespace fs = std::filesystem;
 
@@ -82,6 +84,35 @@ std::string ResolveWorkspaceDir() {
     return workspace.string();
 }
 
+// Fase 3: soporte para "abrir con" el .avaproj desde el explorador del SO.
+// La asociación de la extensión en sí (registro de Windows / instalador) no
+// es código de este repo -- ver PLAN_AVAPROJ.md. Lo que sí es de este repo
+// es parsear `--project <ruta>.avaproj` (o `--project=<ruta>.avaproj`) y
+// abrir la carpeta contenedora como proyecto.
+std::string ParseProjectArgPath(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        std::string candidate;
+        if (arg == "--project" && i + 1 < argc) {
+            candidate = argv[++i];
+        } else if (arg.rfind("--project=", 0) == 0) {
+            candidate = arg.substr(std::string("--project=").size());
+        } else {
+            continue;
+        }
+
+        if (candidate.empty()) continue;
+
+        std::error_code ec;
+        fs::path path(candidate);
+        if (path.extension() != ".avaproj") continue;
+        if (!fs::is_regular_file(path, ec) || ec) continue;
+
+        return fs::absolute(path, ec).string();
+    }
+    return "";
+}
+
 std::string ResolvePluginsDir() {
     fs::path base = fs::current_path();
 #if defined(_WIN32)
@@ -100,9 +131,6 @@ constexpr float kTitleBarHeight = 34.0f;
 
 constexpr float kTitleBarGap = 6.0f;
 
-// Fase 7: width of the fixed vertical icon strip at the left edge of the
-// workbench (DrawActivityBar) -- same footprint class as the title bar's
-// own caption buttons (kButtonWidth = 46 in titlebar_panel.cpp).
 constexpr float kActivityBarWidth = 44.0f;
 
 bool g_native_close_requested = false;
@@ -114,7 +142,10 @@ void GlfwWindowCloseRequested(GLFWwindow* window) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
+    const std::string cli_project_avaproj = ParseProjectArgPath(argc, argv);
+    const bool launched_with_project = !cli_project_avaproj.empty();
+
     glfwSetErrorCallback(GlfwErrorCallback);
     if (!glfwInit()) {
         return 1;
@@ -183,7 +214,28 @@ int main() {
     std::string pending_build_browse_value;
 
     studio::ExplorerState explorer_state;
-    explorer_state.root_dir = ResolveWorkspaceDir();
+    // Fix: si no nos lanzaron con un .avaproj especifico (doble click /
+    // "abrir con" desde el explorador del SO), antes esto siempre volvia a
+    // ResolveWorkspaceDir() (<exe_dir>/scripts) -- perdiendo de vista el
+    // proyecto en el que el usuario venia trabajando. Ahora se restaura
+    // settings.last_project_dir (si sigue existiendo en disco) antes de
+    // caer al workspace generico.
+    std::error_code root_dir_ec;
+    explorer_state.root_dir =
+        launched_with_project
+            ? fs::path(cli_project_avaproj).parent_path().string()
+            : (!settings.last_project_dir.empty() &&
+                       fs::is_directory(settings.last_project_dir, root_dir_ec)
+                   ? settings.last_project_dir
+                   : ResolveWorkspaceDir());
+
+    studio::ProjectConfig project_config = studio::LoadProjectConfig(explorer_state.root_dir);
+    auto reload_project_config = [&]() { project_config = studio::LoadProjectConfig(explorer_state.root_dir); };
+    studio::ProjectPropertiesState project_properties_state;
+    project_properties_state.open = launched_with_project;
+    studio::ProjectPropertiesBrowseField pending_project_properties_browse_field =
+        studio::ProjectPropertiesBrowseField::kNone;
+    std::string pending_project_properties_browse_value;
 
     studio::EditorState editor_state;
     studio::InitEditorPanel(editor_state);
@@ -192,6 +244,39 @@ int main() {
     editor_state.modules_path =
         settings.modules_path.empty() ? studio::util::ResolveDefaultModulesDir() : settings.modules_path;
     studio::OpenWelcomeTab(editor_state);
+
+    // Fix: helper unico para cambiar de proyecto/carpeta abierta que ademas
+    // persiste el cambio en settings.last_project_dir -- usado por los 3
+    // puntos donde el usuario abre explicitamente otro proyecto (abrir un
+    // .avaproj, Open Folder, crear un proyecto nuevo). El fallback inicial
+    // de mas arriba no pasa por aca a proposito: si cayo al workspace
+    // generico porque last_project_dir no existe mas, no queremos pisar el
+    // valor guardado hasta que el usuario elija algo explicitamente.
+    auto set_project_root = [&](const std::string& path) {
+        explorer_state.root_dir = path;
+        editor_state.project_root = path;
+        reload_project_config();
+        settings.last_project_dir = path;
+        studio::SaveSettings(settings);
+    };
+
+    // Los .avaproj se abren siempre con el panel de Propiedades (Fase 2/3),
+    // nunca como texto plano en el editor -- ver DrawExplorerPanel, que ya
+    // hace lo mismo para el doble clic en el explorador. Este helper cubre
+    // el resto de los caminos genéricos de "abrir archivo" (Quick Open).
+    auto open_path_respecting_avaproj = [&](const std::string& path) {
+        if (fs::path(path).extension() == ".avaproj") {
+            const std::string proj_dir = fs::path(path).parent_path().string();
+            if (proj_dir != explorer_state.root_dir) {
+                set_project_root(proj_dir);
+            } else {
+                reload_project_config();
+            }
+            project_properties_state.open = true;
+        } else {
+            studio::OpenFileInTab(editor_state, path);
+        }
+    };
 
     studio::TerminalState terminal_state;
     studio::LogsState logs_state;
@@ -272,10 +357,6 @@ int main() {
         return result;
     };
 
-    // Shared by "Run Project" and "Check" so both agree on exactly the same
-    // project_dir/entry -- same settings fields, same DetectEntryFile() call,
-    // same error strings, so they can never diverge on "which is the entry
-    // point of this project".
     struct ProjectEntryResolution {
         bool ok = false;
         std::string error;
@@ -284,17 +365,15 @@ int main() {
     };
     auto resolve_project_entry = [&]() -> ProjectEntryResolution {
         ProjectEntryResolution res;
-        const fs::path project_dir = settings.build_project_dir.empty()
-                                          ? fs::path(explorer_state.root_dir)
-                                          : fs::path(settings.build_project_dir);
+        const fs::path project_dir(explorer_state.root_dir);
         std::error_code project_dir_ec;
         if (!fs::exists(project_dir, project_dir_ec) || !fs::is_directory(project_dir, project_dir_ec)) {
             res.error = "project folder not found -- check it under Build > Project.";
             return res;
         }
-        const std::string entry = settings.build_entry_file.empty()
+        const std::string entry = project_config.proj.entry_file.empty()
                                        ? studio::DetectEntryFile(project_dir)
-                                       : settings.build_entry_file;
+                                       : project_config.proj.entry_file;
         if (entry.empty()) {
             res.error = "no .ava entry file found in the project -- set one under Build > Project.";
             return res;
@@ -367,26 +446,11 @@ int main() {
         }
     };
 
-    // Fase 7: reads settings.closed_panels directly instead of the
-    // panel_open map -- panel_open only gets an entry for a given panel the
-    // first time that panel's own try_emplace runs later in the same frame,
-    // so at the point the Activity Bar needs to know "is Explorer open
-    // right now" (drawn before Explorer itself), panel_open might not have
-    // an entry for it yet on the very first frame. closed_panels is the
-    // actual source of truth both panel_open and persist_if_closed already
-    // derive from, so reading it directly sidesteps the ordering problem
-    // instead of working around it.
     auto panel_visible = [&](const std::string& name) {
         auto& closed = settings.closed_panels;
         return std::find(closed.begin(), closed.end(), name) == closed.end();
     };
 
-    // Flips `name`'s open/closed state (same toggle the View menu's
-    // per-panel MenuItem list used to drive inline before Fase 7 moved that
-    // list to the Activity Bar) -- pulled out to a lambda so the Command
-    // Palette's per-panel "View: <panel>" entries (Fase 3) and the Activity
-    // Bar's icon clicks (Fase 7) can both reuse it verbatim instead of
-    // duplicating the find/erase/push_back dance.
     auto toggle_panel_visibility = [&](const std::string& name) {
         auto& closed = settings.closed_panels;
         auto it = std::find(closed.begin(), closed.end(), name);
@@ -401,10 +465,6 @@ int main() {
         studio::SaveSettings(settings);
     };
 
-    // Unconditionally opens+focuses `name` (same shape titlebar_result.open_settings_requested/
-    // build_requested and want_build already had inline, duplicated three times) -- used for
-    // panels that only ever need to be *shown*, never toggled closed, from a menu/shortcut/command
-    // (Settings, Build).
     auto open_panel_focused = [&](const std::string& name) {
         auto& closed = settings.closed_panels;
         auto it = std::find(closed.begin(), closed.end(), name);
@@ -418,13 +478,6 @@ int main() {
     studio::QuickOpenState quick_open_state;
     studio::NewProjectState new_project_state;
 
-    // Fase 7: set by the Activity Bar's Extensions icon (activity_result.
-    // extensions_clicked, below) and consumed the *next* frame when
-    // DrawTitleBar is called -- the Activity Bar draws after the title bar
-    // within the same frame, so a same-frame open isn't possible without
-    // reordering the whole draw sequence; a one-frame-later modal open is
-    // the same latency every other cross-panel effect in this loop already
-    // has (e.g. Quick Open picks, Problems/Terminal file clicks).
     bool pending_open_extensions = false;
 
     while (!glfwWindowShouldClose(window)) {
@@ -504,11 +557,6 @@ int main() {
                                             to_rect(titlebar_result.maximize_rect), to_rect(titlebar_result.close_rect),
                                             extra_rects, extra_rect_count);
 
-        // Fase 7: the Activity Bar occupies a fixed-width strip to the left
-        // of the dockspace (same non-dockable-top-level-window idiom the
-        // title bar itself uses), so the dockspace host is pushed right and
-        // narrowed by that same width instead of starting flush against
-        // the work area's left edge like it did before this phase.
         const float activity_bar_x = viewport->WorkPos.x;
         const float activity_bar_y = viewport->WorkPos.y + kTitleBarHeight + kTitleBarGap;
         const float activity_bar_h = viewport->WorkSize.y - kTitleBarHeight - kTitleBarGap;
@@ -528,10 +576,6 @@ int main() {
         ImGui::Begin("AvaStudioDockHost", nullptr, host_flags);
         ImGui::PopStyleVar(3);
 
-        // Bumped from "AvaStudioDockspace" so users upgrading from a build
-        // that predates the "Build" panel (or any other default-layout fix)
-        // get a fresh, fully-docked layout instead of inheriting a saved
-        // imgui.ini where that panel has no dock slot and opens floating.
         ImGuiID dockspace_id = ImGui::GetID("AvaStudioDockspace_v2");
 
         if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr) {
@@ -575,16 +619,6 @@ int main() {
         ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f));
         ImGui::End();
 
-        // Fase 7: Activity Bar drawn as its own fixed strip immediately
-        // left of the dockspace host, same relationship the title bar has
-        // to everything below it. Explorer/Toolbox/Settings are toggled
-        // the same way the old View menu list did (open/close); Search
-        // reuses the exact editor_state.find_in_project_requested flag the
-        // Ctrl+Shift+F handler and Command Palette entry already set
-        // further down, instead of re-deriving its own open/focus/
-        // focus_query_field dance; Extensions defers to pending_open_extensions
-        // (see its declaration above) since the modal itself lives inside
-        // DrawTitleBar, called earlier this same frame.
         const studio::ActivityBarResult activity_result = studio::DrawActivityBar(
             activity_bar_x, activity_bar_y, kActivityBarWidth, activity_bar_h,
             panel_visible("Explorer###explorer"), panel_visible("Find in Project###find_in_project"),
@@ -612,7 +646,7 @@ int main() {
             persist_if_closed("Explorer###explorer", open);
         }
         if (explorer_result.file_to_open) {
-            studio::OpenFileInTab(editor_state, *explorer_result.file_to_open);
+            open_path_respecting_avaproj(*explorer_result.file_to_open);
         }
         if (explorer_result.file_deleted) {
             studio::CloseTabForPath(editor_state, *explorer_result.file_deleted);
@@ -624,15 +658,10 @@ int main() {
         if (explorer_result.reveal_in_file_manager) {
             studio::titlebar::RevealInFileExplorer(*explorer_result.reveal_in_file_manager);
         }
+        if (explorer_result.open_project_properties) {
+            project_properties_state.open = true;
+        }
 
-        // Fase 7: Toolbox becomes a real panel_open entry (same shape as
-        // every other panel below) instead of always drawing without a
-        // close button whenever the active tab happens to be an .avaui
-        // Design view -- needed so the new Activity Bar (and Command
-        // Palette's "View: Toolbox" entry, which already iterates
-        // kBuiltinPanelNames) has something to toggle. The relevant-context
-        // gate stays: it still only actually draws while the active tab is
-        // an .avaui in Design view, same as before.
         if (bool& open = panel_open.try_emplace("Toolbox###toolbox", true).first->second; open) {
             if (const studio::EditorTab* active = editor_state.Active();
                 active && active->is_avaui && active->view_mode == studio::TabViewMode::Design) {
@@ -649,13 +678,6 @@ int main() {
                                                                  : studio::PropertiesState{};
         }
 
-        // Go to Definition (F12/Ctrl+Click in the code editor) targeting a
-        // symbol declared in a *different* file (an import): DrawEditorPanel
-        // only records the request (see EditorState::goto_definition_requested)
-        // instead of opening the tab itself, since doing that mid-tab-bar-loop
-        // risks desyncing which tab ImGui thinks is selected this frame.
-        // Consumed here, one frame later, the same way Problems/Find in
-        // Project file-clicks already are just below.
         if (editor_state.goto_definition_requested) {
             editor_state.goto_definition_requested = false;
             studio::OpenFileInTab(editor_state, editor_state.goto_definition_file);
@@ -693,17 +715,7 @@ int main() {
         if (titlebar_result.open_folder_requested || editor_state.open_folder_requested) {
             std::string path;
             if (studio::titlebar::OpenFolderDialog(window, path, explorer_state.root_dir)) {
-                // Bug found while wiring Fase 6 (New Project): this only
-                // ever updated explorer_state.root_dir -- editor_state.
-                // project_root (what Quick Open/Find in Project actually
-                // search) was left pointing at whatever project was open
-                // before, so switching folders here silently left those
-                // two features searching the old project. Same fix shape
-                // as want_run/Shift+F5 (Fase 1) and want_build/Ctrl+Shift+B
-                // (Fase 2): keep the two in sync at the one place that
-                // changes either of them.
-                explorer_state.root_dir = path;
-                editor_state.project_root = path;
+                set_project_root(path);
             }
         }
         if (titlebar_result.save_as_requested || want_save_as || editor_state.save_as_requested) {
@@ -750,8 +762,8 @@ int main() {
                         "save the file (Ctrl+S) before running it -- Run needs a .ava on disk.");
                 } else {
                     studio::SaveTab(*active);
-                    fs::path ava_cli = settings.build_ava_cli_path.empty() ? studio::DetectAvaCliPath()
-                                                                            : fs::path(settings.build_ava_cli_path);
+                    fs::path ava_cli = project_config.user.ava_cli_path.empty() ? studio::DetectAvaCliPath()
+                                                                            : fs::path(project_config.user.ava_cli_path);
                     std::error_code ava_cli_ec;
                     if (ava_cli.empty() || !fs::exists(ava_cli, ava_cli_ec)) {
                         engine.AppendConsoleLine(studio::ConsoleLine::Kind::Error,
@@ -772,8 +784,8 @@ int main() {
                 if (!resolved.ok) {
                     engine.AppendConsoleLine(studio::ConsoleLine::Kind::Error, resolved.error);
                 } else {
-                    fs::path ava_cli = settings.build_ava_cli_path.empty() ? studio::DetectAvaCliPath()
-                                                                            : fs::path(settings.build_ava_cli_path);
+                    fs::path ava_cli = project_config.user.ava_cli_path.empty() ? studio::DetectAvaCliPath()
+                                                                            : fs::path(project_config.user.ava_cli_path);
                     std::error_code ava_cli_ec;
                     if (ava_cli.empty() || !fs::exists(ava_cli, ava_cli_ec)) {
                         engine.AppendConsoleLine(studio::ConsoleLine::Kind::Error,
@@ -826,25 +838,19 @@ int main() {
         }
 
         if (titlebar_result.build_requested || editor_state.build_requested || want_build) {
-            // Build panel only configures paths now (Target/Project/Advanced) -- this is the
-            // one place a build actually starts, same shape as run_project_requested/
-            // check_requested just above: resolve_project_entry's project_dir default (the
-            // folder currently open in the editor) is exactly what TriggerBuild falls back to
-            // via ResolveBuildProjectDir when Build's own Project Folder override is empty.
-            const studio::TriggerBuildOutcome build_outcome =
-                studio::TriggerBuild(build_panel_state, settings, explorer_state.root_dir, log_bridge);
 
-            // The configured/detected entry .ava doesn't exist on disk (typically a stale
-            // build_entry_file left over from a different project folder, see the "es cierto
-            // el archivo no estaba" thread above). Rather than making the person go dig it out
-            // by hand in the Build panel, offer the same picker Browse uses right here, then
-            // retry the build immediately with whatever they picked.
+            const studio::TriggerBuildOutcome build_outcome = studio::TriggerBuild(
+                build_panel_state, project_config.proj, project_config.user, explorer_state.root_dir, log_bridge,
+                project_config.ambiguous_avaproj, project_config.avaproj_candidates);
+
             if (build_outcome.entry_file_missing) {
                 std::string path;
-                if (studio::titlebar::OpenFileDialog(window, path, build_outcome.project_dir)) {
-                    settings.build_entry_file = studio::NormalizeEntryFilePath(build_outcome.project_dir, path);
-                    studio::SaveSettings(settings);
-                    studio::TriggerBuild(build_panel_state, settings, explorer_state.root_dir, log_bridge);
+                if (studio::titlebar::OpenFileDialog(window, path, explorer_state.root_dir)) {
+                    project_config.proj.entry_file = studio::NormalizeEntryFilePath(explorer_state.root_dir, path);
+                    studio::SaveProjectConfig(project_config);
+                    studio::TriggerBuild(build_panel_state, project_config.proj, project_config.user,
+                                          explorer_state.root_dir, log_bridge, project_config.ambiguous_avaproj,
+                                          project_config.avaproj_candidates);
                 }
             }
         }
@@ -869,6 +875,10 @@ int main() {
 
         if (titlebar_result.new_project_requested || editor_state.new_project_requested) {
             studio::OpenNewProjectDialog(new_project_state, explorer_state.root_dir);
+        }
+
+        if (titlebar_result.project_properties_requested) {
+            project_properties_state.open = true;
         }
 
         want_quit = want_quit || titlebar_result.quit_requested || g_native_close_requested;
@@ -1026,48 +1036,34 @@ int main() {
 
         if (bool& open = panel_open.try_emplace("Build###build", true).first->second; open) {
             studio::BuildPanelResult build_result =
-                studio::DrawBuildPanel(build_panel_state, settings, explorer_state.root_dir,
-                                        pending_build_browse_field, pending_build_browse_value, log_bridge, &open);
+                studio::DrawBuildPanel(build_panel_state, project_config.proj, project_config.user,
+                                        explorer_state.root_dir, pending_build_browse_field,
+                                        pending_build_browse_value, log_bridge, &open);
             pending_build_browse_field = studio::BuildBrowseField::kNone;
             pending_build_browse_value.clear();
             if (build_result.browse_requested != studio::BuildBrowseField::kNone) {
                 std::string path;
                 bool picked = false;
                 switch (build_result.browse_requested) {
-                    case studio::BuildBrowseField::kProjectDir:
-                        picked = studio::titlebar::OpenFolderDialog(
-                            window, path,
-                            settings.build_project_dir.empty() ? explorer_state.root_dir : settings.build_project_dir);
-                        break;
-                    case studio::BuildBrowseField::kOutputDir:
-                        picked = studio::titlebar::OpenFolderDialog(window, path, settings.build_out_dir);
-                        break;
                     case studio::BuildBrowseField::kVcpkgRoot:
-                        picked = studio::titlebar::OpenFolderDialog(window, path, settings.build_vcpkg_root);
+                        picked = studio::titlebar::OpenFolderDialog(window, path, project_config.user.vcpkg_root);
                         break;
                     case studio::BuildBrowseField::kCompilerPathDesktop:
-                        picked = studio::titlebar::OpenFolderDialog(window, path, settings.build_compiler_path_desktop);
+                        picked = studio::titlebar::OpenFolderDialog(window, path,
+                                                                     project_config.user.compiler_path_desktop);
                         break;
                     case studio::BuildBrowseField::kCompilerPathBarekernel:
-                        picked = studio::titlebar::OpenFolderDialog(window, path, settings.build_compiler_path_barekernel);
-                        break;
-                    case studio::BuildBrowseField::kEntryFile:
-                        picked = studio::titlebar::OpenFileDialog(
-                            window, path,
-                            settings.build_project_dir.empty() ? explorer_state.root_dir : settings.build_project_dir);
+                        picked = studio::titlebar::OpenFolderDialog(window, path,
+                                                                     project_config.user.compiler_path_barekernel);
                         break;
                     case studio::BuildBrowseField::kAvaCliPath:
-                        // ava_cli(.exe) is an executable, not a .ava script -- the default
-                        // OpenFileDialog filter (AvaLang Scripts) hid it from this picker
-                        // entirely, which is what looked like "opens to search for a .ava
-                        // instead of the file I actually need".
+
                         picked = studio::titlebar::OpenFileDialog(
-                            window, path, settings.build_ava_cli_path,
+                            window, path, project_config.user.ava_cli_path,
                             "Executables (*.exe)\0*.exe\0All Files (*.*)\0*.*\0");
                         break;
                     case studio::BuildBrowseField::kKeyFile:
-                        // The AES key is 32 raw bytes with no fixed extension -- same
-                        // "hidden behind the .ava filter" problem as ava_cli path above.
+
                         picked = studio::titlebar::OpenFileDialog(window, path, explorer_state.root_dir,
                                                                    "All Files (*.*)\0*.*\0");
                         break;
@@ -1079,10 +1075,64 @@ int main() {
                     pending_build_browse_value = path;
                 }
             }
-            if (build_result.settings_dirty) {
-                studio::SaveSettings(settings);
+            if (build_result.open_project_properties) {
+                project_properties_state.open = true;
+            }
+            if (build_result.dirty) {
+                studio::SaveProjectConfig(project_config);
             }
             persist_if_closed("Build###build", open);
+        }
+
+        if (project_properties_state.open) {
+            studio::ProjectPropertiesResult properties_result = studio::DrawProjectPropertiesPanel(
+                project_properties_state, project_config.proj, project_config.user, explorer_state.root_dir,
+                pending_project_properties_browse_field, pending_project_properties_browse_value);
+            pending_project_properties_browse_field = studio::ProjectPropertiesBrowseField::kNone;
+            pending_project_properties_browse_value.clear();
+            if (properties_result.browse_requested != studio::ProjectPropertiesBrowseField::kNone) {
+                std::string path;
+                bool picked = false;
+                switch (properties_result.browse_requested) {
+                    case studio::ProjectPropertiesBrowseField::kIcon:
+                        picked = studio::titlebar::OpenFileDialog(window, path, explorer_state.root_dir,
+                                                                   "All Files (*.*)\0*.*\0");
+                        break;
+                    case studio::ProjectPropertiesBrowseField::kAvaCliPath:
+                        picked = studio::titlebar::OpenFileDialog(
+                            window, path, project_config.user.ava_cli_path,
+                            "Executables (*.exe)\0*.exe\0All Files (*.*)\0*.*\0");
+                        break;
+                    case studio::ProjectPropertiesBrowseField::kKeyFile:
+                        picked = studio::titlebar::OpenFileDialog(window, path, explorer_state.root_dir,
+                                                                   "All Files (*.*)\0*.*\0");
+                        break;
+                    case studio::ProjectPropertiesBrowseField::kVcpkgRoot:
+                        picked = studio::titlebar::OpenFolderDialog(window, path, project_config.user.vcpkg_root);
+                        break;
+                    case studio::ProjectPropertiesBrowseField::kCompilerPathDesktop:
+                        picked = studio::titlebar::OpenFolderDialog(window, path,
+                                                                     project_config.user.compiler_path_desktop);
+                        break;
+                    case studio::ProjectPropertiesBrowseField::kCompilerPathBarekernel:
+                        picked = studio::titlebar::OpenFolderDialog(window, path,
+                                                                     project_config.user.compiler_path_barekernel);
+                        break;
+                    case studio::ProjectPropertiesBrowseField::kReferenceFile:
+                        picked = studio::titlebar::OpenFileDialog(window, path, explorer_state.root_dir,
+                                                                   "All Files (*.*)\0*.*\0");
+                        break;
+                    case studio::ProjectPropertiesBrowseField::kNone:
+                        break;
+                }
+                if (picked) {
+                    pending_project_properties_browse_field = properties_result.browse_requested;
+                    pending_project_properties_browse_value = path;
+                }
+            }
+            if (properties_result.dirty) {
+                studio::SaveProjectConfig(project_config);
+            }
         }
 
         if (bool& open = panel_open.try_emplace("Terminal###terminal", true).first->second; open) {
@@ -1136,17 +1186,6 @@ int main() {
             persist_if_closed("Find in Project###find_in_project", open);
         }
 
-        // Fase 3 (Command Palette): registry rebuilt every frame, by reference into
-        // all the state above -- same "no separate source of truth" reasoning
-        // DrawTitleBar's menus already follow (this is the same set of actions,
-        // just also reachable through Ctrl+Shift+P / a searchable list instead of
-        // only through the menu bar). Deliberately NOT included here: "About"
-        // (a static-bool modal local to titlebar_panel.cpp with no external
-        // trigger) and "Replace in Project"/whole-word/regex search (out of
-        // §5.2's scope, see Fase 2.5's own notes). "Extensions" WAS excluded
-        // for the same reason as "About" through Fase 6, but Fase 7 gave it a
-        // real trigger (pending_open_extensions, for the Activity Bar's icon),
-        // so it's included below now.
         {
             const std::string category_file = studio::util::Tr("menu.file");
             const std::string category_edit = studio::util::Tr("menu.edit");
@@ -1196,11 +1235,7 @@ int main() {
 
             add(category_preferences, "menu.file.settings", "Ctrl+,",
                 [&] { editor_state.open_settings_panel_requested = true; });
-            // Fase 7: now that the Activity Bar's Extensions icon gives the
-            // Plugins modal a real external trigger (pending_open_extensions),
-            // it's no longer a "static-bool modal with no entry point" the
-            // way Fase 3's design note excluded it -- so it gets a Command
-            // Palette entry the same way Settings just above does.
+
             add(category_preferences, "menu.file.extensions", "", [&] { pending_open_extensions = true; });
 
             {
@@ -1226,35 +1261,17 @@ int main() {
             }
 
             add(category_build, "build.install_vcpkg_button", "", [&] {
-                studio::StartVcpkgInstall(build_panel_state, studio::ResolveVcpkgInstallTarget(settings),
+                studio::StartVcpkgInstall(build_panel_state, studio::ResolveVcpkgInstallTarget(project_config.user),
                                            "x64-windows-static-md");
             });
 
             studio::DrawCommandPalette(command_palette_state, commands);
         }
 
-        // Fase 4 (Quick Open): drawn unconditionally each frame, same
-        // requirement as DrawCommandPalette just above -- it's a no-op
-        // whenever the popup isn't open. A pick just opens the file, same
-        // two-step (open then let the caller act) pattern already used for
-        // Terminal/Problems/Find in Project file clicks.
         if (auto quick_open_pick = studio::DrawQuickOpen(quick_open_state)) {
-            studio::OpenFileInTab(editor_state, *quick_open_pick);
+            open_path_respecting_avaproj(*quick_open_pick);
         }
 
-        // Fase 6 (New Project wizard): drawn unconditionally each frame,
-        // same requirement as DrawCommandPalette/DrawQuickOpen above --
-        // it's a no-op whenever the popup isn't open. Two things it can
-        // hand back on a given frame: (a) a request to browse for the
-        // destination folder -- handled the same way BuildBrowseField's
-        // switch does in the Build panel block above, just with a single
-        // bool instead of an enum (this dialog only ever browses one
-        // field), and (b) a successfully created project -- same two-step
-        // pattern as every other cross-panel effect in this app (Quick
-        // Open picks, Problems/Terminal file clicks): point Explorer and
-        // the rest of EditorState at the new project, then open its entry
-        // file, instead of the dialog reaching into either of those
-        // itself.
         {
             const studio::NewProjectDrawResult new_project_draw = studio::DrawNewProjectDialog(new_project_state);
             if (new_project_draw.browse_destination_requested) {
@@ -1264,8 +1281,7 @@ int main() {
                 }
             }
             if (new_project_draw.created) {
-                explorer_state.root_dir = new_project_draw.created->project_dir;
-                editor_state.project_root = new_project_draw.created->project_dir;
+                set_project_root(new_project_draw.created->project_dir);
                 studio::OpenFileInTab(editor_state, new_project_draw.created->entry_file);
             }
         }

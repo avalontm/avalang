@@ -1,7 +1,9 @@
 #include "util/project_utils.h"
 
 #include <algorithm>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <system_error>
 #include <vector>
 
@@ -14,6 +16,13 @@ namespace {
 bool IsSearchableFile(const fs::path& path) {
     const std::string ext = path.extension().string();
     return ext == ".ava" || ext == ".avaui";
+}
+
+bool DeclaresEntry(const fs::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) return false;
+    std::string contents((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return contents.find("[entry]") != std::string::npos;
 }
 
 }
@@ -38,6 +47,11 @@ std::string DetectEntryFile(const fs::path& project_dir) {
     walk(project_dir, 0);
     if (found.empty()) return "";
     std::sort(found.begin(), found.end());
+
+    for (const auto& rel : found) {
+        if (DeclaresEntry(project_dir / rel)) return rel;
+    }
+
     return found.front();
 }
 
@@ -65,6 +79,13 @@ std::vector<fs::path> ListSearchableFiles(const fs::path& project_dir) {
     };
     walk(project_dir);
     return out;
+}
+
+std::string ToProjectRelativePath(const std::string& project_dir, const std::string& absolute_path) {
+    std::error_code ec;
+    fs::path rel = fs::relative(fs::path(absolute_path), fs::path(project_dir), ec);
+    return (!ec && !rel.empty() && rel.native().rfind(fs::path("..").native(), 0) != 0) ? rel.generic_string()
+                                                                                         : absolute_path;
 }
 
 }

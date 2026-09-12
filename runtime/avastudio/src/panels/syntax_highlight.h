@@ -15,6 +15,7 @@ enum class TokenKind {
     String,
     Number,
     Comment,
+    Annotation,
 };
 
 struct Token {

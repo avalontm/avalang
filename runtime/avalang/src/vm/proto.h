@@ -52,6 +52,22 @@ struct AVA_PROTO_API Proto {
     // Shared by a module's top proto and all its child protos via the
     // same shared_ptr, so every closure of the module resolves together.
     avastd::shared_ptr<avastd::unordered_map<avastd::string, Value>> module_globals;
+
+    // Plan de anotaciones (AvaLang_Plan_Anotaciones.md), Fase 2: nombre de
+    // la función/método marcado `[entry]` en el programa compilado, o
+    // vacío si no hay ninguno (comportamiento actual -- correr el chunk
+    // top-level de punta a punta, sin invocar nada extra). Solo se
+    // completa en el Proto top-level que devuelve Compiler::Compile();
+    // los child_protos (funciones, métodos, lambdas) no llevan copia
+    // propia de esto. Compiler::ValidateEntryAttributes (compiler.cpp) ya
+    // garantizó que, si esto no está vacío, es la única `[entry]` del
+    // programa compilado.
+    avastd::string entry_func_name;
+    // Vacío si entry_func_name es una función suelta (top-level). Si
+    // entry_func_name es un método static, acá va el nombre de la clase
+    // dueña -- así la Fase 3 (VM) sabe que tiene que resolverlo via
+    // class_obj->attrs en vez de buscarlo como global suelto.
+    avastd::string entry_class_name;
 };
 
 } // namespace ava

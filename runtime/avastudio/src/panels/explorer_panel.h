@@ -21,6 +21,8 @@ struct ExplorerResult {
     std::optional<std::pair<std::string, std::string>> file_renamed;
 
     std::optional<std::string> reveal_in_file_manager;
+
+    bool open_project_properties = false;
 };
 
 ExplorerResult DrawExplorerPanel(ExplorerState& state, bool* p_open = nullptr);

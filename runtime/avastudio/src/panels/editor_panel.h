@@ -37,6 +37,12 @@ struct EditorTab {
     FoldIndex fold_index;
     std::unordered_set<int> folded_lines;
 
+    // Per-tab text zoom applied to the code editor only (mouse wheel while
+    // holding Ctrl, or Ctrl+=/Ctrl+-/Ctrl+0), 1.0 = 100%. See ClampEditorZoom
+    // and the zoom handling right before tab.editor.Render() in
+    // DrawEditorPanel (editor_panel.cpp).
+    float zoom = 1.0f;
+
     bool dirty = false;
 
     bool index_dirty = false;

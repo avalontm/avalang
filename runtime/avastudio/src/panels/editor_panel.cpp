@@ -43,6 +43,20 @@ std::string TrFormat(const std::string& key, std::initializer_list<std::string> 
 
 std::string TrFormat(const std::string& key, const std::string& arg) { return TrFormat(key, {arg}); }
 
+// Editor text zoom (mouse wheel + keyboard shortcuts, see DrawEditorPanel). The
+// vendored editor (TextEditor::render, "Legacy") snapshots ImGui::GetFontSize()
+// once at the very top of its own render() -- *before* it opens its internal
+// child window -- and feeds that single value into every glyph measurement and
+// draw call for the frame (glyphSize, line/column layout, font->RenderChar).
+// That means scaling the *panel* window's font via ImGui::SetWindowFontScale()
+// immediately before calling tab.editor.Render() is enough to zoom the whole
+// editor; no changes to the vendored library are needed.
+constexpr float kEditorMinZoom = 0.5f;
+constexpr float kEditorMaxZoom = 3.0f;
+constexpr float kEditorWheelZoomStep = 0.1f;
+
+float ClampEditorZoom(float zoom) { return std::clamp(zoom, kEditorMinZoom, kEditorMaxZoom); }
+
 std::string DirOf(const std::string& file_path) {
     if (file_path.empty()) return "";
     auto pos = file_path.find_last_of("/\\");
@@ -155,7 +169,7 @@ void RebuildIndexAndTrie(EditorTab& tab) {
 
     tab.variable_type_index.Rebuild(tab.GetText(), tab.class_index, tab.function_index);
 
-    std::unordered_set<std::string> variable_names = tab.variable_type_index.AllVariableNames();
+    std::unordered_set<std::string> variable_names = languages::ScanKnownVariableNames(tab.GetText());
     std::unordered_set<std::string> removed_variable_names;
     for (const auto& name : tab.known_variable_names) {
         if (!variable_names.count(name)) removed_variable_names.insert(name);
@@ -967,6 +981,7 @@ void InitTab(EditorTab& tab) {
     palette[static_cast<size_t>(TextEditor::Color::keyword)] = palette::U32FromHex(palette::kSynKeyword);
     palette[static_cast<size_t>(TextEditor::Color::declaration)] = palette::U32FromHex(palette::kSynFunction);
     palette[static_cast<size_t>(TextEditor::Color::comment)] = palette::U32FromHex(palette::kSynComment);
+    palette[static_cast<size_t>(TextEditor::Color::number)] = palette::U32FromHex(palette::kSynNumber);
     palette[static_cast<size_t>(TextEditor::Color::docComment)] = palette::U32FromHex(palette::kSynDocComment);
     palette[static_cast<size_t>(TextEditor::Color::docParamTag)] = palette::U32FromHex(palette::kSynDocParamTag);
     palette[static_cast<size_t>(TextEditor::Color::string)] = palette::U32FromHex(palette::kSynString);
@@ -1558,6 +1573,34 @@ void DrawEditorPanel(EditorState& state) {
                         tab.colored_variable_generation = languages::KnownVariableNamesGeneration();
                     }
 
+                    // --- Editor zoom: Ctrl+mouse wheel and keyboard shortcuts ------------
+                    // Must run *before* Render() -- see ClampEditorZoom's comment on why
+                    // ImGui::SetWindowFontScale() here is enough to scale the vendored
+                    // editor's text. Left active through the squiggles/hover-popup code
+                    // below (they measure text against the same zoomed font) and reset to
+                    // 1.0f right before EndTabItem() so it never leaks into the tab bar or
+                    // any tab drawn afterward.
+                    const bool zoom_hover = ImGui::IsMouseHoveringRect(editor_min, editor_max);
+                    const bool zoom_key_scope = state.code_editor_has_focus || zoom_hover;
+                    const ImGuiIO& zoom_io = ImGui::GetIO();
+                    if (zoom_hover && zoom_io.KeyCtrl && zoom_io.MouseWheel != 0.0f) {
+                        tab.zoom = ClampEditorZoom(tab.zoom + zoom_io.MouseWheel * kEditorWheelZoomStep);
+                    }
+                    if (ShortcutRegistry::Instance().Pressed(ShortcutId::ZoomIn, zoom_key_scope) ||
+                        (zoom_key_scope && zoom_io.KeyCtrl &&
+                         ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, false))) {
+                        tab.zoom = ClampEditorZoom(tab.zoom + kEditorWheelZoomStep);
+                    }
+                    if (ShortcutRegistry::Instance().Pressed(ShortcutId::ZoomOut, zoom_key_scope) ||
+                        (zoom_key_scope && zoom_io.KeyCtrl &&
+                         ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, false))) {
+                        tab.zoom = ClampEditorZoom(tab.zoom - kEditorWheelZoomStep);
+                    }
+                    if (ShortcutRegistry::Instance().Pressed(ShortcutId::ZoomReset, zoom_key_scope)) {
+                        tab.zoom = 1.0f;
+                    }
+                    ImGui::SetWindowFontScale(tab.zoom);
+
                     tab.editor.Render("##editor", avail, false);
                     state.code_editor_has_focus = ImGui::IsItemFocused();
                     DrawIncompleteInterfaceSquiggles(tab, editor_min, editor_max);
@@ -1665,6 +1708,10 @@ void DrawEditorPanel(EditorState& state) {
                             if (!dot_popup_drawn) DrawKeywordHint(tab);
                         }
                     }
+
+                    // Reset the zoom applied above before EndTabItem() -- see the comment
+                    // by ImGui::SetWindowFontScale(tab.zoom) above.
+                    ImGui::SetWindowFontScale(1.0f);
                 }
                 ImGui::EndTabItem();
             }

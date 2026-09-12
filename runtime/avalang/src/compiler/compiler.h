@@ -238,6 +238,20 @@ private:
     // que en JS/Python/C# (await solo vale en el cuerpo léxico directo
     // de la función async que lo contiene). Ver CompileExpr(AwaitExpr).
     bool in_async_func_ = false;
+    // Plan de anotaciones (AvaLang_Plan_Anotaciones.md), Fase 2: estado de
+    // ValidateEntryAttributes (compiler.cpp), acumulado a través de todo
+    // el archivo que este Compiler compila (top-level CompileChunk +
+    // CompileClass, ambos corriendo sobre `this`, no sobre un `Compiler
+    // sub` -- por eso alcanza con que esto viva acá y no en cada
+    // sub-compiler). No cubre `import`s: cada archivo importado se
+    // resuelve en runtime via __import__ (ver CompileImport), no como
+    // parte del mismo AST/Compiler, así que un `[entry]` en un módulo
+    // importado no se detecta todavía -- limitación conocida, fuera de
+    // alcance de esta fase.
+    bool entry_found_ = false;
+    std::string entry_func_name_;
+    std::string entry_class_name_;
+    int entry_line_ = 0;
     std::unordered_map<std::string, ClassObj*> compiled_classes_;
     std::unordered_map<std::string, InterfaceInfo> compiled_interfaces_;
     // Phase 13 ("Clases y objetos").
@@ -575,6 +589,18 @@ private:
     void EmitDefaultsPrologue(const std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>>& params,
                                uint16_t param_reg_base);
     void CompileClass(const ClassDef* cls);
+    // Plan de anotaciones (AvaLang_Plan_Anotaciones.md), Fase 2: valida
+    // `func->attributes` contra la whitelist de anotaciones reconocidas
+    // (hoy solo "entry") y, si trae `[entry]`, que sea válida: como
+    // mucho una en todo el programa compilado, sin parámetros, y --si
+    // `owner_class` no está vacío (es un método, no una función suelta)--
+    // que el método sea `static`. `owner_class` es el nombre de la clase
+    // dueña, o "" para una funcDeclaration/modifiedFuncDeclaration suelta
+    // a nivel de módulo. Actualiza entry_found_/entry_func_name_/
+    // entry_class_name_/entry_line_ (ver compiler.h) cuando encuentra un
+    // `[entry]` válido; esos se vuelcan a proto_->entry_func_name/
+    // entry_class_name al final de Compile().
+    void ValidateEntryAttributes(const FuncDef* func, const std::string& owner_class);
     void CompileInterface(const InterfaceDef* iface);
     void CompileImport(const ImportStmt* stmt);
     void RegisterImportedClasses(const std::string& module_name);

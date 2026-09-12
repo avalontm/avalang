@@ -36,6 +36,9 @@ enum class ShortcutId {
     FindInProject,
     CommandPalette,
     QuickOpen,
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
 };
 
 class ShortcutRegistry {

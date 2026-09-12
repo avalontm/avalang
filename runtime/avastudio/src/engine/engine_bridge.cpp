@@ -21,6 +21,47 @@ std::string ReadLastErrorSource(AvaVM* vm, const std::string& ran_source_name) {
     return source.empty() ? ran_source_name : source;
 }
 
+// `import Foo` (segmento único, sin alias) se resuelve buscando
+// "Foo.ava" como sibling en disco, tanto para el harvesting estático de
+// clases en tiempo de compilación (Compiler::RegisterImportedClasses,
+// compiler.cpp) como para el import real en runtime (VM::DoImport,
+// vm_import.cpp) -- ninguno de los dos mira los buffers de las demás
+// pestañas abiertas en el editor. Si `source_name` está vacío (pestaña
+// "Untitled", nunca guardada -- ver EditorTab::file_path/NewUntitledTab,
+// editor_panel.cpp), la resolución de siblings no tiene ninguna carpeta
+// real donde buscar y cae en el cwd del proceso, que casi nunca es
+// donde vive el otro archivo. El resultado es un error confuso y
+// aparentemente no relacionado (ej. "'Foo' is not a class", o en
+// runtime "could not find module: Foo") en vez de decir lo que en
+// realidad pasa: el archivo (o el que importa) todavía no está guardado
+// en disco. Heurística barata: solo importa si el source declara algún
+// `import` de un solo segmento (dotted imports y namespaces nativos
+// como `system`/`io` no dependen de un sibling .ava, así que no
+// aplica el aviso).
+bool HasBareSingleSegmentImport(const std::string& source) {
+    size_t pos = 0;
+    while ((pos = source.find("import", pos)) != std::string::npos) {
+        bool at_line_start = (pos == 0) || source[pos - 1] == '\n' || source[pos - 1] == '\r';
+        size_t after = pos + 6;
+        if (at_line_start && after < source.size() && (source[after] == ' ' || source[after] == '\t')) {
+            size_t line_end = source.find('\n', after);
+            std::string rest = source.substr(after, line_end == std::string::npos ? std::string::npos
+                                                                                    : line_end - after);
+            if (rest.find('.') == std::string::npos && rest.find(" as ") == std::string::npos) {
+                return true;
+            }
+        }
+        pos = after;
+    }
+    return false;
+}
+
+const char* kUnsavedImportHint =
+    "\n(este archivo no esta guardado en disco -- los imports a otros .ava del "
+    "mismo proyecto solo se resuelven contra archivos ya guardados en la misma "
+    "carpeta, no contra otras pestanas abiertas sin guardar. Guarda este archivo "
+    "y el/los que importa, y volve a correr.)";
+
 }
 
 EngineBridge::EngineBridge() {
@@ -86,6 +127,9 @@ RunResult EngineBridge::RunScript(const std::string& source, const std::string& 
         result.error_column = ava_last_error_column(vm_);
         result.error_source = ReadLastErrorSource(vm_, source_name);
         if (compile_error) ava_string_free(compile_error);
+        if (source_name.empty() && HasBareSingleSegmentImport(source)) {
+            result.message += kUnsavedImportHint;
+        }
         console_.push_back({ConsoleLine::Kind::Error, result.message,
                              result.error_source, result.error_line, result.error_column});
         return result;
@@ -105,6 +149,9 @@ RunResult EngineBridge::RunScript(const std::string& source, const std::string& 
         result.error_column = ava_last_error_column(vm_);
         result.error_source = ReadLastErrorSource(vm_, source_name);
         ava_string_free(run_error);
+        if (source_name.empty() && HasBareSingleSegmentImport(source)) {
+            result.message += kUnsavedImportHint;
+        }
         console_.push_back({ConsoleLine::Kind::Error, result.message,
                              result.error_source, result.error_line, result.error_column});
         return result;

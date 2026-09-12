@@ -22,6 +22,13 @@ ShortcutRegistry::ShortcutRegistry() {
     Bind(ShortcutId::FindInProject, {ImGuiKey_F, true, true, false, ShortcutScope::EditorUnfocused});
     Bind(ShortcutId::CommandPalette, {ImGuiKey_P, true, true, false, ShortcutScope::Global});
     Bind(ShortcutId::QuickOpen, {ImGuiKey_P, true, false, false, ShortcutScope::Global});
+    // Ctrl+= (no Shift) so the physical "+"/"=" key works without also requiring
+    // Shift on layouts where "+" lives on the Shift layer; ImGuiKey_KeypadAdd and
+    // ImGuiKey_KeypadSubtract are checked alongside these in editor_panel.cpp for
+    // the numpad, since Bind only stores one key per id.
+    Bind(ShortcutId::ZoomIn, {ImGuiKey_Equal, true, false, false, ShortcutScope::EditorFocused});
+    Bind(ShortcutId::ZoomOut, {ImGuiKey_Minus, true, false, false, ShortcutScope::EditorFocused});
+    Bind(ShortcutId::ZoomReset, {ImGuiKey_0, true, false, false, ShortcutScope::EditorFocused});
 }
 
 void ShortcutRegistry::Bind(ShortcutId id, ShortcutSpec spec) {

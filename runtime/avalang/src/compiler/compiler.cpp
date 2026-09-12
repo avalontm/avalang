@@ -3,6 +3,7 @@
 #include "../common/ava_error.h"
 #include "../builtins/builtin_names.h"
 #include "../frontend/frontend.h"
+#include "../vm/vm_platform_accessor.h"
 #include <stdexcept>
 #include <cstdio>
 #include <unordered_set>
@@ -30,6 +31,10 @@ void Compiler::Reset() {
     parent_locals_.clear();
     parent_ = nullptr;
     loop_depth_ = 0;
+    entry_found_ = false;
+    entry_func_name_.clear();
+    entry_class_name_.clear();
+    entry_line_ = 0;
 }
 
 uint16_t Compiler::AllocReg() {
@@ -140,6 +145,18 @@ static void RejectMemberModifiersOutsideClass(bool is_static, bool is_private, c
     }
 }
 
+static void RejectLocalOutsideFunction(bool is_local, bool is_top_level, const char* kind,
+                                        int line, int col, const std::string& source_name) {
+    if (is_local && is_top_level) {
+        std::string msg = std::string("'local' is only valid inside a function or method body (") +
+                           kind + "). Use a plain assignment for a script-level variable";
+        if (line > 0) {
+            msg += " (line " + std::to_string(line) + ")";
+        }
+        throw AvaError(msg, line, col, source_name);
+    }
+}
+
 static void RejectDuplicateFuncDefs(const std::vector<std::shared_ptr<StmtNode>>& stmts,
                                      const std::string& source_name) {
     std::unordered_set<std::string> seen;
@@ -152,6 +169,24 @@ static void RejectDuplicateFuncDefs(const std::vector<std::shared_ptr<StmtNode>>
                 msg += " (line " + std::to_string(f->line) + ")";
             }
             throw AvaError(msg, f->line, f->col, source_name);
+        }
+    }
+}
+
+static void RejectDuplicateFieldDefs(const std::vector<std::shared_ptr<StmtNode>>& stmts,
+                                      const std::string& source_name) {
+    std::unordered_set<std::string> seen;
+    for (auto& stmt : stmts) {
+        auto* a = dynamic_cast<AssignStmt*>(stmt.get());
+        if (!a) continue;
+        auto* n = dynamic_cast<NameExpr*>(a->target.get());
+        if (!n) continue;
+        if (!seen.insert(n->name).second) {
+            std::string msg = "field '" + n->name + "' is already defined in this class";
+            if (a->line > 0) {
+                msg += " (line " + std::to_string(a->line) + ")";
+            }
+            throw AvaError(msg, a->line, a->col, source_name);
         }
     }
 }
@@ -1385,6 +1420,7 @@ void Compiler::CompileStmt(const std::shared_ptr<StmtNode>& stmt) {
 
     if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
         RejectMemberModifiersOutsideClass(a->is_static, a->is_private, "asignacion", a->line, a->col, source_name_);
+        RejectLocalOutsideFunction(a->is_local, is_top_level_, "asignacion", a->line, a->col, source_name_);
         if (!a->target) {
             FreeRegs(1);
             return;
@@ -2803,8 +2839,75 @@ void Compiler::CompileFunc(const FuncDef* func) {
     Emit(OpCode::SETGLOBAL, reg, name_idx);
 }
 
+// Plan de anotaciones (AvaLang_Plan_Anotaciones.md), Fase 2. Ver el
+// comentario de la declaración en compiler.h para el contrato completo.
+void Compiler::ValidateEntryAttributes(const FuncDef* func, const std::string& owner_class) {
+    if (func->attributes.empty()) return;
+
+    for (auto& attr : func->attributes) {
+        // Whitelist de anotaciones reconocidas -- hoy solo "entry". Un
+        // nombre no reconocido (typo tipo `[mian]`, o una anotación de
+        // una fase futura que todavía no existe) es un error duro en vez
+        // de ignorarse en silencio, tal como pide el plan.
+        if (attr != "entry") {
+            std::string msg = "unknown annotation '[" + attr + "]'" +
+                               (owner_class.empty()
+                                    ? " on function '" + func->name + "'"
+                                    : " on method '" + owner_class + "." + func->name + "'") +
+                               " -- the only annotation AvaLang currently recognizes is '[entry]'";
+            throw AvaError(msg, func->line, func->col, source_name_);
+        }
+
+        if (entry_found_) {
+            std::string msg = "duplicate '[entry]' -- '" + entry_func_name_ +
+                               "' is already marked as the program's entry point";
+            if (entry_line_ > 0) {
+                msg += " (line " + std::to_string(entry_line_) + ")";
+            }
+            msg += "; only one '[entry]' is allowed per program";
+            throw AvaError(msg, func->line, func->col, source_name_);
+        }
+
+        if (!func->params.empty()) {
+            std::string msg = "'[entry]' function '" + func->name +
+                               "' cannot take parameters in this version of AvaLang";
+            if (func->line > 0) {
+                msg += " (line " + std::to_string(func->line) + ")";
+            }
+            throw AvaError(msg, func->line, func->col, source_name_);
+        }
+
+        if (!owner_class.empty() && !func->is_static) {
+            std::string msg = "'[entry]' method '" + owner_class + "." + func->name +
+                               "' must be 'static', same as C#'s static void Main()";
+            if (func->line > 0) {
+                msg += " (line " + std::to_string(func->line) + ")";
+            }
+            throw AvaError(msg, func->line, func->col, source_name_);
+        }
+
+        entry_found_ = true;
+        entry_func_name_ = func->name;
+        entry_class_name_ = owner_class;
+        entry_line_ = func->line;
+    }
+}
+
 void Compiler::CompileChunk(const std::vector<std::shared_ptr<StmtNode>>& stmts) {
     RejectDuplicateFuncDefs(stmts, source_name_);
+    // Fase 2 de anotaciones: solo a nivel top-level -- CompileChunk
+    // también compila cuerpos de función (CompileFunc llama a
+    // sub.CompileChunk(func->body)), y `[entry]` no aplica a funciones
+    // anidadas dentro de otra función (decisión de diseño #1 del plan:
+    // solo funciones sueltas y métodos). CompileClass (abajo) cubre el
+    // otro caso válido -- métodos.
+    if (is_top_level_) {
+        for (auto& stmt : stmts) {
+            if (auto* f = dynamic_cast<FuncDef*>(stmt.get())) {
+                ValidateEntryAttributes(f, "");
+            }
+        }
+    }
     if (is_top_level_) {
         CollectFuncSignatures(stmts, known_funcs_, known_func_returns_, compiled_classes_, known_top_level_globals_);
     } else {
@@ -2875,6 +2978,16 @@ std::shared_ptr<Proto> Compiler::Compile(const std::shared_ptr<Chunk>& chunk,
         Emit(OpCode::RETURN, 0, 0);
     }
     proto_->num_registers = max_reg_ + 1;
+    // Fase 2 de anotaciones: vuelca lo que haya encontrado
+    // ValidateEntryAttributes (CompileChunk a nivel top-level + todo
+    // CompileClass que corrió durante este Compile()) al Proto top-level
+    // que se devuelve acá. Vacío si el programa no usa `[entry]` --
+    // Fase 3 (VM) debe interpretar eso como "sin cambios de
+    // comportamiento", no como error.
+    if (entry_found_) {
+        proto_->entry_func_name = entry_func_name_;
+        proto_->entry_class_name = entry_class_name_;
+    }
     return proto_;
 }
 
@@ -2886,6 +2999,7 @@ uint16_t Compiler::CompileExprToReg(const std::shared_ptr<StmtNode>& stmt) {
     }
     if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
         RejectMemberModifiersOutsideClass(a->is_static, a->is_private, "asignacion", a->line, a->col, source_name_);
+        RejectLocalOutsideFunction(a->is_local, is_top_level_, "asignacion", a->line, a->col, source_name_);
         if (!a->target) {
             FreeRegs(1);
             return 0;
@@ -3441,6 +3555,23 @@ void Compiler::CompileClass(const ClassDef* cls) {
         for (auto& stmt : cls->body) {
             auto* f = dynamic_cast<FuncDef*>(stmt.get());
             if (!f) continue;
+            // A method sharing its name with the class is normally the
+            // constructor (compiled below as `__init__`). Constructors are
+            // never `static` -- they exist to initialize `this` and run via
+            // `new ClassName()`, not `ClassName.methodName()` -- so if the
+            // author wrote `static` here it's ambiguous/almost certainly a
+            // mistake (e.g. copying a C#/Java `static void Main()` pattern
+            // without realizing it collides with the constructor name in
+            // AvaLang). Reject it up front with a clear message instead of
+            // silently guessing what was meant.
+            if (f->name == cls->name && f->is_static) {
+                std::string msg = "constructor '" + cls->name + "' cannot be marked 'static' -- "
+                                   "constructors always run against an instance (via 'new " + cls->name +
+                                   "()') and are never invoked as 'static'; rename this method if you "
+                                   "meant it to be a static method unrelated to construction, since a "
+                                   "static method cannot share its name with the class either";
+                throw AvaError(msg, f->line, f->col, source_name_);
+            }
             if (!seen_methods.insert(f->name).second) {
                 bool is_ctor = f->name == cls->name;
                 std::string msg = is_ctor
@@ -3476,8 +3607,29 @@ void Compiler::CompileClass(const ClassDef* cls) {
         for (auto& name : own_dynamic_attrs) class_dynamic_attrs_[cls->name].insert(name);
     }
 
+    RejectDuplicateFieldDefs(cls->body, source_name_);
+    RejectDuplicateFuncDefs(cls->body, source_name_);
+    // Fase 2 de anotaciones: por cada método de esta clase (no
+    // recursivo -- cls->body son los métodos declarados directamente acá,
+    // no los heredados, que ya se validaron cuando se compiló la clase
+    // base).
+    for (auto& stmt : cls->body) {
+        if (auto* f = dynamic_cast<FuncDef*>(stmt.get())) {
+            ValidateEntryAttributes(f, cls->name);
+        }
+    }
+
     for (auto& stmt : cls->body) {
         if (auto* a = dynamic_cast<AssignStmt*>(stmt.get())) {
+            if (a->is_local) {
+                std::string msg = "'local' is not valid as a class field -- "
+                                   "class fields don't need it, use a plain assignment or "
+                                   "'private'/'static' for visibility";
+                if (a->line > 0) {
+                    msg += " (line " + std::to_string(a->line) + ")";
+                }
+                throw AvaError(msg, a->line, a->col, source_name_);
+            }
             if (auto* n = dynamic_cast<NameExpr*>(a->target.get())) {
                 Value attr_val;
                 if (auto* s = dynamic_cast<StringExpr*>(a->value.get())) {
@@ -3538,6 +3690,9 @@ void Compiler::CompileClass(const ClassDef* cls) {
     for (auto& stmt : cls->body) {
         auto* f = dynamic_cast<FuncDef*>(stmt.get());
         if (!f) continue;
+        // A `static` method sharing the class's name was already rejected
+        // above with an explicit error, so by this point `is_ctor` being
+        // true always means a real (non-static) constructor.
         bool is_ctor = f->name == cls->name;
         std::string method_name = is_ctor ? "__init__" : f->name;
 
@@ -3656,6 +3811,10 @@ void Compiler::CompileClass(const ClassDef* cls) {
             uint16_t min_registers = static_cast<uint16_t>(real_param_count + 1);
             sub.proto_->num_registers = std::max<uint16_t>(sub.max_reg_ + 1, min_registers);
 
+            // A `static` method sharing the class's name is rejected earlier
+            // in this function with an explicit compile error (see the
+            // duplicate-methods loop above), so by the time we get here
+            // `f->name == cls->name` can only mean a real constructor.
             bool is_constructor = f->name == cls->name;
             std::string method_name = is_constructor ? "__init__" : f->name;
             class_obj->methods[method_name] = sub.proto_;
@@ -3757,16 +3916,44 @@ void Compiler::CompileImport(const ImportStmt* stmt) {
 }
 
 namespace {
+// Bug nuevo (encontrado en esta pasada): esta funcion resolvia
+// "existe el sibling .ava?" con std::filesystem::exists, que solo ve
+// el disco real del SO -- bypaseando por completo la PAL
+// (VmPlatformAccessor, ver su propio comentario: "Provides VM,
+// Runtime, and Compiler with a single entry point to OS services").
+// VM::DoImport y ModuleResolver ya pasan por VmPlatformAccessor::Get()
+// (Fase 7, avapack, filesystem virtual en memoria) precisamente para
+// que un .exe empacado con MemoryOverridePlatform -- que nunca escribe
+// source/bytecode a disco real -- pueda resolver imports contra su
+// filesystem virtual. Esta funcion (el harvesting estatico de clases
+// para el chequeo de 'new', agregado despues de la Fase 7) se quedo
+// usando std::filesystem crudo: en un .exe empacado, el sibling .ava
+// jamas existe en disco real (por diseno), asi que esto siempre
+// devolvia "" -- la clase nunca se registraba en compiled_classes_ y
+// 'new Program()' fallaba con "'Program' is not a class" aunque el
+// modulo se resuelva perfectamente en runtime (DoImport si pasa por la
+// PAL). Fix: usar VmPlatformAccessor::Get().FileSystem() para Exists,
+// igual que ModuleResolver::ResolveModulePath (module.cpp). Fuera de
+// un .exe empacado, VmPlatformAccessor::Get() sin override devuelve el
+// IPlatform real (disco real), asi que el comportamiento para
+// ava_cli/avahost/AvaStudio no cambia.
 std::string ResolveSiblingImportFile(const std::string& module_name, const std::string& current_dir) {
     namespace fs = std::filesystem;
-    std::error_code ec;
-    fs::path base = current_dir.empty() ? fs::current_path(ec) : fs::path(current_dir);
+    auto& fsys = VmPlatformAccessor::Get().FileSystem();
 
-    fs::path candidate = base / (module_name + ".ava");
-    if (fs::exists(candidate, ec)) return candidate.string();
+    std::string base = current_dir.empty() ? std::string(".") : current_dir;
+    auto join = [](const std::string& a, const std::string& b) {
+        if (a.empty()) return b;
+        char last = a.back();
+        if (last == '/' || last == '\\') return a + b;
+        return (fs::path(a) / b).string();
+    };
 
-    candidate = base / module_name / "index.ava";
-    if (fs::exists(candidate, ec)) return candidate.string();
+    std::string candidate = join(base, module_name + ".ava");
+    if (fsys.Exists(candidate)) return candidate;
+
+    candidate = join(join(base, module_name), "index.ava");
+    if (fsys.Exists(candidate)) return candidate;
 
     return "";
 }
@@ -3822,9 +4009,13 @@ void Compiler::RegisterImportedClasses(const std::string& module_name) {
 
     if (chain.count(resolved)) return;
 
-    std::ifstream file(resolved, std::ios::binary);
-    if (!file.is_open()) return;
-    std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    // Mismo motivo que en ResolveSiblingImportFile: leer con
+    // std::ifstream bypasea la PAL, asi que en un .exe empacado
+    // (MemoryOverridePlatform) esto nunca encontraba el contenido real
+    // del sibling. Ahora pasa por VmPlatformAccessor::Get().FileSystem(),
+    // igual que VM::DoImport (vm_import.cpp).
+    std::string source;
+    if (!VmPlatformAccessor::Get().FileSystem().ReadFile(resolved, source)) return;
 
     chain.insert(resolved);
     HarvestedClassInfo harvested;

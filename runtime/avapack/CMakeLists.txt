@@ -123,8 +123,13 @@ set(AVAPACK_OUT_NAME "avapack_testproj" CACHE STRING
     "Nombre del target/ejecutable empacado resultante (sin extension)")
 set(AVAPACK_KEY_FILE "" CACHE FILEPATH
     "(Fase 3, opcional) ruta a 32 bytes crudos con la clave AES-256 a usar. Vacio = clave aleatoria por build.")
-set(AVAPACK_EXTRA_MODULES_DIR "" CACHE PATH
-    "(opcional) carpeta con modulos nativos (libraries/) para embeber si el proyecto los importa")
+# Fix: antes era CACHE PATH (una sola carpeta). Ahora es CACHE STRING para
+# poder pasar una lista separada por ';' -- ava_cli build arma esa lista con
+# libraries/ del repo (stdlib) + cualquier <Reference> del .avaproj resuelta
+# por Ava Studio (ver runtime/avacli/src/build_command.cpp). Con una sola
+# carpeta sigue funcionando igual que antes.
+set(AVAPACK_EXTRA_MODULES_DIR "" CACHE STRING
+    "(opcional) lista separada por ';' de carpetas con modulos a embeber si el proyecto los importa (stdlib libraries/ + <Reference> del .avaproj)")
 
 set(AVAPACK_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(AVAPACK_GENERATED_CPP "${AVAPACK_GENERATED_DIR}/embedded_project.cpp")
@@ -138,7 +143,14 @@ if(NOT "${AVAPACK_KEY_FILE}" STREQUAL "")
     list(APPEND AVAPACK_GEN_ARGS --key-file "${AVAPACK_KEY_FILE}")
 endif()
 if(NOT "${AVAPACK_EXTRA_MODULES_DIR}" STREQUAL "")
-    list(APPEND AVAPACK_GEN_ARGS --extra-modules-dir "${AVAPACK_EXTRA_MODULES_DIR}")
+    # Fix: iterar la lista (';'-separada) en vez de pasarla entera como un
+    # solo --extra-modules-dir -- avapack_gen espera una carpeta por
+    # ocurrencia del flag (es repetible, ver generator/main.cpp ParseArgs).
+    foreach(_ava_extra_module_dir IN LISTS AVAPACK_EXTRA_MODULES_DIR)
+        if(NOT "${_ava_extra_module_dir}" STREQUAL "")
+            list(APPEND AVAPACK_GEN_ARGS --extra-modules-dir "${_ava_extra_module_dir}")
+        endif()
+    endforeach()
 endif()
 if(AVAPACK_OBFUSCATE)
     list(APPEND AVAPACK_GEN_ARGS --obfuscate)
@@ -153,10 +165,27 @@ if(AVAPACK_DEBUG_UNENCRYPTED)
     list(APPEND AVAPACK_GEN_ARGS --debug)
 endif()
 
+# Bugfix: este custom_command dependia solo de avapack_gen (el binario),
+# nunca de los archivos del proyecto que le pasamos por --project/--entry.
+# `ava_cli build` reutiliza build_pack/ entre corridas para ser rapido (ver
+# runtime/avacli/src/build_command.cpp), asi que sin esto: editabas
+# main.ava, corrias `ava_cli build` de nuevo, CMake veia que avapack_gen no
+# habia cambiado, y NUNCA volvia a correr avapack_gen -- el .exe empacado
+# seguia teniendo el embedded_project.cpp viejo (con tu print anterior, o
+# sin el nuevo) aunque la build "terminara bien". `ava_cli build` reconfigura
+# CMake en cada corrida, asi que este GLOB_RECURSE siempre refleja el
+# estado actual del proyecto en el momento de cada build.
+file(GLOB_RECURSE AVAPACK_PROJECT_SOURCE_FILES "${AVAPACK_PROJECT_DIR}/*")
+
+set(AVAPACK_GENERATE_DEPENDS avapack_gen ${AVAPACK_PROJECT_SOURCE_FILES})
+if(NOT "${AVAPACK_KEY_FILE}" STREQUAL "")
+    list(APPEND AVAPACK_GENERATE_DEPENDS "${AVAPACK_KEY_FILE}")
+endif()
+
 add_custom_command(
     OUTPUT "${AVAPACK_GENERATED_CPP}"
     COMMAND avapack_gen ${AVAPACK_GEN_ARGS}
-    DEPENDS avapack_gen
+    DEPENDS ${AVAPACK_GENERATE_DEPENDS}
     COMMENT "avapack: generando + cifrando embedded_project.cpp desde ${AVAPACK_PROJECT_DIR} (entry: ${AVAPACK_ENTRY_FILE})"
     VERBATIM
 )

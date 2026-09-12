@@ -123,9 +123,6 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
         }
     }
 
-    // Each menu button is sized to its own translated label (util::AutoButtonSize)
-    // instead of a single fixed width tuned for English -- otherwise longer
-    // translations (e.g. Spanish) get clipped/overflow past the button box.
     const float kMenuBtnMinWidth = 44.0f;
     const float menu_btn_height = ImGui::GetFrameHeight();
 
@@ -160,6 +157,9 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
         }
         if (ImGui::MenuItem(util::Tr("menu.file.open_folder").c_str())) {
             result.open_folder_requested = true;
+        }
+        if (ImGui::MenuItem(util::Tr("menu.file.project_properties").c_str())) {
+            result.project_properties_requested = true;
         }
         ImGui::Separator();
         if (ImGui::MenuItem(util::Tr("menu.file.save").c_str(), "Ctrl+S")) {

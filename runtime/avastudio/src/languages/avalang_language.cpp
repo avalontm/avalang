@@ -4,6 +4,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "languages/lexer_utils.h"
+
 namespace studio::languages {
 
 namespace {
@@ -138,6 +140,22 @@ public:
             color = TextEditor::Color::importPath;
             return word_end;
         }
+        if (state_ == State::kExpectTypeName) {
+            // The NAME right after `as` -- either a typeAnnotation's type
+            // (`x as int`, `x as int = 1`) or an import alias
+            // (`import a as b`). Left unhandled (returns `start` below) on
+            // purpose: it must NOT go through the assignment/`as`/`in`
+            // checks further down, since a typed assignment's type name
+            // sits directly before the `=` too (`NAME 'as' NAME '=' expr`)
+            // and would otherwise get wrongly colored as the assignment
+            // target itself. Falling through lets the engine's own
+            // keyword/identifier tables color builtin type names
+            // (int/float/bool/string, via lang.identifiers) normally, and
+            // leaves anything else (a class/interface type, an import
+            // alias) as plain default text.
+            state_ = State::kIdle;
+            return start;
+        }
         state_ = State::kIdle;
 
         if (pending_new_) {
@@ -164,11 +182,14 @@ public:
             // Leave `import` itself unhandled (returns `start` below) so
             // it still gets the normal keyword color from the engine's
             // default identifier path; only the NAME segments that
-            // follow get colored here (kExpectImportPath above), and the
-            // optional trailing `as NAME` is left alone entirely -- once
-            // a word other than a dotted continuation shows up,
-            // kExpectMoreImportPath resets to kIdle on its own.
+            // follow get colored here (kExpectImportPath above). The
+            // optional trailing `as NAME` goes through kExpectTypeName
+            // below like every other `as` (see the `word == "as"` check).
             state_ = State::kExpectImportPath;
+            return start;
+        }
+        if (word == "as") {
+            state_ = State::kExpectTypeName;
             return start;
         }
 
@@ -186,7 +207,7 @@ public:
                 ++c1;
                 bool isAssign = false;
                 if (c0 == '=') {
-                    isAssign = !(c1 < end && *c1 == '=');
+                    isAssign = !(c1 < end && (*c1 == '=' || *c1 == '>'));
                 } else if ((c0 == '+' || c0 == '-' || c0 == '*' || c0 == '%') &&
                            c1 < end && *c1 == '=') {
                     isAssign = true;
@@ -218,7 +239,7 @@ public:
 private:
     enum class State {
         kIdle, kExpectClassName, kExpectColonOrBody, kExpectBaseName, kExpectMoreBase,
-        kExpectImportPath, kExpectMoreImportPath,
+        kExpectImportPath, kExpectMoreImportPath, kExpectTypeName,
     };
 
     State state_ = State::kIdle;
@@ -269,6 +290,77 @@ void UpdateKnownVariableNames(const std::unordered_set<std::string>& removed,
 
 int KnownVariableNamesGeneration() { return KnownVariableGeneration(); }
 
+std::unordered_set<std::string> ScanKnownVariableNames(const std::string& text) {
+    using lexer::IsIdentChar;
+    using lexer::IsIdentStart;
+    using lexer::ReadIdent;
+    using lexer::SkipInlineWhitespace;
+
+    std::unordered_set<std::string> names;
+    const size_t end = text.size();
+    size_t i = 0;
+    int paren_depth = 0;
+    bool skip_next_word = false;
+
+    while (i < end) {
+        char c = text[i];
+
+        if (c == '#') { while (i < end && text[i] != '\n') ++i; continue; }
+        if (c == '\'' || c == '"') {
+            char quote = c;
+            ++i;
+            while (i < end && text[i] != quote) {
+                if (text[i] == '\\' && i + 1 < end) i += 2; else ++i;
+            }
+            if (i < end) ++i;
+            continue;
+        }
+        if (c == '(') { ++paren_depth; ++i; continue; }
+        if (c == ')') { if (paren_depth > 0) --paren_depth; ++i; continue; }
+        if (!IsIdentStart(c)) { ++i; continue; }
+
+        std::string word = ReadIdent(text, i);
+        if (skip_next_word) {
+            skip_next_word = false;
+            continue;
+        }
+        if (word == "as") {
+            skip_next_word = true;
+            continue;
+        }
+        if (kNonFunctionWords.count(word)) continue;
+
+        size_t after_ws = i;
+        SkipInlineWhitespace(text, after_ws);
+
+        bool matched = false;
+        if (paren_depth == 0 && after_ws < end) {
+            char c0 = text[after_ws];
+            char c1 = after_ws + 1 < end ? text[after_ws + 1] : '\0';
+            if (c0 == '=' && c1 != '=' && c1 != '>') {
+                matched = true;
+            } else if ((c0 == '+' || c0 == '-' || c0 == '*' || c0 == '%') && c1 == '=') {
+                matched = true;
+            } else if (c0 == '/' && c1 == '=') {
+                matched = true;
+            } else if (c0 == '/' && c1 == '/') {
+                char c2 = after_ws + 2 < end ? text[after_ws + 2] : '\0';
+                matched = c2 == '=';
+            }
+        }
+        if (!matched && after_ws + 1 < end && text[after_ws] == 'a' && text[after_ws + 1] == 's' &&
+            (after_ws + 2 >= end || !IsIdentChar(text[after_ws + 2]))) {
+            matched = true;
+        }
+        if (!matched && after_ws + 1 < end && text[after_ws] == 'i' && text[after_ws + 1] == 'n' &&
+            (after_ws + 2 >= end || !IsIdentChar(text[after_ws + 2]))) {
+            matched = true;
+        }
+        if (matched) names.insert(word);
+    }
+    return names;
+}
+
 const TextEditor::Language* AvaLang() {
     static TextEditor::Language language = [] {
         TextEditor::Language lang;
@@ -302,7 +394,7 @@ const TextEditor::Language* AvaLang() {
         };
 
         lang.identifiers = {
-            "print", "type", "typeof", "str", "int", "float",
+            "print", "type", "typeof", "str", "int", "float", "bool", "string", "list", "dict",
             "abs", "round", "floor", "ceil", "min", "max", "pow", "sqrt", "sum",
             "sorted", "reversed", "any", "all", "len", "range",
         };

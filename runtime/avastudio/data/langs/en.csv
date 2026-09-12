@@ -13,6 +13,7 @@ menu.file.view_design,View Design
 menu.file.preferences,Preferences
 menu.file.settings,Settings
 menu.file.extensions,Extensions
+menu.file.project_properties,Project Properties...
 menu.file.exit,Exit
 menu.edit,Edit
 menu.edit.find_in_project,Find in Project...
@@ -49,6 +50,7 @@ explorer.delete_folder_confirm,"Delete folder ""%s"" and everything inside it?"
 explorer.delete_file_confirm,"Delete ""%s""?"
 explorer.delete_undone,This can't be undone.
 explorer.folder_not_found,(folder not found: %s)
+explorer.project_properties,Properties
 common.cancel,Cancel
 panel.editor.title,Code Editor
 editor.no_file_open,No file open. Use File > Open or double-click a file in Explorer.
@@ -130,13 +132,27 @@ find_in_project.no_results,No matches found.
 find_in_project.results_count,%s matches
 find_in_project.results_truncated,Showing the first %s matches -- narrow your search to see more.
 panel.build.title,Build
-build.intro,"Packages the current project into a standalone .exe (see runtime/avapack/README.md). This runs 'ava_cli build' in the background -- everything below just fills in its flags."
+build.intro,"Runs 'ava_cli build' in the background to package the current project into a standalone .exe (see runtime/avapack/README.md). This window only holds this machine's local paths -- entry file, output folder, obfuscation, etc. now live in the project's Properties."
+build.open_project_properties_button,Open Project Properties...
+build.progress_stage_starting,Starting build...
+build.progress_stage_configuring,Configuring (CMake)...
+build.progress_stage_compiling,Compiling...
+build.progress_stage_packaging,Packaging...
+build.progress_stage_signing,Signing the executable...
+build.progress_stage_done,Done
+build.progress_elapsed,(%s)
 build.section_target,Target
 build.platform_label,Platform
 build.platform_value,"%s (detected)"
 build.target_label,Build type
+build.target_readonly_note,"Set in Project Properties > Application."
 build.target_desktop,Desktop
 build.target_barekernel,BareKernel
+build.target_library,Library
+build.library_not_implemented_note,"Library output (.dll/.so) is not implemented yet -- the schema is ready, but builds for this target are disabled for now."
+build.error_library_not_implemented,"Library output is not implemented yet -- switch the target to Desktop or BareKernel to build."
+build.section_machine_paths,Machine paths
+build.section_machine_paths_note,"Local to this computer -- saved in <project>.avaproj.user, not committed to git."
 build.toolchain_dir_label,Cross-toolchain folder
 build.toolchain_dir_hint,"(i686-elf-gcc/g++/ld/objcopy/nm)"
 build.compiler_path_label,Compiler path
@@ -149,16 +165,10 @@ build.force_runtime_label,"Force rebuild generic runner"
 build.force_runtime_tooltip,"Same as ava_cli build's --force-runtime: rebuilds avapack_barekernel_runtime\n(main_barekernel.cpp) instead of reusing the cached .a in\nbuild_pack_barekernel/. Needed the first time you build into a clean repo\ncheckout, or after changing main_barekernel.cpp / app.ld."
 build.force_rebuild_warning,"Remember to turn this back off after your next build -- left on, every build force-rebuilds and loses the caching speedup."
 build.error_toolchain_dir_missing,"could not find the cross-toolchain folder -- set it above."
-build.section_project,Project
-build.section_options,Options
 build.section_advanced,Advanced
 build.default_path_hint,"(default: %s)"
-build.project_folder_label,Project folder
-build.entry_script_label,"Entry script (.ava)"
-build.entry_script_hint,"(default: auto-detect main.ava)"
 build.detect_button,Detect
 common.browse,Browse...
-build.output_folder_label,Output folder
 build.obfuscate_label,Obfuscate
 build.obfuscate_tooltip,"Compiles the entry to .avbc bytecode instead of embedding plain .ava source.\nAlso produces a <out>.avmap SymbolMap next to the build -- keep it yourself,\nnever distribute it alongside the .exe."
 build.obfuscate_strings_label,Obfuscate strings
@@ -191,6 +201,22 @@ build.error_repo_root_not_found,could not find the AvaLang repo root -- set it u
 build.error_project_dir_missing,project folder does not exist.
 build.error_entry_file_missing,could not find an entry .ava file -- set 'Entry script' above.
 build.error_entry_file_not_found,"entry script does not exist: %s -- pick the right one."
+project_properties.title,Project Properties
+project_properties.tab_application,Application
+project_properties.tab_build,Build
+project_properties.tab_references,References
+project_properties.name_label,Project name
+project_properties.entry_file_label,"Entry script (.ava)"
+project_properties.output_type_label,Output type
+project_properties.modules_path_label,Modules path
+project_properties.out_dir_label,Output folder
+project_properties.icon_label,Icon
+project_properties.icon_hint,"(optional)"
+project_properties.section_options,Options
+project_properties.section_machine,"This machine (not shared -- .avaproj.user)"
+project_properties.machine_note,"These paths are local to this computer and are not committed with the project."
+project_properties.add_reference_button,Add Reference...
+project_properties.no_references,No references added yet.
 panel.settings.title,Settings
 settings.language_label,Language
 settings.section_general,General
@@ -207,13 +233,16 @@ quick_open.hint,Go to file...
 quick_open.no_results,No matching files.
 quick_open.no_project_files,No .ava/.avaui files found in this project.
 menu.file.new_project,New Project...
+new_project.section_location,Location
 new_project.name_label,Project name
 new_project.name_hint,MyProject
 new_project.destination_label,Destination folder
-new_project.template_label,Template
-new_project.template_empty,Empty
-new_project.template_with_screen,With example screen
-new_project.preview_label,"Will create: %s"
+new_project.section_template,Project type
+new_project.template_console,Console
+new_project.template_console_desc,"A single main.ava -- ideal for scripts, tools and console programs."
+new_project.template_ui,UI
+new_project.template_ui_desc,"Adds app.ava, styles.ava and a starter screen under views/, ready to design interfaces."
+new_project.preview_header,Will create:
 new_project.create_button,Create Project
 new_project.error_name_required,Enter a project name.
 new_project.error_destination_required,Choose a destination folder.

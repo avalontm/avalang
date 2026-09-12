@@ -48,4 +48,17 @@ void UpdateKnownVariableNames(const std::unordered_set<std::string>& removed,
 
 int KnownVariableNamesGeneration();
 
+// Scans `text` for every NAME that AvaLangTokenizer would color as
+// Color::variableName -- a plain or augmented assignment target
+// (`x = ...`, `x += ...`), a typed declaration/assignment (`x as Type`),
+// or a `for x in ...` loop variable -- regardless of whether its type can
+// be resolved. Unlike VariableTypeIndex (member_access_resolver.h), which
+// only keeps a variable once it can infer a type for it (needed there for
+// dot-member-access autocomplete, not here), this keeps every name so a
+// plain `msg = ""` still gets tracked. Call this from RebuildIndexAndTrie
+// and diff the result against EditorTab::known_variable_names the same
+// way interface names are diffed, then hand the diff to
+// UpdateKnownVariableNames.
+std::unordered_set<std::string> ScanKnownVariableNames(const std::string& text);
+
 }

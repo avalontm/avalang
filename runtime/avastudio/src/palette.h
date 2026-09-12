@@ -54,5 +54,14 @@ constexpr unsigned int kSynPunctuation     = 0xC8BAAB;
 constexpr unsigned int kSynClass           = 0x4EC9B0;
 constexpr unsigned int kSynInterface       = 0xB8D7A3;
 constexpr unsigned int kSynIdentifier      = 0xF8FAFC;
+// Anotaciones estilo `[entry]`. Deliberadamente distinto de kSynKeyword
+// (naranja, para static/func/class) y de kSynFunction (dorado mas
+// saturado, para nombres de funcion) -- una anotacion es metadata SOBRE
+// la declaracion, no la declaracion en si, asi que necesita su propio
+// canal visual. 0xDCDCAA es el mismo tono khaki-dorado que usa VS Code
+// Dark+ para decoradores (scope entity.name.function.decorator), asi el
+// editor de AvaStudio queda consistente con lo que ya se ve en la
+// extension de VS Code para el mismo concepto.
+constexpr unsigned int kSynAnnotation      = 0xDCDCAA;
 
 }

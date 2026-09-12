@@ -345,6 +345,16 @@ struct FuncDef : StmtNode {
     // dentro de una `async func` no hereda esto (mismo criterio que
     // JS/Python/C#).
     bool is_async = false;
+    // Plan de anotaciones (AvaLang_Plan_Anotaciones.md), Fase 1: nombres
+    // crudos de `[NAME]` que preceden esta declaración (`attributeList` en
+    // la gramática), en el orden en que aparecen. Vacío si no hay ninguna.
+    // Guardado como lista simple de strings (no un `bool is_main`) a
+    // propósito: la Fase 5 (anotaciones con argumentos, ej. `[route("/x")]`)
+    // solo necesita ampliar esto a una estructura nombre+args por entrada,
+    // sin tener que volver a tocar este struct ni ast_builder.cpp. La
+    // validación semántica de qué anotaciones son válidas (hoy solo
+    // "entry") vive en el compilador (Fase 2), no acá.
+    std::vector<std::string> attributes;
     FuncDef(std::string n, std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> p,
             bool v, std::vector<std::shared_ptr<StmtNode>> b)
         : name(std::move(n)), params(std::move(p)), is_vararg(v), body(std::move(b)) {}

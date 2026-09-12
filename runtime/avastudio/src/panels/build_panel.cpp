@@ -1,5 +1,7 @@
 #include "panels/build_panel.h"
 
+#include <cfloat>
+#include <chrono>
 #include <filesystem>
 #include <vector>
 
@@ -37,6 +39,68 @@ std::string TrFormat(const std::string& key, std::initializer_list<std::string> 
         result = result.substr(0, pos) + arg + result.substr(pos + 2);
     }
     return result;
+}
+
+// Deriva una etapa legible + una fraccion (0..1, solo para la barra) a
+// partir de los marcadores que `ava_cli build` ya imprime por stdout
+// (ver build_command.cpp: "build: configuring", "build: compiling",
+// "build: usando herramientas prebuilt", "signing", "build: done ->",
+// y el equivalente en español para el target barekernel). No es una
+// medicion real del progreso (ava_cli no reporta porcentaje), pero le
+// da al usuario una nocion concreta de en que paso esta el build en
+// vez de solo un spinner indefinido -- se busca el ULTIMO marcador que
+// aparece en el log acumulado hasta ahora, ya que los pasos se
+// imprimen en orden y no se repiten.
+struct BuildStageInfo {
+    std::string label_key;
+    float fraction;
+};
+
+BuildStageInfo DeriveBuildStage(const std::string& log) {
+    struct Marker {
+        const char* needle;
+        const char* label_key;
+        float fraction;
+    };
+    // Orden = orden en que ava_cli los imprime; se evalua de atras para
+    // adelante asi el marcador mas reciente (el que realmente describe
+    // donde esta el build ahora) gana sobre uno mas viejo que tambien
+    // aparezca en el log.
+    static const Marker kMarkers[] = {
+        {"build: done ->", "build.progress_stage_done", 1.0f},
+        {"listo ->", "build.progress_stage_done", 1.0f},
+        {"signing", "build.progress_stage_signing", 0.85f},
+        {"escribiendo AppHeader", "build.progress_stage_packaging", 0.85f},
+        {"[info] copied", "build.progress_stage_packaging", 0.8f},
+        {"usando herramientas prebuilt", "build.progress_stage_packaging", 0.6f},
+        {"build: compiling", "build.progress_stage_compiling", 0.55f},
+        {"compilando (cruzado", "build.progress_stage_compiling", 0.55f},
+        {"compilando herramientas de host", "build.progress_stage_compiling", 0.45f},
+        {"linkeando", "build.progress_stage_compiling", 0.7f},
+        {"generando embedded_avb.cpp", "build.progress_stage_compiling", 0.4f},
+        {"build: configuring", "build.progress_stage_configuring", 0.15f},
+        {"configurando build cruzado", "build.progress_stage_configuring", 0.15f},
+        {"compilando" /* barekernel entry, catch-all */, "build.progress_stage_compiling", 0.3f},
+    };
+    for (size_t i = sizeof(kMarkers) / sizeof(kMarkers[0]); i-- > 0;) {
+        if (log.find(kMarkers[i].needle) != std::string::npos) {
+            return {kMarkers[i].label_key, kMarkers[i].fraction};
+        }
+    }
+    return {"build.progress_stage_starting", 0.05f};
+}
+
+std::string LastNonEmptyLine(const std::string& log) {
+    size_t end = log.find_last_not_of("\n\r");
+    if (end == std::string::npos) return "";
+    size_t start = log.find_last_of('\n', end);
+    return log.substr(start == std::string::npos ? 0 : start + 1, end - (start == std::string::npos ? 0 : start));
+}
+
+std::string FormatSeconds(double seconds) {
+    int total = static_cast<int>(seconds);
+    if (total < 60) return std::to_string(total) + "s";
+    return std::to_string(total / 60) + "m " + std::to_string(total % 60) + "s";
 }
 
 std::string TrFormat(const std::string& key, const std::string& arg) { return TrFormat(key, {arg}); }
@@ -101,6 +165,7 @@ void StartBuild(BuildPanelState& state, std::vector<std::string> args, std::stri
     }
     state.logged_to_output = false;
     state.building = true;
+    state.build_started_at = std::chrono::steady_clock::now();
 
     state.worker = std::thread([&state, args = std::move(args), ava_cli_path = std::move(ava_cli_path),
                                  expected_result_path = std::move(expected_result_path)]() {
@@ -148,13 +213,7 @@ void StartBuild(BuildPanelState& state, std::vector<std::string> args, std::stri
     });
 }
 
-}  // close the anonymous namespace early so StartVcpkgInstall (below) gets
-   // external linkage -- it's called directly from main.cpp's Command
-   // Palette wiring (Fase 3), not just from the button click further down in
-   // this file. DetectRepoRoot/DetectVcpkgRoot/etc. above stay internal
-   // (only used inside this TU); the `fs` alias declared inside that
-   // namespace is still visible down here and for the rest of the file,
-   // same as any other anonymous-namespace member.
+}  // namespace
 
 void StartVcpkgInstall(BuildPanelState& state, std::string target_dir, std::string triplet) {
     if (state.installing_vcpkg.load()) return;
@@ -247,26 +306,17 @@ void StartVcpkgInstall(BuildPanelState& state, std::string target_dir, std::stri
     });
 }
 
-// Same computation the "Install vcpkg" button used to do inline (settings.build_vcpkg_root,
-// falling back to auto-detecting a vcpkg checkout next to the repo root or the executable).
-// Public (declared in build_panel.h) so the Command Palette's "Install vcpkg" entry can call
-// it without duplicating the fallback chain -- see DrawBuildPanel's own button below, which
-// now calls this too instead of repeating the ternary chain inline.
-std::string ResolveVcpkgInstallTarget(const StudioSettings& settings) {
+std::string ResolveVcpkgInstallTarget(const AvaProjUserFile& user) {
     const fs::path repo_root_for_vcpkg =
-        settings.build_repo_root.empty() ? DetectRepoRoot(SelfExecutableDir()) : fs::path(settings.build_repo_root);
+        user.repo_root.empty() ? DetectRepoRoot(SelfExecutableDir()) : fs::path(user.repo_root);
     const fs::path detected_vcpkg = DetectVcpkgRoot(repo_root_for_vcpkg);
-    const fs::path install_target = settings.build_vcpkg_root.empty()
+    const fs::path install_target = user.vcpkg_root.empty()
                                          ? (detected_vcpkg.empty()
                                                 ? (repo_root_for_vcpkg.empty() ? SelfExecutableDir() / "vcpkg"
                                                                                 : repo_root_for_vcpkg / "vcpkg")
                                                 : detected_vcpkg)
-                                         : fs::path(settings.build_vcpkg_root);
+                                         : fs::path(user.vcpkg_root);
     return install_target.string();
-}
-
-std::string ResolveBuildProjectDir(const StudioSettings& settings, const std::string& explorer_root_dir) {
-    return settings.build_project_dir.empty() ? explorer_root_dir : settings.build_project_dir;
 }
 
 std::string NormalizeEntryFilePath(const std::string& project_dir, const std::string& picked_path) {
@@ -285,30 +335,60 @@ void PollBuild(BuildPanelState& state, LogBridge& log_bridge) {
     }
 }
 
-TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const StudioSettings& settings,
-                                  const std::string& explorer_root_dir, LogBridge& log_bridge) {
+TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const AvaProjFile& proj, const AvaProjUserFile& user,
+                                  const std::string& explorer_root_dir, LogBridge& log_bridge,
+                                  bool project_ambiguous, const std::vector<std::string>& avaproj_candidates) {
     TriggerBuildOutcome outcome;
-    outcome.project_dir = ResolveBuildProjectDir(settings, explorer_root_dir);
+    outcome.project_dir = explorer_root_dir;
     if (state.building.load()) return outcome;
 
-    const fs::path project_dir(outcome.project_dir);
-    const bool is_barekernel = (settings.build_target == "barekernel");
+    // Fix: si la carpeta abierta tiene mas de un .avaproj, no hay forma de
+    // saber cual de los proyectos quiere compilar el usuario -- antes esto
+    // se resolvia mezclando archivos de cualquiera de ellos (ver
+    // LoadProjectConfig / DetectEntryFile). Ahora se corta aca, listando
+    // los candidatos, para que el usuario abra la subcarpeta especifica
+    // (Open Folder) del proyecto que quiere buildear.
+    if (project_ambiguous) {
+        std::string list;
+        for (const std::string& c : avaproj_candidates) {
+            if (!list.empty()) list += ", ";
+            list += c;
+        }
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.log = "error: se encontraron varios .avaproj en " + explorer_root_dir +
+                     " (" + list +
+                     ") -- Ava Studio no puede saber cual proyecto queres compilar. "
+                     "Abri la subcarpeta del proyecto especifico (File > Open Folder) "
+                     "en vez de la carpeta que los contiene a todos.\n";
+        state.log_forwarded_upto = 0;
+        state.has_result = true;
+        state.last_success = false;
+        state.logged_to_output = false;
+        log_bridge.Log("[build] error: multiples .avaproj encontrados -- ver detalle en Build.");
+        state.logged_to_output = true;
+        return outcome;
+    }
 
-    fs::path ava_cli =
-        settings.build_ava_cli_path.empty() ? DetectAvaCliPath() : fs::path(settings.build_ava_cli_path);
-    fs::path repo_root = settings.build_repo_root.empty()
+    const fs::path project_dir(outcome.project_dir);
+    const bool is_barekernel = (proj.output_type == AvaProjOutputType::kBareKernel);
+    const bool is_library = (proj.output_type == AvaProjOutputType::kLibrary);
+
+    fs::path ava_cli = user.ava_cli_path.empty() ? DetectAvaCliPath() : fs::path(user.ava_cli_path);
+    fs::path repo_root = user.repo_root.empty()
                               ? [&]() {
                                     fs::path d = DetectRepoRoot(SelfExecutableDir());
                                     return d.empty() ? DetectRepoRoot(project_dir) : d;
                                 }()
-                              : fs::path(settings.build_repo_root);
-    std::string entry =
-        settings.build_entry_file.empty() ? DetectEntryFile(project_dir) : settings.build_entry_file;
-    fs::path out_dir = settings.build_out_dir.empty() ? (project_dir / "dist") : fs::path(settings.build_out_dir);
+                              : fs::path(user.repo_root);
+    std::string entry = proj.entry_file.empty() ? DetectEntryFile(project_dir) : proj.entry_file;
+    fs::path out_dir_raw = proj.out_dir.empty() ? fs::path("bin") : fs::path(proj.out_dir);
+    fs::path out_dir = out_dir_raw.is_absolute() ? out_dir_raw : (project_dir / out_dir_raw);
 
     std::error_code ec;
     std::string setup_error;
-    if (ava_cli.empty() || !fs::exists(ava_cli, ec)) {
+    if (is_library) {
+        setup_error = util::Tr("build.error_library_not_implemented");
+    } else if (ava_cli.empty() || !fs::exists(ava_cli, ec)) {
         setup_error = util::Tr("build.error_ava_cli_not_found");
     } else if (repo_root.empty() || !LooksLikeRepoRoot(repo_root)) {
         setup_error = util::Tr("build.error_repo_root_not_found");
@@ -317,20 +397,13 @@ TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const StudioSettings& s
     } else if (entry.empty()) {
         setup_error = util::Tr("build.error_entry_file_missing");
     } else if (!fs::exists(project_dir / entry, ec)) {
-        // The configured/detected entry doesn't exist on disk -- typically stale
-        // build_entry_file left over after switching to a different project folder
-        // (see comment on TriggerBuildOutcome in the header). Rather than handing this
-        // straight to ava_cli, which would only report it deep inside the subprocess log
-        // as a raw "--entry no existe: <path>", surface it here and let the caller offer a
-        // picker instead.
         outcome.entry_file_missing = true;
         setup_error = TrFormat("build.error_entry_file_not_found", (project_dir / entry).string());
-    } else if (is_barekernel && (settings.build_compiler_path_barekernel.empty() ||
-                                  !fs::exists(settings.build_compiler_path_barekernel, ec))) {
+    } else if (is_barekernel && (user.compiler_path_barekernel.empty() ||
+                                  !fs::exists(user.compiler_path_barekernel, ec))) {
         setup_error = util::Tr("build.error_toolchain_dir_missing");
     } else {
-        fs::path vcpkg_root =
-            settings.build_vcpkg_root.empty() ? DetectVcpkgRoot(repo_root) : fs::path(settings.build_vcpkg_root);
+        fs::path vcpkg_root = user.vcpkg_root.empty() ? DetectVcpkgRoot(repo_root) : fs::path(user.vcpkg_root);
         if (!vcpkg_root.empty()) {
             auto env_platform = ava::platform::Platform::Create();
             if (env_platform) {
@@ -351,27 +424,46 @@ TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const StudioSettings& s
             "--target", is_barekernel ? "barekernel" : "desktop",
         };
         const std::string& active_compiler_path =
-            is_barekernel ? settings.build_compiler_path_barekernel : settings.build_compiler_path_desktop;
+            is_barekernel ? user.compiler_path_barekernel : user.compiler_path_desktop;
         if (!active_compiler_path.empty()) {
             args.push_back("--compiler-path");
             args.push_back(active_compiler_path);
         }
         if (is_barekernel) {
-            if (settings.build_force_so) args.push_back("--force-so");
-            if (settings.build_force_runtime) args.push_back("--force-runtime");
+            if (user.force_so) args.push_back("--force-so");
+            if (user.force_runtime) args.push_back("--force-runtime");
         }
+        // Fix: las <Reference Include="..."> del .avaproj (AvaProjReference,
+        // ver project/avaproj_file.h) se guardaban y leian del XML pero
+        // nunca llegaban a la build real -- cualquier import a una carpeta
+        // fuera de project_dir (p.ej. una carpeta compartida hermana del
+        // proyecto dentro del workspace) nunca se empaquetaba, y el .exe
+        // final fallaba en runtime con "could not find module: X". Cada
+        // referencia se resuelve relativa a project_dir (si no es absoluta)
+        // y se pasa como --extra-modules-dir; las que no existan se
+        // ignoran (avapack_gen ya avisa si termina faltando un modulo).
+        for (const AvaProjReference& reference : proj.references) {
+            if (reference.include.empty()) continue;
+            fs::path ref_path(reference.include);
+            fs::path ref_abs = ref_path.is_absolute() ? ref_path : (project_dir / ref_path);
+            std::error_code ref_ec;
+            if (!fs::exists(ref_abs, ref_ec) || !fs::is_directory(ref_abs, ref_ec)) continue;
+            args.push_back("--extra-modules-dir");
+            args.push_back(ref_abs.string());
+        }
+
         if (!is_barekernel) {
-            if (!settings.build_key_file.empty()) {
+            if (!user.key_file.empty()) {
                 args.push_back("--key-file");
-                args.push_back(settings.build_key_file);
+                args.push_back(user.key_file);
             }
-            if (settings.build_obfuscate) {
+            if (proj.obfuscate) {
                 args.push_back("--obfuscate");
-                if (settings.build_obfuscate_strings) args.push_back("--obfuscate-strings");
-                if (settings.build_flatten_control_flow) args.push_back("--flatten-control-flow");
+                if (proj.obfuscate_strings) args.push_back("--obfuscate-strings");
+                if (proj.flatten_control_flow) args.push_back("--flatten-control-flow");
             }
-            if (settings.build_zero_disk) args.push_back("--zero-disk");
-            if (settings.build_debug_unencrypted) args.push_back("--debug");
+            if (proj.zero_disk) args.push_back("--zero-disk");
+            if (proj.debug_unencrypted) args.push_back("--debug");
         }
 
         std::string entry_stem = fs::path(entry).stem().string();
@@ -396,12 +488,6 @@ TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const StudioSettings& s
 
     return outcome;
 }
-
-// TriggerBuild/PollBuild/ResolveBuildProjectDir above get external linkage the same way
-// StartVcpkgInstall/ResolveVcpkgInstallTarget already did (this point in the file is already
-// past the anonymous namespace's early close above, in plain `studio::` scope) -- they're
-// called directly from main.cpp (the Run menu's Build action and the frame-polled log flush)
-// instead of only being reachable from inside DrawBuildPanel further down in this file.
 
 namespace {
 
@@ -433,39 +519,77 @@ bool DrawPathRow(const char* label, const char* hint, std::string& value, const 
     return committed;
 }
 
-}
+}  // namespace
 
-BuildPanelResult DrawBuildPanel(BuildPanelState& state, StudioSettings& settings,
+BuildPanelResult DrawBuildPanel(BuildPanelState& state, AvaProjFile& proj, AvaProjUserFile& user,
                                  const std::string& explorer_root_dir, BuildBrowseField browsed_field,
                                  const std::string& browsed_value, LogBridge& log_bridge, bool* p_open) {
     BuildPanelResult result;
 
     if (browsed_field != BuildBrowseField::kNone && !browsed_value.empty()) {
         switch (browsed_field) {
-            case BuildBrowseField::kProjectDir:  settings.build_project_dir  = browsed_value; break;
-            case BuildBrowseField::kOutputDir:   settings.build_out_dir      = browsed_value; break;
-            case BuildBrowseField::kAvaCliPath:  settings.build_ava_cli_path = browsed_value; break;
-            case BuildBrowseField::kKeyFile:     settings.build_key_file     = browsed_value; break;
-            case BuildBrowseField::kVcpkgRoot:   settings.build_vcpkg_root   = browsed_value; break;
+            case BuildBrowseField::kAvaCliPath:  user.ava_cli_path           = browsed_value; break;
+            case BuildBrowseField::kKeyFile:     user.key_file               = browsed_value; break;
+            case BuildBrowseField::kVcpkgRoot:   user.vcpkg_root             = browsed_value; break;
             case BuildBrowseField::kCompilerPathDesktop:
-                settings.build_compiler_path_desktop = browsed_value; break;
+                user.compiler_path_desktop = browsed_value; break;
             case BuildBrowseField::kCompilerPathBarekernel:
-                settings.build_compiler_path_barekernel = browsed_value; break;
-            case BuildBrowseField::kEntryFile: {
-                settings.build_entry_file =
-                    NormalizeEntryFilePath(ResolveBuildProjectDir(settings, explorer_root_dir), browsed_value);
-                break;
-            }
+                user.compiler_path_barekernel = browsed_value; break;
             case BuildBrowseField::kNone: break;
         }
-        result.settings_dirty = true;
+        result.dirty = true;
     }
 
     const std::string title = util::Tr("panel.build.title") + "###build";
     ImGui::Begin(title.c_str(), p_open);
 
     ImGui::TextWrapped("%s", util::Tr("build.intro").c_str());
+    ImGui::Dummy(ImVec2(0.0f, 6.0f));
+
+    const std::string open_properties_label = util::Tr("build.open_project_properties_button");
+    if (ImGui::Button(open_properties_label.c_str())) {
+        result.open_project_properties = true;
+    }
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
+
+    if (state.building.load()) {
+        std::string log_snapshot;
+        {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            log_snapshot = state.log;
+        }
+        const BuildStageInfo stage = DeriveBuildStage(log_snapshot);
+        const std::string last_line = LastNonEmptyLine(log_snapshot);
+        const double elapsed_s = std::chrono::duration<double>(
+                                      std::chrono::steady_clock::now() - state.build_started_at)
+                                      .count();
+
+        ImGui::Separator();
+
+        // Spinner de 8 frames Braille, gira con el reloj de ImGui -- no
+        // depende de ningun evento nuevo del proceso hijo, asi que se ve
+        // vivo aunque `ava_cli` este en silencio un rato (ej. durante el
+        // configure de CMake).
+        static const char* kSpinnerFrames[] = {"\xE2\xA0\x8B", "\xE2\xA0\x99", "\xE2\xA0\xB9", "\xE2\xA0\xB8",
+                                                 "\xE2\xA0\xBC", "\xE2\xA0\xB4", "\xE2\xA0\xA6", "\xE2\xA0\xA7"};
+        const int frame = static_cast<int>(ImGui::GetTime() * 8.0) %
+                           static_cast<int>(sizeof(kSpinnerFrames) / sizeof(kSpinnerFrames[0]));
+        ImGui::TextColored(palette::FromHex(palette::kInfo), "%s", kSpinnerFrames[frame]);
+        ImGui::SameLine();
+        ImGui::Text("%s", util::Tr(stage.label_key).c_str());
+        ImGui::SameLine();
+        ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s",
+                            TrFormat("build.progress_elapsed", {FormatSeconds(elapsed_s)}).c_str());
+
+        ImGui::ProgressBar(stage.fraction, ImVec2(-FLT_MIN, 0.0f));
+
+        if (!last_line.empty()) {
+            ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s", last_line.c_str());
+        }
+
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 6.0f));
+    }
 
     ImGui::TextColored(palette::FromHex(palette::kInfo), "%s", util::Tr("build.section_target").c_str());
     ImGui::Separator();
@@ -476,182 +600,100 @@ BuildPanelResult DrawBuildPanel(BuildPanelState& state, StudioSettings& settings
     ImGui::Text("%s", platform_value.c_str());
     ImGui::Dummy(ImVec2(0.0f, 6.0f));
 
-    const bool is_barekernel = (settings.build_target == "barekernel");
-    int target_index = is_barekernel ? 1 : 0;
-    ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s", util::Tr("build.target_label").c_str());
-    ImGui::SetNextItemWidth(-1.0f);
+    const bool is_barekernel = (proj.output_type == AvaProjOutputType::kBareKernel);
+    const bool is_library = (proj.output_type == AvaProjOutputType::kLibrary);
     const std::string target_desktop_label = util::Tr("build.target_desktop");
     const std::string target_barekernel_label = util::Tr("build.target_barekernel");
-    const char* target_items[] = {target_desktop_label.c_str(), target_barekernel_label.c_str()};
-    if (ImGui::Combo("##BuildTarget", &target_index, target_items, 2)) {
-        settings.build_target = (target_index == 1) ? "barekernel" : "desktop";
-        result.settings_dirty = true;
+    const std::string target_library_label = util::Tr("build.target_library");
+    const std::string& target_value =
+        is_barekernel ? target_barekernel_label : (is_library ? target_library_label : target_desktop_label);
+    ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s", util::Tr("build.target_label").c_str());
+    ImGui::Text("%s", target_value.c_str());
+    ImGui::TextDisabled("%s", util::Tr("build.target_readonly_note").c_str());
+
+    if (is_library) {
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        ImGui::TextColored(palette::FromHex(palette::kWarning), "%s",
+                            util::Tr("build.library_not_implemented_note").c_str());
     }
 
-    ImGui::Dummy(ImVec2(0.0f, 6.0f));
-    // One visible row, but it auto-switches which underlying setting it
-    // edits based on the Target combo above -- pick "desktop" here, type a
-    // path, flip to "barekernel", type a different path: both are kept
-    // separately (build_compiler_path_desktop / build_compiler_path_barekernel)
-    // and whichever matches the current target is what actually gets sent to
-    // ava_cli build --compiler-path below.
+    ImGui::Dummy(ImVec2(0.0f, 8.0f));
+    ImGui::TextColored(palette::FromHex(palette::kInfo), "%s", util::Tr("build.section_machine_paths").c_str());
+    ImGui::Separator();
+    ImGui::TextDisabled("%s", util::Tr("build.section_machine_paths_note").c_str());
+    ImGui::Dummy(ImVec2(0.0f, 4.0f));
+
     if (is_barekernel) {
         if (DrawPathRow(util::Tr("build.compiler_path_label").c_str(),
                          util::Tr("build.compiler_path_hint_barekernel").c_str(),
-                         settings.build_compiler_path_barekernel, util::Tr("common.browse").c_str(),
+                         user.compiler_path_barekernel, util::Tr("common.browse").c_str(),
                          BuildBrowseField::kCompilerPathBarekernel, result)) {
-            result.settings_dirty = true;
+            result.dirty = true;
         }
         ImGui::TextWrapped("%s", util::Tr("build.barekernel_note").c_str());
+        ImGui::Dummy(ImVec2(0.0f, 6.0f));
 
-        ImGui::Dummy(ImVec2(0.0f, 4.0f));
-        ImGui::TextColored(palette::FromHex(palette::kInfo), "%s", util::Tr("build.section_options").c_str());
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0.0f, 4.0f));
-
-        if (ImGui::Checkbox(util::Tr("build.force_so_label").c_str(), &settings.build_force_so))
-            result.settings_dirty = true;
+        if (ImGui::Checkbox(util::Tr("build.force_so_label").c_str(), &user.force_so))
+            result.dirty = true;
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s", util::Tr("build.force_so_tooltip").c_str());
         }
-        if (ImGui::Checkbox(util::Tr("build.force_runtime_label").c_str(), &settings.build_force_runtime))
-            result.settings_dirty = true;
+        if (ImGui::Checkbox(util::Tr("build.force_runtime_label").c_str(), &user.force_runtime))
+            result.dirty = true;
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s", util::Tr("build.force_runtime_tooltip").c_str());
         }
-        if (settings.build_force_so || settings.build_force_runtime) {
+        if (user.force_so || user.force_runtime) {
             ImGui::TextColored(palette::FromHex(palette::kWarning), "%s",
                                 util::Tr("build.force_rebuild_warning").c_str());
         }
     } else {
         if (DrawPathRow(util::Tr("build.compiler_path_label").c_str(),
                          util::Tr("build.compiler_path_hint_desktop").c_str(),
-                         settings.build_compiler_path_desktop, util::Tr("common.browse").c_str(),
+                         user.compiler_path_desktop, util::Tr("common.browse").c_str(),
                          BuildBrowseField::kCompilerPathDesktop, result)) {
-            result.settings_dirty = true;
+            result.dirty = true;
         }
-    }
-    ImGui::Dummy(ImVec2(0.0f, 4.0f));
-
-    ImGui::TextColored(palette::FromHex(palette::kInfo), "%s", util::Tr("build.section_project").c_str());
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0.0f, 4.0f));
-
-    const std::string project_hint = TrFormat("build.default_path_hint", explorer_root_dir);
-    if (DrawPathRow(util::Tr("build.project_folder_label").c_str(), project_hint.c_str(), settings.build_project_dir,
-                     util::Tr("common.browse").c_str(), BuildBrowseField::kProjectDir, result)) {
-        result.settings_dirty = true;
-    }
-    const fs::path project_dir(ResolveBuildProjectDir(settings, explorer_root_dir));
-
-    ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s", util::Tr("build.entry_script_label").c_str());
-    ImGui::SetNextItemWidth(-180.0f);
-    bool entry_edited = ImGui::InputTextWithHint("##EntryScript", util::Tr("build.entry_script_hint").c_str(),
-                                                  &settings.build_entry_file);
-    if (ImGui::IsItemDeactivatedAfterEdit()) result.settings_dirty = true;
-    (void)entry_edited;
-    ImGui::SameLine();
-    const std::string detect_label = util::Tr("build.detect_button");
-    if (ImGui::Button(detect_label.c_str(), util::AutoButtonSize(detect_label.c_str(), 70.0f))) {
-        std::error_code ec;
-        if (fs::exists(project_dir, ec)) {
-            settings.build_entry_file = DetectEntryFile(project_dir);
-            result.settings_dirty = true;
+        if (DrawPathRow(util::Tr("build.key_file_label").c_str(), util::Tr("build.key_file_hint").c_str(),
+                         user.key_file, util::Tr("common.browse").c_str(), BuildBrowseField::kKeyFile, result)) {
+            result.dirty = true;
         }
-    }
-    ImGui::SameLine();
-    const std::string browse_entry_id = util::Tr("common.browse") + "##EntryScript";
-    if (ImGui::Button(browse_entry_id.c_str(), ImVec2(80.0f, 0.0f))) {
-        result.browse_requested = BuildBrowseField::kEntryFile;
-    }
-    ImGui::Dummy(ImVec2(0.0f, 6.0f));
-
-    const std::string out_hint = TrFormat("build.default_path_hint", (project_dir / "dist").string());
-    if (DrawPathRow(util::Tr("build.output_folder_label").c_str(), out_hint.c_str(), settings.build_out_dir,
-                     util::Tr("common.browse").c_str(), BuildBrowseField::kOutputDir, result)) {
-        result.settings_dirty = true;
-    }
-
-    if (!is_barekernel) {
-    ImGui::Dummy(ImVec2(0.0f, 4.0f));
-    ImGui::TextColored(palette::FromHex(palette::kInfo), "%s", util::Tr("build.section_options").c_str());
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0.0f, 4.0f));
-
-    if (ImGui::Checkbox(util::Tr("build.obfuscate_label").c_str(), &settings.build_obfuscate)) result.settings_dirty = true;
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", util::Tr("build.obfuscate_tooltip").c_str());
-    }
-    if (settings.build_obfuscate) {
-        ImGui::Indent();
-        if (ImGui::Checkbox(util::Tr("build.obfuscate_strings_label").c_str(), &settings.build_obfuscate_strings))
-            result.settings_dirty = true;
-        if (ImGui::Checkbox(util::Tr("build.flatten_control_flow_label").c_str(),
-                             &settings.build_flatten_control_flow))
-            result.settings_dirty = true;
-        ImGui::Unindent();
-    }
-
-    if (ImGui::Checkbox(util::Tr("build.zero_disk_label").c_str(), &settings.build_zero_disk)) result.settings_dirty = true;
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", util::Tr("build.zero_disk_tooltip").c_str());
-    }
-
-    if (ImGui::Checkbox(util::Tr("build.debug_unencrypted_label").c_str(), &settings.build_debug_unencrypted))
-        result.settings_dirty = true;
-    if (settings.build_debug_unencrypted) {
-        ImGui::SameLine();
-        ImGui::TextColored(palette::FromHex(palette::kWarning), "%s",
-                            util::Tr("build.debug_unencrypted_warning").c_str());
-    }
-    ImGui::Dummy(ImVec2(0.0f, 6.0f));
-
-    if (DrawPathRow(util::Tr("build.key_file_label").c_str(), util::Tr("build.key_file_hint").c_str(),
-                     settings.build_key_file, util::Tr("common.browse").c_str(), BuildBrowseField::kKeyFile, result)) {
-        result.settings_dirty = true;
-    }
     }
 
     ImGui::Dummy(ImVec2(0.0f, 4.0f));
     if (ImGui::CollapsingHeader(util::Tr("build.section_advanced").c_str())) {
         ImGui::Indent();
-        // Repo Root used to be a manual override here, but DetectRepoRoot(SelfExecutableDir())
-        // already finds it reliably (it just walks up looking for CMakeLists.txt +
-        // runtime/avapack/CMakeLists.txt) -- exposing a field for something that's never
-        // actually needed by hand was clutter, so it's gone from the UI. TriggerBuild/
-        // StartVcpkgInstall still fall back to settings.build_repo_root if it's non-empty (old
-        // settings.json from before this still work), they just auto-detect otherwise.
         if (DrawPathRow(util::Tr("build.ava_cli_path_label").c_str(), util::Tr("build.ava_cli_path_hint").c_str(),
-                         settings.build_ava_cli_path, util::Tr("common.browse").c_str(),
+                         user.ava_cli_path, util::Tr("common.browse").c_str(),
                          BuildBrowseField::kAvaCliPath, result)) {
-            result.settings_dirty = true;
+            result.dirty = true;
         }
         ImGui::SameLine();
         const std::string auto_detect_avacli_id = util::Tr("build.auto_detect_button") + "##AvaCli";
         if (ImGui::Button(auto_detect_avacli_id.c_str())) {
             fs::path detected = DetectAvaCliPath();
             if (!detected.empty()) {
-                settings.build_ava_cli_path = detected.string();
-                result.settings_dirty = true;
+                user.ava_cli_path = detected.string();
+                result.dirty = true;
             }
         }
 
         const fs::path repo_root_for_vcpkg =
-            settings.build_repo_root.empty() ? DetectRepoRoot(SelfExecutableDir()) : fs::path(settings.build_repo_root);
+            user.repo_root.empty() ? DetectRepoRoot(SelfExecutableDir()) : fs::path(user.repo_root);
         const fs::path detected_vcpkg = DetectVcpkgRoot(repo_root_for_vcpkg);
         const std::string vcpkg_hint =
             detected_vcpkg.empty() ? util::Tr("build.vcpkg_not_found_hint")
                                     : TrFormat("build.default_path_hint", detected_vcpkg.string());
-        if (DrawPathRow(util::Tr("build.vcpkg_root_label").c_str(), vcpkg_hint.c_str(), settings.build_vcpkg_root,
+        if (DrawPathRow(util::Tr("build.vcpkg_root_label").c_str(), vcpkg_hint.c_str(), user.vcpkg_root,
                          util::Tr("common.browse").c_str(), BuildBrowseField::kVcpkgRoot, result)) {
-            result.settings_dirty = true;
+            result.dirty = true;
         }
 
         const bool vcpkg_installing = state.installing_vcpkg.load();
         ImGui::BeginDisabled(vcpkg_installing || state.building.load());
         if (ImGui::Button(vcpkg_installing ? util::Tr("build.installing_vcpkg_button").c_str()
                                             : util::Tr("build.install_vcpkg_button").c_str())) {
-            StartVcpkgInstall(state, ResolveVcpkgInstallTarget(settings), "x64-windows-static-md");
+            StartVcpkgInstall(state, ResolveVcpkgInstallTarget(user), "x64-windows-static-md");
         }
         ImGui::EndDisabled();
         if (vcpkg_installing) {
@@ -661,19 +703,12 @@ BuildPanelResult DrawBuildPanel(BuildPanelState& state, StudioSettings& settings
         }
         {
             std::lock_guard<std::mutex> vcpkg_lock(state.vcpkg_mutex);
-
-            // This panel is config-only (see comment below) -- FlushLogToOutput forwards the
-            // vcpkg install log to the Output panel, which is the ONLY place it's shown. No
-            // "vcpkg ready"/"vcpkg failed" text is drawn here anymore; that was a second,
-            // redundant echo of the exact one-line result Output already gets right below via
-            // log_bridge.Log(...). Auto-filling build_vcpkg_root on success is real config
-            // behavior (not a log), so that part stays.
             FlushLogToOutput(state.vcpkg_log, state.vcpkg_log_forwarded_upto, state.vcpkg_has_result,
                               "[vcpkg]   ", log_bridge);
             if (state.vcpkg_has_result) {
-                if (state.vcpkg_last_success && settings.build_vcpkg_root.empty()) {
-                    settings.build_vcpkg_root = state.vcpkg_installed_dir;
-                    result.settings_dirty = true;
+                if (state.vcpkg_last_success && user.vcpkg_root.empty()) {
+                    user.vcpkg_root = state.vcpkg_installed_dir;
+                    result.dirty = true;
                 }
                 if (!state.vcpkg_logged_to_output) {
                     log_bridge.Log(state.vcpkg_last_success ? "[vcpkg] install succeeded -> " +
@@ -686,15 +721,10 @@ BuildPanelResult DrawBuildPanel(BuildPanelState& state, StudioSettings& settings
         ImGui::Unindent();
     }
 
-    // This panel only configures build paths/settings -- it doesn't show build progress,
-    // results, or any other log-like text. Starting a build (StartBuild, args resolution,
-    // setup-error checks) lives in TriggerBuild above, reachable from Run > Build / Ctrl+B /
-    // the Command Palette (main.cpp), not a button here. Everything about what a build actually
-    // did -- its full log, "succeeded -> path", "failed" -- goes ONLY to the Output panel
-    // (PollBuild, polled every frame regardless of whether this panel is open) so there's a
-    // single place to look, instead of this panel echoing a second copy of the same status.
+    (void)explorer_root_dir;
     ImGui::End();
     return result;
 }
 
 }
+

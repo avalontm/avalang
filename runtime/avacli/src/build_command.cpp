@@ -86,6 +86,16 @@ struct BuildOptions {
                             // libavalang.so -- se reusa el que ya este junto al .exe de
                             // salida. Pasar --force-so para reconstruirlo (primer build
                             // limpio, o cambios que lo afecten).
+    // Fix: carpetas extra a buscar modulos importados (ademas de --project y
+    // de libraries/ del repo, que se sigue agregando automaticamente mas
+    // abajo). Pensado para las <Reference Include="..."> del .avaproj
+    // (ver runtime/avastudio/src/project/avaproj_file.h) -- antes ese campo
+    // se guardaba/leia en el XML pero nunca llegaba hasta aca, asi que
+    // cualquier import a una carpeta fuera de --project (p.ej. una carpeta
+    // compartida hermana del proyecto dentro del workspace) nunca se
+    // empaquetaba y el .exe final fallaba en runtime con "could not find
+    // module: X". Repetible: una por --extra-modules-dir.
+    std::vector<std::string> extra_modules_dirs;
     bool build_runtime = false; // --target barekernel: por defecto NO se recompila el
                                  // runner generico (main_barekernel.cpp) -- se reusa el
                                  // .a cacheado en build_pack_barekernel/. Pasar
@@ -116,6 +126,12 @@ void PrintBuildUsage() {
         "                build_pack/ persists between runs and only what actually\n"
         "                changed gets rebuilt.\n"
         "  --repo-root   Root of the AvaLang repo. Default: current directory.\n"
+        "  --extra-modules-dir <dir>\n"
+        "                (repeatable) Extra folder to search for imported modules\n"
+        "                that live outside --project -- e.g. a shared folder\n"
+        "                referenced from the .avaproj's <Reference> entries. The\n"
+        "                repo's own libraries/ folder (stdlib) is always searched\n"
+        "                too and doesn't need to be passed here.\n"
         "  --debug       Packaged debug mode: the embedded content is left\n"
         "                UNENCRYPTED (so it can be diagnosed) and it is built in\n"
         "                Debug mode (with symbols) instead of Release. Do not use\n"
@@ -279,6 +295,9 @@ bool ParseBuildArgs(int argc, char** argv, BuildOptions& opts, std::string& erro
             unsigned long parsed = std::strtoul(v, &end, 0);
             if (end == v || *end != '\0') { error = "invalid --bss-size"; return false; }
             opts.bss_size = static_cast<std::uint32_t>(parsed);
+        } else if (arg == "--extra-modules-dir") {
+            const char* v = next_value("--extra-modules-dir"); if (!v) return false;
+            opts.extra_modules_dirs.push_back(v);
         } else if (arg == "--force-so") {
             opts.build_so = true;
         } else if (arg == "--force-runtime") {
@@ -653,6 +672,19 @@ bool TryFastPackWithPrebuiltStub(ava::platform::IProcess& process, const BuildOp
     if (fs::exists(libraries_dir, ec) && fs::is_directory(libraries_dir, ec)) {
         gen_args.push_back("--extra-modules-dir");
         gen_args.push_back(libraries_dir.string());
+    }
+    // Fix: carpetas extra del proyecto (--extra-modules-dir de ava_cli build,
+    // ver arriba) -- p.ej. las <Reference> del .avaproj, resueltas por
+    // Ava Studio antes de invocar ava_cli (ver build_panel.cpp).
+    for (const std::string& extra : opts.extra_modules_dirs) {
+        fs::path extra_abs = fs::absolute(fs::path(extra), ec);
+        if (!fs::exists(extra_abs, ec) || !fs::is_directory(extra_abs, ec)) {
+            std::cerr << "warning: --extra-modules-dir no existe o no es una carpeta, se ignora: "
+                      << extra << "\n";
+            continue;
+        }
+        gen_args.push_back("--extra-modules-dir");
+        gen_args.push_back(extra_abs.string());
     }
 
     if (!RunTool(process, gen_exe.string(), gen_args, "avapack_gen (payload)")) {
@@ -1346,8 +1378,32 @@ int RunBuildCommand(int argc, char** argv) {
         configure_args.push_back("-DAVAPACK_KEY_FILE=" + key_file_abs.string());
     }
     fs::path libraries_dir = repo_root / "libraries";
-    if (fs::exists(libraries_dir, ec) && fs::is_directory(libraries_dir, ec)) {
-        configure_args.push_back("-DAVAPACK_EXTRA_MODULES_DIR=" + libraries_dir.string());
+    {
+        // Fix: AVAPACK_EXTRA_MODULES_DIR ahora acepta una lista separada por
+        // ';' (ver runtime/avapack/CMakeLists.txt) -- se arma con libraries/
+        // del repo (stdlib, como antes) + cualquier --extra-modules-dir
+        // pasado a ava_cli build (p.ej. las <Reference> del .avaproj).
+        std::vector<std::string> extra_modules_list;
+        if (fs::exists(libraries_dir, ec) && fs::is_directory(libraries_dir, ec)) {
+            extra_modules_list.push_back(libraries_dir.string());
+        }
+        for (const std::string& extra : opts.extra_modules_dirs) {
+            fs::path extra_abs = fs::absolute(fs::path(extra), ec);
+            if (!fs::exists(extra_abs, ec) || !fs::is_directory(extra_abs, ec)) {
+                std::cerr << "warning: --extra-modules-dir no existe o no es una carpeta, se ignora: "
+                          << extra << "\n";
+                continue;
+            }
+            extra_modules_list.push_back(extra_abs.string());
+        }
+        if (!extra_modules_list.empty()) {
+            std::string joined;
+            for (const std::string& d : extra_modules_list) {
+                if (!joined.empty()) joined += ";";
+                joined += d;
+            }
+            configure_args.push_back("-DAVAPACK_EXTRA_MODULES_DIR=" + joined);
+        }
     }
     if (opts.debug_unencrypted) {
         configure_args.push_back("-DAVAPACK_DEBUG_UNENCRYPTED=ON");

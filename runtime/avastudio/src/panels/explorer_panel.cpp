@@ -30,11 +30,6 @@ struct CreateRequest {
 CreateRequest g_create_request;
 char g_name_buf[128] = "";
 
-// Fase 5 ("Generar"): which boilerplate to scaffold when creating a file
-// (irrelevant for folders). Reset to kClass every time the popup opens
-// (DrawCreatePopup below), same "explicit default, not whatever was left
-// over from last time" reasoning CommandPaletteState/QuickOpenState already
-// follow for their own transient UI state.
 util::ScaffoldKind g_new_file_kind = util::ScaffoldKind::kClass;
 
 struct DeleteRequest {
@@ -117,10 +112,6 @@ void DrawCreatePopup(ExplorerResult& result) {
                       .c_str());
         ImGui::Separator();
 
-        // Visual Studio "Add New Item" style: a selectable template list up
-        // top (only meaningful for files -- a folder has no boilerplate to
-        // pick), with the item's name pinned in its own field at the bottom
-        // instead of the previous single row of three radio buttons.
         if (!g_create_request.is_folder) {
             struct TemplateOption { util::ScaffoldKind kind; const char* label_key; unsigned int color; };
             static const TemplateOption kOptions[] = {
@@ -162,22 +153,11 @@ void DrawCreatePopup(ExplorerResult& result) {
             if (g_create_request.is_folder) {
                 fs::create_directories(target, ec);
             } else {
-                // Extension is always forced to match `g_new_file_kind`,
-                // even if the user typed a different one (or none) --
-                // whatever the user types is just the stem; the boilerplate
-                // written below always matches the extension on disk, so
-                // the two can never disagree (a ".avaui" with .ava-style
-                // class code inside would be a silent foot-gun otherwise).
                 target.replace_extension(util::ScaffoldExtension(g_new_file_kind));
                 fs::create_directories(target.parent_path(), ec);
                 std::ofstream out(target.string(), std::ios::binary);
                 out << util::BuildScaffoldContent(g_new_file_kind, target.stem().string());
                 out.close();
-                // Auto-open the new file, same as double-clicking it in the
-                // tree would -- reuses the existing file_to_open field
-                // instead of inventing a new result/mechanism, same "no
-                // separate source of truth" reasoning the rest of this
-                // plan's phases already follow.
                 result.file_to_open = target.string();
             }
             ImGui::CloseCurrentPopup();
@@ -282,6 +262,12 @@ void DrawEntryContextMenu(const std::string& entry_path, const std::string& dir,
         if (ImGui::MenuItem(util::Tr("explorer.open_in_file_manager").c_str())) {
             result.reveal_in_file_manager = entry_path;
         }
+        if (fs::path(entry_path).extension() == ".avaproj") {
+            ImGui::Separator();
+            if (ImGui::MenuItem(util::Tr("explorer.project_properties").c_str())) {
+                result.open_project_properties = true;
+            }
+        }
         ImGui::Separator();
         if (ImGui::MenuItem(util::Tr("explorer.rename").c_str(), "F2")) {
             g_rename_request = {true, entry_path};
@@ -340,7 +326,11 @@ void DrawDirectory(const fs::path& dir, ExplorerState& state, ExplorerResult& re
                                   ImGuiSelectableFlags_AllowDoubleClick)) {
                 state.selected_path = path_str;
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                    result.file_to_open = path_str;
+                    if (path.extension() == ".avaproj") {
+                        result.open_project_properties = true;
+                    } else {
+                        result.file_to_open = path_str;
+                    }
                 }
             }
 

@@ -13,6 +13,7 @@ menu.file.view_design,Ver Diseño
 menu.file.preferences,Preferencias
 menu.file.settings,Configuración
 menu.file.extensions,Extensiones
+menu.file.project_properties,Propiedades del proyecto...
 menu.file.exit,Salir
 menu.edit,Editar
 menu.edit.find_in_project,Buscar en el proyecto...
@@ -49,6 +50,7 @@ explorer.delete_folder_confirm,"¿Eliminar la carpeta ""%s"" y todo su contenido
 explorer.delete_file_confirm,"¿Eliminar ""%s""?"
 explorer.delete_undone,Esta acción no se puede deshacer.
 explorer.folder_not_found,(carpeta no encontrada: %s)
+explorer.project_properties,Propiedades
 common.cancel,Cancelar
 panel.editor.title,Editor de Código
 editor.no_file_open,No hay ningún archivo abierto. Usa Archivo > Abrir o doble clic en un archivo del Explorador.
@@ -130,13 +132,27 @@ find_in_project.no_results,No se encontraron resultados.
 find_in_project.results_count,%s resultados
 find_in_project.results_truncated,Mostrando los primeros %s resultados -- acotá la búsqueda para ver más.
 panel.build.title,Compilar
-build.intro,"Empaqueta el proyecto actual en un .exe independiente (ver runtime/avapack/README.md). Esto ejecuta 'ava_cli build' en segundo plano -- todo lo de abajo simplemente completa sus flags."
+build.intro,"Ejecuta 'ava_cli build' en segundo plano para empaquetar el proyecto actual en un .exe independiente (ver runtime/avapack/README.md). Esta ventana solo tiene las rutas locales de esta máquina -- el archivo de entrada, la carpeta de salida, la ofuscación, etc. ahora viven en las Propiedades del proyecto."
+build.open_project_properties_button,Abrir Propiedades del proyecto...
+build.progress_stage_starting,Iniciando build...
+build.progress_stage_configuring,Configurando (CMake)...
+build.progress_stage_compiling,Compilando...
+build.progress_stage_packaging,Empaquetando...
+build.progress_stage_signing,Firmando el ejecutable...
+build.progress_stage_done,Listo
+build.progress_elapsed,(%s)
 build.section_target,Destino
 build.platform_label,Plataforma
 build.platform_value,"%s (detectada)"
 build.target_label,Tipo de build
+build.target_readonly_note,"Se configura en Propiedades del proyecto > Aplicación."
 build.target_desktop,Desktop
 build.target_barekernel,BareKernel
+build.target_library,Librería
+build.library_not_implemented_note,"La salida como librería (.dll/.so) todavía no está implementada -- el esquema ya está listo, pero compilar con este destino está deshabilitado por ahora."
+build.error_library_not_implemented,"La salida como librería todavía no está implementada -- cambiá el destino a Desktop o BareKernel para compilar."
+build.section_machine_paths,Rutas de esta máquina
+build.section_machine_paths_note,"Locales a esta computadora -- se guardan en <proyecto>.avaproj.user, no se commitean a git."
 build.toolchain_dir_label,Carpeta del cross-toolchain
 build.toolchain_dir_hint,"(i686-elf-gcc/g++/ld/objcopy/nm)"
 build.compiler_path_label,Ruta del compilador
@@ -149,16 +165,10 @@ build.force_runtime_label,"Forzar reconstrucción del runner genérico"
 build.force_runtime_tooltip,"Igual que --force-runtime de ava_cli build: reconstruye\navapack_barekernel_runtime (main_barekernel.cpp) en vez de reusar el .a\ncacheado en build_pack_barekernel/. Hace falta la primera vez que buildeás\nen un checkout limpio, o después de tocar main_barekernel.cpp / app.ld."
 build.force_rebuild_warning,"Acordate de desactivarlo después del próximo build -- si queda activado, cada build fuerza la reconstrucción y se pierde la ventaja del cache."
 build.error_toolchain_dir_missing,"no se encontró la carpeta del cross-toolchain -- configurala arriba."
-build.section_project,Proyecto
-build.section_options,Opciones
 build.section_advanced,Avanzado
 build.default_path_hint,"(por defecto: %s)"
-build.project_folder_label,Carpeta del proyecto
-build.entry_script_label,"Script de entrada (.ava)"
-build.entry_script_hint,"(por defecto: detecta main.ava automáticamente)"
 build.detect_button,Detectar
 common.browse,Explorar...
-build.output_folder_label,Carpeta de salida
 build.obfuscate_label,Ofuscar
 build.obfuscate_tooltip,"Compila el archivo de entrada a bytecode .avbc en vez de incluir el código .ava en texto plano.\nTambién genera un SymbolMap <out>.avmap junto al build -- guardalo vos,\nnunca lo distribuyas junto al .exe."
 build.obfuscate_strings_label,Ofuscar strings
@@ -191,6 +201,22 @@ build.error_repo_root_not_found,no se encontró la raíz del repo de AvaLang -- 
 build.error_project_dir_missing,la carpeta del proyecto no existe.
 build.error_entry_file_missing,no se encontró un archivo .ava de entrada -- configurá 'Script de entrada' arriba.
 build.error_entry_file_not_found,"el script de entrada no existe: %s -- elegí el correcto."
+project_properties.title,Propiedades del proyecto
+project_properties.tab_application,Aplicación
+project_properties.tab_build,Build
+project_properties.tab_references,Referencias
+project_properties.name_label,Nombre del proyecto
+project_properties.entry_file_label,"Script de entrada (.ava)"
+project_properties.output_type_label,Tipo de salida
+project_properties.modules_path_label,Ruta de módulos
+project_properties.out_dir_label,Carpeta de salida
+project_properties.icon_label,Ícono
+project_properties.icon_hint,"(opcional)"
+project_properties.section_options,Opciones
+project_properties.section_machine,"Esta máquina (no se comparte -- .avaproj.user)"
+project_properties.machine_note,"Estas rutas son locales a esta computadora y no se commitean con el proyecto."
+project_properties.add_reference_button,Agregar referencia...
+project_properties.no_references,Todavía no hay referencias agregadas.
 panel.settings.title,Configuración
 settings.language_label,Idioma
 settings.section_general,General
@@ -207,13 +233,16 @@ quick_open.hint,Ir a un archivo...
 quick_open.no_results,No hay archivos que coincidan.
 quick_open.no_project_files,No se encontraron archivos .ava/.avaui en este proyecto.
 menu.file.new_project,Nuevo Proyecto...
+new_project.section_location,Ubicación
 new_project.name_label,Nombre del proyecto
 new_project.name_hint,MiProyecto
 new_project.destination_label,Carpeta destino
-new_project.template_label,Plantilla
-new_project.template_empty,Vacío
-new_project.template_with_screen,Con pantalla de ejemplo
-new_project.preview_label,"Se creará: %s"
+new_project.section_template,Tipo de proyecto
+new_project.template_console,Consola
+new_project.template_console_desc,"Un solo main.ava -- ideal para scripts, herramientas y programas de consola."
+new_project.template_ui,UI
+new_project.template_ui_desc,"Agrega app.ava, styles.ava y una pantalla inicial en views/, lista para diseñar interfaces."
+new_project.preview_header,Se creará:
 new_project.create_button,Crear Proyecto
 new_project.error_name_required,Ingresá un nombre de proyecto.
 new_project.error_destination_required,Elegí una carpeta destino.

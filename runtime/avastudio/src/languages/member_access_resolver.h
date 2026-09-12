@@ -4,7 +4,6 @@
 #include <deque>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "languages/class_index.h"
@@ -20,8 +19,6 @@ public:
     std::string TypeOf(const std::string& variable, size_t cursor_offset) const;
 
     std::vector<std::string> VisibleVariables(size_t cursor_offset) const;
-
-    std::unordered_set<std::string> AllVariableNames() const;
 
     void Clear() {
         scopes_.clear();

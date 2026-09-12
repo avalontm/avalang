@@ -289,6 +289,21 @@ public:
 
 private:
     Value ExecuteFrame(size_t frame_idx);
+    // Plan de anotaciones (AvaLang_Plan_Anotaciones.md), Fase 3: llamada
+    // desde Run() después de ejecutar el chunk top-level, solo si
+    // `main->entry_func_name` no está vacío (si está vacío, Run() nunca
+    // llama esto -- comportamiento actual sin cambios). Resuelve
+    // `main->entry_func_name` como global suelto (función) o, si
+    // `main->entry_class_name` no está vacío, como método static de esa
+    // clase (mismo mecanismo que `Clase.metodo` -- BoundMethod con
+    // `instance = Nil`, ver OpGetAttr en vm_classes.cpp) y lo invoca sin
+    // argumentos vía Call(). Cualquier excepción (entry point no
+    // encontrado -- no debería pasar si ValidateEntryAttributes hizo su
+    // trabajo en el compilador -- o una excepción sin capturar lanzada
+    // por el propio `[entry]`) se propaga tal cual hacia arriba: mismo
+    // tratamiento que cualquier otro error de runtime del chunk
+    // top-level (ver Run()), sin código de salida especial.
+    Value InvokeEntryPoint(const avastd::shared_ptr<Proto>& main);
     // FASE 1 (async/await) fix: reanuda ejecucion desde el frame MAS
     // PROFUNDO de frames_ (no siempre frame 0), y cuando ese frame termina
     // normalmente (no suspendido), propaga su resultado hacia el frame
