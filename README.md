@@ -8,6 +8,8 @@ From the first visual prototype to a running web application, every stage is des
 
 ![General architecture](docs/images/diagram.png)
 
+![AvaStudio IDE](docs/images/avastudio_ide.png)
+
 ---
 
 # The Ecosystem
