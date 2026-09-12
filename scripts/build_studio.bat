@@ -1,58 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-REM Este script vive en scripts\ (ver AVALAND_STRUCT.md); nos
-REM movemos a la raiz del repo (un nivel arriba) para que las rutas
-REM relativas (CMakeLists.txt, third_party\, build\, vcpkg\) sigan
-REM funcionando sin importar desde donde se invoque este .bat.
 cd /d "%~dp0.."
-
-REM =====================================================================
-REM Ava Studio build script (Windows)
-REM
-REM Configures + builds the whole project with AVA_BUILD_STUDIO=ON, so
-REM you get avalang.dll, ava_cli, ava_studio.exe AND its plugins
-REM (plugins\ai_agent.dll, plugins\hello_world.dll -- these are .dll's
-REM loaded at runtime via LoadLibrary, never linked into ava_studio.exe,
-REM so they need to be requested as their own --target alongside
-REM ava_studio or they silently don't get built). Uses its own build
-REM directory (build_studio\) so it never touches or reconfigures your
-REM regular build\ from build.bat.
-REM
-REM Also builds avapack_gen.exe/avapack_stub.exe (AVA_BUILD_PACK=ON, ver
-REM runtime/avapack/README.md, Fase 9) right next to ava_cli.exe -- eso
-REM es justo lo que ava_studio.exe necesita encontrado ahi para que
-REM "ava_cli build" corrido DESDE ADENTRO de Ava Studio (Build panel) use
-REM el camino rapido sin CMake/sin repo, en vez de recompilar avalang
-REM entero en build_pack\ cada vez que apretas Build.
-REM
-REM Usage:
-REM   build_studio.bat                build Release with the default generator
-REM   build_studio.bat debug           build Debug instead
-REM   build_studio.bat clean            delete build_studio\ and exit -- nothing
-REM                                     else, no configure/build (see below)
-REM   build_studio.bat ninja            use Ninja instead of Visual Studio/MSBuild
-REM                                     (requires ninja.exe on PATH)
-REM   build_studio.bat run              after a successful build, launch ava_studio.exe
-REM
-REM Flags can be combined, e.g.:  build_studio.bat clean debug run
-REM "clean" alone (no other flag) just wipes build_studio\ and stops there --
-REM handy when you only want to reclaim disk space or force a from-scratch
-REM CMake reconfigure later. Combine it with another flag (debug/ninja/run)
-REM to wipe build_studio\ first and then continue into a normal build, same
-REM as before.
-REM
-REM The first time you configure with AVA_BUILD_STUDIO=ON, CMake fetches
-REM GLFW and Dear ImGui (docking branch) via FetchContent -- needs
-REM internet and git on PATH that one time, then they're cached in
-REM build_studio\_deps\.
-REM
-REM If VCPKG_ROOT is set (i.e. you already ran install.bat), its
-REM toolchain is picked up automatically so the real ANTLR4 frontend
-REM builds too -- otherwise ava_studio still builds and runs fine, it
-REM just falls back to the stub frontend when you press Run (F5) on a
-REM script (see README.md).
-REM =====================================================================
 
 set "BUILD_DIR=build_studio"
 set "BUILD_TYPE=Release"
@@ -60,9 +9,6 @@ set "CLEAN=0"
 set "GENERATOR=Visual Studio 17 2022"
 set "USE_NINJA=0"
 set "RUN_AFTER=0"
-REM Set when debug/ninja/run is explicitly passed, so a bare "clean" (no
-REM other flag) can be told apart from "clean" combined with one of them --
-REM see the clean-only branch right after argument parsing below.
 set "OTHER_FLAG=0"
 
 :parse_args
@@ -80,6 +26,7 @@ goto parse_args
 if "%CLEAN%"=="1" if "%OTHER_FLAG%"=="0" (
     if exist "%BUILD_DIR%" (
         echo Cleaning %BUILD_DIR% ...
+        taskkill /F /IM ava_studio.exe >nul 2>nul
         rmdir /s /q "%BUILD_DIR%"
         echo Done -- %BUILD_DIR%\ removed.
     ) else (
@@ -99,44 +46,23 @@ if errorlevel 1 (
 if "%CLEAN%"=="1" (
     if exist "%BUILD_DIR%" (
         echo Cleaning %BUILD_DIR% ...
+        taskkill /F /IM ava_studio.exe >nul 2>nul
         rmdir /s /q "%BUILD_DIR%"
     )
 )
 
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
-REM AVA_BUILD_PACK=ON agrega avapack_gen/avapack_stub al grafo de CMake
-REM de build_studio (Fase 9, ver runtime/avapack/README.md) -- sin esto,
-REM "ava_cli build" corrido desde dentro de Ava Studio nunca encuentra
-REM avapack_stub.exe/avapack_gen.exe prebuilt junto a ava_cli.exe y
-REM SIEMPRE cae al flujo lento con CMake (recompila avalang/avalang_ui/
-REM avapack_gen/avapack_build desde cero en build_pack\ en cada build).
-REM No agrega costo de build real: solo pide los targets avapack_gen/
-REM avapack_stub mas abajo, nunca el target avapack_testproj (el .exe de
-REM ejemplo que tambien se configura bajo AVA_BUILD_PACK), asi que no se
-REM empaqueta ningun proyecto de muestra de mas en cada build_studio.
-set "CMAKE_CONFIGURE_ARGS=-DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DAVA_BUILD_STUDIO=ON -DAVA_BUILD_PACK=ON"
+set "CMAKE_CONFIGURE_ARGS=-DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DAVA_BUILD_STUDIO=ON -DAVA_BUILD_PACK=ON -DAVA_ENABLE_LTO=OFF"
 
 if defined VCPKG_ROOT (
     echo Using vcpkg toolchain: %VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake
-    REM NOTE: inside a parenthesized block, %VAR% expands ONCE at block
-    REM entry, not after each "set". Must use !VAR! (delayed expansion,
-    REM already enabled via setlocal above) so each append actually sees
-    REM the previous one's result.
     set "CMAKE_CONFIGURE_ARGS=!CMAKE_CONFIGURE_ARGS! -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake"
     if defined AVA_VCPKG_TRIPLET (
         echo Using vcpkg triplet: %AVA_VCPKG_TRIPLET%
         set "CMAKE_CONFIGURE_ARGS=!CMAKE_CONFIGURE_ARGS! -DVCPKG_TARGET_TRIPLET=%AVA_VCPKG_TRIPLET%"
     )
 
-    REM --- libcurl for the ai_agent plugin ---------------------------------
-    REM Self-healing, same reasoning as install_studio.bat: si VCPKG_ROOT
-    REM quedo seteado por una corrida vieja de install.bat (de antes de
-    REM que el plugin ai_agent existiera), curl nunca se instalo -- y
-    REM como este es el script que la gente corre directo (sin pasar por
-    REM install_studio.bat), el chequeo tiene que estar ACA tambien, no
-    REM solo ahi, o el configure de CMake sigue fallando con "Could NOT
-    REM find CURL" antes de que nadie vea ese otro mensaje.
     if exist "%VCPKG_ROOT%\vcpkg.exe" (
         set "AVA_CURL_TRIPLET=%AVA_VCPKG_TRIPLET%"
         if not defined AVA_CURL_TRIPLET set "AVA_CURL_TRIPLET=x64-windows-static-md"
@@ -177,53 +103,36 @@ if errorlevel 1 (
 
 echo.
 echo Building ^(%BUILD_TYPE%^) ...
-REM ava_studio.exe no depende de los plugins en CMake (son .dll/.so
-REM cargados en runtime via LoadLibrary/dlopen, ver plugin_host.cpp --
-REM nunca se linkean) asi que "--target ava_studio" solo por si mismo
-REM NUNCA los compila, aunque su add_subdirectory este mas abajo en el
-REM mismo CMakeLists.txt. Hay que pedirlos explicitamente ademas del
-REM exe, o el panel del agente de IA (ai_agent.dll) simplemente no
-REM aparece -- ni error ni warning, Ava Studio arranca igual sin esa
-REM pestaña (ver PLUGIN_SYSTEM_FASE0.md, "Si el .dll no esta en
-REM plugins/ ... arranca igual, sin esa pestaña").
-REM ava_cli/avapack_gen/avapack_stub se piden explicitos por el mismo
-REM motivo que ai_agent_plugin/hello_world_plugin arriba -- estar
-REM configurados (AVA_BUILD_CLI/AVA_BUILD_PACK=ON) no alcanza, CMake solo
-REM compila lo que se pide como --target. Los tres quedan en la MISMA
-REM carpeta que avalang.dll/avalang_ui.dll (ver RUNTIME_OUTPUT_DIRECTORY
-REM en runtime/avacli/CMakeLists.txt y runtime/avapack/CMakeLists.txt --
-REM todos apuntan a "%BUILD_DIR%\runtime\avalang"), que es exactamente
-REM donde ava_studio.exe ya busca ava_cli.exe (ver DetectAvaCliPath en
-REM runtime/avastudio/src/util/ava_cli_locator.cpp) y donde ava_cli
-REM (FindPrebuiltPackTools, runtime/avacli/src/build_command.cpp) busca
-REM avapack_stub.exe/avapack_gen.exe -- asi que no hace falta copiar nada
-REM a mano, ya quedan todos juntos.
-cmake --build "%BUILD_DIR%" --config %BUILD_TYPE% --target ava_studio --target ai_agent_plugin --target hello_world_plugin --target ava_cli --target avapack_gen --target avapack_stub --parallel
+set "USE_FAST_BUILD=0"
+if "%USE_NINJA%"=="0" (
+    set "MSBUILD_EXE="
+    if exist "%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" (
+        for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -prerelease -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe`) do set "MSBUILD_EXE=%%i"
+    )
+    if not defined MSBUILD_EXE (
+        for /f "delims=" %%i in ('where msbuild 2^>nul') do if not defined MSBUILD_EXE set "MSBUILD_EXE=%%i"
+    )
+    set "SLN_FILE="
+    for /f "delims=" %%s in ('dir /b "%BUILD_DIR%\*.sln" 2^>nul') do if not defined SLN_FILE set "SLN_FILE=%BUILD_DIR%\%%s"
+    if defined MSBUILD_EXE if defined SLN_FILE set "USE_FAST_BUILD=1"
+)
+
+if "%USE_FAST_BUILD%"=="1" (
+    "!MSBUILD_EXE!" "!SLN_FILE!" /p:Configuration=%BUILD_TYPE% /m /nodeReuse:false /t:ava_studio;ai_agent_plugin;hello_world_plugin;ava_cli;avapack_gen;avapack_stub
+) else (
+    cmake --build "%BUILD_DIR%" --config %BUILD_TYPE% --target ava_studio --target ai_agent_plugin --target hello_world_plugin --target ava_cli --target avapack_gen --target avapack_stub --parallel
+)
 if errorlevel 1 (
     echo [ERROR] Build failed. See output above.
     exit /b 1
 )
 
-REM Multi-config generators (Visual Studio) put the exe under
-REM <build>\studio\<Config>\; single-config ones (Ninja) put it under
-REM <build>\studio\ directly.
 set "STUDIO_EXE=%BUILD_DIR%\runtime\avastudio\%BUILD_TYPE%\ava_studio.exe"
 if not exist "%STUDIO_EXE%" set "STUDIO_EXE=%BUILD_DIR%\runtime\avastudio\ava_studio.exe"
 
 for %%F in ("%STUDIO_EXE%") do set "STUDIO_EXE_DIR=%%~dpF"
 set "PLUGINS_DIR=%STUDIO_EXE_DIR%plugins"
 
-REM ava_studio.exe LINKS avalang/avalang_ui directly (unlike the
-REM plugins above, which are dlopen'd by path at runtime, not linked)
-REM -- when AVA_BUILD_SHARED=ON (the default) those are actual .dlls
-REM the .exe needs sitting right next to it to even start, the same
-REM way plugins\*.dll needs to sit next to it to be found by
-REM PluginHost::LoadAll. CMake doesn't do this copy on its own (only
-REM the plugins' own CMakeLists.txt has a POST_BUILD step for that),
-REM so it's done here instead, same "<build>\<target-subdir>\<Config>\
-REM vs <build>\<target-subdir>\" fallback as STUDIO_EXE above, since
-REM avalang/avalang_ui land in their own subdirectory of build_studio\,
-REM not next to ava_studio.exe.
 set "AVALANG_DLL=%BUILD_DIR%\runtime\avalang\%BUILD_TYPE%\avalang.dll"
 if not exist "%AVALANG_DLL%" set "AVALANG_DLL=%BUILD_DIR%\runtime\avalang\avalang.dll"
 
@@ -253,19 +162,6 @@ if exist "%LIBRARIES_DIR%" (
     robocopy "%LIBRARIES_DIR%" "%MODULES_DIR%" /MIR /NFL /NDL /NJH /NJS >nul
 )
 
-REM ava_cli.exe/avapack_gen.exe/avapack_stub.exe (pedidos como --target
-REM arriba, junto con AVA_BUILD_PACK=ON) quedan en esta carpeta porque
-REM ambos CMakeLists.txt (runtime/avacli, runtime/avapack) fijan
-REM RUNTIME_OUTPUT_DIRECTORY a "%BUILD_DIR%\runtime\avalang" explicito --
-REM la misma carpeta donde avalang.dll/avalang_ui.dll ya caen por
-REM defecto. Es EXACTAMENTE la carpeta donde DetectAvaCliPath()
-REM (runtime/avastudio/src/util/ava_cli_locator.cpp) busca ava_cli.exe
-REM cuando ava_studio.exe corre desde %STUDIO_EXE_DIR%, y donde
-REM FindPrebuiltPackTools (runtime/avacli/src/build_command.cpp) busca
-REM avapack_stub.exe/avapack_gen.exe -- asi que Ava Studio detecta
-REM ava_cli.exe solo, y "ava_cli build" corrido desde adentro de Ava
-REM Studio usa el camino rapido de Fase 9 (sin CMake, sin el repo) sin
-REM ninguna configuracion manual.
 set "AVA_CLI_TOOLS_DIR=%BUILD_DIR%\runtime\avalang\%BUILD_TYPE%"
 if not exist "%AVA_CLI_TOOLS_DIR%\ava_cli.exe" set "AVA_CLI_TOOLS_DIR=%BUILD_DIR%\runtime\avalang"
 
@@ -278,7 +174,7 @@ echo                 %STUDIO_EXE_DIR%avalang_ui.dll
 echo plugins:        %PLUGINS_DIR%\ai_agent.dll
 echo                 %PLUGINS_DIR%\hello_world.dll
 echo modules:        %MODULES_DIR%
-echo ava_cli.exe / avapack_gen.exe / avapack_stub.exe (Fase 9, deteccion automatica):
+echo ava_cli.exe / avapack_gen.exe / avapack_stub.exe:
 echo                 %AVA_CLI_TOOLS_DIR%\ava_cli.exe
 echo =====================================================================
 
@@ -286,9 +182,6 @@ if "%RUN_AFTER%"=="1" (
     if exist "%STUDIO_EXE%" (
         echo.
         echo Launching ava_studio.exe ...
-        REM Run from the repo root (not build_studio\) so the Explorer
-        REM panel's default "scripts" path (relative to the working
-        REM directory) resolves to .\scripts\ like ava_cli's examples.
         pushd "%~dp0.."
         start "" "%STUDIO_EXE%"
         popd
