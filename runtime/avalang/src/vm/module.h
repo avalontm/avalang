@@ -29,6 +29,8 @@ public:
     avastd::string ResolveModulePath(const avastd::string& module_path, const avastd::string& current_dir);
     
     bool ModuleExists(const avastd::string& module_path, const avastd::string& current_dir);
+
+    bool IsModulePathADirectory(const avastd::string& module_path, const avastd::string& current_dir);
     
     avastd::string GetStdlibPath() const { return stdlib_path_; }
     const avastd::vector<avastd::string>& GetSearchPaths() const { return search_paths_; }
@@ -40,6 +42,24 @@ private:
     bool reload_mode_ = false;
     
     avastd::string PathToFilePath(const avastd::string& module_path);
+};
+
+// Mirrors ModuleResolver's search_paths_ (e.g. the project/script root avacli
+// and AvaStudio register via AddSearchPath) in a process-wide list that the
+// compiler's compile-time sibling-import class harvesting can also consult.
+// That harvesting (compiler.cpp: ResolveSiblingImportFiles) runs standalone,
+// without access to any particular VM's ModuleResolver instance, and used to
+// only fall back to the OS current working directory -- which is often not
+// the project root (e.g. running `ava_cli path/to/project/main.ava` from a
+// different directory), so a file whose imports reference a sibling folder
+// (e.g. "import Interfaces.IAnimal" from inside Models/Dog.ava, where
+// Interfaces/ sits next to Models/, not inside it) would silently fail to
+// resolve at compile time even though the real runtime import (which does go
+// through ModuleResolver) succeeded.
+class AVA_MODULE_API GlobalSearchRoots {
+public:
+    static void Add(const avastd::string& path);
+    static const avastd::vector<avastd::string>& Get();
 };
 
 class AVA_MODULE_API ModuleCache {

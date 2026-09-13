@@ -83,6 +83,12 @@ void FunctionIndex::ScanText(const std::string& text, const std::string& source_
 
         if (IsIdentStart(c)) {
             std::string word = ReadIdent(text, i);
+            if (word == "class" || word == "interface") {
+                size_t body_end = 0;
+                FindMatchingEnd(text, i, body_end, word == "interface");
+                pending_doc.clear();
+                continue;
+            }
             if (word != "func") { pending_doc.clear(); continue; }
 
             size_t save = i;

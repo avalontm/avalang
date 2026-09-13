@@ -1,0 +1,34 @@
+diff --git a/TextEditor.cpp b/TextEditor.cpp
+index a2a252b..b335db3 100644
+--- a/TextEditor.cpp
++++ b/TextEditor.cpp
+@@ -1592,8 +1592,27 @@ void TextEditor::handleBackspace(bool wordMode) {
+ 
+ 	// remove selections or characters to the left of the cursor
+ 	for (auto cursor = cursors.begin(); cursor < cursors.end(); cursor++) {
+-		auto start = cursor->hasSelection() ? cursor->getSelectionStart() : document.getLeft(cursor->getSelectionStart(), wordMode);
+-		auto end = cursor->getSelectionEnd();
++		Coordinate start;
++		Coordinate end;
++
++		if (cursor->hasSelection()) {
++			start = cursor->getSelectionStart();
++			end = cursor->getSelectionEnd();
++
++		} else {
++			auto position = cursor->getSelectionStart();
++			start = document.getLeft(position, wordMode);
++			end = position;
++
++			// if backspacing lands right between an empty, matching pair
++			// of glyphs (e.g. the () or "" left over from a completed
++			// paired glyph, or just typed by hand), remove the closer
++			// along with the opener instead of leaving it stranded
++			if (!wordMode && completePairedGlyphs && CodePoint::isMatchingPair(document.getCodePoint(start), document.getCodePoint(position))) {
++				end = document.getRight(position);
++			}
++		}
++
+ 		deleteText(transaction, start, end);
+ 		cursor->update(start, false);
+ 		cursors.adjustForDelete(cursor, start, end);

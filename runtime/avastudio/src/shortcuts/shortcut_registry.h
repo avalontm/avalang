@@ -39,6 +39,8 @@ enum class ShortcutId {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    FormatDocument,
+    QuickFix,
 };
 
 class ShortcutRegistry {

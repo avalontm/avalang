@@ -7,17 +7,6 @@
 
 namespace ava {
 
-static avastd::string JoinModulePath(const avastd::string& dir, const avastd::string& name) {
-    if (dir.empty()) return name;
-    char last = dir.back();
-    if (last == '/' || last == '\\') return dir + name;
-#ifdef _WIN32
-    return dir + "\\" + name;
-#else
-    return dir + "/" + name;
-#endif
-}
-
 static void AttachModuleGlobals(const avastd::shared_ptr<Proto>& proto,
                                 const avastd::shared_ptr<avastd::unordered_map<avastd::string, Value>>& mod_globals) {
     if (!proto) return;
@@ -27,81 +16,20 @@ static void AttachModuleGlobals(const avastd::shared_ptr<Proto>& proto,
     }
 }
 
-static void SetNestedNamespace(
-    avastd::unordered_map<avastd::string, Value>& globals,
-    const avastd::vector<avastd::string>& parts,
-
-    Value module_dict) {
-
-    DictObj* current;
-    {
-        auto it = globals.find(parts[0]);
-        if (it != globals.end() && it->second.type == ValueType::Dict) {
-            current = static_cast<DictObj*>(it->second.obj);
-        } else {
-            Value ns_val;
-            ns_val.type = ValueType::Dict;
-            ns_val.obj = new DictObj();
-            if (it != globals.end()) {
-                it->second = ns_val;
-            } else {
-                globals.emplace(parts[0], ns_val);
-            }
-            current = static_cast<DictObj*>(ns_val.obj);
-        }
-    }
-
-    for (size_t i = 1; i + 1 < parts.size(); ++i) {
-        auto idx_it = current->index.find(parts[i]);
-        if (idx_it != current->index.end() && current->entries[idx_it->second].second.type == ValueType::Dict) {
-            current = static_cast<DictObj*>(current->entries[idx_it->second].second.obj);
-        } else {
-            Value ns_val;
-            ns_val.type = ValueType::Dict;
-            ns_val.obj = new DictObj();
-            if (idx_it != current->index.end()) {
-                current->entries[idx_it->second].second = ns_val;
-            } else {
-                current->index[parts[i]] = current->entries.size();
-                current->entries.emplace_back(parts[i], ns_val);
-            }
-            current = static_cast<DictObj*>(ns_val.obj);
-        }
-    }
-
-    const avastd::string& leaf = parts.back();
-    auto leaf_it = current->index.find(leaf);
-    if (leaf_it != current->index.end()) {
-        current->entries[leaf_it->second].second = module_dict;
-    } else {
-        current->index[leaf] = current->entries.size();
-        current->entries.emplace_back(leaf, module_dict);
-    }
-}
-
-static void PlaceModuleInScope(VM& vm, const avastd::string& module_path,
+static void PlaceModuleInScope(VM& vm, const avastd::string& /*module_path*/,
                                 const avastd::string& alias, Value module_dict) {
     if (!alias.empty()) {
         vm.SetGlobal(alias, module_dict);
         return;
     }
 
-    avastd::vector<avastd::string> parts;
-    avastd::string temp = module_path;
-    size_t start = 0;
-    while ((start = temp.find('.')) != avastd::string::npos) {
-        parts.push_back(temp.substr(0, start));
-        temp = temp.substr(start + 1);
-    }
-    parts.push_back(temp);
-
-    if (parts.size() > 1) {
-        SetNestedNamespace(vm.Globals(), parts, module_dict);
-    } else {
-        auto* dict = static_cast<DictObj*>(module_dict.obj);
-        for (auto& entry : dict->entries) {
-            vm.SetGlobal(entry.first, entry.second);
-        }
+    // Import per individual file: a dotted module path (e.g. "Models.Dog") is
+    // just a way to locate the file (Models/Dog.ava) -- it does not create a
+    // nested namespace. Every alias-less import flattens the module's
+    // top-level symbols directly into the importing scope.
+    auto* dict = static_cast<DictObj*>(module_dict.obj);
+    for (auto& entry : dict->entries) {
+        vm.SetGlobal(entry.first, entry.second);
     }
 }
 
@@ -142,6 +70,11 @@ Value VM::DoImport(const avastd::string& module_path, const avastd::string& alia
     
     avastd::string resolved_path = module_resolver_.ResolveModulePath(module_path, current_dir);
     if (resolved_path.empty()) {
+        if (module_resolver_.IsModulePathADirectory(module_path, current_dir)) {
+            AVA_THROW(avastd::runtime_error(
+                "'" + module_path + "' is a folder, not a module -- import the specific file inside it instead, "
+                "e.g. 'import " + module_path + ".<FileName>'"));
+        }
         AVA_THROW(avastd::runtime_error("could not find module: " + module_path));
     }
 
@@ -150,15 +83,9 @@ Value VM::DoImport(const avastd::string& module_path, const avastd::string& alia
     AVA_TRY {
         if (!module_cache_.Exists(module_path)) {
 
-            bool is_folder_module = VmPlatformAccessor::Get().FileSystem().IsDirectory(resolved_path);
-            avastd::vector<avastd::string> source_files =
-                is_folder_module ? ModuleResolver::ListLooseAvaFiles(resolved_path)
-                                  : avastd::vector<avastd::string>{resolved_path};
-            avastd::string compile_source_name =
-                is_folder_module ? JoinModulePath(resolved_path, "(namespace).ava") : resolved_path;
-
             avastd::string source;
-            for (const avastd::string& file : source_files) {
+            {
+                const avastd::string& file = resolved_path;
 
                 if (before_module_read_hook_) {
                     before_module_read_hook_(file);
@@ -181,12 +108,12 @@ Value VM::DoImport(const avastd::string& module_path, const avastd::string& alia
 
             avastd::string prev_dir = GetCurrentDir();
             avastd::string prev_module = current_module_;
-            SetCurrentDir(GetFileDir(compile_source_name));
-            current_module_ = compile_source_name;
+            SetCurrentDir(GetFileDir(resolved_path));
+            current_module_ = resolved_path;
 
             avastd::shared_ptr<Proto> compiled_proto;
             AVA_TRY {
-                compiled_proto = CompileSource(source, compile_source_name);
+                compiled_proto = CompileSource(source, resolved_path);
             } AVA_CATCH(avastd::exception, e) {
                 (void)e;
                 SetCurrentDir(prev_dir);

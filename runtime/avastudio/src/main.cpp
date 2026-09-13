@@ -84,11 +84,6 @@ std::string ResolveWorkspaceDir() {
     return workspace.string();
 }
 
-// Fase 3: soporte para "abrir con" el .avaproj desde el explorador del SO.
-// La asociación de la extensión en sí (registro de Windows / instalador) no
-// es código de este repo -- ver PLAN_AVAPROJ.md. Lo que sí es de este repo
-// es parsear `--project <ruta>.avaproj` (o `--project=<ruta>.avaproj`) y
-// abrir la carpeta contenedora como proyecto.
 std::string ParseProjectArgPath(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -214,12 +209,7 @@ int main(int argc, char** argv) {
     std::string pending_build_browse_value;
 
     studio::ExplorerState explorer_state;
-    // Fix: si no nos lanzaron con un .avaproj especifico (doble click /
-    // "abrir con" desde el explorador del SO), antes esto siempre volvia a
-    // ResolveWorkspaceDir() (<exe_dir>/scripts) -- perdiendo de vista el
-    // proyecto en el que el usuario venia trabajando. Ahora se restaura
-    // settings.last_project_dir (si sigue existiendo en disco) antes de
-    // caer al workspace generico.
+
     std::error_code root_dir_ec;
     explorer_state.root_dir =
         launched_with_project
@@ -244,15 +234,12 @@ int main(int argc, char** argv) {
     editor_state.modules_path =
         settings.modules_path.empty() ? studio::util::ResolveDefaultModulesDir() : settings.modules_path;
     editor_state.workspace_index.SetRoot(editor_state.project_root, editor_state.modules_path);
+    editor_state.show_minimap = settings.show_minimap;
+    editor_state.show_inlay_hints = settings.show_inlay_hints;
+    editor_state.format_on_save = settings.format_on_save;
+    editor_state.format_on_type = settings.format_on_type;
     studio::OpenWelcomeTab(editor_state);
 
-    // Fix: helper unico para cambiar de proyecto/carpeta abierta que ademas
-    // persiste el cambio en settings.last_project_dir -- usado por los 3
-    // puntos donde el usuario abre explicitamente otro proyecto (abrir un
-    // .avaproj, Open Folder, crear un proyecto nuevo). El fallback inicial
-    // de mas arriba no pasa por aca a proposito: si cayo al workspace
-    // generico porque last_project_dir no existe mas, no queremos pisar el
-    // valor guardado hasta que el usuario elija algo explicitamente.
     auto set_project_root = [&](const std::string& path) {
         explorer_state.root_dir = path;
         editor_state.project_root = path;
@@ -262,10 +249,6 @@ int main(int argc, char** argv) {
         studio::SaveSettings(settings);
     };
 
-    // Los .avaproj se abren siempre con el panel de Propiedades (Fase 2/3),
-    // nunca como texto plano en el editor -- ver DrawExplorerPanel, que ya
-    // hace lo mismo para el doble clic en el explorador. Este helper cubre
-    // el resto de los caminos genéricos de "abrir archivo" (Quick Open).
     auto open_path_respecting_avaproj = [&](const std::string& path) {
         if (fs::path(path).extension() == ".avaproj") {
             const std::string proj_dir = fs::path(path).parent_path().string();
@@ -644,10 +627,7 @@ int main(int argc, char** argv) {
 
         studio::ExplorerResult explorer_result;
         if (bool& open = panel_open.try_emplace("Explorer###explorer", true).first->second; open) {
-            // Mantenemos esto en cada frame (no solo al recargar el .avaproj)
-            // porque Project Properties edita project_config.proj.out_dir en
-            // el mismo objeto en vivo -- asi el explorador refleja el cambio
-            // apenas el usuario lo guarda, sin cablear otro punto de reload.
+
             explorer_state.excluded_names.assign({project_config.proj.out_dir});
             explorer_result = studio::DrawExplorerPanel(explorer_state, &open);
             persist_if_closed("Explorer###explorer", open);
@@ -678,6 +658,7 @@ int main(int argc, char** argv) {
         }
 
         studio::DrawEditorPanel(editor_state);
+        studio::UpdateProblemsFromDiagnostics(problems_state, "live", studio::CollectDiagnosticProblems(editor_state));
         if (const studio::EditorTab* active = editor_state.Active();
             active && active->is_avaui && active->view_mode == studio::TabViewMode::Design) {
 
@@ -709,6 +690,7 @@ int main(int argc, char** argv) {
         const bool want_find_in_project = shortcuts.Pressed(studio::ShortcutId::FindInProject, editor_has_focus);
         const bool want_command_palette = shortcuts.Pressed(studio::ShortcutId::CommandPalette, editor_has_focus);
         const bool want_quick_open = shortcuts.Pressed(studio::ShortcutId::QuickOpen, editor_has_focus);
+        const bool want_format_document = shortcuts.Pressed(studio::ShortcutId::FormatDocument, editor_has_focus);
 
         if (titlebar_result.new_requested || want_new || editor_state.new_tab_requested) {
             studio::NewUntitledTab(editor_state);
@@ -759,18 +741,17 @@ int main(int argc, char** argv) {
                 studio::ToggleTabViewMode(editor_state, *active);
             }
         }
+        if (want_format_document) {
+            if (studio::EditorTab* active = editor_state.Active(); active && !active->is_welcome) {
+                studio::FormatTab(editor_state, *active);
+            }
+        }
         if (editor_state.run_requested || want_run) {
 
             if (terminal_state.run.running.load()) {
 
             } else {
-                // Fix: F5 corria el archivo abierto en el tab activo, lo cual
-                // no tiene sentido una vez que existe un .avaproj -- si el
-                // usuario esta viendo models/User.ava y aprieta F5, esperaria
-                // que arranque el programa desde el entry point (main.ava),
-                // no que intente ejecutar User.ava como si fuera un script
-                // independiente. Ahora F5 siempre resuelve y corre el entry
-                // del proyecto, igual que RunProject (Ctrl+F5).
+
                 const ProjectEntryResolution resolved = resolve_project_entry();
                 if (!resolved.ok) {
                     engine.AppendConsoleLine(studio::ConsoleLine::Kind::Error, resolved.error);
@@ -1090,6 +1071,13 @@ int main(int argc, char** argv) {
                     tab_ptr->modules_path = editor_state.modules_path;
                     tab_ptr->index_dirty = true;
                 }
+                editor_state.show_minimap = settings.show_minimap;
+                editor_state.show_inlay_hints = settings.show_inlay_hints;
+                editor_state.format_on_save = settings.format_on_save;
+                editor_state.format_on_type = settings.format_on_type;
+                for (const auto& tab_ptr : editor_state.tabs) {
+                    tab_ptr->editor.SetShowScrollbarMiniMapEnabled(!settings.show_minimap);
+                }
                 studio::SaveSettings(settings);
             }
             persist_if_closed("Settings###settings", open);
@@ -1284,6 +1272,12 @@ int main(int argc, char** argv) {
                 [&] { editor_state.quick_open_requested = true; });
             add(category_edit, "menu.edit.find_in_project", shortcut_labels.Label(studio::ShortcutId::FindInProject),
                 [&] { editor_state.find_in_project_requested = true; });
+            add(category_edit, "menu.edit.format_document", shortcut_labels.Label(studio::ShortcutId::FormatDocument),
+                [&] {
+                    if (studio::EditorTab* active = editor_state.Active(); active && !active->is_welcome) {
+                        studio::FormatTab(editor_state, *active);
+                    }
+                });
 
             add(category_run, "menu.run.run_script", shortcut_labels.Label(studio::ShortcutId::Run),
                 [&] { editor_state.run_requested = true; });

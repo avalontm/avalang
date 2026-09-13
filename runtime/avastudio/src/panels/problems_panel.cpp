@@ -28,7 +28,30 @@ void UpdateProblemsFromResult(ProblemsState& state, const std::string& source_la
     state.selection_anchor = state.selection_cursor = -1;
 }
 
+void UpdateProblemsFromDiagnostics(ProblemsState& state, const std::string& source_label,
+                                    std::vector<ProblemEntry> fresh_entries) {
+    auto& entries = state.entries;
+    entries.erase(std::remove_if(entries.begin(), entries.end(),
+                                  [&](const ProblemEntry& e) { return e.source_label == source_label; }),
+                  entries.end());
+    for (auto& entry : fresh_entries) {
+        entry.source_label = source_label;
+        entries.push_back(std::move(entry));
+    }
+    state.selection_anchor = state.selection_cursor = -1;
+}
+
 namespace {
+
+ImU32 SeverityColor(diagnostics::Severity severity) {
+    switch (severity) {
+        case diagnostics::Severity::Error: return palette::U32FromHex(palette::kError);
+        case diagnostics::Severity::Warning: return palette::U32FromHex(palette::kWarning);
+        case diagnostics::Severity::Info: return palette::U32FromHex(palette::kInfo);
+        case diagnostics::Severity::Hint: return palette::U32FromHex(palette::kTextDisabled);
+    }
+    return palette::U32FromHex(palette::kError);
+}
 
 std::string TrFormat(const std::string& key, std::initializer_list<std::string> args) {
     std::string result = util::Tr(key);
@@ -115,7 +138,7 @@ std::optional<ProblemsFileClickRequest> DrawProblemsPanel(ProblemsState& state, 
             const int last = std::max(state.selection_anchor, state.selection_cursor);
             const bool is_selected = state.selection_anchor >= 0 && i >= first && i <= last;
 
-            ImGui::PushStyleColor(ImGuiCol_Text, palette::FromHex(palette::kError));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(SeverityColor(entry.severity)));
             const std::string text = EntryLineText(entry);
             ImGui::Selectable(text.c_str(), is_selected);
             ImGui::PopStyleColor();

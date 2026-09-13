@@ -17,6 +17,7 @@ menu.file.project_properties,Propiedades del proyecto...
 menu.file.exit,Salir
 menu.edit,Editar
 menu.edit.find_in_project,Buscar en el proyecto...
+menu.edit.format_document,Formatear documento
 menu.view,Ver
 menu.run,Ejecutar
 menu.run.run_script,Ejecutar
@@ -60,6 +61,8 @@ editor.tab.welcome,Bienvenida
 editor.tab.untitled,Sin título
 editor.hint.builtin,INCORPORADA
 editor.hint.function,FUNCIÓN
+editor.hint.class,CLASE
+editor.hint.interface,INTERFAZ
 editor.hint.what_it_does,QUÉ HACE
 editor.hint.keyword,PALABRA CLAVE
 editor.hint.syntax,CÓMO SE ESCRIBE
@@ -225,6 +228,12 @@ settings.no_plugins,(ninguno)
 settings.modules_folder_label,Carpeta de módulos
 settings.modules_folder_description,"Además de los imports relativos al archivo abierto, ""import"" también busca acá -- pensado para módulos base/compartidos entre proyectos. Dejalo en blanco para usar la carpeta de módulos junto al ejecutable."
 settings.modules_folder_hint,"(por defecto: carpeta junto al ejecutable)"
+settings.section_editor,Editor
+settings.show_minimap_label,Mostrar minimapa
+settings.show_inlay_hints_label,Mostrar inlay hints
+settings.section_formatting,Formateo
+settings.format_on_save_label,Formatear documento al guardar
+settings.format_on_type_label,Formatear documento mientras se escribe
 menu.view.command_palette,Paleta de Comandos...
 command_palette.hint,Escribí un comando...
 command_palette.no_results,No hay comandos que coincidan.
@@ -251,6 +260,13 @@ new_project.error_destination_required,Elegí una carpeta destino.
 new_project.error_destination_missing,La carpeta destino no existe.
 new_project.error_already_exists,"Ya existe una carpeta con ese nombre ahí."
 new_project.error_create_failed,No se pudo crear la carpeta del proyecto.
-editor.context.implement_interface,Implementar interfaz
+editor.context.implement_interface,Implementar interfaz '%s'
+editor.context.add_import,Agregar import '%s'
+editor.context.remove_unused_import,Eliminar import no usado '%s'
+editor.context.rename_unused_variable,Renombrar '%s' a '_%s' (marcar como no usada a propósito)
+editor.context.remove_unused_variable,Eliminar variable no usada '%s'
+editor.context.remove_unused_member,Eliminar miembro no usado '%s'
+editor.context.remove_unreachable,Eliminar código inalcanzable
+editor.quickfix.tooltip,Quick Fix... (%s)
 editor.hint.missing_interface_members,%s no implementa %s:
 explorer.new_item_name_label,Nombre:

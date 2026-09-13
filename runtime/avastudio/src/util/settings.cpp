@@ -61,6 +61,14 @@ StudioSettings LoadSettings() {
             settings.modules_path = value;
         } else if (key == "last_project_dir") {
             settings.last_project_dir = value;
+        } else if (key == "show_minimap") {
+            settings.show_minimap = (value != "0");
+        } else if (key == "show_inlay_hints") {
+            settings.show_inlay_hints = (value != "0");
+        } else if (key == "format_on_save") {
+            settings.format_on_save = (value != "0");
+        } else if (key == "format_on_type") {
+            settings.format_on_type = (value != "0");
         } else if (key == "disabled_plugin") {
             if (!value.empty()) settings.disabled_plugins.push_back(value);
         } else if (key == "closed_panel") {
@@ -80,6 +88,10 @@ void SaveSettings(const StudioSettings& settings) {
     file << "language=" << settings.language << "\n";
     file << "modules_path=" << settings.modules_path << "\n";
     file << "last_project_dir=" << settings.last_project_dir << "\n";
+    file << "show_minimap=" << (settings.show_minimap ? "1" : "0") << "\n";
+    file << "show_inlay_hints=" << (settings.show_inlay_hints ? "1" : "0") << "\n";
+    file << "format_on_save=" << (settings.format_on_save ? "1" : "0") << "\n";
+    file << "format_on_type=" << (settings.format_on_type ? "1" : "0") << "\n";
     for (const std::string& name : settings.disabled_plugins) {
         if (name.empty()) continue;
         file << "disabled_plugin=" << name << "\n";

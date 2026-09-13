@@ -320,6 +320,22 @@ void VariableTypeIndex::ScanRange(const std::string& text, size_t start, size_t 
                                     break;
                                 }
                             }
+                        } else if (class_index.Find(rhs_name) != nullptr ||
+                                   (workspace_classes && workspace_classes->Find(rhs_name) != nullptr)) {
+                            // rhs_name no es una variable local, pero SI es una
+                            // clase/namespace conocido (p.ej. `dt = DateTime.Now()`
+                            // tras `import system`, donde DateTime es una clase de
+                            // solo miembros static, no una instancia) -- resolver
+                            // el tipo de retorno del metodo static con ese mismo
+                            // nombre, igual que arriba pero sin pasar por
+                            // LookupInScope.
+                            for (const auto& member : class_index.FlattenedMembers(rhs_name, workspace_classes)) {
+                                if (member.is_method && member.is_static && member.name == method_name &&
+                                    member.signature) {
+                                    resolved_type = member.signature->EffectiveReturnType();
+                                    break;
+                                }
+                            }
                         }
                     }
                 }

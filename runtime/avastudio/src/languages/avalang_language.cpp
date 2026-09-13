@@ -89,6 +89,20 @@ int& KnownVariableGeneration() {
     return generation;
 }
 
+std::unordered_map<std::string, int>& KnownClassRefCounts() {
+    static std::unordered_map<std::string, int> counts;
+    return counts;
+}
+
+bool IsKnownClassName(const std::string& name) {
+    return KnownClassRefCounts().count(name) != 0;
+}
+
+int& KnownClassGeneration() {
+    static int generation = 0;
+    return generation;
+}
+
 class AvaLangTokenizer {
 public:
     TextEditor::Iterator operator()(TextEditor::Iterator start, TextEditor::Iterator end, TextEditor::Color& color) {
@@ -231,6 +245,10 @@ public:
                 color = TextEditor::Color::variableName;
                 return word_end;
             }
+            if (after_ws < end && *after_ws == '.' && IsKnownClassName(word)) {
+                color = TextEditor::Color::preprocessor;
+                return word_end;
+            }
         }
 
         return start;
@@ -289,6 +307,26 @@ void UpdateKnownVariableNames(const std::unordered_set<std::string>& removed,
 }
 
 int KnownVariableNamesGeneration() { return KnownVariableGeneration(); }
+
+void UpdateKnownClassNames(const std::unordered_set<std::string>& removed,
+                            const std::unordered_set<std::string>& added) {
+    auto& counts = KnownClassRefCounts();
+    bool changed = false;
+    for (const auto& name : removed) {
+        auto it = counts.find(name);
+        if (it == counts.end()) continue;
+        if (--it->second <= 0) {
+            counts.erase(it);
+            changed = true;
+        }
+    }
+    for (const auto& name : added) {
+        if (++counts[name] == 1) changed = true;
+    }
+    if (changed) ++KnownClassGeneration();
+}
+
+int KnownClassNamesGeneration() { return KnownClassGeneration(); }
 
 std::unordered_set<std::string> ScanKnownVariableNames(const std::string& text) {
     using lexer::IsIdentChar;

@@ -17,6 +17,7 @@ menu.file.project_properties,Project Properties...
 menu.file.exit,Exit
 menu.edit,Edit
 menu.edit.find_in_project,Find in Project...
+menu.edit.format_document,Format Document
 menu.view,View
 menu.run,Run
 menu.run.run_script,Run
@@ -60,6 +61,8 @@ editor.tab.welcome,Welcome
 editor.tab.untitled,Untitled
 editor.hint.builtin,BUILT-IN
 editor.hint.function,FUNCTION
+editor.hint.class,CLASS
+editor.hint.interface,INTERFACE
 editor.hint.what_it_does,WHAT IT DOES
 editor.hint.keyword,KEYWORD
 editor.hint.syntax,HOW TO WRITE IT
@@ -225,6 +228,12 @@ settings.no_plugins,(none)
 settings.modules_folder_label,Modules folder
 settings.modules_folder_description,"In addition to imports relative to the open file, ""import"" also looks here -- meant for base/shared modules across projects. Leave blank to use the modules folder next to the executable."
 settings.modules_folder_hint,"(default: folder next to the executable)"
+settings.section_editor,Editor
+settings.show_minimap_label,Show minimap
+settings.show_inlay_hints_label,Show inlay hints
+settings.section_formatting,Formatting
+settings.format_on_save_label,Format document on save
+settings.format_on_type_label,Format document while typing
 menu.view.command_palette,Command Palette...
 command_palette.hint,Type a command...
 command_palette.no_results,No matching commands.
@@ -251,6 +260,13 @@ new_project.error_destination_required,Choose a destination folder.
 new_project.error_destination_missing,Destination folder does not exist.
 new_project.error_already_exists,"A folder with that name already exists there."
 new_project.error_create_failed,Could not create the project folder.
-editor.context.implement_interface,Implement Interface
+editor.context.implement_interface,Implement Interface '%s'
+editor.context.add_import,Add import '%s'
+editor.context.remove_unused_import,Remove unused import '%s'
+editor.context.rename_unused_variable,Rename '%s' to '_%s' (mark as intentionally unused)
+editor.context.remove_unused_variable,Remove unused variable '%s'
+editor.context.remove_unused_member,Remove unused member '%s'
+editor.context.remove_unreachable,Remove unreachable code
+editor.quickfix.tooltip,Quick Fix... (%s)
 editor.hint.missing_interface_members,%s does not implement %s:
 explorer.new_item_name_label,Name:

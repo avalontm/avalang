@@ -4,11 +4,6 @@
 
 namespace ava {
 
-// ToCNew() (Retain() + ToC() for a freshly-created String/List/Dict
-// Value) now lives in builtin_shared.h so builtin_natives.cpp,
-// builtin_mem.cpp, and c_api_ui.cpp can share it too -- see the comment
-// there for the full story. It used to be defined only in this file.
-
 Value MakeDict() {
     Value v;
     v.type = ValueType::Dict;
@@ -49,16 +44,6 @@ void SetDictEntry(Value& dict_val, const avastd::string& key, Value entry) {
 
 namespace {
 
-// Fase 3 - System.DateTime. The one area with real new work, since
-// nothing in the codebase decomposes an epoch into a calendar date
-// yet (see plan). Uses the days<->civil-date algorithm popularized by
-// Howard Hinnant (http://howardhinnant.github.io/date_algorithms.html,
-// public domain) -- proleptic Gregorian, valid across the entire
-// int64_t range CivilFromDays takes, re-derived and re-typed here
-// rather than pulled in as a dependency, and checked against known
-// dates (epoch, a leap day, a year-1 and a year-9999 boundary) before
-// wiring it into DateTime.Now/UtcNow below.
-
 struct CivilDate {
     int64_t year;
     int month;
@@ -87,14 +72,11 @@ struct BrokenDownTime {
     int minute;
     int second;
     int millisecond;
-    int day_of_week;  // 0 = Sunday .. 6 = Saturday, same convention as JS/C#
+    int day_of_week;
 };
 
 BrokenDownTime BreakDownEpochMs(int64_t epoch_ms) {
-    // Floor division toward negative infinity (plain integer division
-    // truncates toward zero, which is wrong for ms before the epoch)
-    // -- the -86399999 offset is the standard trick to floor a
-    // negative numerator without branching on the remainder.
+
     int64_t days = epoch_ms >= 0 ? epoch_ms / 86400000 : (epoch_ms - 86399999) / 86400000;
     int64_t ms_of_day = epoch_ms - days * 86400000;
 
@@ -108,7 +90,6 @@ BrokenDownTime BreakDownEpochMs(int64_t epoch_ms) {
     t.minute = static_cast<int>((ms_of_day / 60000) % 60);
     t.second = static_cast<int>((ms_of_day / 1000) % 60);
     t.millisecond = static_cast<int>(ms_of_day % 1000);
-    // 1970-01-01 was a Thursday -- index 4 in a Sunday=0 week.
     t.day_of_week = static_cast<int>(((days % 7) + 7 + 4) % 7);
     return t;
 }
@@ -120,12 +101,6 @@ avastd::string ZeroPad(int64_t value, int width) {
     return negative ? ("-" + s) : s;
 }
 
-// "Ticks" here is epoch milliseconds (same unit as
-// IClock::NowMs()/this Dict's own inputs), NOT .NET's real
-// DateTime.Ticks (100ns intervals since 0001-01-01) -- named to match
-// the field list the plan called out (Year/.../Ticks) but documented
-// here so nothing downstream assumes .NET-compatible arithmetic on
-// it.
 Value BuildDateTimeDict(int64_t epoch_ms) {
     BrokenDownTime t = BreakDownEpochMs(epoch_ms);
 
@@ -155,16 +130,6 @@ double ArgAsNumber(const ava_value_t* args, size_t count, size_t index, double d
     return AsNumber(FromC(args[index]));
 }
 
-// DateTime.Now() and DateTime.UtcNow() are the SAME call underneath:
-// IClock::NowMs() is already UTC on every backend (CLOCK_REALTIME on
-// Linux, GetSystemTimeAsFileTime on Windows -- both epoch-UTC, see
-// LinClock.cpp/WinClock.cpp), and there is no timezone/offset source
-// anywhere in the PAL to turn that into genuine local time (gap
-// flagged already in the plan for this phase). Rather than fabricate
-// an offset or silently mislabel UTC as local, Now() is documented as
-// UTC-in-practice here -- same "explicit gap over silent guess" call
-// as Environment.Exit() in Fase 4.
-
 ava_value_t datetime_now(AvaVM*, const ava_value_t*, size_t, void*) {
     return ToCNew(BuildDateTimeDict(VmPlatformAccessor::Get().Clock().NowMs()));
 }
@@ -173,13 +138,6 @@ ava_value_t datetime_utc_now(AvaVM*, const ava_value_t*, size_t, void*) {
     return ToCNew(BuildDateTimeDict(VmPlatformAccessor::Get().Clock().NowMs()));
 }
 
-// Fixed-format ISO 8601 (YYYY-MM-DDTHH:MM:SS.mmmZ) -- not
-// parametrizable yet, same first-cut scope the plan calls out.
-// DateTime.ToString(dt) is a namespace-level function taking the Dict
-// Now()/UtcNow() returns, rather than a method attached to the Dict
-// itself -- same Fase-0 reasoning that kept CurrentDirectory/
-// ForegroundColor as get/set functions instead of real properties: no
-// VM-level instance-method sugar on plain Dicts yet.
 ava_value_t datetime_to_string(AvaVM*, const ava_value_t* args, size_t count, void*) {
     if (count == 0) return ToC(Value::Nil());
     Value dt = FromC(args[0]);
@@ -199,12 +157,6 @@ ava_value_t datetime_to_string(AvaVM*, const ava_value_t* args, size_t count, vo
     return ToCNew(Value::String(s));
 }
 
-// Fase 0's "decide in this phase, don't duplicate" call: Sleep(ms)
-// lives on DateTime (thin wrap of IClock::SleepMs) instead of waiting
-// for a hypothetical future System.Threading -- CKM_CAP_THREADS=0
-// today (see plan's own "fuera de alcance" section), so there is no
-// such namespace to put it in, and IClock is already the PAL owner of
-// this call.
 ava_value_t datetime_sleep(AvaVM*, const ava_value_t* args, size_t count, void*) {
     double ms = ArgAsNumber(args, count, 0, 0.0);
     if (ms < 0) ms = 0;
@@ -221,28 +173,14 @@ Value BuildDateTimeNamespace() {
     });
 }
 
-// Fase 2 - System.Console.
-//
-// Reads a single argument as display text the same way `print`
-// already does (ToDisplayString, shared via builtin_shared.h) --
-// System.Console.WriteLine(42) prints "42" instead of failing, same
-// as print(42) already does. Missing argument -> empty string, same
-// permissive convention every other builtin here already follows.
 avastd::string ArgAsDisplayString(const ava_value_t* args, size_t count, size_t index) {
     if (index >= count) return avastd::string();
     return ToDisplayString(FromC(args[index]));
 }
 
-// Console.ForegroundColor(color) / Console.Colors.* representation
-// (Fase 0 decision deferred to here, see plan): a lowercase string
-// name ("red", "blue", ...) rather than integer constants -- readable
-// at the call site and doesn't require the VM to support any new kind
-// of constant. Console.Colors.Red etc. are the same strings, spelled
-// out so scripts don't have to hardcode literals or guess the exact
-// spelling.
 struct ConsoleColorEntry {
-    const char* key;   // Console.Colors.<key>, PascalCase (matches ConsoleColor's C++ enumerator names)
-    const char* value;  // what ForegroundColor(...) actually takes, lowercase
+    const char* key;   
+    const char* value; 
     platform::ConsoleColor color;
 };
 
@@ -279,20 +217,13 @@ Value BuildConsoleColorsConstants() {
     return colors;
 }
 
-// Wraps IConsole 1:1 (Write/WriteLine/WriteError/ReadLine/
-// SetForegroundColor/ResetColor), going through
-// VmPlatformAccessor::Get() -- the same single entry point to the PAL
-// that builtin_print/builtin_input already use (builtin_natives.cpp),
-// so print()/input() and System.Console.* never diverge: both sit on
-// top of the exact same IConsole instance.
-
-ava_value_t console_write(AvaVM*, const ava_value_t* args, size_t count, void*) {
-    VmPlatformAccessor::Get().Console().Write(ArgAsDisplayString(args, count, 0));
+ava_value_t console_write(AvaVM* vm, const ava_value_t* args, size_t count, void*) {
+    reinterpret_cast<ava::VM*>(vm)->Print(ArgAsDisplayString(args, count, 0));
     return ToC(Value::Nil());
 }
 
-ava_value_t console_write_line(AvaVM*, const ava_value_t* args, size_t count, void*) {
-    VmPlatformAccessor::Get().Console().WriteLine(ArgAsDisplayString(args, count, 0));
+ava_value_t console_write_line(AvaVM* vm, const ava_value_t* args, size_t count, void*) {
+    reinterpret_cast<ava::VM*>(vm)->Print(ArgAsDisplayString(args, count, 0) + "\n");
     return ToC(Value::Nil());
 }
 
@@ -301,20 +232,11 @@ ava_value_t console_write_error(AvaVM*, const ava_value_t* args, size_t count, v
     return ToC(Value::Nil());
 }
 
-// Returns nil on EOF (IConsole::ReadLine's own false-on-EOF signal)
-// instead of a garbage/empty string that would look indistinguishable
-// from an actual blank line read from input.
-ava_value_t console_read_line(AvaVM*, const ava_value_t*, size_t, void*) {
-    avastd::string line;
-    bool ok = VmPlatformAccessor::Get().Console().ReadLine(line);
-    if (!ok) return ToC(Value::Nil());
+ava_value_t console_read_line(AvaVM* vm, const ava_value_t*, size_t, void*) {
+    avastd::string line = reinterpret_cast<ava::VM*>(vm)->ReadLine(avastd::string());
     return ToCNew(Value::String(line));
 }
 
-// Returns false (instead of raising) on an unrecognized color name --
-// same permissive-on-bad-input convention as the rest of this file --
-// so a script can check the return value instead of every call site
-// needing a try/catch for a typo'd color name.
 ava_value_t console_foreground_color(AvaVM*, const ava_value_t* args, size_t count, void*) {
     avastd::string name = ArgAsDisplayString(args, count, 0);
     platform::ConsoleColor color;
@@ -342,28 +264,6 @@ Value BuildConsoleNamespace() {
     SetDictEntry(console_ns, "Colors", BuildConsoleColorsConstants());
     return console_ns;
 }
-
-// Fase 4 - System.Environment. Wraps IEnvironment 1:1, same
-// VmPlatformAccessor::Get() entry point as Console above.
-//
-// GetEnvironmentVariable/SetEnvironmentVariable name the C# way
-// (Environment.GetEnvironmentVariable / .SetEnvironmentVariable) since
-// the plan calls those out by name explicitly; CurrentDirectory (a
-// property in C#) is exposed as a get/set method pair for the same
-// Fase-0 reason ConsoleColor stayed a string instead of a real
-// property: no VM-level getter-without-call sugar yet.
-//
-// Exit(code) is deliberately NOT wired here: unlike every other
-// member in this file, there is no IEnvironment/IProcess member for
-// "terminate the current process" -- IProcess::Execute launches a
-// *different* process, it doesn't end this one. The only way to do
-// that today is a raw libc exit(), which doesn't exist in the
-// freestanding barekernel build this file also has to compile for
-// (see ava_cstdio.h -- no exit() wrapper in avastd on purpose).
-// Adding it means designing a new PAL member first, which is a
-// bigger change than "wire an existing PAL call" like the rest of
-// this plan -- left as a documented gap, same as the plan's own
-// Fase 5.5 streaming gap, not a silent omission.
 
 ava_value_t environment_get_variable(AvaVM*, const ava_value_t* args, size_t count, void*) {
     avastd::string name = ArgAsDisplayString(args, count, 0);
@@ -413,39 +313,6 @@ Value BuildEnvironmentNamespace() {
         {"GetCommandLineArgs", environment_get_command_line_args},
     });
 }
-
-// Fase 5 - System.IO. Wraps IFileSystem, split into File/Directory
-// submodules the same way C#'s System.IO does, same
-// VmPlatformAccessor::Get() entry point as Console/Environment above.
-//
-// Failure convention matches Environment.GetEnvironmentVariable: nil
-// (not false, not a sentinel number) wherever the underlying PAL call
-// can fail and the script needs to tell "worked" from "didn't" --
-// File.ReadAllText and File.Size return nil instead of an empty
-// string / -1 (IFileSystem::FileSize's own not-found sentinel, see
-// LinFileSystem.cpp/WinFileSystem.cpp) so a typo'd path doesn't read
-// as "0-byte file" or "empty file". Delete/Create/WriteAllText return
-// plain bool, same as Environment.SetEnvironmentVariable.
-//
-// IFileSystem::Exists() alone doesn't distinguish files from
-// directories (true for either) -- File.Exists/Directory.Exists are
-// deliberately narrowed with IsDirectory() so they match the real
-// System.IO.File.Exists/Directory.Exists contract (a directory path
-// reads as false from File.Exists, and vice versa) instead of both
-// namespaces sharing one file-or-dir boolean.
-//
-// Directory.Enumerate(path) returns nil on failure (bad/missing path,
-// same convention as the rest of this section) or, on success, a List
-// of Dict{Name, IsDirectory} -- one entry per DirEntry from
-// IFileSystem::EnumerateDirectory, field names PascalCase to match
-// Console.Colors.* above rather than mirroring the internal C++
-// struct's lowercase field names.
-//
-// vm_file.cpp's VM::RunFile also touches IFileSystem, but only to
-// load .ava module source for `import` -- an internal implementation
-// detail of the compiler, not a user-facing API -- so there's no
-// second surface for scripts to read/write files that could diverge
-// from this one (checked per the plan's own note for this phase).
 
 ava_value_t file_read_all_text(AvaVM*, const ava_value_t* args, size_t count, void*) {
     avastd::string path = ArgAsDisplayString(args, count, 0);
@@ -550,29 +417,6 @@ Value BuildIONamespace() {
     return io_ns;
 }
 
-// Fase 5.5 - System.Diagnostics.Process. Wraps IProcess
-// (CurrentProcessId/Execute), same VmPlatformAccessor::Get() entry
-// point as the rest of this file. Nested two levels
-// (Diagnostics.Process.*) to match System.Diagnostics.Process in C#,
-// unlike Console/Environment/IO which sit directly under the root.
-//
-// Process.Start(command, args) is deliberately the *blocking* form
-// only (IProcess::Execute) -- the plan's own streaming variant
-// (IProcessStream::ExecuteStreaming, additive on top of IProcess, see
-// IProcessStream.h) needs a callback bridged back into an AvaNativeFn
-// call, which is real added complexity for a capability barekernel's
-// own BareKernelProcess::Execute doesn't even fill in yet (stdout_output/
-// stderr_output come back empty there -- documented gap already noted
-// in the plan for Fase 5.5, not new). Left for a later pass instead of
-// half-wiring a callback path against a backend that can't exercise it.
-//
-// Execute() returning false means the process could not even be
-// launched (bad command, not just a nonzero exit code) -- Start
-// returns nil in that case, same nil-on-failure convention as
-// File.ReadAllText/Directory.Enumerate above, rather than a fabricated
-// exit code. A process that *launches* and exits nonzero still comes
-// back as a normal Dict with that exit code in it.
-
 avastd::vector<avastd::string> ArgAsStringList(const ava_value_t* args, size_t count, size_t index) {
     avastd::vector<avastd::string> out;
     if (index >= count) return out;
@@ -621,10 +465,7 @@ Value BuildDiagnosticsNamespace() {
 } // namespace
 
 void RegisterSystemModule(VM& vm) {
-    // Console (Phase 2), Environment (Phase 4), IO (Phase 5),
-    // Diagnostics.Process (Phase 5.5) and DateTime (Phase 3, above)
-    // are all wired to the PAL now -- every child of "system" this
-    // plan scoped in is real.
+
     vm.RegisterNativeModule("system", [](VM&) -> Value {
         Value root = MakeDict();
 
@@ -637,32 +478,6 @@ void RegisterSystemModule(VM& vm) {
         return root;
     });
 
-    // Fase 6 - dotted submodule imports (`import system.io`, etc.),
-    // the sugar the plan left optional. Each is a SEPARATE
-    // native_modules_ entry (not a re-derivation of "system" above)
-    // returning just that one area's Dict -- same
-    // BuildXNamespace() helpers "system" itself uses, so there is no
-    // second copy of Console/DateTime/Environment/IO/Diagnostics that
-    // could drift from the flat `import system` form.
-    //
-    // Left out on purpose: "system.diagnostics.process" (3 segments).
-    // PlaceModuleInScope/SetNestedNamespace (this same file's
-    // existing, already-relied-on placement logic for ordinary
-    // file-backed dotted imports, unchanged by this plan) only nests
-    // correctly for a 2-segment path -- for 3+ segments today it
-    // recurses into SetNestedNamespace with the *top-level* globals
-    // map at every level instead of descending into the namespace
-    // Dict it just created, so the deepest segment lands back at
-    // global scope instead of nested. That is pre-existing behavior
-    // of the general import mechanism (reachable today with any
-    // 3-level file import path, e.g. `import a.b.c`), not something
-    // introduced by this plan, and fixing it means changing shared
-    // import-placement logic every existing file-backed import also
-    // depends on -- out of scope for "wire system.* sugar" and risks
-    // a regression well beyond this plan. `import system.diagnostics`
-    // (2 segments, below) already reaches Process fully via
-    // `system.Process.*`, so the capability isn't missing, only the
-    // 3-level spelling of it.
     vm.RegisterNativeModule("system.console", [](VM&) -> Value {
         return BuildConsoleNamespace();
     });

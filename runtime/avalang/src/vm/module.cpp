@@ -50,6 +50,24 @@ void ModuleResolver::AddSearchPath(const avastd::string& path) {
         if (p == path) return;
     }
     search_paths_.push_back(path);
+    GlobalSearchRoots::Add(path);
+}
+
+static avastd::vector<avastd::string>& GlobalSearchRootsStorage() {
+    static avastd::vector<avastd::string> roots;
+    return roots;
+}
+
+void GlobalSearchRoots::Add(const avastd::string& path) {
+    auto& roots = GlobalSearchRootsStorage();
+    for (const auto& p : roots) {
+        if (p == path) return;
+    }
+    roots.push_back(path);
+}
+
+const avastd::vector<avastd::string>& GlobalSearchRoots::Get() {
+    return GlobalSearchRootsStorage();
 }
 
 void ModuleResolver::SetStdlibPath(const avastd::string& path) {
@@ -79,11 +97,6 @@ avastd::string ModuleResolver::ResolveModulePath(const avastd::string& module_pa
         avastd::string index_path = JoinPath(module_dir, "index.ava");
         if (FileExists(index_path)) return index_path;
 
-        if (VmPlatformAccessor::Get().FileSystem().IsDirectory(module_dir) &&
-            !ListLooseAvaFiles(module_dir).empty()) {
-            return module_dir;
-        }
-
         return avastd::string();
     };
 
@@ -105,6 +118,23 @@ avastd::string ModuleResolver::ResolveModulePath(const avastd::string& module_pa
 
 bool ModuleResolver::ModuleExists(const avastd::string& module_path, const avastd::string& current_dir) {
     return !ResolveModulePath(module_path, current_dir).empty();
+}
+
+bool ModuleResolver::IsModulePathADirectory(const avastd::string& module_path, const avastd::string& current_dir) {
+    avastd::string file_path = PathToFilePath(module_path);
+    auto& fsys = VmPlatformAccessor::Get().FileSystem();
+
+    auto is_dir_at = [&](const avastd::string& base) -> bool {
+        avastd::string dir = JoinPath(base, file_path);
+        return fsys.IsDirectory(dir);
+    };
+
+    if (is_dir_at(current_dir)) return true;
+    for (const auto& search_path : search_paths_) {
+        if (is_dir_at(search_path)) return true;
+    }
+    if (!stdlib_path_.empty() && is_dir_at(stdlib_path_)) return true;
+    return false;
 }
 
 void ModuleCache::Add(const avastd::string& module_name, avastd::shared_ptr<Proto> proto, const avastd::string& file_path) {

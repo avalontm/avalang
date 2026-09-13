@@ -206,15 +206,16 @@ HarvestedClassInfo HarvestImportedClasses(
         const std::string& source, const std::string& source_name,
         std::unordered_set<std::string>& chain,
         std::unordered_map<std::string, HarvestedClassInfo>& cache) {
-    try {
-        auto chunk = ParseToChunk(source, source_name);
-        Compiler compiler;
-        compiler.SetImportHarvestContext(&chain, &cache);
-        compiler.Compile(chunk, source_name);
-        return compiler.SnapshotClassInfo();
-    } catch (...) {
-        return {};
-    }
+    // A compile error in an imported file is a real, actionable problem for
+    // whoever wrote the `import` -- previously this swallowed it and returned
+    // an empty snapshot, which surfaced downstream as a confusing "'X' is not
+    // a class" at the import site instead of the actual error (with the
+    // actual file/line) that caused the harvest to fail. Let it propagate.
+    auto chunk = ParseToChunk(source, source_name);
+    Compiler compiler;
+    compiler.SetImportHarvestContext(&chain, &cache);
+    compiler.Compile(chunk, source_name);
+    return compiler.SnapshotClassInfo();
 }
 
 std::shared_ptr<Proto> CompileFile(const std::string& file_path) {

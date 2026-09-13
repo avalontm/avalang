@@ -4,6 +4,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <sstream>
@@ -13,16 +14,17 @@
 #include "branding/logo_texture.h"
 #include "fonts/embedded_font.h"
 #include "imgui.h"
-// For ImGuiWindow/GImGui (popup hit-testing) and ImGuiKeyData (key suppression) --
-// already used the same way by src/main.cpp.
 #include "imgui_internal.h"
 #include "languages/avalang_language.h"
 #include "languages/block_scanner.h"
+#include "languages/code_formatter.h"
+#include "languages/diagnostics_engine.h"
 #include "languages/keyword_docs.h"
 #include "languages/lexer_utils.h"
 #include "languages/member_access_resolver.h"
 #include "palette.h"
 #include "panels/designer_canvas.h"
+#include "panels/syntax_highlight.h"
 #include "parser/AvauiWriter.h"
 #include "shortcuts/shortcut_registry.h"
 #include "util/i18n.h"
@@ -45,14 +47,6 @@ std::string TrFormat(const std::string& key, std::initializer_list<std::string> 
 
 std::string TrFormat(const std::string& key, const std::string& arg) { return TrFormat(key, {arg}); }
 
-// Editor text zoom (mouse wheel + keyboard shortcuts, see DrawEditorPanel). The
-// vendored editor (TextEditor::render, "Legacy") snapshots ImGui::GetFontSize()
-// once at the very top of its own render() -- *before* it opens its internal
-// child window -- and feeds that single value into every glyph measurement and
-// draw call for the frame (glyphSize, line/column layout, font->RenderChar).
-// That means scaling the *panel* window's font via ImGui::SetWindowFontScale()
-// immediately before calling tab.editor.Render() is enough to zoom the whole
-// editor; no changes to the vendored library are needed.
 constexpr float kEditorMinZoom = 0.5f;
 constexpr float kEditorMaxZoom = 3.0f;
 constexpr float kEditorWheelZoomStep = 0.1f;
@@ -94,39 +88,24 @@ void RebuildAutocompleteTrie(EditorTab& tab) {
     }
 }
 
-// True if `member_name` is reachable by walking `start`'s own heritage graph
-// (start itself, then its heritage_names, recursively) -- i.e. whether
-// `start`, as directly listed on a class's header line, is the one actually
-// responsible for requiring `member_name`. Used to attribute each abstract
-// member MissingInterfaceMembers reports (which only knows the closest
-// declared_in, possibly several `interface IB : IA` hops away) back to the
-// interface name written in the class's own heritage clause, since that's
-// where VS/Roslyn puts the squiggle.
-bool HeritageChainDeclares(const ClassIndex& class_index, const std::string& start,
+bool HeritageChainDeclares(const ClassIndex& class_index, const ClassIndex* fallback, const std::string& start,
                             const std::string& member_name, std::unordered_set<std::string>& visited) {
     if (!visited.insert(start).second) return false;
     const ClassInfo* info = class_index.Find(start);
+    if (!info && fallback) info = fallback->Find(start);
     if (!info) return false;
     if (info->methods.count(member_name)) return true;
     for (const auto& parent : info->heritage_names) {
-        if (HeritageChainDeclares(class_index, parent, member_name, visited)) return true;
+        if (HeritageChainDeclares(class_index, fallback, parent, member_name, visited)) return true;
     }
     return false;
 }
 
-// Recomputes tab.incomplete_interfaces from the freshly-rebuilt class_index.
-// Only classes actually declared in this buffer are considered -- flagging a
-// class defined in an imported file would point the squiggle/quick-fix at
-// the wrong file (or nowhere, since ImplementMissingInterfaceMembers only
-// knows how to edit the currently open tab). One IncompleteInterface is
-// produced per directly-listed heritage name that's still missing at least
-// one member, not per class, so `class C : IShape, IColor` with only IColor
-// incomplete squiggles just IColor.
-void RebuildIncompleteInterfaces(EditorTab& tab) {
+void RebuildIncompleteInterfaces(EditorTab& tab, const ClassIndex* fallback) {
     tab.incomplete_interfaces.clear();
     for (const auto& [name, info] : tab.class_index.Classes()) {
         if (info.is_interface || !info.source_file.empty()) continue;
-        std::vector<ClassMember> missing = tab.class_index.MissingInterfaceMembers(name);
+        std::vector<ClassMember> missing = tab.class_index.MissingInterfaceMembers(name, fallback);
         if (missing.empty()) continue;
 
         std::vector<std::string> order;
@@ -134,7 +113,7 @@ void RebuildIncompleteInterfaces(EditorTab& tab) {
         for (auto& member : missing) {
             for (const auto& heritage : info.heritage_names) {
                 std::unordered_set<std::string> visited;
-                if (!HeritageChainDeclares(tab.class_index, heritage, member.name, visited)) continue;
+                if (!HeritageChainDeclares(tab.class_index, fallback, heritage, member.name, visited)) continue;
                 if (by_heritage.find(heritage) == by_heritage.end()) order.push_back(heritage);
                 by_heritage[heritage].push_back(member);
                 break;
@@ -147,12 +126,30 @@ void RebuildIncompleteInterfaces(EditorTab& tab) {
     }
 }
 
+ImU32 DiagnosticSeverityColor(diagnostics::Severity severity) {
+    switch (severity) {
+        case diagnostics::Severity::Error: return palette::U32FromHex(palette::kError);
+        case diagnostics::Severity::Warning: return palette::U32FromHex(palette::kWarning);
+        case diagnostics::Severity::Info: return palette::U32FromHex(palette::kInfo);
+        case diagnostics::Severity::Hint: return palette::U32FromHex(palette::kTextDisabled);
+    }
+    return palette::U32FromHex(palette::kTextDisabled);
+}
+
 void RebuildIndexAndTrie(EditorState& state, EditorTab& tab) {
     ImportFileCache import_cache;
     const std::string dir = DirOf(tab.file_path);
     tab.function_index.Rebuild(tab.GetText(), dir, &import_cache, tab.modules_path);
     tab.class_index.Rebuild(tab.GetText(), dir, &import_cache, tab.modules_path);
-    RebuildIncompleteInterfaces(tab);
+    if (state.log_bridge) {
+        std::string names;
+        for (const auto& [name, info] : tab.class_index.Classes()) {
+            (void)info;
+            names += name + " ";
+        }
+    }
+    std::shared_ptr<const WorkspaceIndex::Snapshot> workspace = state.workspace_index.CurrentSnapshot();
+    RebuildIncompleteInterfaces(tab, &workspace->classes);
 
     std::unordered_set<std::string> interface_names;
     for (const auto& [name, info] : tab.class_index.Classes()) {
@@ -169,9 +166,29 @@ void RebuildIndexAndTrie(EditorState& state, EditorTab& tab) {
     languages::UpdateKnownInterfaceNames(removed_interface_names, added_interface_names);
     tab.known_interface_names = std::move(interface_names);
 
-    std::shared_ptr<const WorkspaceIndex::Snapshot> workspace = state.workspace_index.CurrentSnapshot();
+    std::unordered_set<std::string> class_names;
+    for (const auto& [name, info] : tab.class_index.Classes()) {
+        if (!info.is_interface) class_names.insert(name);
+    }
+    std::unordered_set<std::string> removed_class_names;
+    for (const auto& name : tab.known_class_names) {
+        if (!class_names.count(name)) removed_class_names.insert(name);
+    }
+    std::unordered_set<std::string> added_class_names;
+    for (const auto& name : class_names) {
+        if (!tab.known_class_names.count(name)) added_class_names.insert(name);
+    }
+    languages::UpdateKnownClassNames(removed_class_names, added_class_names);
+    tab.known_class_names = std::move(class_names);
+
     tab.variable_type_index.Rebuild(tab.GetText(), tab.class_index, tab.function_index, &workspace->classes,
                                      &workspace->functions);
+
+    tab.diagnostics = diagnostics::ComputeDiagnostics(tab.GetText(), dir, tab.modules_path, tab.class_index,
+                                                       tab.function_index, &workspace->classes, &workspace->functions);
+
+    tab.inlay_hints = diagnostics::ComputeInlayHints(tab.GetText(), tab.variable_type_index, tab.function_index,
+                                                      &workspace->classes, &workspace->functions);
 
     std::unordered_set<std::string> variable_names = languages::ScanKnownVariableNames(tab.GetText());
     std::unordered_set<std::string> removed_variable_names;
@@ -199,6 +216,13 @@ void MaybeRebuildIndex(EditorState& state, EditorTab& tab) {
     if (!tab.index_dirty) return;
     if (ImGui::GetTime() - tab.last_edit_time < kIndexRebuildDebounceSeconds) return;
     RebuildIndexAndTrie(state, tab);
+}
+
+void MaybeAutoFormatOnType(EditorState& state, EditorTab& tab) {
+    if (!tab.format_pending) return;
+    if (ImGui::GetTime() - tab.last_edit_time < kIndexRebuildDebounceSeconds) return;
+    tab.format_pending = false;
+    FormatTab(state, tab);
 }
 
 std::string TextBeforeCursor(EditorTab& tab, const TextEditor::CursorPosition& pos) {
@@ -310,11 +334,7 @@ bool PopulateMemberSuggestions(EditorState& state, EditorTab& tab, TextEditor::A
             const std::string name_lower = ToLowerAscii(member.name);
             if (name_lower.compare(0, search_term_lower.size(), search_term_lower) != 0) continue;
         }
-        // NOTE: this feeds the editor widget's own built-in suggestion popup (used once the
-        // user types a filter letter after the dot -- see DrawDotCompletionPopup, which only
-        // covers the bare "just typed a dot" moment). That popup inserts whatever string is
-        // selected verbatim on Tab/Enter/click, so this must be plain insertable text, not the
-        // decorated "name : Type" / full signature label used for on-screen display elsewhere.
+
         std::string insert_text = member.name;
         if (member.is_method) insert_text += "()";
         suggestions.push_back(insert_text);
@@ -356,11 +376,13 @@ bool FindEnclosingCall(const std::string& line_before_cursor, CallContext& out) 
     return false;
 }
 
-std::string WordEndingAtCursor(const std::string& line_before_cursor) {
-    size_t end = line_before_cursor.size();
-    size_t start = end;
-    while (start > 0 && IsIdentChar(line_before_cursor[start - 1])) --start;
-    return line_before_cursor.substr(start, end - start);
+std::string WordAtColumn(const std::string& line_text, int column) {
+    const int len = static_cast<int>(line_text.size());
+    int start = std::clamp(column, 0, len);
+    int end = start;
+    while (start > 0 && IsIdentChar(line_text[start - 1])) --start;
+    while (end < len && IsIdentChar(line_text[end])) ++end;
+    return line_text.substr(static_cast<size_t>(start), static_cast<size_t>(end - start));
 }
 
 bool FindExternalAttributeAssignment(EditorTab& tab, const std::string& class_name, const std::string& attr_name,
@@ -430,16 +452,7 @@ size_t TextOffsetForPosition(const std::string& text, int line, int column) {
 
 bool ResolveDefinitionTarget(EditorState& state, EditorTab& tab, const TextEditor::CursorPosition& pos,
                               DefinitionTarget& out) {
-    // Use the *full* identifier the cursor sits inside -- scanning both left and right from the
-    // column, not just backward from it. A plain left click places the caret wherever the pixel
-    // under the mouse lands, which is very often in the *middle* of a word, not at its end.
-    // Scanning backward-only from there (the old behavior) grabbed just the prefix up to the
-    // click point -- e.g. clicking between the 't' and 'e' of "test" produced the word "t", not
-    // "test" -- so whether F12 worked at all depended on exactly which pixel/column inside the
-    // word you happened to click. That's the "a veces se traba" behavior: a right-click (whose
-    // column gets rounded to the nearest character, see ScreenPosToCursor) or a second click
-    // would often land differently and happen to hit the end of the word, while a first plain
-    // click landing mid-word would not.
+
     const std::string line = tab.editor.GetLineText(pos.line);
     const int column = std::clamp(pos.column, 0, static_cast<int>(line.size()));
     int word_start = column;
@@ -654,27 +667,101 @@ bool DrawParameterHint(EditorTab& tab) {
     return true;
 }
 
-bool DrawKeywordHint(EditorTab& tab) {
-    TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
-    std::string word = WordEndingAtCursor(TextBeforeCursor(tab, pos));
+TextEditor::CursorPosition ScreenPosToCursor(EditorTab& tab, const ImVec2& screen_pos,
+                                              const ImVec2& editor_screen_min);
+
+bool DrawFunctionNameHint(EditorState& state, EditorTab& tab, const std::string& word) {
+    const FunctionSignature* sig = tab.function_index.Find(word);
+    if (!sig) sig = state.workspace_index.CurrentSnapshot()->functions.Find(word);
+    if (!sig) return false;
+
+    ImGui::SetNextWindowBgAlpha(0.97f);
+    ImGui::BeginTooltip();
+
+    if (sig->is_builtin) {
+        DrawHintBadge(util::Tr("editor.hint.builtin").c_str(), palette::U32FromHex(palette::kBorder),
+                      palette::U32FromHex(palette::kTextSecondary));
+    } else {
+        DrawHintBadge(util::Tr("editor.hint.function").c_str(), palette::U32FromHex(palette::kPrimary),
+                      palette::U32FromHex(palette::kBackground));
+    }
+
+    ImGui::TextColored(palette::FromHex(palette::kSynFunction), "%s", sig->name.c_str());
+    ImGui::SameLine(0, 0);
+    ImGui::TextUnformatted("(");
+    for (size_t i = 0; i < sig->params.size(); ++i) {
+        if (i > 0) { ImGui::SameLine(0, 0); ImGui::TextUnformatted(", "); }
+        ImGui::SameLine(0, 0);
+        ImGui::TextColored(palette::FromHex(palette::kTextSecondary), "%s", sig->params[i].c_str());
+    }
+    ImGui::SameLine(0, 0);
+    ImGui::TextUnformatted(")");
+
+    if (!sig->doc.empty()) {
+        ImGui::Spacing();
+        DrawHintSectionLabel(util::Tr("editor.hint.what_it_does").c_str());
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + kHintContentWidth);
+        ImGui::TextColored(palette::FromHex(palette::kTextPrimary), "%s", sig->doc.c_str());
+        ImGui::PopTextWrapPos();
+    }
+
+    if (!sig->is_builtin && !sig->source_file.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(palette::FromHex(palette::kTextDisabled), "%s",
+                            TrFormat("editor.hint.defined_in", sig->source_file).c_str());
+    }
+
+    ImGui::EndTooltip();
+    return true;
+}
+
+bool DrawClassNameHint(EditorState& state, EditorTab& tab, const std::string& word) {
+    const ClassInfo* info = tab.class_index.Find(word);
+    if (!info) info = state.workspace_index.CurrentSnapshot()->classes.Find(word);
+    if (!info) return false;
+
+    ImGui::SetNextWindowBgAlpha(0.97f);
+    ImGui::BeginTooltip();
+
+    DrawHintBadge(util::Tr(info->is_interface ? "editor.hint.interface" : "editor.hint.class").c_str(),
+                  palette::U32FromHex(palette::kSynClass), palette::U32FromHex(palette::kBackground));
+    ImGui::SameLine();
+    ImGui::TextColored(palette::FromHex(palette::kSynClass), "%s", info->name.c_str());
+
+    if (!info->heritage_names.empty()) {
+        std::string joined;
+        for (size_t i = 0; i < info->heritage_names.size(); ++i) {
+            if (i > 0) joined += ", ";
+            joined += info->heritage_names[i];
+        }
+        ImGui::SameLine();
+        ImGui::TextColored(palette::FromHex(palette::kTextSecondary), ": %s", joined.c_str());
+    }
+
+    if (!info->source_file.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(palette::FromHex(palette::kTextDisabled), "%s",
+                            TrFormat("editor.hint.defined_in", info->source_file).c_str());
+    }
+
+    ImGui::EndTooltip();
+    return true;
+}
+
+bool DrawKeywordHint(EditorState& state, EditorTab& tab, const ImVec2& editor_min) {
+    const TextEditor::CursorPosition pos = ScreenPosToCursor(tab, ImGui::GetMousePos(), editor_min);
+    if (pos.line < 0 || pos.line >= static_cast<int>(tab.editor.GetLineCount())) return false;
+    const std::string line_text = tab.editor.GetLineText(pos.line);
+    const std::string word = WordAtColumn(line_text, pos.column);
     if (word.empty() || !IsIdentStart(word[0])) return false;
 
     const auto& docs = KeywordDocs();
-
     auto exact = docs.find(word);
     const KeywordDoc* match = exact != docs.end() ? &exact->second : nullptr;
-
     if (!match) {
-        const KeywordDoc* candidate = nullptr;
-        for (const auto& [name, doc] : docs) {
-            if (name.size() > word.size() && name.compare(0, word.size(), word) == 0) {
-                if (candidate) { candidate = nullptr; break; }
-                candidate = &doc;
-            }
-        }
-        match = candidate;
+        if (DrawClassNameHint(state, tab, word)) return true;
+        return DrawFunctionNameHint(state, tab, word);
     }
-    if (!match) return false;
 
     ImGui::SetNextWindowBgAlpha(0.97f);
     ImGui::BeginTooltip();
@@ -737,11 +824,6 @@ ImVec2 EstimateCaretScreenPos(EditorTab& tab, const TextEditor::CursorPosition& 
     return ImVec2(x, y);
 }
 
-// Inverse of EstimateCaretScreenPos: which line/column is under a given screen point. Used so
-// the right-click context menu ("Ir a la definición" etc.) acts on whatever the user actually
-// clicked on, not on the blinking text cursor -- the vendored TextEditor only moves that cursor
-// on left clicks (see its handling of ImGuiMouseButton_Right in TextEditor.cpp), so reading
-// GetCursorPosition() after a right click reports a stale, unrelated position.
 TextEditor::CursorPosition ScreenPosToCursor(EditorTab& tab, const ImVec2& screen_pos,
                                               const ImVec2& editor_screen_min) {
     const float line_height = tab.editor.GetLineHeight();
@@ -759,14 +841,6 @@ TextEditor::CursorPosition ScreenPosToCursor(EditorTab& tab, const ImVec2& scree
     return TextEditor::CursorPosition(line, column);
 }
 
-// Column (0-based, in glyphs) where `interface_name` starts in the
-// comma-separated heritage clause after the ':' on `line_text`, e.g. the
-// "IShape" in `class Circle : IShape, IColor`. class_index only keeps the
-// line, not per-name columns, so this re-finds it the same cheap way
-// ScreenPosToCursor's caller already re-derives things from GetLineText
-// rather than growing ClassInfo for a couple of rendering-only callers.
-// Returns -1 if not found (heritage clause missing, or edited since the
-// index was last rebuilt).
 int HeritageNameColumnOnLine(const std::string& line_text, const std::string& interface_name) {
     const size_t colon = line_text.find(':');
     if (colon == std::string::npos) return -1;
@@ -785,36 +859,6 @@ int HeritageNameColumnOnLine(const std::string& line_text, const std::string& in
     return -1;
 }
 
-// Picks which IncompleteInterface (if any) a right-click at `pos` should act
-// on. Several interfaces can be incomplete on the same class header line
-// (`class C : IShape, IColor`), so a click landing inside one name's own
-// squiggle span wins that one specifically; otherwise this falls back to the
-// first incomplete interface on the line, same as clicking anywhere else on
-// a Roslyn squiggle line does.
-const EditorTab::IncompleteInterface* FindIncompleteInterfaceAtLine(const EditorTab& tab,
-                                                                     const TextEditor::CursorPosition& pos) {
-    const EditorTab::IncompleteInterface* line_match = nullptr;
-    const std::string line_text = tab.editor.GetLineText(pos.line);
-    for (const auto& entry : tab.incomplete_interfaces) {
-        if (entry.line != pos.line) continue;
-        if (!line_match) line_match = &entry;
-        const int col = HeritageNameColumnOnLine(line_text, entry.interface_name);
-        if (col >= 0 && pos.column >= col &&
-            pos.column <= col + static_cast<int>(entry.interface_name.size())) {
-            return &entry;
-        }
-    }
-    return line_match;
-}
-
-// Draws a VS-Code-style wavy amber underline under the name of every
-// currently-incomplete interface in a class's heritage clause -- matching
-// Roslyn (`class Circle : IShape` underlines IShape, not Circle, and the
-// interface's own file is left untouched since the interface itself is
-// valid) -- plus a tooltip listing what's missing when the mouse hovers it.
-// Purely a rendering overlay -- it never touches the buffer, so it's cheap
-// enough to run every frame off the cached tab.incomplete_interfaces rather
-// than only when hovering.
 void DrawIncompleteInterfaceSquiggles(EditorTab& tab, const ImVec2& editor_min, const ImVec2& editor_max) {
     if (tab.incomplete_interfaces.empty()) return;
 
@@ -871,13 +915,172 @@ void DrawIncompleteInterfaceSquiggles(EditorTab& tab, const ImVec2& editor_min, 
     }
 }
 
-// Builds the stub body inserted for one missing interface method, e.g.:
-//     func Area(x, y) as float
-//         # TODO: implementar
-//     end
-// `indent` is the class body's own indentation (whatever the class already
-// uses), so generated stubs match the surrounding code instead of hardcoding
-// a width the project might not use.
+void DrawDiagnosticSquiggles(EditorTab& tab, const ImVec2& editor_min, const ImVec2& editor_max) {
+    if (tab.diagnostics.empty()) return;
+
+    const float line_height = tab.editor.GetLineHeight();
+    const float glyph_width = tab.editor.GetGlyphWidth();
+    const int first_visible_line = tab.editor.GetFirstVisibleLine();
+    const int last_visible_line = first_visible_line + static_cast<int>((editor_max.y - editor_min.y) / line_height) + 1;
+
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    const ImVec2 mouse = ImGui::GetMousePos();
+
+    for (const auto& diag : tab.diagnostics) {
+        if (diag.line < first_visible_line || diag.line > last_visible_line) continue;
+        if (diag.column_end <= diag.column_start) continue;
+
+        const ImU32 color = DiagnosticSeverityColor(diag.severity);
+        const ImVec2 start = EstimateCaretScreenPos(tab, TextEditor::CursorPosition(diag.line, diag.column_start), editor_min);
+        const float width = glyph_width * static_cast<float>(diag.column_end - diag.column_start);
+        if (start.x + width < editor_min.x || start.x > editor_max.x) continue;
+
+        const float y = start.y + line_height - 3.0f;
+        draw_list->PushClipRect(editor_min, editor_max, true);
+        const float amplitude = 1.6f;
+        const float step = 3.0f;
+        ImVec2 prev(start.x, y);
+        bool up = false;
+        for (float x = step; x <= width + step; x += step) {
+            up = !up;
+            ImVec2 next(start.x + std::min(x, width), y - (up ? amplitude : 0.0f));
+            draw_list->AddLine(prev, next, color, 1.3f);
+            prev = next;
+        }
+        draw_list->PopClipRect();
+
+        const ImVec2 hover_min(start.x, start.y);
+        const ImVec2 hover_max(start.x + width, start.y + line_height);
+        if (!diag.message.empty() && mouse.x >= hover_min.x && mouse.x <= hover_max.x &&
+            mouse.y >= hover_min.y && mouse.y <= hover_max.y &&
+            ImGui::IsMouseHoveringRect(editor_min, editor_max)) {
+            ImGui::BeginTooltip();
+            ImGui::TextColored(palette::FromHex(
+                                    diag.severity == diagnostics::Severity::Error ? palette::kError
+                                    : diag.severity == diagnostics::Severity::Warning ? palette::kWarning
+                                    : diag.severity == diagnostics::Severity::Info ? palette::kInfo
+                                                                                    : palette::kTextDisabled),
+                                "%s", diag.message.c_str());
+            ImGui::EndTooltip();
+        }
+    }
+}
+
+void DrawInlayHints(EditorTab& tab, const ImVec2& editor_min, const ImVec2& editor_max) {
+    if (tab.inlay_hints.empty()) return;
+
+    const float line_height = tab.editor.GetLineHeight();
+    const float glyph_width = tab.editor.GetGlyphWidth();
+    const int first_visible_line = tab.editor.GetFirstVisibleLine();
+    const int last_visible_line = first_visible_line + static_cast<int>((editor_max.y - editor_min.y) / line_height) + 1;
+    const int cursor_line = tab.editor.GetCursorPosition(0).line;
+
+    ImDrawList* draw_list = ImGui::GetForegroundDrawList();
+    const ImU32 hint_color = palette::U32FromHex(palette::kTextDisabled);
+    const ImU32 bg_color = tab.editor.GetPalette().get(TextEditor::Color::background);
+
+    std::unordered_map<int, std::vector<const diagnostics::InlayHint*>> hints_by_line;
+    for (const auto& hint : tab.inlay_hints) {
+        if (hint.line < first_visible_line || hint.line > last_visible_line) continue;
+        hints_by_line[hint.line].push_back(&hint);
+    }
+
+    auto color_at = [](const std::vector<syntax::Token>& tokens, int idx) {
+        for (const auto& t : tokens) {
+            if (idx >= t.start && idx < t.end) return syntax::ColorForToken(t.kind);
+        }
+        return syntax::ColorForToken(syntax::TokenKind::Default);
+    };
+
+    for (auto& [line, hints] : hints_by_line) {
+        std::sort(hints.begin(), hints.end(), [](const diagnostics::InlayHint* a, const diagnostics::InlayHint* b) {
+            return a->column < b->column;
+        });
+        const std::string line_text = tab.editor.GetLineText(line);
+
+        if (line == cursor_line) {
+            for (const diagnostics::InlayHint* hint : hints) {
+                const size_t col = static_cast<size_t>(hint->column);
+                const size_t hint_len = hint->text.size();
+                const size_t available = col < line_text.size() ? line_text.size() - col : 0;
+                bool fits = true;
+                for (size_t k = 0; k < hint_len && k < available; ++k) {
+                    if (line_text[col + k] != ' ' && line_text[col + k] != '\t') { fits = false; break; }
+                }
+                if (!fits) continue;
+                const ImVec2 pos = EstimateCaretScreenPos(tab, TextEditor::CursorPosition(line, hint->column), editor_min);
+                if (pos.x > editor_max.x || pos.x < editor_min.x) continue;
+                draw_list->PushClipRect(editor_min, editor_max, true);
+                draw_list->AddText(pos, hint_color, hint->text.c_str());
+                draw_list->PopClipRect();
+            }
+            continue;
+        }
+
+        const ImVec2 line_start = EstimateCaretScreenPos(tab, TextEditor::CursorPosition(line, 0), editor_min);
+        if (line_start.y + line_height < editor_min.y || line_start.y > editor_max.y) continue;
+        if (line_start.x > editor_max.x) continue;
+
+        const std::vector<syntax::Token> tokens = syntax::Tokenize(line_text);
+
+        draw_list->PushClipRect(editor_min, editor_max, true);
+        draw_list->AddRectFilled(ImVec2(line_start.x, line_start.y), ImVec2(editor_max.x, line_start.y + line_height),
+                                  bg_color);
+
+        float x = line_start.x;
+        int drawn_up_to = 0;
+        const int line_len = static_cast<int>(line_text.size());
+        auto draw_real_range = [&](int from, int to) {
+            int i = from;
+            while (i < to) {
+                const int run_start = i;
+                const ImU32 c = color_at(tokens, i);
+                while (i < to && color_at(tokens, i) == c) ++i;
+                const std::string piece = line_text.substr(static_cast<size_t>(run_start), static_cast<size_t>(i - run_start));
+                if (x <= editor_max.x) draw_list->AddText(ImVec2(x, line_start.y), c, piece.c_str());
+                x += glyph_width * static_cast<float>(piece.size());
+            }
+        };
+
+        for (const diagnostics::InlayHint* hint : hints) {
+            const int col = std::clamp(hint->column, 0, line_len);
+            draw_real_range(drawn_up_to, col);
+            drawn_up_to = col;
+            if (x <= editor_max.x) draw_list->AddText(ImVec2(x, line_start.y), hint_color, hint->text.c_str());
+            x += glyph_width * static_cast<float>(hint->text.size());
+        }
+        draw_real_range(drawn_up_to, line_len);
+
+        draw_list->PopClipRect();
+    }
+}
+
+void AddMissingImport(EditorState& state, EditorTab& tab, const diagnostics::Diagnostic& diag) {
+    if (diag.import_segments.empty()) return;
+
+    std::string joined;
+    for (size_t k = 0; k < diag.import_segments.size(); ++k) {
+        if (k) joined += ".";
+        joined += diag.import_segments[k];
+    }
+
+    int insert_line = 0;
+    const int line_count = static_cast<int>(tab.editor.GetLineCount());
+    while (insert_line < line_count) {
+        const std::string trimmed = TrimTrailing(tab.editor.GetLineText(insert_line));
+        size_t first_non_space = trimmed.find_first_not_of(" \t");
+        if (first_non_space == std::string::npos) break;
+        std::string word;
+        size_t j = first_non_space;
+        if (IsIdentStart(trimmed[j])) word = ReadIdent(trimmed, j);
+        if (word != "import") break;
+        ++insert_line;
+    }
+
+    tab.editor.ReplaceSectionText(insert_line, 0, insert_line, 0, "import " + joined + "\n");
+    RebuildIndexAndTrie(state, tab);
+}
+
 std::string BuildMethodStub(const ClassMember& member, const std::string& indent) {
     std::string params;
     if (member.signature) {
@@ -893,9 +1096,6 @@ std::string BuildMethodStub(const ClassMember& member, const std::string& indent
     return header + "\n" + indent + "    # TODO: implementar\n" + indent + "end\n";
 }
 
-// Inserts a stub for every still-missing member of `entry` right before the
-// class's closing `end`, then rebuilds the index so the squiggle clears once
-// the newly-inserted stubs make the class complete.
 void ImplementMissingInterfaceMembers(EditorState& state, EditorTab& tab,
                                        const EditorTab::IncompleteInterface& entry) {
     const FoldRange* range = tab.fold_index.RangeStartingAt(entry.line);
@@ -916,10 +1116,162 @@ void ImplementMissingInterfaceMembers(EditorState& state, EditorTab& tab,
     RebuildIndexAndTrie(state, tab);
 }
 
-// Everything DrawDotCompletionPopup needs to know, computed *before* tab.editor.Render() runs
-// for this frame -- see the long comment on kDotCompletionNavKeys below for why the split
-// matters (in short: by the time Render() returns, it has already consumed Up/Down/Enter/Tab
-// itself if we don't claim them first).
+struct QuickFix {
+    std::string label;
+    std::function<void()> apply;
+};
+
+void DeleteLineRange(EditorTab& tab, int start_line, int end_line) {
+    const int line_count = static_cast<int>(tab.editor.GetLineCount());
+    if (end_line + 1 < line_count) {
+        tab.editor.ReplaceSectionText(start_line, 0, end_line + 1, 0, "");
+        return;
+    }
+    if (start_line > 0) {
+        const int prev_len = static_cast<int>(tab.editor.GetLineText(start_line - 1).size());
+        const int last_len = static_cast<int>(tab.editor.GetLineText(end_line).size());
+        tab.editor.ReplaceSectionText(start_line - 1, prev_len, end_line, last_len, "");
+        return;
+    }
+    const int last_len = static_cast<int>(tab.editor.GetLineText(end_line).size());
+    tab.editor.ReplaceSectionText(start_line, 0, end_line, last_len, "");
+}
+
+void RemoveUnusedImport(EditorState& state, EditorTab& tab, const diagnostics::Diagnostic& diag) {
+    DeleteLineRange(tab, diag.line, diag.line);
+    RebuildIndexAndTrie(state, tab);
+}
+
+void RenameUnusedVariable(EditorState& state, EditorTab& tab, const diagnostics::Diagnostic& diag) {
+    tab.editor.ReplaceSectionText(diag.line, diag.column_start, diag.line, diag.column_end, "_" + diag.symbol);
+    RebuildIndexAndTrie(state, tab);
+}
+
+void RemoveUnusedVariableDeclaration(EditorState& state, EditorTab& tab, const diagnostics::Diagnostic& diag) {
+    DeleteLineRange(tab, diag.line, diag.line);
+    RebuildIndexAndTrie(state, tab);
+}
+
+void RemoveUnusedMember(EditorState& state, EditorTab& tab, const diagnostics::Diagnostic& diag) {
+    const FoldRange* range = tab.fold_index.RangeStartingAt(diag.line);
+    if (range) DeleteLineRange(tab, range->start_line, range->end_line);
+    else DeleteLineRange(tab, diag.line, diag.line);
+    RebuildIndexAndTrie(state, tab);
+}
+
+void RemoveUnreachableLine(EditorState& state, EditorTab& tab, const diagnostics::Diagnostic& diag) {
+    DeleteLineRange(tab, diag.line, diag.line);
+    RebuildIndexAndTrie(state, tab);
+}
+
+std::vector<QuickFix> CollectQuickFixesAt(EditorState& state, EditorTab& tab, const TextEditor::CursorPosition& pos) {
+    std::vector<QuickFix> fixes;
+
+    for (const auto& entry : tab.incomplete_interfaces) {
+        if (entry.line != pos.line) continue;
+        fixes.push_back({TrFormat("editor.context.implement_interface", entry.interface_name),
+                          [&state, &tab, entry]() { ImplementMissingInterfaceMembers(state, tab, entry); }});
+    }
+
+    for (const auto& diag : tab.diagnostics) {
+        if (diag.line != pos.line) continue;
+
+        switch (diag.kind) {
+            case diagnostics::Kind::MissingImport: {
+                std::string joined;
+                for (size_t k = 0; k < diag.import_segments.size(); ++k) {
+                    if (k) joined += ".";
+                    joined += diag.import_segments[k];
+                }
+                fixes.push_back({TrFormat("editor.context.add_import", joined),
+                                  [&state, &tab, diag]() { AddMissingImport(state, tab, diag); }});
+                break;
+            }
+            case diagnostics::Kind::UnusedImport:
+                fixes.push_back({TrFormat("editor.context.remove_unused_import", diag.symbol),
+                                  [&state, &tab, diag]() { RemoveUnusedImport(state, tab, diag); }});
+                break;
+            case diagnostics::Kind::UnusedVariable:
+                fixes.push_back({TrFormat("editor.context.rename_unused_variable", {diag.symbol, diag.symbol}),
+                                  [&state, &tab, diag]() { RenameUnusedVariable(state, tab, diag); }});
+                fixes.push_back({TrFormat("editor.context.remove_unused_variable", diag.symbol),
+                                  [&state, &tab, diag]() { RemoveUnusedVariableDeclaration(state, tab, diag); }});
+                break;
+            case diagnostics::Kind::UnusedPrivateMember:
+                fixes.push_back({TrFormat("editor.context.remove_unused_member", diag.symbol),
+                                  [&state, &tab, diag]() { RemoveUnusedMember(state, tab, diag); }});
+                break;
+            case diagnostics::Kind::UnreachableCode:
+                fixes.push_back({util::Tr("editor.context.remove_unreachable"),
+                                  [&state, &tab, diag]() { RemoveUnreachableLine(state, tab, diag); }});
+                break;
+            default:
+                break;
+        }
+    }
+
+    return fixes;
+}
+
+void DrawQuickFixGutterIcon(EditorState& state, EditorTab& tab, const ImVec2& editor_min, const ImVec2& editor_max) {
+    const TextEditor::CursorPosition cursor = tab.editor.GetCursorPosition(0);
+    const std::vector<QuickFix> fixes = CollectQuickFixesAt(state, tab, cursor);
+
+    const std::string popup_id = "##quick_fix_popup_" + std::to_string(tab.id);
+
+    const bool shortcut_pressed =
+        ShortcutRegistry::Instance().Pressed(ShortcutId::QuickFix, state.code_editor_has_focus);
+    if (shortcut_pressed && !fixes.empty()) {
+        ImGui::OpenPopup(popup_id.c_str());
+    }
+
+    if (fixes.empty()) return;
+
+    const float line_height = tab.editor.GetLineHeight();
+    const float glyph_width = tab.editor.GetGlyphWidth();
+    const int first_visible_line = tab.editor.GetFirstVisibleLine();
+    if (cursor.line < first_visible_line) return;
+
+    const ImVec2 line_pos = EstimateCaretScreenPos(tab, TextEditor::CursorPosition(cursor.line, 0), editor_min);
+    if (line_pos.y + line_height < editor_min.y || line_pos.y > editor_max.y) return;
+
+    const float gutter_width = EstimateGutterWidth(tab, glyph_width);
+    const ImVec2 bulb_center(editor_min.x + gutter_width - glyph_width * 1.5f, line_pos.y + line_height * 0.5f);
+    const float radius = std::min(line_height, glyph_width * 2.0f) * 0.32f;
+
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    const ImU32 color = palette::U32FromHex(palette::kWarning);
+    draw_list->PushClipRect(editor_min, ImVec2(editor_min.x + gutter_width, editor_max.y), true);
+    draw_list->AddCircleFilled(bulb_center, radius, color);
+    draw_list->AddRectFilled(ImVec2(bulb_center.x - radius * 0.35f, bulb_center.y + radius * 0.6f),
+                              ImVec2(bulb_center.x + radius * 0.35f, bulb_center.y + radius * 1.05f), color);
+    draw_list->PopClipRect();
+
+    const ImVec2 hit_min(bulb_center.x - radius - 2.0f, bulb_center.y - radius - 2.0f);
+    const ImVec2 hit_max(bulb_center.x + radius + 2.0f, bulb_center.y + radius + 2.0f);
+    const ImVec2 mouse = ImGui::GetMousePos();
+    const bool hovered = mouse.x >= hit_min.x && mouse.x <= hit_max.x && mouse.y >= hit_min.y && mouse.y <= hit_max.y &&
+                         ImGui::IsMouseHoveringRect(editor_min, editor_max, false);
+
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        ImGui::OpenPopup(popup_id.c_str());
+    }
+    if (hovered) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted(TrFormat("editor.quickfix.tooltip",
+                                        ShortcutRegistry::Instance().Label(ShortcutId::QuickFix)).c_str());
+        ImGui::EndTooltip();
+    }
+
+    ImGui::SetNextWindowPos(ImVec2(bulb_center.x, line_pos.y + line_height), ImGuiCond_Appearing);
+    if (ImGui::BeginPopup(popup_id.c_str())) {
+        for (const QuickFix& fix : fixes) {
+            if (ImGui::MenuItem(fix.label.c_str())) fix.apply();
+        }
+        ImGui::EndPopup();
+    }
+}
+
 struct DotCompletionPending {
     bool active = false;
     TextEditor::CursorPosition pos{};
@@ -942,22 +1294,11 @@ DotCompletionPending PrepareDotCompletion(EditorState& state, EditorTab& tab) {
     return pending;
 }
 
-// Keys the popup wants for itself instead of the code underneath it: list navigation
-// (Up/Down), accepting a suggestion (Enter/Tab), and dismissing the popup (Escape).
 constexpr ImGuiKey kDotCompletionNavKeys[] = {
     ImGuiKey_DownArrow, ImGuiKey_UpArrow, ImGuiKey_Enter, ImGuiKey_KeypadEnter,
     ImGuiKey_Tab,       ImGuiKey_Escape,
 };
 
-// The popup is drawn *after* tab.editor.Render() (so it can position itself against the
-// editor's current scroll/caret and paint on top of the text), but Render() is a black box
-// from the vendored TextEditor library -- it has no idea this popup exists and will happily
-// treat Down/Up as "move the caret a line", Enter as "insert a newline", Tab as "insert a
-// tab", all *before* our code below even runs. Reading IsKeyPressed() after the fact would
-// still report "yes, Down was pressed" (ImGui doesn't consume key reads), but the caret would
-// already have jumped a line by then. So: while the popup is (or is about to be) showing, zero
-// out these keys' state in ImGui's own key table *before* calling Render(), so the editor
-// widget sees them as not-pressed, and only *we* act on the edge we captured beforehand.
 void ClaimDotCompletionKeys() {
     for (ImGuiKey key : kDotCompletionNavKeys) {
         if (ImGuiKeyData* data = ImGui::GetKeyData(key)) {
@@ -975,16 +1316,10 @@ struct DotCompletionKeys {
     bool dismiss = false;
 };
 
-// Unlike DrawParameterHint/DrawKeywordHint (plain tooltips, never interactive), this draws a
-// real ImGui window with clickable *and* keyboard-navigable rows -- see keys.* for how Up/Down/
-// Enter/Tab/Escape reach here despite the editor widget being rendered first.
 bool DrawDotCompletionPopup(EditorTab& tab, const ImVec2& editor_screen_min,
                             const DotCompletionPending& pending, const DotCompletionKeys& keys) {
     const int count = static_cast<int>(pending.members.size());
 
-    // Reset the selection whenever the popup starts covering a different spot (a new '.', or
-    // the member list changed because the filter after it grew/shrank) so a stale index never
-    // lands on an out-of-range or unrelated row.
     if (tab.dot_popup_line != pending.pos.line || tab.dot_popup_column != pending.pos.column) {
         tab.dot_popup_selected = 0;
         tab.dot_popup_line = pending.pos.line;
@@ -992,8 +1327,6 @@ bool DrawDotCompletionPopup(EditorTab& tab, const ImVec2& editor_screen_min,
     }
 
     if (keys.dismiss) {
-        // Remember this exact caret spot so re-resolving the same members next frame (caret
-        // hasn't moved yet) doesn't just reopen the popup the user just closed.
         tab.dot_popup_line = -1;
         tab.dot_popup_column = -1;
         return false;
@@ -1024,12 +1357,6 @@ bool DrawDotCompletionPopup(EditorTab& tab, const ImVec2& editor_screen_min,
 
     const std::string window_id = "##dot_completion_popup_" + std::to_string(tab.id);
 
-    // Only hide the popup while a mouse press is happening *outside* of it -- e.g. a click to
-    // move the caret elsewhere, or a drag-to-select in the code above/below. If the press
-    // lands inside the popup's own rect (the user clicking a suggestion), keep it open so the
-    // click can land on the Selectable below: unconditionally hiding the window mid-press used
-    // to eat that exact click, because the row's mouse-down had no window left to register
-    // against by the time the mouse went up.
     const bool any_mouse_down = ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
                                  ImGui::IsMouseDown(ImGuiMouseButton_Middle) ||
                                  ImGui::IsMouseDown(ImGuiMouseButton_Right);
@@ -1098,11 +1425,6 @@ void InitTab(EditorState& state, EditorTab& tab) {
     palette[static_cast<size_t>(TextEditor::Color::knownIdentifier)] = palette::U32FromHex(palette::kSynKnownIdentifier);
     palette[static_cast<size_t>(TextEditor::Color::punctuation)] = palette::U32FromHex(palette::kSynPunctuation);
     palette[static_cast<size_t>(TextEditor::Color::preprocessor)] = palette::U32FromHex(palette::kSynClass);
-    // Color::identifier is the engine's own default color for any plain
-    // identifier the colorizer doesn't otherwise recognize (variables,
-    // parameters, anything you type) -- keep it the normal editor text
-    // color. Known interface names get their own slot below instead of
-    // hijacking this one (see patches/imguicolortextedit_interface_name.patch).
     palette[static_cast<size_t>(TextEditor::Color::identifier)] = palette::U32FromHex(palette::kSynIdentifier);
     palette[static_cast<size_t>(TextEditor::Color::interfaceName)] = palette::U32FromHex(palette::kSynInterface);
     palette[static_cast<size_t>(TextEditor::Color::variableName)] = palette::U32FromHex(palette::kSynVariable);
@@ -1113,6 +1435,7 @@ void InitTab(EditorState& state, EditorTab& tab) {
     tab.editor.SetAutoIndentEnabled(true);
     tab.editor.SetShowMatchingBrackets(true);
     tab.editor.SetCompletePairedGlyphs(true);
+    tab.editor.SetShowScrollbarMiniMapEnabled(!state.show_minimap);
 
     tab.editor.SetBoldFont(GetCodeFont());
     tab.editor.SetBoldColors({TextEditor::Color::keyword, TextEditor::Color::declaration});
@@ -1121,6 +1444,7 @@ void InitTab(EditorState& state, EditorTab& tab) {
         tab.dirty = true;
         tab.editor.ClearMarkers();
         tab.index_dirty = true;
+        tab.format_pending = true;
         tab.last_edit_time = ImGui::GetTime();
     }, 0);
 
@@ -1160,12 +1484,9 @@ void CloseTabNow(EditorState& state, int index) {
     if (index < 0 || index >= static_cast<int>(state.tabs.size())) return;
 
     InvalidateDesignerVmCache(state.tabs[index]->id);
-    // Release this tab's contribution to the shared, reference-counted
-    // interface-name table (see UpdateKnownInterfaceNames) -- if some other
-    // open tab still declares the same interface name, its own entry keeps
-    // the refcount above zero and the color survives.
     languages::UpdateKnownInterfaceNames(state.tabs[index]->known_interface_names, {});
     languages::UpdateKnownVariableNames(state.tabs[index]->known_variable_names, {});
+    languages::UpdateKnownClassNames(state.tabs[index]->known_class_names, {});
     state.tabs.erase(state.tabs.begin() + index);
 
     if (state.tabs.empty()) {
@@ -1263,8 +1584,50 @@ EditorTab& OpenWelcomeTab(EditorState& state) {
     return *state.tabs.back();
 }
 
+namespace {
+
+int LeadingWhitespaceLength(const std::string& line) {
+    size_t i = 0;
+    while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
+    return static_cast<int>(i);
+}
+
+void ApplyFormattedText(EditorTab& tab, const std::string& formatted) {
+    const TextEditor::CursorPosition cursor = tab.editor.GetCursorPosition(0);
+    const int original_indent_len = LeadingWhitespaceLength(tab.editor.GetLineText(cursor.line));
+
+    tab.SetText(formatted);
+
+    const int new_line_count = tab.editor.GetLineCount();
+    const int target_line = std::clamp(cursor.line, 0, std::max(0, new_line_count - 1));
+    const std::string new_line = tab.editor.GetLineText(target_line);
+    const int new_indent_len = LeadingWhitespaceLength(new_line);
+
+    const int adjusted_column = target_line == cursor.line
+                                     ? cursor.column - original_indent_len + new_indent_len
+                                     : new_indent_len;
+    const int clamped_column = std::clamp(adjusted_column, 0, static_cast<int>(new_line.size()));
+    tab.editor.SetCursor(target_line, clamped_column);
+}
+
+}
+
+void FormatTab(EditorState& state, EditorTab& tab) {
+    if (tab.is_welcome || tab.is_avaui) return;
+
+    const std::string formatted = languages::FormatAvalangSource(tab.GetText());
+    if (formatted == tab.GetText()) return;
+
+    ApplyFormattedText(tab, formatted);
+    tab.dirty = true;
+    RebuildIndexAndTrie(state, tab);
+    tab.format_pending = false;
+}
+
 void SaveTab(EditorState& state, EditorTab& tab) {
     if (tab.file_path.empty()) return;
+
+    if (state.format_on_save) FormatTab(state, tab);
 
     if (tab.index_dirty) RebuildIndexAndTrie(state, tab);
 
@@ -1551,6 +1914,120 @@ void SelectMatchInEditor(EditorState& state, const std::string& file_path, int l
     tab.editor.ScrollToLine(line - 1, TextEditor::Scroll::alignMiddle);
 }
 
+namespace {
+
+constexpr float kMinimapWidth = 90.0f;
+constexpr float kMinimapGutter = 4.0f;
+constexpr float kMinimapCharWidth = 1.2f;
+constexpr float kMinimapMaxRowHeight = 3.0f;
+constexpr float kMinimapLeftMargin = 3.0f;
+
+bool MinimapTokenIsBlank(const std::string& text, int start, int end) {
+    for (int i = start; i < end; ++i) {
+        if (!std::isspace(static_cast<unsigned char>(text[i]))) return false;
+    }
+    return true;
+}
+
+void ScrollMinimapToLocalY(EditorTab& tab, float local_y, float panel_height, float row_height,
+                            int total_lines) {
+    if (total_lines <= 0) return;
+    local_y = std::clamp(local_y, 0.0f, panel_height);
+    const int target_line = std::clamp(static_cast<int>(local_y / row_height), 0, total_lines - 1);
+    tab.editor.ScrollToLine(target_line, TextEditor::Scroll::alignMiddle);
+}
+
+void DrawEditorMinimap(EditorTab& tab, const ImVec2& size) {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::BeginChild("##editor_minimap", size, false,
+                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
+
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const ImVec2 p1 = ImVec2(p0.x + size.x, p0.y + size.y);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+
+    draw->AddRectFilled(p0, p1, palette::U32FromHex(palette::kSurface));
+    draw->AddLine(p0, ImVec2(p0.x, p1.y), palette::U32FromHex(palette::kBorder));
+
+    const int total_lines = tab.editor.GetLineCount();
+    if (total_lines > 0 && size.y > 0.0f) {
+        float row_height = kMinimapMaxRowHeight;
+        if (static_cast<float>(total_lines) * row_height > size.y) {
+            row_height = size.y / static_cast<float>(total_lines);
+        }
+        row_height = std::max(row_height, 0.05f);
+
+        const int first_visible = tab.editor.GetFirstVisibleLine();
+        const int last_visible = tab.editor.GetLastVisibleLine();
+        const float viewport_y0 = p0.y + static_cast<float>(first_visible) * row_height;
+        const float viewport_y1 = p0.y + static_cast<float>(last_visible + 1) * row_height;
+        draw->AddRectFilled(ImVec2(p0.x, viewport_y0), ImVec2(p1.x, viewport_y1),
+                             palette::U32FromHex(palette::kTextPrimary, 0.10f));
+        draw->AddRect(ImVec2(p0.x, viewport_y0), ImVec2(p1.x, viewport_y1),
+                      palette::U32FromHex(palette::kTextPrimary, 0.30f));
+
+        float last_drawn_y = -1.0f;
+        for (int line = 0; line < total_lines; ++line) {
+            const float y = p0.y + static_cast<float>(line) * row_height;
+            if (y > p1.y) break;
+            if (y - last_drawn_y < 1.0f) continue;  
+            last_drawn_y = y;
+
+            const std::string text = tab.editor.GetLineText(line);
+            if (text.empty()) continue;
+
+            const float block_h = std::max(1.0f, row_height - 0.4f);
+            for (const syntax::Token& token : syntax::Tokenize(text)) {
+                if (MinimapTokenIsBlank(text, token.start, token.end)) continue;
+
+                const float x0 = p0.x + kMinimapLeftMargin + static_cast<float>(token.start) * kMinimapCharWidth;
+                if (x0 >= p1.x) break;
+                const float x1 = std::min(
+                    p0.x + kMinimapLeftMargin + static_cast<float>(token.end) * kMinimapCharWidth, p1.x - 1.0f);
+                if (x1 <= x0) continue;
+
+                ImVec4 color = ImGui::ColorConvertU32ToFloat4(syntax::ColorForToken(token.kind));
+                color.w = 0.8f;  
+                draw->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + block_h),
+                                     ImGui::ColorConvertFloat4ToU32(color));
+            }
+        }
+
+        if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            tab.minimap_dragging = true;
+        }
+        if (tab.minimap_dragging) {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                ScrollMinimapToLocalY(tab, ImGui::GetMousePos().y - p0.y, size.y, row_height, total_lines);
+            } else {
+                tab.minimap_dragging = false;
+            }
+        }
+    }
+
+    ImGui::EndChild();
+}
+
+}
+
+std::vector<ProblemEntry> CollectDiagnosticProblems(const EditorState& state) {
+    std::vector<ProblemEntry> entries;
+    for (const auto& tab : state.tabs) {
+        if (!tab || tab->is_welcome || tab->file_path.empty()) continue;
+        for (const auto& diag : tab->diagnostics) {
+            ProblemEntry entry;
+            entry.file = tab->file_path;
+            entry.line = diag.line + 1;
+            entry.column = diag.column_start + 1;
+            entry.message = diag.message;
+            entry.severity = diag.severity;
+            entries.push_back(std::move(entry));
+        }
+    }
+    return entries;
+}
+
 void DrawEditorPanel(EditorState& state) {
     state.workspace_index.Poll();
 
@@ -1612,6 +2089,7 @@ void DrawEditorPanel(EditorState& state) {
             }
             if (selected) {
                 MaybeRebuildIndex(state, tab);
+                if (state.format_on_type) MaybeAutoFormatOnType(state, tab);
 
                 if (tab.is_welcome) {
                     DrawWelcomeTab(state);
@@ -1646,11 +2124,13 @@ void DrawEditorPanel(EditorState& state) {
                     }
                     ImVec2 avail = ImGui::GetContentRegionAvail();
 
+                    const bool show_minimap = state.show_minimap;
+                    const float minimap_reserved = show_minimap ? (kMinimapWidth + kMinimapGutter) : 0.0f;
+                    avail.x = std::max(avail.x - minimap_reserved, 0.0f);
+
                     const ImVec2 editor_min = ImGui::GetCursorScreenPos();
                     const ImVec2 editor_max = ImVec2(editor_min.x + avail.x, editor_min.y + avail.y);
 
-                    // Must be computed, and the keys it wants must be claimed, *before*
-                    // Render() below -- see the comments on ClaimDotCompletionKeys().
                     const DotCompletionPending dot_pending = PrepareDotCompletion(state, tab);
                     DotCompletionKeys dot_keys;
                     if (dot_pending.active) {
@@ -1663,26 +2143,15 @@ void DrawEditorPanel(EditorState& state) {
                         ClaimDotCompletionKeys();
                     }
 
-                    // The known-interface-names table is shared across every open tab and
-                    // can change from some *other* tab's index rebuild (a newly opened
-                    // interface, a rename, a tab closing) -- but the vendored editor only
-                    // colorizes on SetText()/typed edits, so catch up here before drawing
-                    // whenever this tab's own last colorize predates the current
-                    // generation (see KnownInterfaceNamesGeneration()'s header comment).
                     if (tab.colored_interface_generation != languages::KnownInterfaceNamesGeneration() ||
-                        tab.colored_variable_generation != languages::KnownVariableNamesGeneration()) {
+                        tab.colored_variable_generation != languages::KnownVariableNamesGeneration() ||
+                        tab.colored_class_generation != languages::KnownClassNamesGeneration()) {
                         tab.editor.SetLanguage(languages::AvaLang());
                         tab.colored_interface_generation = languages::KnownInterfaceNamesGeneration();
                         tab.colored_variable_generation = languages::KnownVariableNamesGeneration();
+                        tab.colored_class_generation = languages::KnownClassNamesGeneration();
                     }
 
-                    // --- Editor zoom: Ctrl+mouse wheel and keyboard shortcuts ------------
-                    // Must run *before* Render() -- see ClampEditorZoom's comment on why
-                    // ImGui::SetWindowFontScale() here is enough to scale the vendored
-                    // editor's text. Left active through the squiggles/hover-popup code
-                    // below (they measure text against the same zoomed font) and reset to
-                    // 1.0f right before EndTabItem() so it never leaks into the tab bar or
-                    // any tab drawn afterward.
                     const bool zoom_hover = ImGui::IsMouseHoveringRect(editor_min, editor_max);
                     const bool zoom_key_scope = state.code_editor_has_focus || zoom_hover;
                     const ImGuiIO& zoom_io = ImGui::GetIO();
@@ -1706,7 +2175,18 @@ void DrawEditorPanel(EditorState& state) {
 
                     tab.editor.Render("##editor", avail, false);
                     state.code_editor_has_focus = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
+
+                    if (show_minimap) {
+                        ImGui::SameLine(0.0f, kMinimapGutter);
+                        DrawEditorMinimap(tab, ImVec2(kMinimapWidth, avail.y));
+                    }
+
+                    if (state.show_inlay_hints) {
+                        DrawInlayHints(tab, editor_min, editor_max);
+                    }
                     DrawIncompleteInterfaceSquiggles(tab, editor_min, editor_max);
+                    DrawDiagnosticSquiggles(tab, editor_min, editor_max);
+                    DrawQuickFixGutterIcon(state, tab, editor_min, editor_max);
 
                     const bool goto_def_hover = ImGui::IsMouseHoveringRect(editor_min, editor_max);
                     const bool goto_def_key =
@@ -1726,12 +2206,6 @@ void DrawEditorPanel(EditorState& state) {
                         JumpToDefinition(state, tab, hover_target);
                     }
 
-                    // The vendored editor only moves its own text cursor on left clicks (see its
-                    // handling of ImGuiMouseButton_Right in TextEditor.cpp) -- record where a
-                    // right click actually landed ourselves, on the exact frame it happens, so
-                    // the context menu below can resolve "Ir a la definición" against the word
-                    // under the cursor the user right-clicked, not wherever the blinking text
-                    // cursor was last left (typically wherever they were previously typing).
                     if (ImGui::IsMouseHoveringRect(editor_min, editor_max) &&
                         ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
                         tab.context_menu_click_valid = true;
@@ -1742,20 +2216,18 @@ void DrawEditorPanel(EditorState& state) {
                                                                       : tab.editor.GetCursorPosition(0);
                     DefinitionTarget menu_target;
                     const bool menu_has_definition = ResolveDefinitionTarget(state, tab, menu_pos, menu_target);
-                    const EditorTab::IncompleteInterface* menu_incomplete_interface =
-                        FindIncompleteInterfaceAtLine(tab, menu_pos);
+                    const std::vector<QuickFix> menu_quick_fixes = CollectQuickFixesAt(state, tab, menu_pos);
 
-                    // Right-click context menu, VS/VS Code style. BeginPopupContextItem
-                    // attaches to the last item, i.e. the "##editor" child Render() just drew.
                     if (ImGui::BeginPopupContextItem("##editor_context_menu")) {
                         const std::string goto_def_label = ShortcutRegistry::Instance().Label(ShortcutId::GotoDefinition);
                         if (ImGui::MenuItem(util::Tr("editor.context.goto_definition").c_str(), goto_def_label.c_str(),
                                             false, menu_has_definition)) {
                             JumpToDefinition(state, tab, menu_target);
                         }
-                        if (menu_incomplete_interface) {
-                            if (ImGui::MenuItem(util::Tr("editor.context.implement_interface").c_str())) {
-                                ImplementMissingInterfaceMembers(state, tab, *menu_incomplete_interface);
+                        if (!menu_quick_fixes.empty()) {
+                            ImGui::Separator();
+                            for (const QuickFix& fix : menu_quick_fixes) {
+                                if (ImGui::MenuItem(fix.label.c_str())) fix.apply();
                             }
                         }
                         ImGui::Separator();
@@ -1783,12 +2255,10 @@ void DrawEditorPanel(EditorState& state) {
                             const bool dot_popup_drawn =
                                 dot_pending.active &&
                                 DrawDotCompletionPopup(tab, editor_min, dot_pending, dot_keys);
-                            if (!dot_popup_drawn) DrawKeywordHint(tab);
+                            if (!dot_popup_drawn) DrawKeywordHint(state, tab, editor_min);
                         }
                     }
 
-                    // Reset the zoom applied above before EndTabItem() -- see the comment
-                    // by ImGui::SetWindowFontScale(tab.zoom) above.
                     ImGui::SetWindowFontScale(1.0f);
                 }
                 ImGui::EndTabItem();

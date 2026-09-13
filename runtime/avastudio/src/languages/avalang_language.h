@@ -48,6 +48,11 @@ void UpdateKnownVariableNames(const std::unordered_set<std::string>& removed,
 
 int KnownVariableNamesGeneration();
 
+void UpdateKnownClassNames(const std::unordered_set<std::string>& removed,
+                            const std::unordered_set<std::string>& added);
+
+int KnownClassNamesGeneration();
+
 // Scans `text` for every NAME that AvaLangTokenizer would color as
 // Color::variableName -- a plain or augmented assignment target
 // (`x = ...`, `x += ...`), a typed declaration/assignment (`x as Type`),

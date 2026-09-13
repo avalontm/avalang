@@ -270,17 +270,56 @@ three patches need to be manually updated against the new state of
 moved..." section above for an example of how this was
 diagnosed/fixed last time.
 
+## imguicolortextedit_smart_backspace_pair.patch
+
+`ImGuiColorTextEdit` (goossens fork) already auto-closes paired
+glyphs -- `(`, `[`, `{`, `'`, `"` -- and already wraps a selection
+with a pair when you type an opener over it (`completePairedGlyphs`,
+on by default; Ava Studio also turns it on explicitly in
+`editor_panel.cpp`'s `InitEditorPanel` via `SetCompletePairedGlyphs`).
+So "auto-close brackets/quotes + surround selection" from
+`ide_checklist.md` section 1 was already implemented and enabled --
+the checklist entry marking it `[ ]` was wrong.
+
+What was still missing: pressing Backspace right after an
+auto-inserted empty pair (cursor sitting between `(` and `)`, or `"`
+and `"`, with nothing typed in between) only deleted the opener,
+leaving the stray closer behind -- unlike VS Code/JetBrains-style
+"smart backspace", which removes both in one keystroke.
+
+This patch:
+- In `handleBackspace`, for a cursor with no selection, checks
+  whether the glyph immediately to the left and the glyph
+  immediately to the right of the cursor form a matching pair
+  (`CodePoint::isMatchingPair`, already used elsewhere in the file).
+  If they do (and `completePairedGlyphs` is on, and it's not a
+  word-mode/Ctrl+Backspace delete), it extends the delete range to
+  include the closer too, via `document.getRight`.
+- Doesn't touch anything else: word-mode backspace, backspace with an
+  active selection, and backspace next to non-matching or
+  non-adjacent glyphs behave exactly as before.
+- `document.getCodePoint` already returns
+  `IM_UNICODE_CODEPOINT_INVALID` past the end of a line, so this is
+  safe at start/end of line without an extra bounds check.
+
+Note this triggers on *any* adjacent matching pair, not only ones the
+editor itself auto-inserted (the library doesn't track provenance per
+pair) -- same as VS Code's smart backspace, which does the same thing
+by adjacency, not by history.
+
 ## Application order
-`CMakeLists.txt` applies all six patches in a single call to
+`CMakeLists.txt` applies all seven patches in a single call to
 `git apply` (it accepts multiple files and applies them in order on
 the clean clone): `imguicolortextedit_interpolation.patch`,
 `imguicolortextedit_bold_keywords.patch`,
 `imguicolortextedit_doc_comment.patch`,
 `imguicolortextedit_import_path.patch`,
-`imguicolortextedit_interface_name.patch`, then
-`imguicolortextedit_variable_name.patch`. They don't overlap -- each
-touches a distinct part of the file (or, for the last four, appends
-its own enum entry and palette lines right after the previous
-patch's) -- but if another patch is ever added, keep the order and
-test `git apply patch1 patch2 patch3 patch4 patch5 patch6` by hand on
-a clean clone before pushing it (see AvaStudio.md).
+`imguicolortextedit_interface_name.patch`,
+`imguicolortextedit_variable_name.patch`, then
+`imguicolortextedit_smart_backspace_pair.patch`. They don't overlap --
+each touches a distinct part of the file (or, for four of them,
+appends its own enum entry and palette lines right after the previous
+patch's), and the last one only touches `handleBackspace`, which none
+of the others go near -- but if another patch is ever added, keep the
+order and test `git apply patch1 patch2 ... patchN` by hand on a
+clean clone before pushing it (see AvaStudio.md).

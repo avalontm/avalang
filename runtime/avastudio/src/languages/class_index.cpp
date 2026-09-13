@@ -20,6 +20,108 @@ void ClassIndex::Rebuild(const std::string& text, const std::string& current_fil
 
     std::unordered_set<std::string> visited;
     ScanImports(text, current_file_dir, visited, cache, stdlib_dir);
+
+    AddNativeSystemNamespaces();
+}
+
+namespace {
+
+ClassMethodInfo NativeMethod(const std::string& owner, const std::string& name,
+                              std::vector<std::string> params, const std::string& doc) {
+    FunctionSignature sig;
+    sig.name = name;
+    sig.params = std::move(params);
+    sig.is_builtin = true;
+    std::string display = name + "(";
+    for (size_t i = 0; i < sig.params.size(); ++i) {
+        if (i) display += ", ";
+        display += sig.params[i];
+    }
+    display += ")";
+    sig.display = owner + "." + display;
+    sig.doc = doc;
+    for (const auto& p : sig.params) {
+        if (p.find('=') == std::string::npos) sig.min_args++;
+    }
+
+    ClassMethodInfo info;
+    info.signature = std::move(sig);
+    info.is_static = true;
+    return info;
+}
+
+void AddNativeField(ClassInfo& info, const std::string& name, const std::string& declared_type) {
+    ClassAttributeInfo attr;
+    attr.is_static = true;
+    attr.declared_type = declared_type;
+    info.attributes[name] = std::move(attr);
+}
+
+}  // namespace
+
+void ClassIndex::AddNativeSystemNamespaces() {
+    auto seed = [&](const std::string& name, std::vector<std::pair<std::string, ClassMethodInfo>> methods,
+                     std::vector<std::pair<std::string, std::string>> fields = {}) {
+        if (classes_.count(name)) return;  // a real user-defined class of this name wins
+        ClassInfo info;
+        info.name = name;
+        for (auto& [mname, minfo] : methods) info.methods[mname] = std::move(minfo);
+        for (auto& [fname, ftype] : fields) AddNativeField(info, fname, ftype);
+        classes_[name] = std::move(info);
+    };
+
+    seed("Console", {
+        {"Write", NativeMethod("Console", "Write", {"value"}, "Writes value's display text with no trailing newline.")},
+        {"WriteLine", NativeMethod("Console", "WriteLine", {"value"}, "Writes value's display text followed by a newline.")},
+        {"WriteError", NativeMethod("Console", "WriteError", {"value"}, "Writes value's display text to stderr, followed by a newline.")},
+        {"ReadLine", NativeMethod("Console", "ReadLine", {}, "Reads one line of input.")},
+        {"ForegroundColor", NativeMethod("Console", "ForegroundColor", {"color"}, "Sets the terminal text color (Console.Colors.*). Returns false on an unrecognized name.")},
+        {"ResetColor", NativeMethod("Console", "ResetColor", {}, "Resets the terminal text color to default.")},
+    });
+
+    seed("Environment", {
+        {"GetEnvironmentVariable", NativeMethod("Environment", "GetEnvironmentVariable", {"name"}, "Returns the value of environment variable name, or nil if unset.")},
+        {"SetEnvironmentVariable", NativeMethod("Environment", "SetEnvironmentVariable", {"name", "value"}, "Sets environment variable name to value.")},
+        {"GetCurrentDirectory", NativeMethod("Environment", "GetCurrentDirectory", {}, "Returns the process's current working directory.")},
+        {"SetCurrentDirectory", NativeMethod("Environment", "SetCurrentDirectory", {"path"}, "Changes the process's current working directory.")},
+        {"GetCommandLineArgs", NativeMethod("Environment", "GetCommandLineArgs", {}, "Returns the process's command-line arguments as a list.")},
+    });
+
+    seed("DateTime", {
+        {"Now", NativeMethod("DateTime", "Now", {}, "Returns the current date/time as a Dict (UTC in practice -- see source comment).")},
+        {"UtcNow", NativeMethod("DateTime", "UtcNow", {}, "Same as Now() -- the PAL clock is already UTC.")},
+        {"ToString", NativeMethod("DateTime", "ToString", {"dt"}, "Formats a DateTime Dict as ISO 8601 (YYYY-MM-DDTHH:MM:SS.mmmZ).")},
+        {"Sleep", NativeMethod("DateTime", "Sleep", {"ms"}, "Blocks the current thread for ms milliseconds.")},
+    }, {});
+
+    seed("File", {
+        {"ReadAllText", NativeMethod("File", "ReadAllText", {"path"}, "Returns the file's full text, or nil if it can't be read.")},
+        {"WriteAllText", NativeMethod("File", "WriteAllText", {"path", "content"}, "Writes content to path, overwriting it. Returns true on success.")},
+        {"Delete", NativeMethod("File", "Delete", {"path"}, "Deletes the file at path. Returns true on success.")},
+        {"Exists", NativeMethod("File", "Exists", {"path"}, "True if path exists and is a file (not a directory).")},
+        {"Size", NativeMethod("File", "Size", {"path"}, "Returns the file's size in bytes, or nil if it doesn't exist.")},
+    });
+
+    seed("Directory", {
+        {"Create", NativeMethod("Directory", "Create", {"path"}, "Creates the directory at path. Returns true on success.")},
+        {"Delete", NativeMethod("Directory", "Delete", {"path"}, "Deletes the directory at path. Returns true on success.")},
+        {"Exists", NativeMethod("Directory", "Exists", {"path"}, "True if path exists and is a directory (not a file).")},
+        {"Enumerate", NativeMethod("Directory", "Enumerate", {"path"}, "Returns a list of {Name, IsDirectory} Dicts for path's entries, or nil on failure.")},
+    });
+
+    seed("IO", {}, {
+        {"File", "File"},
+        {"Directory", "Directory"},
+    });
+
+    seed("Process", {
+        {"Start", NativeMethod("Process", "Start", {"command", "args"}, "Launches command with args (a list) and blocks until it exits. Returns {ExitCode, Stdout, Stderr}, or nil if it couldn't be launched.")},
+        {"GetCurrentId", NativeMethod("Process", "GetCurrentId", {}, "Returns this process's PID.")},
+    });
+
+    seed("Diagnostics", {}, {
+        {"Process", "Process"},
+    });
 }
 
 namespace {
@@ -30,9 +132,7 @@ void RecordAttribute(ClassInfo& info, const std::string& attr_name, bool is_stat
     attr.is_static = attr.is_static || is_static;
     attr.is_private = attr.is_private || is_private;
     if (!declared_type.empty()) attr.declared_type = declared_type;
-    // First sighting wins (matches methods/classes: "if not already present,
-    // insert") -- a class-body declaration should win the jump target over a
-    // later `this.x = ...` assignment inside a constructor for the same name.
+
     if (attr.line == 0 && line > 0) attr.line = line;
 }
 
@@ -52,10 +152,6 @@ void ConsumeModifiers(const std::string& body, size_t& i, bool& is_static, bool&
     }
 }
 
-// Skips whitespace, newlines and `#` comments starting at i (without
-// mutating i) and returns the identifier word found there, or "" if the
-// next meaningful token isn't an identifier (e.g. `end` of an outer block,
-// EOF, or punctuation).
 std::string PeekNextWord(const std::string& body, size_t i) {
     for (;;) {
         while (i < body.size() && (body[i] == ' ' || body[i] == '\t' || body[i] == '\r' || body[i] == '\n')) ++i;
@@ -407,10 +503,6 @@ void ClassIndex::ScanText(const std::string& text, const std::string& source_fil
             std::string class_name = ReadIdent(text, i);
             SkipInlineWhitespace(text, i);
 
-            // `class Name : Base, IA, IB` / `interface Name : IA, IB`: a
-            // comma-separated heritage list (AvaLang_Plan_Interfaces.md,
-            // Fase 1). Keep the full list so implemented/extended interfaces
-            // contribute members too, not just a single base class.
             std::vector<std::string> heritage_names;
             if (i < text.size() && text[i] == ':') {
                 size_t colon = i;
@@ -521,22 +613,9 @@ std::string ClassIndex::ResolveImportPath(const std::vector<std::string>& module
 std::vector<ClassMember> ClassIndex::FlattenedMembers(const std::string& class_name,
                                                        const ClassIndex* fallback) const {
     std::vector<ClassMember> result;
-    // Maps member name -> index into `result`. Normally "first sighting
-    // wins" (see below), but a concrete method encountered later must still
-    // replace an earlier abstract interface signature of the same name --
-    // otherwise `class C : IArea, Base` where only Base actually implements
-    // Area() would incorrectly report Area() as unimplemented just because
-    // the interface happened to be listed first in the heritage clause.
     std::unordered_map<std::string, size_t> seen;
     std::unordered_set<std::string> visited_classes;
 
-    // BFS over the whole heritage graph, not just a single base chain: a
-    // class can implement several interfaces (`class C : Base, IA, IB`) and
-    // an interface can extend several more (`interface IB : IA, IC`), with
-    // diamonds allowed (AvaLang_Plan_Interfaces.md, Fase 1 "diamond").
-    // visited_classes dedups so a diamond is only walked once; closest
-    // declaration wins for any given member name via the `seen` set below,
-    // same "first sighting wins" rule used inside a single class body.
     std::vector<std::string> queue = {class_name};
     size_t head = 0;
     while (head < queue.size()) {
@@ -562,9 +641,6 @@ std::vector<ClassMember> ClassIndex::FlattenedMembers(const std::string& class_n
                 seen[name] = result.size();
                 result.push_back(std::move(member));
             } else if (result[it->second].is_abstract && !method_info.is_abstract) {
-                // A later, more distant declaration turned out to actually
-                // implement what an earlier one only declared -- overwrite in
-                // place so MissingInterfaceMembers below doesn't flag it.
                 ClassMember& member = result[it->second];
                 member.is_method = true;
                 member.is_static = method_info.is_static;
@@ -597,15 +673,15 @@ std::vector<ClassMember> ClassIndex::FlattenedMembers(const std::string& class_n
     return result;
 }
 
-std::vector<ClassMember> ClassIndex::MissingInterfaceMembers(const std::string& class_name) const {
+std::vector<ClassMember> ClassIndex::MissingInterfaceMembers(const std::string& class_name,
+                                                               const ClassIndex* fallback) const {
     std::vector<ClassMember> result;
 
     const ClassInfo* info = Find(class_name);
-    // An interface is itself allowed to leave signatures unimplemented --
-    // only a concrete `class` is expected to close them all out.
+    if (!info && fallback) info = fallback->Find(class_name);
     if (!info || info->is_interface) return result;
 
-    for (auto& member : FlattenedMembers(class_name)) {
+    for (auto& member : FlattenedMembers(class_name, fallback)) {
         if (member.is_method && member.is_abstract) result.push_back(std::move(member));
     }
     return result;

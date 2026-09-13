@@ -116,7 +116,19 @@ RunResult EngineBridge::RunScript(const std::string& source, const std::string& 
         "Run #" + std::to_string(run_count_) + " " +
         (source_name.empty() ? std::string("<script>") : source_name)});
 
-    ava_vm_set_current_dir(vm_, DirOf(source_name).c_str());
+    const std::string script_dir = DirOf(source_name);
+    ava_vm_set_current_dir(vm_, script_dir.c_str());
+    // Sin esto, el harvesting de clases en tiempo de compilacion
+    // (Compiler::RegisterImportedClasses) no tiene forma de encontrar una
+    // carpeta hermana de otra que ya se importo (ej. "import Models" cuyo
+    // Dog.ava hace a su vez "import Interfaces", con Interfaces/ hermana de
+    // Models/, no adentro) -- el unico fallback que le queda es el cwd real
+    // del proceso, que en AvaStudio es donde vive el .exe, no la carpeta del
+    // proyecto. avacli ya registra esto (ver runtime/avacli/src/main.cpp);
+    // aca faltaba el equivalente.
+    if (!script_dir.empty()) {
+        ava_vm_add_search_path(vm_, script_dir.c_str());
+    }
 
     char* compile_error = nullptr;
     AvaModule* module = ava_compile(vm_, source.c_str(), source_name.c_str(), &compile_error);
@@ -188,7 +200,11 @@ RunResult EngineBridge::RunScript(const std::string& source, const std::string& 
 RunResult EngineBridge::CheckScript(const std::string& source, const std::string& source_name) {
     RunResult result;
 
-    ava_vm_set_current_dir(vm_, DirOf(source_name).c_str());
+    const std::string script_dir = DirOf(source_name);
+    ava_vm_set_current_dir(vm_, script_dir.c_str());
+    if (!script_dir.empty()) {
+        ava_vm_add_search_path(vm_, script_dir.c_str());
+    }
 
     char* compile_error = nullptr;
     AvaModule* module = ava_compile(vm_, source.c_str(), source_name.c_str(), &compile_error);

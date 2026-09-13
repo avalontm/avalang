@@ -1,0 +1,77 @@
+class Console
+    static func Write(text) end
+    static func WriteLine(text) end
+    static func WriteError(text) end
+    static func ReadLine() end
+    static func ForegroundColor(color) as bool end
+    static func ResetColor() end
+    static Colors as ConsoleColors
+end
+
+class ConsoleColors
+    static Default as string
+    static Black as string
+    static Red as string
+    static Green as string
+    static Yellow as string
+    static Blue as string
+    static Magenta as string
+    static Cyan as string
+    static White as string
+end
+
+class DateTime
+    static func Now() as DateTimeValue end
+    static func UtcNow() as DateTimeValue end
+    static func ToString(value) as string end
+    static func Sleep(ms) end
+end
+
+class DateTimeValue
+    Year as float
+    Month as float
+    Day as float
+    Hour as float
+    Minute as float
+    Second as float
+    Millisecond as float
+    DayOfWeek as float
+    Ticks as float
+end
+
+class Environment
+    static func GetEnvironmentVariable(name) as string end
+    static func SetEnvironmentVariable(name, value) as bool end
+    static func GetCurrentDirectory() as string end
+    static func SetCurrentDirectory(path) as bool end
+    static func GetCommandLineArgs() as list end
+end
+
+class IO
+    static File as File
+    static Directory as Directory
+end
+
+class File
+    static func ReadAllText(path) as string end
+    static func WriteAllText(path, content) as bool end
+    static func Delete(path) as bool end
+    static func Exists(path) as bool end
+    static func Size(path) as float end
+end
+
+class Directory
+    static func Create(path) as bool end
+    static func Delete(path) as bool end
+    static func Exists(path) as bool end
+    static func Enumerate(path) as list end
+end
+
+class Diagnostics
+    static Process as Process
+end
+
+class Process
+    static func Start(command, args) as dict end
+    static func GetCurrentId() as float end
+end

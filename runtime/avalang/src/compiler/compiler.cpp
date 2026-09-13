@@ -4,6 +4,7 @@
 #include "../builtins/builtin_names.h"
 #include "../frontend/frontend.h"
 #include "../vm/vm_platform_accessor.h"
+#include "../vm/module.h"
 #include <stdexcept>
 #include <cstdio>
 #include <unordered_set>
@@ -3286,6 +3287,16 @@ void Compiler::CompileMultiAssign(const MultiAssignStmt* stmt) {
     }
 }
 
+static std::string JoinParamNames(const std::vector<std::string>& params) {
+    if (params.empty()) return "no parameters";
+    std::string out;
+    for (size_t i = 0; i < params.size(); ++i) {
+        if (i > 0) out += ", ";
+        out += params[i];
+    }
+    return out;
+}
+
 void Compiler::CompileInterface(const InterfaceDef* iface) {
     if (compiled_classes_.count(iface->name) || compiled_interfaces_.count(iface->name)) {
         throw AvaError("'" + iface->name + "' is already defined", iface->line, iface->col, source_name_);
@@ -3664,12 +3675,14 @@ void Compiler::CompileClass(const ClassDef* cls) {
             }
         }
     }
+    std::unordered_map<std::string, FuncDef*> own_method_defs;
     for (auto& stmt : cls->body) {
         auto* f = dynamic_cast<FuncDef*>(stmt.get());
         if (!f) continue;
 
         bool is_ctor = f->name == cls->name;
         std::string method_name = is_ctor ? "__init__" : f->name;
+        if (!is_ctor) own_method_defs[method_name] = f;
 
         if (f->is_override) {
             if (is_ctor) {
@@ -3812,6 +3825,34 @@ void Compiler::CompileClass(const ClassDef* cls) {
                                         "' but does not define method '" + sig_name + "'",
                                     cls->line, cls->col, source_name_);
                 }
+
+                auto sig_it = iface->signatures.find(sig_name);
+                if (sig_it == iface->signatures.end()) continue;
+                const InterfaceMethodSig& expected = sig_it->second;
+
+                auto own_it = own_method_defs.find(sig_name);
+                if (own_it == own_method_defs.end()) {
+                    continue;
+                }
+                FuncDef* impl = own_it->second;
+
+                bool impl_explicit_this = !impl->params.empty() && impl->params[0].first == "this";
+                size_t impl_param_count = impl->params.size() - (impl_explicit_this ? 1 : 0);
+                size_t expected_param_count = expected.params.size();
+
+                if (impl_param_count != expected_param_count) {
+                    std::string msg = "method '" + sig_name + "' in class '" + cls->name +
+                        "' does not match the signature required by interface '" + iface->name + "': " +
+                        "interface declares " + std::to_string(expected_param_count) +
+                        (expected_param_count == 1 ? " parameter" : " parameters") +
+                        " (" + JoinParamNames(expected.params) + "), but '" + cls->name + "." + sig_name +
+                        "' takes " + std::to_string(impl_param_count) +
+                        (impl_param_count == 1 ? " parameter" : " parameters") +
+                        " -- update '" + sig_name + "' in class '" + cls->name +
+                        "' so its parameter count matches the interface declaration in '" +
+                        iface->name + "'";
+                    throw AvaError(msg, impl->line, impl->col, source_name_);
+                }
             }
         }
     }
@@ -3855,7 +3896,7 @@ void Compiler::CompileClass(const ClassDef* cls) {
 }
 
 void Compiler::CompileImport(const ImportStmt* stmt) {
-    if (stmt->alias.empty() && stmt->module_path.size() == 1) {
+    if (stmt->alias.empty()) {
         has_wildcard_import_ = true;
     }
 
@@ -3880,8 +3921,8 @@ void Compiler::CompileImport(const ImportStmt* stmt) {
 
     FreeRegs(4);
 
-    if (stmt->alias.empty() && stmt->module_path.size() == 1) {
-        RegisterImportedClasses(stmt->module_path[0]);
+    if (stmt->alias.empty()) {
+        RegisterImportedClasses(full_path);
     }
 }
 
@@ -3893,15 +3934,6 @@ void Compiler::AutoImportSiblings(const std::vector<std::shared_ptr<StmtNode>>& 
     if (current_file_dir_.empty()) return;
 
     std::string self_name = std::filesystem::path(source_name_).filename().string();
-
-    // When compiling a folder/namespace import, the VM already concatenates every
-    // loose .ava file in the directory into this single compilation unit under the
-    // synthetic name "(namespace).ava" (see vm_import.cpp). Since that name never
-    // matches a real sibling filename, the self-exclusion check below would fail to
-    // recognize any of them as "self" and would re-import each one as a sibling,
-    // redeclaring every class a second time. All siblings are already part of this
-    // source, so there is nothing left to auto-import.
-    if (self_name == "(namespace).ava") return;
 
     std::unordered_set<std::string> already_imported;
     for (auto& stmt : statements) {
@@ -3949,20 +3981,52 @@ std::vector<std::string> ListLooseAvaFiles(const std::string& dir) {
     return result;
 }
 
+std::string ModuleDottedPathToFilePath(const std::string& module_name) {
+    std::string result = module_name;
+    for (char& c : result) {
+        if (c == '.') c = std::filesystem::path::preferred_separator;
+    }
+    return result;
+}
+
 std::vector<std::string> ResolveSiblingImportFiles(const std::string& module_name, const std::string& current_dir) {
     auto& fsys = VmPlatformAccessor::Get().FileSystem();
-    std::string base = current_dir.empty() ? std::string(".") : current_dir;
+    std::string file_path = ModuleDottedPathToFilePath(module_name);
 
-    std::string candidate = JoinDirPath(base, module_name + ".ava");
-    if (fsys.Exists(candidate)) return {candidate};
+    auto try_base = [&](const std::string& base) -> std::vector<std::string> {
+        std::string root = base.empty() ? std::string(".") : base;
 
-    std::string module_dir = JoinDirPath(base, module_name);
-    candidate = JoinDirPath(module_dir, "index.ava");
-    if (fsys.Exists(candidate)) return {candidate};
+        std::string candidate = JoinDirPath(root, file_path + ".ava");
+        if (fsys.Exists(candidate)) return {candidate};
 
-    if (fsys.IsDirectory(module_dir)) {
-        auto loose = ListLooseAvaFiles(module_dir);
-        if (!loose.empty()) return loose;
+        std::string module_dir = JoinDirPath(root, file_path);
+        candidate = JoinDirPath(module_dir, "index.ava");
+        if (fsys.Exists(candidate)) return {candidate};
+
+        return {};
+    };
+
+    auto found = try_base(current_dir);
+    if (!found.empty()) return found;
+
+    // A file imported by dotted path (e.g. "Models.Dog") can itself import a
+    // sibling folder's file (e.g. "Interfaces.IAnimal") that sits next to
+    // Models, not inside it -- current_dir at that point is Models/, not the
+    // project root, so it won't be found there. Fall back to the
+    // project/script root(s) registered via ModuleResolver::AddSearchPath
+    // (avacli and AvaStudio both register the entry script's directory),
+    // which is what the real runtime import (ModuleResolver::ResolveModulePath)
+    // already searches successfully.
+    for (const auto& root : GlobalSearchRoots::Get()) {
+        if (root == current_dir) continue;
+        found = try_base(root);
+        if (!found.empty()) return found;
+    }
+
+    const std::string cwd = VmPlatformAccessor::Get().Environment().GetCurrentDirectory();
+    if (cwd != current_dir) {
+        found = try_base(cwd);
+        if (!found.empty()) return found;
     }
 
     return {};
@@ -4045,7 +4109,8 @@ void Compiler::RegisterImportedClasses(const std::string& module_name) {
         try {
             harvested = HarvestImportedClasses(source, resolved, chain, cache);
         } catch (...) {
-            harvested = {};
+            chain.erase(resolved);
+            throw;
         }
         chain.erase(resolved);
 

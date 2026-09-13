@@ -1,0 +1,10 @@
+import Interfaces.IAnimal
+
+class Dog : IAnimal
+    func Dog()
+    end
+
+    func Eat()
+        print("Dog is eating")
+    end
+end

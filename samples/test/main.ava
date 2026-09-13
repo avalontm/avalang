@@ -1,0 +1,18 @@
+import system
+import Models.Dog
+
+print("Hello, AvaLang!")
+
+Console.WriteLine("Rulas")
+
+date = DateTime.Now()
+
+print(date.Ticks)
+
+func test()
+    print("test")
+end
+
+dog = new Dog()
+
+dog.Eat()

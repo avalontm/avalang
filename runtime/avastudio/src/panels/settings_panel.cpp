@@ -90,6 +90,36 @@ void DrawGeneralSection(StudioSettings& settings, bool& out_settings_dirty, bool
         settings.modules_path = modules_path_buf;
         out_settings_dirty = true;
     }
+
+    ImGui::Dummy(ImVec2(0.0f, 16.0f));
+    DrawSidebarGroupHeader(util::Tr("settings.section_editor"));
+
+    bool show_minimap = settings.show_minimap;
+    if (ImGui::Checkbox(util::Tr("settings.show_minimap_label").c_str(), &show_minimap)) {
+        settings.show_minimap = show_minimap;
+        out_settings_dirty = true;
+    }
+
+    bool show_inlay_hints = settings.show_inlay_hints;
+    if (ImGui::Checkbox(util::Tr("settings.show_inlay_hints_label").c_str(), &show_inlay_hints)) {
+        settings.show_inlay_hints = show_inlay_hints;
+        out_settings_dirty = true;
+    }
+
+    ImGui::Dummy(ImVec2(0.0f, 16.0f));
+    DrawSidebarGroupHeader(util::Tr("settings.section_formatting"));
+
+    bool format_on_save = settings.format_on_save;
+    if (ImGui::Checkbox(util::Tr("settings.format_on_save_label").c_str(), &format_on_save)) {
+        settings.format_on_save = format_on_save;
+        out_settings_dirty = true;
+    }
+
+    bool format_on_type = settings.format_on_type;
+    if (ImGui::Checkbox(util::Tr("settings.format_on_type_label").c_str(), &format_on_type)) {
+        settings.format_on_type = format_on_type;
+        out_settings_dirty = true;
+    }
 }
 
 }
