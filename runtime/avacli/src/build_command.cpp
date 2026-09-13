@@ -36,6 +36,17 @@ namespace fs = std::filesystem;
 
 namespace {
 
+#if defined(_WIN32)
+constexpr const char* kAvalangRuntimeLib = "avalang.dll";
+constexpr const char* kAvalangUiRuntimeLib = "avalang_ui.dll";
+#elif defined(__APPLE__)
+constexpr const char* kAvalangRuntimeLib = "libavalang.dylib";
+constexpr const char* kAvalangUiRuntimeLib = "libavalang_ui.dylib";
+#else
+constexpr const char* kAvalangRuntimeLib = "libavalang.so";
+constexpr const char* kAvalangUiRuntimeLib = "libavalang_ui.so";
+#endif
+
 fs::path GetSelfExecutableDir() {
 #if defined(_WIN32)
     char buf[MAX_PATH];
@@ -73,6 +84,8 @@ struct BuildOptions {
     bool flatten_control_flow = false;
 
     bool zero_disk = false;
+
+    std::string output_kind = "exe";
 
     std::string sign_pfx;
     std::string sign_password_env;
@@ -156,7 +169,12 @@ void PrintBuildUsage() {
         "                even for milliseconds. Replaces the previous scheme\n"
         "                (compiles main_zerodisk.cpp instead of main.cpp, see\n"
         "                runtime/avapack/README.md). Combinable with --obfuscate\n"
-        "                and --debug.\n"
+        "                and --debug. Not combinable with --output-kind library.\n"
+        "  --output-kind <exe|library>\n"
+        "                Default 'exe'. 'library' builds a dynamic library\n"
+        "                (.dll/.so/.dylib) that exports avapack_run() instead of a\n"
+        "                standalone executable -- see runtime/avapack/src/lib_api.h.\n"
+        "                Not combinable with --zero-disk.\n"
         "  --sign-pfx    (optional, requires signtool in PATH) Signs the final .exe\n"
         "                with the given .pfx certificate. Without this flag, the\n"
         "                .exe is not signed.\n"
@@ -265,6 +283,9 @@ bool ParseBuildArgs(int argc, char** argv, BuildOptions& opts, std::string& erro
             opts.flatten_control_flow = true;
         } else if (arg == "--zero-disk") {
             opts.zero_disk = true;
+        } else if (arg == "--output-kind") {
+            const char* v = next_value("--output-kind"); if (!v) return false;
+            opts.output_kind = v;
         } else if (arg == "--sign-pfx") {
             const char* v = next_value("--sign-pfx"); if (!v) return false;
             opts.sign_pfx = v;
@@ -317,6 +338,14 @@ bool ParseBuildArgs(int argc, char** argv, BuildOptions& opts, std::string& erro
     if (opts.out_path.empty()) { error = "missing --out"; return false; }
     if (opts.target != "desktop" && opts.target != "barekernel") {
         error = "--target must be 'desktop' or 'barekernel' (got '" + opts.target + "')";
+        return false;
+    }
+    if (opts.output_kind != "exe" && opts.output_kind != "library") {
+        error = "--output-kind must be 'exe' or 'library' (got '" + opts.output_kind + "')";
+        return false;
+    }
+    if (opts.output_kind == "library" && opts.zero_disk) {
+        error = "--output-kind library and --zero-disk are mutually exclusive for now";
         return false;
     }
     if (opts.target == "barekernel" && opts.toolchain_dir.empty() && opts.compiler_path.empty()) {
@@ -391,6 +420,28 @@ std::optional<fs::path> FindBuiltBinary(const fs::path& build_dir, const std::st
     return std::nullopt;
 }
 
+std::string HostLibrarySuffix() {
+#if defined(_WIN32)
+    return ".dll";
+#elif defined(__APPLE__)
+    return ".dylib";
+#else
+    return ".so";
+#endif
+}
+
+std::optional<fs::path> FindBuiltLibrary(const fs::path& build_dir, const std::string& target_name,
+                                          const std::string& config) {
+    const std::string filename = target_name + HostLibrarySuffix();
+    fs::path multi_config = build_dir / "runtime" / "avalang" / config / filename;
+    if (fs::exists(multi_config)) return multi_config;
+
+    fs::path single_config = build_dir / "runtime" / "avalang" / filename;
+    if (fs::exists(single_config)) return single_config;
+
+    return std::nullopt;
+}
+
 void CopyRuntimeDllIfPresent(const fs::path& built_binary_dir, const fs::path& out_dir,
                               const std::string& dll_name) {
     fs::path src = built_binary_dir / dll_name;
@@ -405,7 +456,7 @@ void CopyRuntimeDllIfPresent(const fs::path& built_binary_dir, const fs::path& o
 
 void CopyAvaUiDllIfAvailable(const fs::path& built_binary_dir, const fs::path& out_dir,
                               const fs::path& repo_root, const std::string& config) {
-    const std::string dll_name = "avalang_ui.dll";
+    const std::string dll_name = kAvalangUiRuntimeLib;
 
     fs::path src = built_binary_dir / dll_name;
     if (!fs::exists(src)) {
@@ -496,6 +547,8 @@ std::optional<fs::path> FindDllForExternName(const fs::path& libraries_dir, cons
 
 #if defined(_WIN32)
     std::vector<std::string> wanted_names = { name + ".dll" };
+#elif defined(__APPLE__)
+    std::vector<std::string> wanted_names = { "lib" + name + ".dylib", name + ".dylib" };
 #else
     std::vector<std::string> wanted_names = { "lib" + name + ".so", name + ".so" };
 #endif
@@ -613,7 +666,7 @@ bool FindPrebuiltPackTools(const fs::path& dir, fs::path& out_stub_exe, fs::path
     fs::path gen = dir / ("avapack_gen" + std::string(AVACLI_EXE_SUFFIX));
     std::error_code ec;
     if (!fs::exists(stub, ec) || !fs::exists(gen, ec)) return false;
-    if (!fs::exists(dir / "avalang.dll", ec) || !fs::exists(dir / "avalang_ui.dll", ec)) {
+    if (!fs::exists(dir / kAvalangRuntimeLib, ec) || !fs::exists(dir / kAvalangUiRuntimeLib, ec)) {
         // avapack_stub.exe necesita las mismas DLL que ava_cli para arrancar
         // -- sin ellas el .exe empacado tampoco va a poder correr, asi que
         // no vale la pena intentar este camino.
@@ -639,6 +692,7 @@ bool TryFastPackWithPrebuiltStub(ava::platform::IProcess& process, const BuildOp
         // README.md, seccion "Pendiente". Cae al flujo con CMake.
         return false;
     }
+    if (opts.output_kind == "library") return false;
 
     fs::path prebuilt_dir = GetSelfExecutableDir();
     fs::path stub_exe, gen_exe;
@@ -736,8 +790,8 @@ bool TryFastPackWithPrebuiltStub(ava::platform::IProcess& process, const BuildOp
     fs::remove(tmp_payload, ec);
 
     fs::path out_dir = out_path_abs.parent_path();
-    CopyRuntimeDllIfPresent(prebuilt_dir, out_dir, "avalang.dll");
-    CopyRuntimeDllIfPresent(prebuilt_dir, out_dir, "avalang_ui.dll");
+    CopyRuntimeDllIfPresent(prebuilt_dir, out_dir, kAvalangRuntimeLib);
+    CopyRuntimeDllIfPresent(prebuilt_dir, out_dir, kAvalangUiRuntimeLib);
     if (fs::exists(libraries_dir, ec) && fs::is_directory(libraries_dir, ec)) {
         CopyExternNativeLibraries(project_dir_abs, libraries_dir, out_dir);
     }
@@ -1262,7 +1316,14 @@ int RunBuildCommand(int argc, char** argv) {
     if (out_is_dir) {
         std::string default_name = fs::path(opts.entry_file).stem().string();
         if (default_name.empty()) default_name = "packaged";
-        std::string suffix = (opts.target == "barekernel") ? ".exe" : AVACLI_EXE_SUFFIX;
+        std::string suffix;
+        if (opts.target == "barekernel") {
+            suffix = ".exe";
+        } else if (opts.output_kind == "library") {
+            suffix = HostLibrarySuffix();
+        } else {
+            suffix = AVACLI_EXE_SUFFIX;
+        }
         out_path_abs = fs::absolute(raw_out, ec) / (default_name + suffix);
         std::cout << "[info] --out is a directory -- the packaged binary will be saved as "
                   << out_path_abs.string() << "\n";
@@ -1423,6 +1484,12 @@ int RunBuildCommand(int argc, char** argv) {
                      "in-memory virtual filesystem, without a temp dir (see "
                      "runtime/avapack/README.md).\n";
     }
+    if (opts.output_kind == "library") {
+        configure_args.push_back("-DAVAPACK_BUILD_LIBRARY=ON");
+        std::cout << "[info] --output-kind library is active: the output is a dynamic library "
+                     "exporting avapack_run() instead of an executable (see "
+                     "runtime/avapack/src/lib_api.h).\n";
+    }
     if (const char* vcpkg_root = std::getenv("VCPKG_ROOT")) {
         fs::path toolchain = fs::path(vcpkg_root) / "scripts" / "buildsystems" / "vcpkg.cmake";
         configure_args.push_back("-DCMAKE_TOOLCHAIN_FILE=" + toolchain.string());
@@ -1452,9 +1519,13 @@ int RunBuildCommand(int argc, char** argv) {
         return 1;
     }
 
-    std::optional<fs::path> built = FindBuiltBinary(build_dir, target_name, build_config);
+    const bool output_is_library = opts.output_kind == "library";
+    std::optional<fs::path> built = output_is_library
+        ? FindBuiltLibrary(build_dir, target_name, build_config)
+        : FindBuiltBinary(build_dir, target_name, build_config);
     if (!built) {
-        std::cerr << "error: the build seemed to succeed but " << target_name << AVACLI_EXE_SUFFIX
+        std::string expected_suffix = output_is_library ? HostLibrarySuffix() : AVACLI_EXE_SUFFIX;
+        std::cerr << "error: the build seemed to succeed but " << target_name << expected_suffix
                   << " was not found under " << build_dir.string()
                   << "/runtime/avalang/ -- check the output above.\n";
         return 1;
@@ -1469,10 +1540,25 @@ int RunBuildCommand(int argc, char** argv) {
 
     fs::path built_dir = built->parent_path();
     fs::path out_dir = out_path_abs.parent_path();
-    CopyRuntimeDllIfPresent(built_dir, out_dir, "avalang.dll");
+    CopyRuntimeDllIfPresent(built_dir, out_dir, kAvalangRuntimeLib);
     CopyAvaUiDllIfAvailable(built_dir, out_dir, repo_root, build_config);
     if (fs::exists(libraries_dir, ec) && fs::is_directory(libraries_dir, ec)) {
         CopyExternNativeLibraries(project_dir_abs, libraries_dir, out_dir);
+    }
+
+    if (output_is_library) {
+#if defined(_WIN32)
+        fs::path import_lib = built_dir / (target_name + ".lib");
+        if (fs::exists(import_lib, ec)) {
+            fs::path import_lib_dst = out_path_abs;
+            import_lib_dst.replace_extension(".lib");
+            fs::copy_file(import_lib, import_lib_dst, fs::copy_options::overwrite_existing, ec);
+        }
+#endif
+        fs::path lib_api_header = repo_root / "runtime" / "avapack" / "src" / "lib_api.h";
+        if (fs::exists(lib_api_header, ec)) {
+            fs::copy_file(lib_api_header, out_dir / "lib_api.h", fs::copy_options::overwrite_existing, ec);
+        }
     }
 
     if (opts.obfuscate) {

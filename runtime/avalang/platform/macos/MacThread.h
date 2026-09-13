@@ -2,13 +2,12 @@
 #define AVA_PLATFORM_MAC_THREAD_H
 
 #include "../interfaces/IThread.h"
+#include <thread>
 
 namespace ava {
 namespace platform {
 namespace macos_ {
 
-// STUB. TODO: back with pthread_create/pthread_join (Linux) or the
-// equivalent Darwin pthread APIs (macOS).
 class MacThread : public IThread {
 public:
     explicit MacThread(ThreadFunc func);
@@ -20,6 +19,7 @@ public:
 
 private:
     ThreadFunc func_;
+    std::thread* thread_ = nullptr;
 };
 
 class MacThreadFactory : public IThreadFactory {

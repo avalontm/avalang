@@ -7,7 +7,6 @@ namespace ava {
 namespace platform {
 namespace macos_ {
 
-// STUB. TODO: back with clock_gettime(CLOCK_REALTIME/CLOCK_MONOTONIC).
 class MacClock : public IClock {
 public:
     int64_t NowMs() const override;

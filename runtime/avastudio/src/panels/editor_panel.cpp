@@ -292,6 +292,10 @@ void PopulateGeneralSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& a
         if (seen.insert(name).second) ordered.push_back(name);
     };
 
+    auto callable_label = [&](const std::string& name, bool is_callable) {
+        return is_callable ? name + "()" : name;
+    };
+
     TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
     std::string before = TextBeforeCursor(tab, pos);
 
@@ -301,18 +305,18 @@ void PopulateGeneralSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& a
                                 own_variables, own_members);
 
     for (const auto& name : own_variables) add_filtered(name);
-    for (const auto& member : own_members) add_filtered(member.name);
+    for (const auto& member : own_members) add_filtered(callable_label(member.name, member.is_method));
 
     std::vector<std::string> prefix_matches;
     tab.autocomplete_trie.findSuggestions(prefix_matches, ac_state.searchTerm, kAutocompleteLimit,
                                            /*maxSkippedLetters=*/0);
-    for (const auto& word : prefix_matches) add_raw(word);
+    for (const auto& word : prefix_matches) add_raw(callable_label(word, tab.function_index.Find(word) != nullptr));
 
     if (ordered.size() < kAutocompleteLimit && ac_state.searchTerm.size() >= kAutocompleteFuzzyMinChars) {
         std::vector<std::string> fuzzy_matches;
         tab.autocomplete_trie.findSuggestions(fuzzy_matches, ac_state.searchTerm, kAutocompleteLimit,
                                                /*maxSkippedLetters=*/2);
-        for (const auto& word : fuzzy_matches) add_raw(word);
+        for (const auto& word : fuzzy_matches) add_raw(callable_label(word, tab.function_index.Find(word) != nullptr));
     }
 
     ac_state.suggestions = std::move(ordered);
@@ -341,6 +345,99 @@ bool PopulateMemberSuggestions(EditorState& state, EditorTab& tab, TextEditor::A
     }
 
     if (suggestions.empty()) return false;
+    ac_state.suggestions = std::move(suggestions);
+    return true;
+}
+
+bool ExtractImportPathSegments(const std::string& before, std::vector<std::string>& out_segments) {
+    size_t i = before.size();
+    while (i > 0 && IsIdentChar(before[i - 1])) --i;
+
+    size_t p = 0;
+    while (p < i && (before[p] == ' ' || before[p] == '\t')) ++p;
+
+    constexpr size_t kKeywordLen = 6;
+    if (i - p < kKeywordLen || before.compare(p, kKeywordLen, "import") != 0) return false;
+    p += kKeywordLen;
+    if (p >= i || (before[p] != ' ' && before[p] != '\t')) return false;
+    while (p < i && (before[p] == ' ' || before[p] == '\t')) ++p;
+
+    out_segments.clear();
+    while (p < i) {
+        size_t start = p;
+        while (p < i && IsIdentChar(before[p])) ++p;
+        if (p == start) return false;
+        out_segments.push_back(before.substr(start, p - start));
+        if (p < i && before[p] == '.') { ++p; continue; }
+        if (p == i) break;
+        return false;
+    }
+    return true;
+}
+
+void CollectImportEntries(const std::filesystem::path& dir, std::unordered_set<std::string>& out) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) return;
+
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        const std::string name = entry.path().filename().string();
+
+        if (entry.is_directory(ec)) {
+            if (!name.empty() && IsIdentStart(name[0]) && std::all_of(name.begin(), name.end(), IsIdentChar)) {
+                out.insert(name);
+            }
+            continue;
+        }
+
+        constexpr size_t kExtLen = 4;
+        if (name.size() <= kExtLen || name.compare(name.size() - kExtLen, kExtLen, ".ava") != 0) continue;
+
+        std::string stem = name.substr(0, name.size() - kExtLen);
+        if (!stem.empty() && IsIdentStart(stem[0]) && std::all_of(stem.begin(), stem.end(), IsIdentChar)) {
+            out.insert(stem);
+        }
+    }
+}
+
+bool PopulateImportPathSuggestions(EditorState& state, EditorTab& tab, TextEditor::AutoCompleteState& ac_state) {
+    TextEditor::CursorPosition pos = tab.editor.GetCursorPosition(0);
+    std::string before = TextBeforeCursor(tab, pos);
+
+    std::vector<std::string> segments;
+    if (!ExtractImportPathSegments(before, segments)) return false;
+
+    namespace fs = std::filesystem;
+    std::string relative;
+    for (const auto& segment : segments) {
+        if (!relative.empty()) relative += "/";
+        relative += segment;
+    }
+
+    auto collect_base = [&](const std::string& base, std::unordered_set<std::string>& out) {
+        if (base.empty()) return;
+        CollectImportEntries(relative.empty() ? fs::path(base) : fs::path(base) / relative, out);
+    };
+
+    std::unordered_set<std::string> entries;
+    const std::string dir = DirOf(tab.file_path);
+    collect_base(dir, entries);
+    if (state.project_root != dir) collect_base(state.project_root, entries);
+    collect_base(tab.modules_path, entries);
+
+    const std::string search_term_lower = ToLowerAscii(ac_state.searchTerm);
+    std::vector<std::string> suggestions;
+    for (const auto& name : entries) {
+        if (!search_term_lower.empty()) {
+            const std::string name_lower = ToLowerAscii(name);
+            if (name_lower.compare(0, search_term_lower.size(), search_term_lower) != 0) continue;
+        }
+        suggestions.push_back(name);
+    }
+
+    if (suggestions.empty()) return false;
+    std::sort(suggestions.begin(), suggestions.end());
+    if (suggestions.size() > kAutocompleteLimit) suggestions.resize(kAutocompleteLimit);
     ac_state.suggestions = std::move(suggestions);
     return true;
 }
@@ -1449,6 +1546,8 @@ void InitTab(EditorState& state, EditorTab& tab) {
     }, 0);
 
     tab.autocomplete_config.callback = [&state, &tab](TextEditor::AutoCompleteState& ac_state) {
+        if (ac_state.inNumber) { ac_state.suggestions.clear(); return; }
+        if (PopulateImportPathSuggestions(state, tab, ac_state)) return;
         if (PopulateMemberSuggestions(state, tab, ac_state)) return;
         PopulateGeneralSuggestions(tab, ac_state);
     };

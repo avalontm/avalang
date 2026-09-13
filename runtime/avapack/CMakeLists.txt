@@ -87,6 +87,10 @@ option(AVAPACK_ZERO_DISK
     "Fase 7: usa MemoryFileSystem (cero disco) en vez del esquema de temp dir + hooks de Fase 4"
     OFF)
 
+option(AVAPACK_BUILD_LIBRARY
+    "Genera ${AVAPACK_OUT_NAME} como libreria dinamica (.dll/.so/.dylib) en vez de ejecutable -- exporta avapack_run() via lib_api.h"
+    OFF)
+
 # --- Fase 9: avapack_stub -- binario generico, SIN proyecto embebido ---
 #
 # A diferencia de ${AVAPACK_OUT_NAME} (mas abajo), este target no depende de
@@ -112,6 +116,17 @@ target_compile_definitions(avapack_stub PRIVATE ${AVAPACK_TINY_AES_DEFS})
 set_target_properties(avapack_stub PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runtime/avalang"
 )
+if(UNIX AND NOT APPLE)
+    set_target_properties(avapack_stub PROPERTIES
+        BUILD_WITH_INSTALL_RPATH ON
+        INSTALL_RPATH "$ORIGIN"
+    )
+elseif(APPLE)
+    set_target_properties(avapack_stub PROPERTIES
+        BUILD_WITH_INSTALL_RPATH ON
+        INSTALL_RPATH "@loader_path"
+    )
+endif()
 ava_apply_optimization_options(avapack_stub)
 
 # --- proyecto de prueba a empacar (override con -DAVAPACK_PROJECT_DIR=...) ---
@@ -197,15 +212,39 @@ add_custom_target(avapack_generate DEPENDS "${AVAPACK_GENERATED_CPP}")
 # main.cpp -- los dos flujos (temp dir + hooks vs. filesystem virtual) son
 # suficientemente distintos como para no valer la pena entrelazarlos en un
 # solo archivo con #ifdef. Ambos comparten embedded_crypto.h/embedded_project.h.
-if(AVAPACK_ZERO_DISK)
-    set(AVAPACK_MAIN_SRC src/main_zerodisk.cpp)
-    message(STATUS "avapack: AVAPACK_ZERO_DISK=ON -- usando main_zerodisk.cpp (Fase 7, filesystem virtual en memoria)")
-else()
-    set(AVAPACK_MAIN_SRC src/main.cpp)
+if(AVAPACK_ZERO_DISK AND AVAPACK_BUILD_LIBRARY)
+    message(FATAL_ERROR "avapack: AVAPACK_ZERO_DISK y AVAPACK_BUILD_LIBRARY son mutuamente excluyentes por ahora (ver Fase L6 de plan_output_library.md)")
 endif()
 
-add_executable(${AVAPACK_OUT_NAME} "${AVAPACK_MAIN_SRC}" "${AVAPACK_GENERATED_CPP}"
-    "${AVAPACK_TINY_AES_SRC}" "${AVAPACK_CHECKSUM_SRC}")
+if(AVAPACK_ZERO_DISK)
+    set(AVAPACK_MAIN_SRC src/main_zerodisk.cpp)
+    set(AVAPACK_RUNTIME_EXTRA_SRC "")
+    message(STATUS "avapack: AVAPACK_ZERO_DISK=ON -- usando main_zerodisk.cpp (Fase 7, filesystem virtual en memoria)")
+elseif(AVAPACK_BUILD_LIBRARY)
+    set(AVAPACK_MAIN_SRC src/lib_main.cpp)
+    set(AVAPACK_RUNTIME_EXTRA_SRC src/packaged_runtime.cpp)
+    message(STATUS "avapack: AVAPACK_BUILD_LIBRARY=ON -- usando lib_main.cpp (exporta avapack_run via lib_api.h)")
+else()
+    set(AVAPACK_MAIN_SRC src/main.cpp)
+    set(AVAPACK_RUNTIME_EXTRA_SRC src/packaged_runtime.cpp)
+endif()
+
+if(AVAPACK_BUILD_LIBRARY)
+    add_library(${AVAPACK_OUT_NAME} SHARED "${AVAPACK_MAIN_SRC}" ${AVAPACK_RUNTIME_EXTRA_SRC}
+        "${AVAPACK_GENERATED_CPP}" "${AVAPACK_TINY_AES_SRC}" "${AVAPACK_CHECKSUM_SRC}")
+    set_target_properties(${AVAPACK_OUT_NAME} PROPERTIES
+        PREFIX ""
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runtime/avalang"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runtime/avalang"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runtime/avalang"
+    )
+else()
+    add_executable(${AVAPACK_OUT_NAME} "${AVAPACK_MAIN_SRC}" ${AVAPACK_RUNTIME_EXTRA_SRC}
+        "${AVAPACK_GENERATED_CPP}" "${AVAPACK_TINY_AES_SRC}" "${AVAPACK_CHECKSUM_SRC}")
+    set_target_properties(${AVAPACK_OUT_NAME} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runtime/avalang"
+    )
+endif()
 add_dependencies(${AVAPACK_OUT_NAME} avapack_generate)
 
 target_link_libraries(${AVAPACK_OUT_NAME} PRIVATE avalang)
@@ -225,6 +264,17 @@ target_compile_definitions(${AVAPACK_OUT_NAME} PRIVATE ${AVAPACK_TINY_AES_DEFS})
 set_target_properties(${AVAPACK_OUT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runtime/avalang"
 )
+if(UNIX AND NOT APPLE)
+    set_target_properties(${AVAPACK_OUT_NAME} PROPERTIES
+        BUILD_WITH_INSTALL_RPATH ON
+        INSTALL_RPATH "$ORIGIN"
+    )
+elseif(APPLE)
+    set_target_properties(${AVAPACK_OUT_NAME} PROPERTIES
+        BUILD_WITH_INSTALL_RPATH ON
+        INSTALL_RPATH "@loader_path"
+    )
+endif()
 
 # Fase 8 -- Optimizacion: LTO + dead-code elimination + symbol stripping en
 # Release (ver cmake/OptimizationOptions.cmake). Se aplica a avapack_gen

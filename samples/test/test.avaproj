@@ -3,7 +3,8 @@
   <PropertyGroup>
     <ProjectName>test</ProjectName>
     <EntryFile>main.ava</EntryFile>
-    <OutputType>Exe</OutputType>
+    <Target>Desktop</Target>
+    <OutputType>Library</OutputType>
     <ModulesPath></ModulesPath>
     <Icon></Icon>
     <OutDir>bin</OutDir>

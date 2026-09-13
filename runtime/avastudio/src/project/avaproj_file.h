@@ -6,7 +6,12 @@
 
 namespace studio {
 
-enum class AvaProjOutputType { kExe, kBareKernel, kLibrary };
+enum class AvaProjTarget { kDesktop, kBareKernel };
+enum class AvaProjOutputType { kExe, kLibrary };
+
+std::string TargetToString(AvaProjTarget target);
+
+AvaProjTarget TargetFromString(const std::string& value);
 
 std::string OutputTypeToString(AvaProjOutputType type);
 
@@ -19,6 +24,7 @@ struct AvaProjReference {
 struct AvaProjFile {
     std::string project_name;
     std::string entry_file = "main.ava";
+    AvaProjTarget target = AvaProjTarget::kDesktop;
     AvaProjOutputType output_type = AvaProjOutputType::kExe;
     std::string modules_path;
     std::string icon;

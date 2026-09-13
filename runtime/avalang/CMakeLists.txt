@@ -121,6 +121,7 @@ if(AVA_TARGET_BAREKERNEL)
         # (--without-headers, sin libstdc++/libsupc++/libm) no provee. Ver
         # el comentario grande al inicio de ese archivo.
         platform/barekernel/BareKernelRuntimeSupport.cpp
+        platform/barekernel/BareKernelExternThunk.cpp
     )
     message(STATUS "avalang: BareKernel backend selected")
 elseif(WIN32)
@@ -151,7 +152,7 @@ elseif(APPLE)
         platform/macos/MacMemory.cpp
         platform/macos/MacPlatform.cpp
     )
-    message(STATUS "avalang: macOS PAL backend is a STUB (Phase 6 not implemented yet)")
+    message(STATUS "avalang: macOS PAL backend implementado contra POSIX/Darwin (ver PLAN_LIBRERIAS_NATIVAS_MULTIPLATAFORMA.md, Fases 1-2); MacTimer sigue pendiente, fuera de ese plan")
 elseif(UNIX)
     set(PLATFORM_SOURCES
         platform/linux/LinFileSystem.cpp
@@ -359,6 +360,21 @@ if(UNIX AND NOT APPLE)
     if(RT_LIBRARY)
         target_link_libraries(avalang PRIVATE ${RT_LIBRARY})
     endif()
+endif()
+
+if(APPLE)
+    # macOS graba el install_name (ruta de busqueda del propio .dylib)
+    # dentro del binario en tiempo de link -- a diferencia de Linux, donde
+    # un .so no lleva ninguna ruta embebida. Sin esto, un avalang.dylib que
+    # funciona en el arbol de build deja de resolver apenas se copia a otra
+    # carpeta: @rpath lo hace buscar en runtime en vez de hornear la ruta
+    # absoluta del arbol de build (ver Fase 3 de
+    # PLAN_LIBRERIAS_NATIVAS_MULTIPLATAFORMA.md).
+    set_target_properties(avalang PROPERTIES
+        MACOSX_RPATH ON
+        INSTALL_NAME_DIR "@rpath"
+        BUILD_WITH_INSTALL_RPATH ON
+    )
 endif()
 
 # NOTE: symbol visibility is intentionally left at the compiler default

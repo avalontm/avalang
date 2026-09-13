@@ -15,10 +15,10 @@ namespace ava {
 namespace platform {
 namespace macos_ {
 
-// STUB backend. Compiles and wires into IPlatform so the rest of the
-// codebase (Runtime/VM/Compiler) can target this OS today; every
-// individual method still needs its real implementation (see the
-// per-file TODOs in this directory) before this is usable at runtime.
+// Backend de macOS. FileSystem/Threads/Clock/Libraries/Console/Environment/
+// Process/CreateMutex ya estan implementados contra POSIX/Darwin real (ver
+// PLAN_LIBRERIAS_NATIVAS_MULTIPLATAFORMA.md, Fases 1-2). Timer() sigue
+// siendo un stub (ver MacTimer.h), no forma parte de ese plan.
 class MacPlatform : public IPlatform {
 public:
     IFileSystem& FileSystem() override { return file_system_; }

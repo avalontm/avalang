@@ -176,6 +176,7 @@ void OpenNewProjectDialog(NewProjectState& state, const std::string& default_des
     state.name.clear();
     state.destination = default_destination;
     state.template_kind = NewProjectTemplateKind::kConsole;
+    state.output_type = AvaProjOutputType::kExe;
     state.template_search.clear();
     state.template_category.clear();
     state.error_key.clear();
@@ -271,6 +272,27 @@ NewProjectDrawResult DrawNewProjectDialog(NewProjectState& state) {
     ImGui::EndChild();
     ImGui::PopStyleColor(2);
     ImGui::PopStyleVar();
+
+    ImGui::Spacing();
+    ImGui::Spacing();
+    ImGui::TextDisabled("%s", util::Tr("new_project.section_output_type").c_str());
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    const bool is_exe = state.output_type == AvaProjOutputType::kExe;
+    if (ImGui::RadioButton(util::Tr("new_project.output_type_exe").c_str(), is_exe)) {
+        state.output_type = AvaProjOutputType::kExe;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", util::Tr("new_project.output_type_exe_hint").c_str());
+    ImGui::SameLine(0.0f, 24.0f);
+    if (ImGui::RadioButton(util::Tr("new_project.output_type_library").c_str(), !is_exe)) {
+        state.output_type = AvaProjOutputType::kLibrary;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", util::Tr("new_project.output_type_library_hint").c_str());
+    if (!is_exe) {
+        ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s",
+                            util::Tr("new_project.output_type_library_hint").c_str());
+    }
 
     ImGui::Spacing();
     ImGui::Spacing();
@@ -379,6 +401,7 @@ NewProjectDrawResult DrawNewProjectDialog(NewProjectState& state) {
                         avaproj.project_name = state.name;
                         avaproj.entry_file = "main.ava";
                         avaproj.out_dir = "bin";
+                        avaproj.output_type = state.output_type;
                         SaveAvaProjFile((project_dir / (state.name + ".avaproj")).string(), avaproj);
                         EnsureGitignoreEntry(project_dir.string(), "*.avaproj.user");
 

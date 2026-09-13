@@ -1,9 +1,5 @@
 #include "MacLibrary.h"
-
-// STUB implementation -- never actually loads a shared library.
-// TODO(Phase 6): dlopen/dlsym/dlclose,
-// mirroring core/platform/windows/MacLibrary.cpp. Needed by the
-// Extern/FFI system (core/src/vm/vm_extern.cpp).
+#include <dlfcn.h>
 
 namespace ava {
 namespace platform {
@@ -12,12 +8,21 @@ namespace macos_ {
 MacLibraryHandle::MacLibraryHandle(void* handle) : handle_(handle) {
 }
 
-void* MacLibraryHandle::ResolveSymbol(const std::string& /*symbol_name*/) {
-    return nullptr;
+MacLibraryHandle::~MacLibraryHandle() {
+    if (handle_) {
+        dlclose(handle_);
+    }
 }
 
-ILibraryHandle* MacLibraryLoader::Load(const std::string& /*library_name*/) {
-    return nullptr;
+void* MacLibraryHandle::ResolveSymbol(const std::string& symbol_name) {
+    if (!handle_) return nullptr;
+    return dlsym(handle_, symbol_name.c_str());
+}
+
+ILibraryHandle* MacLibraryLoader::Load(const std::string& library_name) {
+    void* handle = dlopen(library_name.c_str(), RTLD_NOW | RTLD_GLOBAL);
+    if (!handle) return nullptr;
+    return new MacLibraryHandle(handle);
 }
 
 void MacLibraryLoader::Unload(ILibraryHandle* handle) {

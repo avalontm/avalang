@@ -7,9 +7,6 @@ namespace ava {
 namespace platform {
 namespace macos_ {
 
-// STUB (Phase 6). Not yet backed by real
-// POSIX/Darwin calls -- see Windows implementation in platform/windows/
-// for the target behavior each method must eventually match.
 class MacFileSystem : public IFileSystem {
 public:
     bool ReadFile(const std::string& path, std::string& out_content) override;

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <system_error>
 
 #include <pugixml.hpp>
 
@@ -9,10 +10,23 @@ namespace studio {
 
 namespace fs = std::filesystem;
 
+std::string TargetToString(AvaProjTarget target) {
+    switch (target) {
+        case AvaProjTarget::kBareKernel:
+            return "BareKernel";
+        case AvaProjTarget::kDesktop:
+        default:
+            return "Desktop";
+    }
+}
+
+AvaProjTarget TargetFromString(const std::string& value) {
+    if (value == "BareKernel") return AvaProjTarget::kBareKernel;
+    return AvaProjTarget::kDesktop;
+}
+
 std::string OutputTypeToString(AvaProjOutputType type) {
     switch (type) {
-        case AvaProjOutputType::kBareKernel:
-            return "BareKernel";
         case AvaProjOutputType::kLibrary:
             return "Library";
         case AvaProjOutputType::kExe:
@@ -22,7 +36,6 @@ std::string OutputTypeToString(AvaProjOutputType type) {
 }
 
 AvaProjOutputType OutputTypeFromString(const std::string& value) {
-    if (value == "BareKernel") return AvaProjOutputType::kBareKernel;
     if (value == "Library") return AvaProjOutputType::kLibrary;
     return AvaProjOutputType::kExe;
 }
@@ -62,7 +75,24 @@ std::optional<AvaProjFile> LoadAvaProjFile(const std::string& path) {
     if (main_group) {
         data.project_name = ChildTextOr(main_group, "ProjectName", "");
         data.entry_file = ChildTextOr(main_group, "EntryFile", "main.ava");
-        data.output_type = OutputTypeFromString(ChildTextOr(main_group, "OutputType", "Exe"));
+
+        // Legacy files (before Target/OutputType were split into two
+        // independent axes) only had <OutputType>Exe|BareKernel|Library
+        // </OutputType>, so "BareKernel" meant the *target*, not a kind of
+        // output -- those files always meant "BareKernel executable" since
+        // Library didn't exist for that target yet. Only fall back to that
+        // reading when <Target> itself is absent; once a file has been
+        // saved by this version it always carries both elements.
+        const bool has_target_element = static_cast<bool>(main_group.child("Target"));
+        const std::string legacy_output_type = ChildTextOr(main_group, "OutputType", "Exe");
+        if (!has_target_element && legacy_output_type == "BareKernel") {
+            data.target = AvaProjTarget::kBareKernel;
+            data.output_type = AvaProjOutputType::kExe;
+        } else {
+            data.target = TargetFromString(ChildTextOr(main_group, "Target", "Desktop"));
+            data.output_type = OutputTypeFromString(legacy_output_type);
+        }
+
         data.modules_path = ChildTextOr(main_group, "ModulesPath", "");
         data.icon = ChildTextOr(main_group, "Icon", "");
         data.out_dir = ChildTextOr(main_group, "OutDir", "bin");
@@ -86,6 +116,42 @@ std::optional<AvaProjFile> LoadAvaProjFile(const std::string& path) {
     return data;
 }
 
+namespace {
+
+// Fix: escritura atomica. Antes se llamaba doc.save_file(path, ...)
+// directo sobre el archivo final -- si la escritura se interrumpe (el
+// proceso muere, el archivo esta bloqueado a mitad de camino por un
+// antivirus/OneDrive, se llena el disco, etc.) el .avaproj puede quedar
+// truncado o a medio escribir, y ademas SaveAvaProjFile devolvia false
+// pero nadie chequeaba ese resultado (ver project_config.cpp / main.cpp),
+// asi que la falla era completamente silenciosa: la seleccion vivia bien
+// en memoria durante la sesion (por eso "andaba"), pero al reabrir se leia
+// el archivo viejo/corrupto y parecia que "no persistia". Escribiendo a un
+// temporal en la misma carpeta y haciendo rename() al final, o se escribe
+// el archivo completo o no se toca el original.
+bool AtomicSaveXml(const pugi::xml_document& doc, const std::string& path) {
+    namespace fs = std::filesystem;
+    const fs::path final_path(path);
+    const fs::path tmp_path = fs::path(path + ".tmp");
+
+    std::error_code ec;
+    fs::create_directories(final_path.parent_path(), ec);
+
+    if (!doc.save_file(tmp_path.c_str(), "  ")) {
+        fs::remove(tmp_path, ec);
+        return false;
+    }
+
+    fs::rename(tmp_path, final_path, ec);
+    if (ec) {
+        fs::remove(tmp_path, ec);
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
+
 bool SaveAvaProjFile(const std::string& path, const AvaProjFile& data) {
     pugi::xml_document doc;
 
@@ -99,6 +165,7 @@ bool SaveAvaProjFile(const std::string& path, const AvaProjFile& data) {
     pugi::xml_node main_group = project_node.append_child("PropertyGroup");
     main_group.append_child("ProjectName").text().set(data.project_name.c_str());
     main_group.append_child("EntryFile").text().set(data.entry_file.c_str());
+    main_group.append_child("Target").text().set(TargetToString(data.target).c_str());
     main_group.append_child("OutputType").text().set(OutputTypeToString(data.output_type).c_str());
     main_group.append_child("ModulesPath").text().set(data.modules_path.c_str());
     main_group.append_child("Icon").text().set(data.icon.c_str());
@@ -120,7 +187,7 @@ bool SaveAvaProjFile(const std::string& path, const AvaProjFile& data) {
         }
     }
 
-    return doc.save_file(path.c_str(), "  ");
+    return AtomicSaveXml(doc, path);
 }
 
 std::vector<std::string> FindAllAvaProjInDir(const std::string& dir) {

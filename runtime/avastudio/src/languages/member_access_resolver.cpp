@@ -1,5 +1,6 @@
 #include "languages/member_access_resolver.h"
 
+#include <algorithm>
 #include <cctype>
 #include <vector>
 
@@ -90,20 +91,24 @@ std::string FindEnclosingClass(const std::string& prefix) {
     return "";
 }
 
-bool ExtractDotAccess(const std::string& before, std::string& identifier) {
+bool ExtractDotChain(const std::string& before, std::string& base, std::vector<std::string>& chain) {
     size_t i = before.size();
     while (i > 0 && IsIdentChar(before[i - 1])) --i;
 
-    if (i == 0 || before[i - 1] != '.') return false;
-    size_t dot = i - 1;
+    std::vector<std::string> segments;
+    while (i > 0 && before[i - 1] == '.') {
+        size_t dot = i - 1;
+        size_t j = dot;
+        while (j > 0 && IsIdentChar(before[j - 1])) --j;
+        if (j == dot) return false;
+        segments.push_back(before.substr(j, dot - j));
+        i = j;
+    }
+    if (segments.empty()) return false;
 
-    size_t j = dot;
-    while (j > 0 && IsIdentChar(before[j - 1])) --j;
-    if (j == dot) return false;
-
-    if (j > 0 && before[j - 1] == '.') return false;
-
-    identifier = before.substr(j, dot - j);
+    std::reverse(segments.begin(), segments.end());
+    base = segments.front();
+    chain.assign(segments.begin() + 1, segments.end());
     return true;
 }
 
@@ -419,37 +424,51 @@ bool ResolveMemberAccess(const std::string& full_text, int cursor_line,
                           const std::string& text_before_cursor_on_line,
                           const ClassIndex& class_index, const VariableTypeIndex& var_types,
                           MemberAccessContext& out, const ClassIndex* workspace_classes) {
-    std::string identifier;
-    if (!ExtractDotAccess(text_before_cursor_on_line, identifier)) return false;
+    std::string base;
+    std::vector<std::string> chain;
+    if (!ExtractDotChain(text_before_cursor_on_line, base, chain)) return false;
 
     std::string prefix = BuildLinePrefix(full_text, cursor_line, text_before_cursor_on_line);
     std::string viewer_class = FindEnclosingClass(prefix);
 
-    if (identifier == "this") {
+    MemberAccessContext ctx;
+    ctx.viewer_class = viewer_class;
+
+    if (base == "this") {
         if (viewer_class.empty()) return false;
-        out.kind = MemberAccessKind::kThis;
-        out.class_name = viewer_class;
-        out.viewer_class = viewer_class;
-        return true;
+        ctx.kind = MemberAccessKind::kThis;
+        ctx.class_name = viewer_class;
+    } else if (std::string var_class = var_types.TypeOf(base, prefix.size()); !var_class.empty()) {
+        ctx.kind = MemberAccessKind::kInstance;
+        ctx.class_name = var_class;
+    } else if (class_index.Find(base) != nullptr ||
+               (workspace_classes && workspace_classes->Find(base) != nullptr)) {
+        ctx.kind = MemberAccessKind::kClassName;
+        ctx.class_name = base;
+    } else {
+        return false;
     }
 
-    std::string var_class = var_types.TypeOf(identifier, prefix.size());
-    if (!var_class.empty()) {
-        out.kind = MemberAccessKind::kInstance;
-        out.class_name = var_class;
-        out.viewer_class = viewer_class;
-        return true;
+    for (const std::string& segment : chain) {
+        std::vector<ClassMember> members = class_index.FlattenedMembers(ctx.class_name, workspace_classes);
+        members = ClassIndex::FilterForAccess(members, ctx.kind, ctx.viewer_class);
+
+        const ClassMember* found = nullptr;
+        for (const auto& member : members) {
+            if (member.name == segment) { found = &member; break; }
+        }
+        if (!found) return false;
+
+        std::string next_type = found->is_method && found->signature ? found->signature->EffectiveReturnType()
+                                                                      : found->declared_type;
+        if (next_type.empty()) return false;
+
+        ctx.class_name = next_type;
+        ctx.kind = MemberAccessKind::kInstance;
     }
 
-    if (class_index.Find(identifier) != nullptr ||
-        (workspace_classes && workspace_classes->Find(identifier) != nullptr)) {
-        out.kind = MemberAccessKind::kClassName;
-        out.class_name = identifier;
-        out.viewer_class = viewer_class;
-        return true;
-    }
-
-    return false;
+    out = ctx;
+    return true;
 }
 
 bool ResolveOwnScopeSuggestions(const std::string& full_text, int cursor_line,

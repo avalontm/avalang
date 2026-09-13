@@ -147,13 +147,12 @@ build.progress_elapsed,(%s)
 build.section_target,Target
 build.platform_label,Platform
 build.platform_value,"%s (detected)"
-build.target_label,Build type
+build.target_label,Target
 build.target_readonly_note,"Set in Project Properties > Application."
 build.target_desktop,Desktop
 build.target_barekernel,BareKernel
-build.target_library,Library
-build.library_not_implemented_note,"Library output (.dll/.so) is not implemented yet -- the schema is ready, but builds for this target are disabled for now."
-build.error_library_not_implemented,"Library output is not implemented yet -- switch the target to Desktop or BareKernel to build."
+build.output_type_label,Output type
+build.error_library_barekernel_not_supported,"Library output is not supported for the BareKernel target -- switch Target to Desktop or Output type to Executable to build."
 build.section_machine_paths,Machine paths
 build.section_machine_paths_note,"Local to this computer -- saved in <project>.avaproj.user, not committed to git."
 build.toolchain_dir_label,Cross-toolchain folder
@@ -178,6 +177,7 @@ build.obfuscate_strings_label,Obfuscate strings
 build.flatten_control_flow_label,Flatten control flow
 build.zero_disk_label,Zero-disk
 build.zero_disk_tooltip,"Resolves the packaged project against an in-memory virtual filesystem instead\nof a temp dir -- no .ava/.avbc touches disk, not even briefly."
+build.zero_disk_disabled_library_tooltip,"Not available for Library output type yet."
 build.debug_unencrypted_label,"Debug build (unencrypted)"
 build.debug_unencrypted_warning,do not distribute this .exe
 build.key_file_label,"AES key file (optional)"
@@ -210,7 +210,12 @@ project_properties.tab_build,Build
 project_properties.tab_references,References
 project_properties.name_label,Project name
 project_properties.entry_file_label,"Entry script (.ava)"
+project_properties.target_label,Target
 project_properties.output_type_label,Output type
+project_properties.output_exe_desktop,Executable%s
+project_properties.output_exe_plain,Executable
+project_properties.output_library_desktop,Library%s
+project_properties.output_library_plain,Library
 project_properties.modules_path_label,Modules path
 project_properties.out_dir_label,Output folder
 project_properties.icon_label,Icon
@@ -242,6 +247,11 @@ quick_open.hint,Go to file...
 quick_open.no_results,No matching files.
 quick_open.no_project_files,No .ava/.avaui files found in this project.
 menu.file.new_project,New Project...
+new_project.section_output_type,Output type
+new_project.output_type_exe,Executable
+new_project.output_type_exe_hint,A standalone program you run directly.
+new_project.output_type_library,Library
+new_project.output_type_library_hint,"A reusable module (.dll/.so/.dylib) for other programs to load and invoke, instead of a standalone executable."
 new_project.section_location,Location
 new_project.name_label,Project name
 new_project.name_hint,MyProject

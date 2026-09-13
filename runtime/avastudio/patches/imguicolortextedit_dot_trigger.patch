@@ -1,0 +1,13 @@
+diff --git a/TextEditor.cpp b/TextEditor.cpp
+index b23157f..7b8c055 100644
+--- a/TextEditor.cpp
++++ b/TextEditor.cpp
+@@ -1575,7 +1575,7 @@ void TextEditor::handleCharacter(ImWchar character) {
+ 
+ 	endTransaction(transaction);
+ 
+-	if (CodePoint::isWord(character)) {
++	if (CodePoint::isWord(character) || character == '.') {
+ 		if (autocomplete.startTyping(cursors)) {
+ 			makeCursorVisible();
+ 		}

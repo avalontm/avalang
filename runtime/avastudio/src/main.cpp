@@ -269,6 +269,13 @@ int main(int argc, char** argv) {
     studio::FindInProjectState find_in_project_state;
 
     studio::LogBridge log_bridge;
+    if (project_config.load_parse_failed) {
+        log_bridge.Log(
+            "[project] advertencia: " + project_config.avaproj_path +
+            " existe pero no se pudo leer correctamente (XML invalido/truncado) -- se cargaron valores "
+            "por defecto (Exe, bin, etc.) en su lugar. Si esperabas ver tu configuracion previa, revisa "
+            "el archivo a mano o restauralo desde una copia de seguridad / control de versiones.");
+    }
     studio::PropertiesState properties_state;
 
     editor_state.log_bridge = &log_bridge;
@@ -843,7 +850,9 @@ int main(int argc, char** argv) {
                 std::string path;
                 if (studio::titlebar::OpenFileDialog(window, path, explorer_state.root_dir)) {
                     project_config.proj.entry_file = studio::NormalizeEntryFilePath(explorer_state.root_dir, path);
-                    studio::SaveProjectConfig(project_config);
+                    if (!studio::SaveProjectConfig(project_config)) {
+                        log_bridge.Log("[project] error: no se pudo guardar " + project_config.avaproj_path);
+                    }
                     studio::TriggerBuild(build_panel_state, project_config.proj, project_config.user,
                                           explorer_state.root_dir, log_bridge, project_config.ambiguous_avaproj,
                                           project_config.avaproj_candidates);
@@ -1128,7 +1137,13 @@ int main(int argc, char** argv) {
                 project_properties_state.open = true;
             }
             if (build_result.dirty) {
-                studio::SaveProjectConfig(project_config);
+                if (!studio::SaveProjectConfig(project_config)) {
+                    log_bridge.Log(
+                        "[project] error: no se pudo guardar " + project_config.avaproj_path +
+                        " -- verifica que el archivo no este bloqueado por otro programa (OneDrive, "
+                        "antivirus, editor externo) y que tengas permisos de escritura. Tu seleccion "
+                        "no quedo guardada en disco.");
+                }
             }
             persist_if_closed("Build###build", open);
         }
@@ -1180,7 +1195,13 @@ int main(int argc, char** argv) {
                 }
             }
             if (properties_result.dirty) {
-                studio::SaveProjectConfig(project_config);
+                if (!studio::SaveProjectConfig(project_config)) {
+                    log_bridge.Log(
+                        "[project] error: no se pudo guardar " + project_config.avaproj_path +
+                        " -- verifica que el archivo no este bloqueado por otro programa (OneDrive, "
+                        "antivirus, editor externo) y que tengas permisos de escritura. Tu seleccion "
+                        "no quedo guardada en disco.");
+                }
             }
         }
 

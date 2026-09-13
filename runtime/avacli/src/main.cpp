@@ -17,16 +17,20 @@
 #include <unistd.h>
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 // Windows reconstruye argv en cada llamada a
 // System.Environment.GetCommandLineArgs() via CommandLineToArgvW, asi
-// que no necesita ayuda de main(). En Linux no hay forma de recuperar
-// argv despues de que main() ya arranco, asi que LinEnvironment expone
-// un setter explicito que hay que llamar una sola vez acá con el
-// argc/argv real del proceso -- si no se llama, GetCommandLineArgs()
-// devuelve siempre una lista vacia (gap real encontrado en la Fase 7
-// de AVALANG_IMPORT_SYSTEM_PLAN.md).
+// que no necesita ayuda de main(). En Linux/macOS no hay forma de
+// recuperar argv despues de que main() ya arranco, asi que
+// Lin/MacEnvironment exponen un setter explicito que hay que llamar
+// una sola vez acá con el argc/argv real del proceso -- si no se
+// llama, GetCommandLineArgs() devuelve siempre una lista vacia (gap
+// real encontrado en la Fase 7 de AVALANG_IMPORT_SYSTEM_PLAN.md).
+#if defined(__linux__)
 #include "platform/linux/LinEnvironment.h"
+#elif defined(__APPLE__)
+#include "platform/macos/MacEnvironment.h"
+#endif
 #endif
 
 #define AVA_CLI_VERSION "0.1.0"
@@ -288,6 +292,9 @@ int main(int argc, char** argv) {
     // argv original tal cual lo vio el proceso, no la version ya
     // recortada que usa el resto de este main() para su propio parsing.
     ava::platform::linux_::SetCommandLineArgs(argc, argv);
+#elif defined(__APPLE__)
+    // Mismo esquema que __linux__ arriba, ver LinEnvironment.h/.cpp.
+    ava::platform::macos_::SetCommandLineArgs(argc, argv);
 #endif
 
     if (argc < 2) {

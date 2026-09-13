@@ -7,7 +7,6 @@ namespace ava {
 namespace platform {
 namespace macos_ {
 
-// STUB. TODO: back with fork/exec/waitpid (Linux) or posix_spawn (macOS).
 class MacProcess : public IProcess {
 public:
     uint64_t CurrentProcessId() const override;

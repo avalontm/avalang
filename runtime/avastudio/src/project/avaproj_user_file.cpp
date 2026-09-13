@@ -1,5 +1,8 @@
 #include "project/avaproj_user_file.h"
 
+#include <filesystem>
+#include <system_error>
+
 #include <pugixml.hpp>
 
 namespace studio {
@@ -11,6 +14,30 @@ std::string ChildTextOr(const pugi::xml_node& parent, const char* name, const st
     if (!child) return fallback;
     const char* text = child.text().as_string();
     return (text != nullptr && text[0] != '\0') ? std::string(text) : fallback;
+}
+
+// Fix: mismo problema y misma solucion que en avaproj_file.cpp -- escritura
+// atomica (temp + rename) para que un guardado interrumpido no deje el
+// .avaproj.user corrupto ni truncado.
+bool AtomicSaveXml(const pugi::xml_document& doc, const std::string& path) {
+    namespace fs = std::filesystem;
+    const fs::path final_path(path);
+    const fs::path tmp_path = fs::path(path + ".tmp");
+
+    std::error_code ec;
+    fs::create_directories(final_path.parent_path(), ec);
+
+    if (!doc.save_file(tmp_path.c_str(), "  ")) {
+        fs::remove(tmp_path, ec);
+        return false;
+    }
+
+    fs::rename(tmp_path, final_path, ec);
+    if (ec) {
+        fs::remove(tmp_path, ec);
+        return false;
+    }
+    return true;
 }
 
 }  // namespace
@@ -52,7 +79,7 @@ bool SaveAvaProjUserFile(const std::string& path, const AvaProjUserFile& data) {
     root.append_child("ForceSo").text().set(data.force_so);
     root.append_child("ForceRuntime").text().set(data.force_runtime);
 
-    return doc.save_file(path.c_str(), "  ");
+    return AtomicSaveXml(doc, path);
 }
 
 }  // namespace studio

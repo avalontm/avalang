@@ -7,7 +7,6 @@ namespace ava {
 namespace platform {
 namespace macos_ {
 
-// STUB. TODO: back with stdio + ANSI escape codes for color.
 class MacConsole : public IConsole {
 public:
     MacConsole();

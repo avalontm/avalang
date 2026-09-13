@@ -71,6 +71,7 @@ FetchContent_Declare(
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_interface_name.patch
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_variable_name.patch
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_smart_backspace_pair.patch
+                   ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_dot_trigger.patch
     UPDATE_DISCONNECTED TRUE
 )
 FetchContent_MakeAvailable(imguicolortextedit)
@@ -113,9 +114,11 @@ set(STUDIO_SOURCES
     src/util/process_log.cpp
     src/util/project_utils.cpp
     src/util/scaffold_templates.cpp
+    src/util/host_platform.cpp
     src/project/avaproj_file.cpp
     src/project/avaproj_user_file.cpp
     src/project/project_config.cpp
+    src/project/output_type_labels.cpp
     src/design/component_catalog.cpp
     src/design/design_document.cpp
     src/design/component_resolver.cpp

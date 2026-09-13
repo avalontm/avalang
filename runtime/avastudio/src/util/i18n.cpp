@@ -119,4 +119,14 @@ const std::string& Tr(const std::string& key) {
     return it->second;
 }
 
+std::string TrFormat(const std::string& key, std::initializer_list<std::string> args) {
+    std::string result = Tr(key);
+    for (const std::string& arg : args) {
+        const size_t pos = result.find("%s");
+        if (pos == std::string::npos) break;
+        result = result.substr(0, pos) + arg + result.substr(pos + 2);
+    }
+    return result;
+}
+
 }

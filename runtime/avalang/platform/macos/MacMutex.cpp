@@ -1,26 +1,30 @@
 #include "MacMutex.h"
 
-// STUB implementation -- not thread-safe yet.
-// TODO(Phase 6): pthread_mutex_init/lock/unlock/trylock,
-// mirroring core/platform/windows/MacMutex.cpp.
+#include <mutex>
 
 namespace ava {
 namespace platform {
 namespace macos_ {
 
-MacMutex::MacMutex() = default;
-MacMutex::~MacMutex() = default;
+MacMutex::MacMutex() : mutex_(new std::mutex()) {
+}
+
+MacMutex::~MacMutex() {
+    delete mutex_;
+    mutex_ = nullptr;
+}
 
 void MacMutex::Lock() {
-    // Not implemented.
+    if (mutex_) mutex_->lock();
 }
 
 void MacMutex::Unlock() {
-    // Not implemented.
+    if (mutex_) mutex_->unlock();
 }
 
 bool MacMutex::TryLock() {
-    return false;
+    if (!mutex_) return false;
+    return mutex_->try_lock();
 }
 
 } // namespace macos_

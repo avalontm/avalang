@@ -3,6 +3,8 @@
 #include <optional>
 #include <string>
 
+#include "project/avaproj_file.h"
+
 namespace studio {
 
 // kConsole: plain main.ava, no UI files (previously "Empty").
@@ -19,6 +21,13 @@ struct NewProjectState {
     std::string destination;
 
     NewProjectTemplateKind template_kind = NewProjectTemplateKind::kConsole;
+
+    // Executable vs Library, written straight into the new .avaproj's
+    // OutputType (see AvaProjOutputType). BareKernel isn't offered here --
+    // it stays a Properties-panel-only choice made after creation, since
+    // it also needs a toolchain path configured, not something a brand
+    // new project has yet.
+    AvaProjOutputType output_type = AvaProjOutputType::kExe;
 
     // Visual Studio-style template browser: free-text search plus a
     // category filter, both applied against the data-driven template list

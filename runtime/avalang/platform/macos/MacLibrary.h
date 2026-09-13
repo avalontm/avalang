@@ -7,10 +7,10 @@ namespace ava {
 namespace platform {
 namespace macos_ {
 
-// STUB. TODO: back with dlopen/dlsym/dlclose.
 class MacLibraryHandle : public ILibraryHandle {
 public:
     explicit MacLibraryHandle(void* handle);
+    ~MacLibraryHandle() override;
 
     void* ResolveSymbol(const std::string& symbol_name) override;
 

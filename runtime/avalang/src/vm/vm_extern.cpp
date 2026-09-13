@@ -4,25 +4,8 @@
 #include "value.h"
 
 #include "../../platform/barekernel/stdcompat/ava_stdcompat.h"
+#include "../../platform/barekernel/BareKernelCaps.h"
 
-// vm_extern.cpp implementa carga dinamica de librerias nativas +
-// invocacion via libffi para bloques `extern` de AvaLang. Depende de
-// std::filesystem (path resolution multiplataforma) ademas de libffi.
-// Portar std::filesystem a este kernel (que no tiene ni siquiera libc,
-// ver docs/kernel/PLAN_BAREKERNEL_STDCOMPAT.md) es un trabajo separado
-// del alcance de "hacer arrancar el VM" -- path resolution con
-// convenciones POSIX/Windows no tiene demasiado sentido conceptual
-// todavia en un kernel que ademas no tiene multiples dispositivos/
-// unidades ni el mismo modelo de "directorio del ejecutable".
-//
-// Se aplica el MISMO patron de degradacion elegante que ya usa este
-// archivo para libffi ausente ("extern compilara pero no podra invocar
-// funciones nativas reales", ver el mensaje de CMake en la config del
-// build): en barekernel, todo `extern` compila pero ava_extern_call()
-// devuelve un error claro en vez de silenciosamente hacer nada raro. El
-// dia que tenga sentido soportar dynamic loading real en el kernel
-// (CKM_CAP_DYNAMIC_LOADING=1 ya existe via ILibrary/BareKernelLibrary),
-// se puede portar esto puntualmente sin tocar el resto del VM.
 #if AVA_HAVE_STD_LIBRARY
 
 #include <algorithm>
@@ -348,23 +331,178 @@ extern "C" ava_value_t ava_extern_call(AvaVM*, const ava_value_t* c_args, size_t
 
 } // namespace ava
 
-#else  // !AVA_HAVE_STD_LIBRARY
+#elif defined(AVA_TARGET_BAREKERNEL) && CKM_CAP_DYNAMIC_LOADING
+
+#include "../../platform/barekernel/BareKernelExternThunk.h"
 
 namespace ava {
 
-// Stub para builds sin STL real (barekernel hoy). Ver nota grande al
-// inicio del archivo. AVA_THROW en vez de silencio: un script que use
-// `extern` en este target falla con un mensaje claro apenas se llama la
-// funcion, no con un comportamiento indefinido.
+namespace {
+
+avastd::mutex g_lib_mutex;
+avastd::unordered_map<avastd::string, platform::ILibraryHandle*> g_loaded_libs;
+
+avastd::vector<avastd::string> CandidateFileNames(const avastd::string& logical) {
+    avastd::vector<avastd::string> out;
+    out.push_back(logical);
+    out.push_back(logical + ".so");
+    out.push_back("lib" + logical + ".so");
+    return out;
+}
+
+avastd::string JoinPath(const avastd::string& dir, const avastd::string& name) {
+    if (dir.empty()) return name;
+    if (dir[dir.size() - 1] == '/') return dir + name;
+    return dir + "/" + name;
+}
+
+avastd::string ModulesRoot() {
+    avastd::string exe_dir = VmPlatformAccessor::Get().FileSystem().GetExecutableDirectory();
+    if (exe_dir.empty()) exe_dir = "/";
+    return JoinPath(exe_dir, "modules");
+}
+
+bool NameMatches(const avastd::string& filename, const avastd::vector<avastd::string>& wanted) {
+    for (avastd::size_t i = 0; i < wanted.size(); ++i) {
+        if (filename == wanted[i]) return true;
+    }
+    return false;
+}
+
+avastd::string FindInModulesDir(const avastd::string& root, const avastd::vector<avastd::string>& filenames) {
+    platform::IFileSystem& fs = VmPlatformAccessor::Get().FileSystem();
+    if (!fs.Exists(root) || !fs.IsDirectory(root)) return avastd::string();
+
+    avastd::vector<platform::DirEntry> entries;
+    if (!fs.EnumerateDirectory(root, entries)) return avastd::string();
+
+    for (avastd::size_t i = 0; i < entries.size(); ++i) {
+        const platform::DirEntry& e = entries[i];
+        avastd::string full = JoinPath(root, e.name);
+        if (e.is_directory) {
+            avastd::string found = FindInModulesDir(full, filenames);
+            if (!found.empty()) return found;
+        } else if (NameMatches(e.name, filenames)) {
+            return full;
+        }
+    }
+    return avastd::string();
+}
+
+platform::ILibraryHandle* LoadFromPath(const avastd::string& path) {
+    if (path.empty()) return nullptr;
+    return VmPlatformAccessor::Get().Libraries().Load(path);
+}
+
+platform::ILibraryHandle* LoadNativeLibrary(const avastd::string& logical_name) {
+    avastd::lock_guard<avastd::mutex> lock(g_lib_mutex);
+    auto it = g_loaded_libs.find(logical_name);
+    if (it != g_loaded_libs.end()) return it->second;
+
+    avastd::vector<avastd::string> candidates = CandidateFileNames(logical_name);
+
+    platform::ILibraryHandle* handle = nullptr;
+    for (avastd::size_t i = 0; i < candidates.size() && !handle; ++i) {
+        handle = LoadFromPath(candidates[i]);
+    }
+    if (!handle) {
+        avastd::string found = FindInModulesDir(ModulesRoot(), candidates);
+        if (!found.empty()) handle = LoadFromPath(found);
+    }
+
+    g_loaded_libs[logical_name] = handle;
+    return handle;
+}
+
+void* ResolveSymbol(platform::ILibraryHandle* handle, const avastd::string& name) {
+    if (!handle) return nullptr;
+    return handle->ResolveSymbol(name);
+}
+
+avastd::string PlatformLoadError() {
+    return "(ver tambien " + ModulesRoot() + " para modulos nativos personalizados)";
+}
+
+} // namespace
+
+extern "C" ava_value_t ava_extern_call(AvaVM*, const ava_value_t* c_args, size_t count, void* user_data) {
+    auto* meta = static_cast<ExternFuncMeta*>(user_data);
+    if (!meta) {
+        AVA_THROW(avastd::runtime_error("extern: metadata de funcion nativa invalida"));
+    }
+    const avastd::string where = meta->alias + "." + meta->func_name;
+
+    platform::ILibraryHandle* handle = LoadNativeLibrary(meta->library);
+    if (!handle) {
+        AVA_THROW(avastd::runtime_error(
+            "extern: no se pudo cargar la libreria \"" + meta->library + "\" (para " + where +
+            "). " + PlatformLoadError()));
+    }
+    void* sym = ResolveSymbol(handle, meta->func_name);
+    if (!sym) {
+        AVA_THROW(avastd::runtime_error(
+            "extern: simbolo \"" + meta->func_name + "\" no encontrado en la libreria \"" +
+            meta->library + "\""));
+    }
+
+    avastd::vector<platform::barekernel::ExternArg> thunk_args;
+    thunk_args.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+        Value v = FromC(c_args[i]);
+        platform::barekernel::ExternArg arg{};
+        switch (v.type) {
+            case ValueType::String: {
+                arg.kind = platform::barekernel::ExternArgKind::Pointer;
+                arg.ptr = const_cast<char*>(static_cast<StringObj*>(v.obj)->data.c_str());
+                break;
+            }
+            case ValueType::Number: {
+                double d = v.n;
+                if (d == static_cast<double>(static_cast<avastd::int32_t>(d))) {
+                    arg.kind = platform::barekernel::ExternArgKind::Int32;
+                    arg.i32 = static_cast<avastd::int32_t>(d);
+                } else if (d == static_cast<double>(static_cast<avastd::int64_t>(d))) {
+                    arg.kind = platform::barekernel::ExternArgKind::Int64;
+                    arg.i64 = static_cast<avastd::int64_t>(d);
+                } else {
+                    arg.kind = platform::barekernel::ExternArgKind::Double;
+                    arg.f64 = d;
+                }
+                break;
+            }
+            case ValueType::Bool: {
+                arg.kind = platform::barekernel::ExternArgKind::Int32;
+                arg.i32 = v.b ? 1 : 0;
+                break;
+            }
+            case ValueType::Nil: {
+                arg.kind = platform::barekernel::ExternArgKind::Pointer;
+                arg.ptr = nullptr;
+                break;
+            }
+            default:
+                AVA_THROW(avastd::runtime_error(
+                    "extern: tipo de argumento no soportado llamando a " + where +
+                    " (solo number/string/bool/nil por ahora)"));
+        }
+        thunk_args.push_back(arg);
+    }
+
+    avastd::int32_t result = platform::barekernel::CallExternCdecl(sym, thunk_args);
+    return ToC(Value::Number(static_cast<double>(result)));
+}
+
+} // namespace ava
+
+#else
+
+namespace ava {
+
 extern "C" ava_value_t ava_extern_call(AvaVM*, const ava_value_t*, size_t, void*) {
     AVA_THROW(avastd::runtime_error(
         "extern: bloques 'extern' (FFI a librerias nativas) no estan "
-        "soportados en este build (falta std::filesystem/libffi en el "
-        "target barekernel) -- ver nota en vm_extern.cpp"));
+        "soportados en este build -- ver nota en vm_extern.cpp"));
 #if !AVA_HAVE_EXCEPTIONS
-    // AVA_THROW no retorna (longjmp), pero el compilador no siempre lo
-    // sabe a traves de la macro -- devolver algo silencia el warning de
-    // "missing return" sin cambiar el comportamiento real.
     ava_value_t dummy{};
     return dummy;
 #endif

@@ -6,6 +6,8 @@
 #include "imgui.h"
 #include "imgui_stdlib.h"
 #include "palette.h"
+#include "project/output_type_labels.h"
+#include "util/host_platform.h"
 #include "util/i18n.h"
 #include "util/project_utils.h"
 #include "util/ui_widgets.h"
@@ -57,20 +59,36 @@ void DrawApplicationTab(AvaProjFile& proj, const std::string& project_dir, Proje
     ImGui::Dummy(ImVec2(0.0f, 6.0f));
 
     ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s",
-                        util::Tr("project_properties.output_type_label").c_str());
-    int type_index = proj.output_type == AvaProjOutputType::kBareKernel
-                          ? 1
-                          : (proj.output_type == AvaProjOutputType::kLibrary ? 2 : 0);
-    const std::string type_exe = util::Tr("build.target_desktop");
-    const std::string type_barekernel = util::Tr("build.target_barekernel");
-    const std::string type_library = util::Tr("build.target_library");
-    const char* type_items[] = {type_exe.c_str(), type_barekernel.c_str(), type_library.c_str()};
+                        util::Tr("project_properties.target_label").c_str());
+    int target_index = proj.target == AvaProjTarget::kBareKernel ? 1 : 0;
+    const std::string target_desktop = util::Tr("build.target_desktop");
+    const std::string target_barekernel = util::Tr("build.target_barekernel");
+    const char* target_items[] = {target_desktop.c_str(), target_barekernel.c_str()};
     ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::Combo("##OutputType", &type_index, type_items, 3)) {
-        proj.output_type = type_index == 1 ? AvaProjOutputType::kBareKernel
-                            : type_index == 2 ? AvaProjOutputType::kLibrary
-                                               : AvaProjOutputType::kExe;
+    if (ImGui::Combo("##Target", &target_index, target_items, 2)) {
+        proj.target = target_index == 1 ? AvaProjTarget::kBareKernel : AvaProjTarget::kDesktop;
         result.dirty = true;
+    }
+    ImGui::Dummy(ImVec2(0.0f, 6.0f));
+
+    ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s",
+                        util::Tr("project_properties.output_type_label").c_str());
+    const bool target_is_barekernel = proj.target == AvaProjTarget::kBareKernel;
+    const util::HostPlatform host_platform = util::DetectedHostPlatform();
+    int output_type_index = proj.output_type == AvaProjOutputType::kLibrary ? 1 : 0;
+    const std::string output_exe = DescribeOutputType(host_platform, target_is_barekernel, AvaProjOutputType::kExe);
+    const std::string output_library =
+        DescribeOutputType(host_platform, target_is_barekernel, AvaProjOutputType::kLibrary);
+    const char* output_type_items[] = {output_exe.c_str(), output_library.c_str()};
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::Combo("##OutputType", &output_type_index, output_type_items, 2)) {
+        proj.output_type = output_type_index == 1 ? AvaProjOutputType::kLibrary : AvaProjOutputType::kExe;
+        if (proj.output_type == AvaProjOutputType::kLibrary) proj.zero_disk = false;
+        result.dirty = true;
+    }
+    if (proj.output_type == AvaProjOutputType::kLibrary && target_is_barekernel) {
+        ImGui::TextColored(palette::FromHex(palette::kWarning), "%s",
+                            util::Tr("build.error_library_barekernel_not_supported").c_str());
     }
     ImGui::Dummy(ImVec2(0.0f, 6.0f));
 
@@ -114,9 +132,13 @@ void DrawBuildTab(AvaProjFile& proj, AvaProjUserFile& user, ProjectPropertiesRes
             result.dirty = true;
         ImGui::Unindent();
     }
+    const bool zero_disk_disabled = proj.output_type == AvaProjOutputType::kLibrary;
+    ImGui::BeginDisabled(zero_disk_disabled);
     if (ImGui::Checkbox(util::Tr("build.zero_disk_label").c_str(), &proj.zero_disk)) result.dirty = true;
+    ImGui::EndDisabled();
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", util::Tr("build.zero_disk_tooltip").c_str());
+        ImGui::SetTooltip("%s", util::Tr(zero_disk_disabled ? "build.zero_disk_disabled_library_tooltip"
+                                                              : "build.zero_disk_tooltip").c_str());
     }
     if (ImGui::Checkbox(util::Tr("build.debug_unencrypted_label").c_str(), &proj.debug_unencrypted))
         result.dirty = true;

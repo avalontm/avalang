@@ -44,6 +44,8 @@ ProjectConfig LoadProjectConfig(const std::string& dir) {
     if (auto loaded = LoadAvaProjFile(config.avaproj_path)) {
         config.proj = *loaded;
     } else {
+        std::error_code exists_ec;
+        config.load_parse_failed = fs::exists(config.avaproj_path, exists_ec);
         config.proj = AvaProjFile{};
         config.proj.project_name = fs::path(dir).filename().string();
     }
@@ -57,15 +59,16 @@ ProjectConfig LoadProjectConfig(const std::string& dir) {
     return config;
 }
 
-void SaveProjectConfig(const ProjectConfig& config) {
-    if (config.avaproj_path.empty()) return;
+bool SaveProjectConfig(const ProjectConfig& config) {
+    if (config.avaproj_path.empty()) return false;
 
     std::error_code ec;
     fs::create_directories(fs::path(config.avaproj_path).parent_path(), ec);
 
-    SaveAvaProjFile(config.avaproj_path, config.proj);
-    SaveAvaProjUserFile(UserFilePathFor(config.avaproj_path), config.user);
+    const bool proj_ok = SaveAvaProjFile(config.avaproj_path, config.proj);
+    const bool user_ok = SaveAvaProjUserFile(UserFilePathFor(config.avaproj_path), config.user);
     EnsureGitignoreEntry(config.dir, "*.avaproj.user");
+    return proj_ok && user_ok;
 }
 
 bool EnsureGitignoreEntry(const std::string& dir, const std::string& pattern) {

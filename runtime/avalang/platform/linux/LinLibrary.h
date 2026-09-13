@@ -7,7 +7,6 @@ namespace ava {
 namespace platform {
 namespace linux_ {
 
-// STUB. TODO: back with dlopen/dlsym/dlclose.
 class LinLibraryHandle : public ILibraryHandle {
 public:
     explicit LinLibraryHandle(void* handle);

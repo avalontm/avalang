@@ -10,7 +10,9 @@
 #include "palette.h"
 #include "platform/Platform.h"
 #include "platform/interfaces/IProcessStream.h"
+#include "project/output_type_labels.h"
 #include "util/ava_cli_locator.h"
+#include "util/host_platform.h"
 #include "util/i18n.h"
 #include "util/ui_widgets.h"
 #include "util/process_log.h"
@@ -30,16 +32,6 @@ namespace studio {
 
 namespace {
 namespace fs = std::filesystem;
-
-std::string TrFormat(const std::string& key, std::initializer_list<std::string> args) {
-    std::string result = util::Tr(key);
-    for (const std::string& arg : args) {
-        const size_t pos = result.find("%s");
-        if (pos == std::string::npos) break;
-        result = result.substr(0, pos) + arg + result.substr(pos + 2);
-    }
-    return result;
-}
 
 // Deriva una etapa legible + una fraccion (0..1, solo para la barra) a
 // partir de los marcadores que `ava_cli build` ya imprime por stdout
@@ -103,7 +95,7 @@ std::string FormatSeconds(double seconds) {
     return std::to_string(total / 60) + "m " + std::to_string(total % 60) + "s";
 }
 
-std::string TrFormat(const std::string& key, const std::string& arg) { return TrFormat(key, {arg}); }
+std::string TrFormat(const std::string& key, const std::string& arg) { return util::TrFormat(key, {arg}); }
 
 bool LooksLikeRepoRoot(const fs::path& dir) {
     std::error_code ec;
@@ -374,7 +366,7 @@ TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const AvaProjFile& proj
     }
 
     const fs::path project_dir(outcome.project_dir);
-    const bool is_barekernel = (proj.output_type == AvaProjOutputType::kBareKernel);
+    const bool is_barekernel = (proj.target == AvaProjTarget::kBareKernel);
     const bool is_library = (proj.output_type == AvaProjOutputType::kLibrary);
 
     fs::path ava_cli = user.ava_cli_path.empty() ? DetectAvaCliPath() : fs::path(user.ava_cli_path);
@@ -390,8 +382,8 @@ TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const AvaProjFile& proj
 
     std::error_code ec;
     std::string setup_error;
-    if (is_library) {
-        setup_error = util::Tr("build.error_library_not_implemented");
+    if (is_library && is_barekernel) {
+        setup_error = util::Tr("build.error_library_barekernel_not_supported");
     } else if (ava_cli.empty() || !fs::exists(ava_cli, ec)) {
         setup_error = util::Tr("build.error_ava_cli_not_found");
     } else if (repo_root.empty() || !LooksLikeRepoRoot(repo_root)) {
@@ -427,6 +419,10 @@ TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const AvaProjFile& proj
             "--repo-root", repo_root.string(),
             "--target", is_barekernel ? "barekernel" : "desktop",
         };
+        if (!is_barekernel) {
+            args.push_back("--output-kind");
+            args.push_back(is_library ? "library" : "exe");
+        }
         const std::string& active_compiler_path =
             is_barekernel ? user.compiler_path_barekernel : user.compiler_path_desktop;
         if (!active_compiler_path.empty()) {
@@ -466,14 +462,21 @@ TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const AvaProjFile& proj
                 if (proj.obfuscate_strings) args.push_back("--obfuscate-strings");
                 if (proj.flatten_control_flow) args.push_back("--flatten-control-flow");
             }
-            if (proj.zero_disk) args.push_back("--zero-disk");
+            if (proj.zero_disk && !is_library) args.push_back("--zero-disk");
             if (proj.debug_unencrypted) args.push_back("--debug");
         }
 
         std::string entry_stem = fs::path(entry).stem().string();
         if (entry_stem.empty()) entry_stem = "packaged";
 
-        const std::string expected_suffix = is_barekernel ? ".exe" : AVASTUDIO_EXE_SUFFIX;
+        std::string expected_suffix;
+        if (is_barekernel) {
+            expected_suffix = ".exe";
+        } else if (is_library) {
+            expected_suffix = util::HostLibraryExtension(util::DetectedHostPlatform());
+        } else {
+            expected_suffix = AVASTUDIO_EXE_SUFFIX;
+        }
         fs::path expected_exe = out_dir / (entry_stem + expected_suffix);
 
         StartBuild(state, std::move(args), ava_cli.string(), expected_exe.string());
@@ -494,18 +497,6 @@ TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const AvaProjFile& proj
 }
 
 namespace {
-
-const char* DetectedPlatformName() {
-#if defined(_WIN32)
-    return "Windows";
-#elif defined(__APPLE__)
-    return "macOS";
-#elif defined(__linux__)
-    return "Linux";
-#else
-    return "Unknown";
-#endif
-}
 
 bool DrawPathRow(const char* label, const char* hint, std::string& value, const char* browse_id,
                   BuildBrowseField field, BuildPanelResult& result) {
@@ -583,7 +574,7 @@ BuildPanelResult DrawBuildPanel(BuildPanelState& state, AvaProjFile& proj, AvaPr
         ImGui::Text("%s", util::Tr(stage.label_key).c_str());
         ImGui::SameLine();
         ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s",
-                            TrFormat("build.progress_elapsed", {FormatSeconds(elapsed_s)}).c_str());
+                            util::TrFormat("build.progress_elapsed", {FormatSeconds(elapsed_s)}).c_str());
 
         ImGui::ProgressBar(stage.fraction, ImVec2(-FLT_MIN, 0.0f));
 
@@ -599,26 +590,30 @@ BuildPanelResult DrawBuildPanel(BuildPanelState& state, AvaProjFile& proj, AvaPr
     ImGui::Separator();
     ImGui::Dummy(ImVec2(0.0f, 4.0f));
 
+    const util::HostPlatform host_platform = util::DetectedHostPlatform();
+
     ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s", util::Tr("build.platform_label").c_str());
-    const std::string platform_value = TrFormat("build.platform_value", DetectedPlatformName());
+    const std::string platform_value = TrFormat("build.platform_value", util::HostPlatformName(host_platform));
     ImGui::Text("%s", platform_value.c_str());
     ImGui::Dummy(ImVec2(0.0f, 6.0f));
 
-    const bool is_barekernel = (proj.output_type == AvaProjOutputType::kBareKernel);
+    const bool is_barekernel = (proj.target == AvaProjTarget::kBareKernel);
     const bool is_library = (proj.output_type == AvaProjOutputType::kLibrary);
     const std::string target_desktop_label = util::Tr("build.target_desktop");
     const std::string target_barekernel_label = util::Tr("build.target_barekernel");
-    const std::string target_library_label = util::Tr("build.target_library");
-    const std::string& target_value =
-        is_barekernel ? target_barekernel_label : (is_library ? target_library_label : target_desktop_label);
+    const std::string output_exe_label = DescribeOutputType(host_platform, is_barekernel, AvaProjOutputType::kExe);
+    const std::string output_library_label =
+        DescribeOutputType(host_platform, is_barekernel, AvaProjOutputType::kLibrary);
     ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s", util::Tr("build.target_label").c_str());
-    ImGui::Text("%s", target_value.c_str());
+    ImGui::Text("%s", (is_barekernel ? target_barekernel_label : target_desktop_label).c_str());
+    ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s", util::Tr("build.output_type_label").c_str());
+    ImGui::Text("%s", (is_library ? output_library_label : output_exe_label).c_str());
     ImGui::TextDisabled("%s", util::Tr("build.target_readonly_note").c_str());
 
-    if (is_library) {
+    if (is_library && is_barekernel) {
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
         ImGui::TextColored(palette::FromHex(palette::kWarning), "%s",
-                            util::Tr("build.library_not_implemented_note").c_str());
+                            util::Tr("build.error_library_barekernel_not_supported").c_str());
     }
 
     ImGui::Dummy(ImVec2(0.0f, 8.0f));
