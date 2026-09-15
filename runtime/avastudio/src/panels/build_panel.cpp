@@ -464,6 +464,7 @@ TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const AvaProjFile& proj
             }
             if (proj.zero_disk && !is_library) args.push_back("--zero-disk");
             if (proj.debug_unencrypted) args.push_back("--debug");
+            if (proj.uses_ui) args.push_back("--with-ui");
         }
 
         std::string entry_stem = fs::path(entry).stem().string();

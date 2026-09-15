@@ -51,6 +51,8 @@ constexpr float kEditorMinZoom = 0.5f;
 constexpr float kEditorMaxZoom = 3.0f;
 constexpr float kEditorWheelZoomStep = 0.1f;
 
+constexpr float kEditorBaseFontSizePx = 16.0f;
+
 float ClampEditorZoom(float zoom) { return std::clamp(zoom, kEditorMinZoom, kEditorMaxZoom); }
 
 std::string DirOf(const std::string& file_path) {
@@ -272,24 +274,37 @@ std::string ToLowerAscii(const std::string& text) {
 constexpr size_t kAutocompleteLimit = 20;
 constexpr size_t kAutocompleteFuzzyMinChars = 3;
 
+// prepends a one-char kind tag ('M'ethod/'F'ield/'C'lass/'K'eyword/'V'ariable) understood by
+// patches/imguicolortextedit_suggestion_icons.patch, which draws a matching icon and strips the tag
+std::string TagSuggestion(char kind, const std::string& text) {
+    return std::string(1, '\x01') + kind + text;
+}
+
+char ClassifyTrieWord(EditorTab& tab, const std::string& word) {
+    if (tab.function_index.Find(word) != nullptr) return 'M';
+    if (tab.class_index.Classes().count(word)) return 'C';
+    if (languages::AvaLang()->keywords.count(word)) return 'K';
+    return 'V';
+}
+
 void PopulateGeneralSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& ac_state) {
     std::unordered_set<std::string> seen;
     std::vector<std::string> ordered;
 
     const std::string search_term_lower = ToLowerAscii(ac_state.searchTerm);
 
-    auto add_filtered = [&](const std::string& name) {
+    auto add_filtered = [&](char kind, const std::string& name) {
         if (ordered.size() >= kAutocompleteLimit) return;
         if (!search_term_lower.empty()) {
             const std::string name_lower = ToLowerAscii(name);
             if (name_lower.compare(0, search_term_lower.size(), search_term_lower) != 0) return;
         }
-        if (seen.insert(name).second) ordered.push_back(name);
+        if (seen.insert(name).second) ordered.push_back(TagSuggestion(kind, name));
     };
 
-    auto add_raw = [&](const std::string& name) {
+    auto add_raw = [&](char kind, const std::string& name) {
         if (ordered.size() >= kAutocompleteLimit) return;
-        if (seen.insert(name).second) ordered.push_back(name);
+        if (seen.insert(name).second) ordered.push_back(TagSuggestion(kind, name));
     };
 
     auto callable_label = [&](const std::string& name, bool is_callable) {
@@ -304,19 +319,27 @@ void PopulateGeneralSuggestions(EditorTab& tab, TextEditor::AutoCompleteState& a
     ResolveOwnScopeSuggestions(tab.GetText(), pos.line, before, tab.class_index, tab.variable_type_index,
                                 own_variables, own_members);
 
-    for (const auto& name : own_variables) add_filtered(name);
-    for (const auto& member : own_members) add_filtered(callable_label(member.name, member.is_method));
+    for (const auto& name : own_variables) add_filtered('V', name);
+    for (const auto& member : own_members) {
+        add_filtered(member.is_method ? 'M' : 'F', callable_label(member.name, member.is_method));
+    }
 
     std::vector<std::string> prefix_matches;
     tab.autocomplete_trie.findSuggestions(prefix_matches, ac_state.searchTerm, kAutocompleteLimit,
                                            /*maxSkippedLetters=*/0);
-    for (const auto& word : prefix_matches) add_raw(callable_label(word, tab.function_index.Find(word) != nullptr));
+    for (const auto& word : prefix_matches) {
+        char kind = ClassifyTrieWord(tab, word);
+        add_raw(kind, callable_label(word, kind == 'M'));
+    }
 
     if (ordered.size() < kAutocompleteLimit && ac_state.searchTerm.size() >= kAutocompleteFuzzyMinChars) {
         std::vector<std::string> fuzzy_matches;
         tab.autocomplete_trie.findSuggestions(fuzzy_matches, ac_state.searchTerm, kAutocompleteLimit,
                                                /*maxSkippedLetters=*/2);
-        for (const auto& word : fuzzy_matches) add_raw(callable_label(word, tab.function_index.Find(word) != nullptr));
+        for (const auto& word : fuzzy_matches) {
+            char kind = ClassifyTrieWord(tab, word);
+            add_raw(kind, callable_label(word, kind == 'M'));
+        }
     }
 
     ac_state.suggestions = std::move(ordered);
@@ -330,6 +353,18 @@ bool PopulateMemberSuggestions(EditorState& state, EditorTab& tab, TextEditor::A
     std::vector<ClassMember> members;
     if (!ResolveVisibleMembers(state, tab, pos.line, before, ctx, members)) return false;
 
+    // right after the dot, with nothing typed yet, DrawDotCompletionPopup (the hand-drawn
+    // popup right below the caret) already shows this exact same member list -- if we also let
+    // this library-driven popup open here (it does, since the dot itself now triggers activation,
+    // see patches/imguicolortextedit_dot_trigger.patch) the two popups would stack on top of each
+    // other. So we suppress ourselves for this one activation; the moment the user types the
+    // first letter, DrawDotCompletionPopup deactivates (its own "before.back() == '.'" check
+    // fails) and this popup takes over normally for filtering.
+    if (!before.empty() && before.back() == '.') {
+        ac_state.suppressPopup = true;
+        return true;
+    }
+
     const std::string search_term_lower = ToLowerAscii(ac_state.searchTerm);
 
     std::vector<std::string> suggestions;
@@ -341,7 +376,7 @@ bool PopulateMemberSuggestions(EditorState& state, EditorTab& tab, TextEditor::A
 
         std::string insert_text = member.name;
         if (member.is_method) insert_text += "()";
-        suggestions.push_back(insert_text);
+        suggestions.push_back(TagSuggestion(member.is_method ? 'M' : 'F', insert_text));
     }
 
     if (suggestions.empty()) return false;
@@ -910,14 +945,18 @@ ImVec2 EstimateCaretScreenPos(EditorTab& tab, const TextEditor::CursorPosition& 
                                const ImVec2& editor_screen_min) {
     const float line_height = tab.editor.GetLineHeight();
     const float glyph_width = tab.editor.GetGlyphWidth();
-    const int first_visible_line = tab.editor.GetFirstVisibleLine();
-    const int first_visible_column = tab.editor.GetFirstVisibleColumn();
+    // Pixel-precise scroll offset (imguicolortextedit_scroll_offset.patch), not the
+    // whole-line/whole-column quantized GetFirstVisibleLine()/GetFirstVisibleColumn():
+    // those floor() to an integer line/column, so overlays positioned from them only
+    // move in whole-line jumps instead of tracking the scroll continuously.
+    const float scroll_x = tab.editor.GetCurrentScrollX();
+    const float scroll_y = tab.editor.GetCurrentScrollY();
     const float gutter_width = EstimateGutterWidth(tab, glyph_width);
 
     const float x = editor_screen_min.x + gutter_width +
-                     static_cast<float>(pos.column - first_visible_column) * glyph_width;
+                     static_cast<float>(pos.column) * glyph_width - scroll_x;
     const float y = editor_screen_min.y +
-                     static_cast<float>(pos.line - first_visible_line) * line_height;
+                     static_cast<float>(pos.line) * line_height - scroll_y;
     return ImVec2(x, y);
 }
 
@@ -925,16 +964,15 @@ TextEditor::CursorPosition ScreenPosToCursor(EditorTab& tab, const ImVec2& scree
                                               const ImVec2& editor_screen_min) {
     const float line_height = tab.editor.GetLineHeight();
     const float glyph_width = tab.editor.GetGlyphWidth();
-    const int first_visible_line = tab.editor.GetFirstVisibleLine();
-    const int first_visible_column = tab.editor.GetFirstVisibleColumn();
+    const float scroll_x = tab.editor.GetCurrentScrollX();
+    const float scroll_y = tab.editor.GetCurrentScrollY();
     const float gutter_width = EstimateGutterWidth(tab, glyph_width);
 
-    const int line =
-        first_visible_line + std::max(0, static_cast<int>((screen_pos.y - editor_screen_min.y) / line_height));
-    const int column =
-        first_visible_column +
-        std::max(0, static_cast<int>((screen_pos.x - editor_screen_min.x - gutter_width + glyph_width * 0.5f) /
-                                      glyph_width));
+    const int line = std::max(
+        0, static_cast<int>((screen_pos.y - editor_screen_min.y + scroll_y) / line_height));
+    const int column = std::max(
+        0, static_cast<int>((screen_pos.x - editor_screen_min.x - gutter_width + scroll_x + glyph_width * 0.5f) /
+                             glyph_width));
     return TextEditor::CursorPosition(line, column);
 }
 
@@ -2270,7 +2308,27 @@ void DrawEditorPanel(EditorState& state) {
                     if (ShortcutRegistry::Instance().Pressed(ShortcutId::ZoomReset, zoom_key_scope)) {
                         tab.zoom = 1.0f;
                     }
-                    ImGui::SetWindowFontScale(tab.zoom);
+                    // NOTE: previously this used ImGui::SetWindowFontScale(tab.zoom).
+                    // That call only stretches glyphs when *rendering* the current
+                    // window; it does not change the font size that ImGui/TextEditor
+                    // use to *compute* layout (GetLineHeight()/GetGlyphWidth(), which
+                    // our own gutter overlays below rely on), and it does not apply to
+                    // the child window that TextEditor::Render() creates internally
+                    // (FontWindowScale is per-window and is not inherited by children).
+                    // The result: as tab.zoom grows, the on-screen glyphs get bigger
+                    // but the line-height/gutter math the widget (and our own overlay
+                    // code) uses to position the line-number gutter, carets, squiggles
+                    // etc. does not grow the same way, so the left-hand gutter drifts
+                    // away from the actual text rows -- worse the further you zoom in.
+                    //
+                    // ImGui 1.92+ (which this project's TextEditor fork targets, see
+                    // README "Supports dynamic font sizes") replaces SetWindowFontScale
+                    // with real dynamic font sizing: PushFont(font, size) re-rasterizes
+                    // at the requested pixel size and updates the actual font metrics
+                    // used everywhere (including inside nested child windows), so every
+                    // consumer of GetLineHeight()/GetGlyphWidth() stays in sync with
+                    // what's drawn on screen regardless of the zoom level.
+                    ImGui::PushFont(nullptr, kEditorBaseFontSizePx * tab.zoom);
 
                     tab.editor.Render("##editor", avail, false);
                     state.code_editor_has_focus = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
@@ -2358,7 +2416,7 @@ void DrawEditorPanel(EditorState& state) {
                         }
                     }
 
-                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::PopFont();
                 }
                 ImGui::EndTabItem();
             }

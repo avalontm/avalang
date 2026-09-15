@@ -72,6 +72,8 @@ FetchContent_Declare(
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_variable_name.patch
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_smart_backspace_pair.patch
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_dot_trigger.patch
+                   ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_suggestion_icons.patch
+                   ${CMAKE_CURRENT_SOURCE_DIR}/patches/imguicolortextedit_scroll_offset.patch
     UPDATE_DISCONNECTED TRUE
 )
 FetchContent_MakeAvailable(imguicolortextedit)

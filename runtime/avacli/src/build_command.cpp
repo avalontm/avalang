@@ -86,6 +86,8 @@ struct BuildOptions {
     bool zero_disk = false;
 
     std::string output_kind = "exe";
+    bool with_ui = false;
+    bool static_crt = false;
 
     std::string sign_pfx;
     std::string sign_password_env;
@@ -172,9 +174,22 @@ void PrintBuildUsage() {
         "                and --debug. Not combinable with --output-kind library.\n"
         "  --output-kind <exe|library>\n"
         "                Default 'exe'. 'library' builds a dynamic library\n"
-        "                (.dll/.so/.dylib) that exports avapack_run() instead of a\n"
-        "                standalone executable -- see runtime/avapack/src/lib_api.h.\n"
-        "                Not combinable with --zero-disk.\n"
+        "                (.dll/.so/.dylib) that exports avapack_run()/avapack_init()/\n"
+        "                avapack_call()/avapack_shutdown() instead of a standalone\n"
+        "                executable -- see runtime/avapack/src/lib_api.h. Not\n"
+        "                combinable with --zero-disk.\n"
+        "  --with-ui     Enables the AVA_BUILD_UI dependency (avalang_ui.dll/.so),\n"
+        "                OFF by default for both --output-kind exe and library. Pass\n"
+        "                this if your .ava project uses .avaui components -- without\n"
+        "                it, the resulting binary/library will not depend on\n"
+        "                avalang_ui.dll/.so at all (and can't create UI components).\n"
+        "                If .avaui files are found in the project but --with-ui\n"
+        "                wasn't passed, a warning is printed (the build still\n"
+        "                proceeds without UI).\n"
+        "  --static-crt  Link the MSVC CRT statically (/MT + x64-windows-static)\n"
+        "                instead of dynamically (/MD). Recommended when the output\n"
+        "                (.exe or .dll) will be distributed/loaded on a machine\n"
+        "                without the VC++ redistributable installed.\n"
         "  --sign-pfx    (optional, requires signtool in PATH) Signs the final .exe\n"
         "                with the given .pfx certificate. Without this flag, the\n"
         "                .exe is not signed.\n"
@@ -286,6 +301,10 @@ bool ParseBuildArgs(int argc, char** argv, BuildOptions& opts, std::string& erro
         } else if (arg == "--output-kind") {
             const char* v = next_value("--output-kind"); if (!v) return false;
             opts.output_kind = v;
+        } else if (arg == "--with-ui") {
+            opts.with_ui = true;
+        } else if (arg == "--static-crt") {
+            opts.static_crt = true;
         } else if (arg == "--sign-pfx") {
             const char* v = next_value("--sign-pfx"); if (!v) return false;
             opts.sign_pfx = v;
@@ -541,6 +560,34 @@ std::unordered_set<std::string> CollectExternLibraryNames(const fs::path& projec
     return extern_names;
 }
 
+bool DirectoryHasAvauiFiles(const fs::path& root) {
+    std::error_code ec;
+    if (!fs::exists(root, ec) || !fs::is_directory(root, ec)) return false;
+    for (auto it = fs::recursive_directory_iterator(
+             root, fs::directory_options::skip_permission_denied, ec);
+         it != fs::recursive_directory_iterator() && !ec; it.increment(ec)) {
+        std::error_code fe;
+        if (!it->is_regular_file(fe)) continue;
+        if (it->path().extension() == ".avaui") return true;
+    }
+    return false;
+}
+
+// Un proyecto solo necesita avalang.ui si de verdad usa UI -- lo
+// aproximamos buscando algun archivo .avaui en el proyecto o en alguna
+// carpeta de modulos extra (<Reference> del .avaproj / libraries/ del
+// repo, mismo set de carpetas que ya se resuelve para --extra-modules-dir
+// mas abajo). Si no aparece ninguno, avalang.ui no hace falta ni para
+// compilar ni para correr el binario resultante -- ver conversacion sobre
+// por que un build de una app sin UI no deberia arrastrar avalang_ui.dll.
+bool ProjectUsesUi(const fs::path& project_dir, const std::vector<fs::path>& extra_module_dirs) {
+    if (DirectoryHasAvauiFiles(project_dir)) return true;
+    for (const fs::path& dir : extra_module_dirs) {
+        if (DirectoryHasAvauiFiles(dir)) return true;
+    }
+    return false;
+}
+
 std::optional<fs::path> FindDllForExternName(const fs::path& libraries_dir, const std::string& name) {
     std::error_code ec;
     if (!fs::exists(libraries_dir, ec) || !fs::is_directory(libraries_dir, ec)) return std::nullopt;
@@ -660,16 +707,25 @@ bool SignBinary(ava::platform::IProcess& process, const fs::path& exe_path,
 // de una copia de avapack_stub.exe. Sin cmake, sin compilar nada, sin
 // necesitar el repo para nada mas que --extra-modules-dir (libraries/, si
 // existe -- opcional, no bloquea el camino rapido si no esta).
-bool FindPrebuiltPackTools(const fs::path& dir, fs::path& out_stub_exe, fs::path& out_gen_exe) {
+bool FindPrebuiltPackTools(const fs::path& dir, bool require_ui_dll, fs::path& out_stub_exe,
+                            fs::path& out_gen_exe) {
     if (dir.empty()) return false;
     fs::path stub = dir / ("avapack_stub" + std::string(AVACLI_EXE_SUFFIX));
     fs::path gen = dir / ("avapack_gen" + std::string(AVACLI_EXE_SUFFIX));
     std::error_code ec;
     if (!fs::exists(stub, ec) || !fs::exists(gen, ec)) return false;
-    if (!fs::exists(dir / kAvalangRuntimeLib, ec) || !fs::exists(dir / kAvalangUiRuntimeLib, ec)) {
-        // avapack_stub.exe necesita las mismas DLL que ava_cli para arrancar
-        // -- sin ellas el .exe empacado tampoco va a poder correr, asi que
-        // no vale la pena intentar este camino.
+    if (!fs::exists(dir / kAvalangRuntimeLib, ec)) {
+        // avapack_stub.exe necesita la misma avalang.dll que ava_cli para
+        // arrancar -- sin ella el .exe empacado tampoco va a poder correr,
+        // asi que no vale la pena intentar este camino.
+        return false;
+    }
+    // avalang_ui.dll solo hace falta junto a avapack_stub.exe si el proyecto
+    // que se esta empacando de verdad usa UI (ver ProjectUsesUi) -- si no la
+    // usa, avapack_stub.exe ni siquiera la referencia (no hay simbolos
+    // ava_ui_* en stub_main.cpp/packaged_runtime.cpp), asi que exigirla
+    // aca solo bloqueaba el camino rapido sin necesidad para apps sin UI.
+    if (require_ui_dll && !fs::exists(dir / kAvalangUiRuntimeLib, ec)) {
         return false;
     }
     out_stub_exe = stub;
@@ -694,12 +750,32 @@ bool TryFastPackWithPrebuiltStub(ava::platform::IProcess& process, const BuildOp
     }
     if (opts.output_kind == "library") return false;
 
+    fs::path libraries_dir_for_ui = repo_root / "libraries";
+    std::vector<fs::path> ui_scan_dirs;
+    if (fs::exists(libraries_dir_for_ui)) ui_scan_dirs.push_back(libraries_dir_for_ui);
+    for (const std::string& extra : opts.extra_modules_dirs) {
+        std::error_code extra_ec;
+        fs::path extra_abs = fs::absolute(fs::path(extra), extra_ec);
+        if (!extra_ec) ui_scan_dirs.push_back(extra_abs);
+    }
+    const bool project_has_avaui = ProjectUsesUi(project_dir_abs, ui_scan_dirs);
+    const bool needs_ui = opts.with_ui;
+
     fs::path prebuilt_dir = GetSelfExecutableDir();
     fs::path stub_exe, gen_exe;
-    if (!FindPrebuiltPackTools(prebuilt_dir, stub_exe, gen_exe)) return false;
+    if (!FindPrebuiltPackTools(prebuilt_dir, needs_ui, stub_exe, gen_exe)) return false;
 
     std::cout << "ava_cli build: usando herramientas prebuilt (" << stub_exe.string() << " + "
               << gen_exe.string() << ") -- sin CMake ni repo.\n";
+    if (!needs_ui) {
+        if (project_has_avaui) {
+            std::cout << "[warning] se encontraron archivos .avaui en el proyecto pero no se paso "
+                         "--with-ui -- avalang_ui.dll no se va a copiar y los componentes de UI no "
+                         "van a funcionar. Pasa --with-ui si tu app los usa.\n";
+        }
+        std::cout << "[info] AVA_BUILD_UI=OFF (default) -- avalang_ui.dll no se copia junto al "
+                     "ejecutable (usa --with-ui para incluirla).\n";
+    }
 
     std::error_code ec;
     fs::path tmp_payload = fs::temp_directory_path(ec) /
@@ -791,7 +867,9 @@ bool TryFastPackWithPrebuiltStub(ava::platform::IProcess& process, const BuildOp
 
     fs::path out_dir = out_path_abs.parent_path();
     CopyRuntimeDllIfPresent(prebuilt_dir, out_dir, kAvalangRuntimeLib);
-    CopyRuntimeDllIfPresent(prebuilt_dir, out_dir, kAvalangUiRuntimeLib);
+    if (needs_ui) {
+        CopyRuntimeDllIfPresent(prebuilt_dir, out_dir, kAvalangUiRuntimeLib);
+    }
     if (fs::exists(libraries_dir, ec) && fs::is_directory(libraries_dir, ec)) {
         CopyExternNativeLibraries(project_dir_abs, libraries_dir, out_dir);
     }
@@ -1421,19 +1499,35 @@ int RunBuildCommand(int argc, char** argv) {
         "-DAVAPACK_OUT_NAME=" + target_name,
     };
 
+    // AVA_BUILD_UI es OFF por default para cualquier --output-kind (exe o
+    // library) -- se activa solo con --with-ui. Igual escaneamos el
+    // proyecto (y sus --extra-modules-dir) por archivos .avaui, unicamente
+    // para poder avisar si el usuario se olvido el flag.
+    fs::path libraries_dir_early = repo_root / "libraries";
+    std::vector<fs::path> ui_scan_dirs;
+    if (fs::exists(libraries_dir_early, ec)) ui_scan_dirs.push_back(libraries_dir_early);
+    for (const std::string& extra : opts.extra_modules_dirs) {
+        std::error_code extra_ec;
+        fs::path extra_abs = fs::absolute(fs::path(extra), extra_ec);
+        if (!extra_ec) ui_scan_dirs.push_back(extra_abs);
+    }
+    const bool project_has_avaui = ProjectUsesUi(project_dir_abs, ui_scan_dirs);
+    const bool needs_ui = opts.with_ui;
+
+    bool needs_ui_prebuilt = needs_ui;
     fs::path prebuilt_dir = GetSelfExecutableDir();
     bool have_prebuilt = !prebuilt_dir.empty()
         && fs::exists(prebuilt_dir / "avalang.dll")
         && fs::exists(prebuilt_dir / "avalang.lib")
-        && fs::exists(prebuilt_dir / "avalang_ui.dll")
-        && fs::exists(prebuilt_dir / "avalang_ui.lib");
+        && (!needs_ui_prebuilt
+            || (fs::exists(prebuilt_dir / "avalang_ui.dll") && fs::exists(prebuilt_dir / "avalang_ui.lib")));
     if (have_prebuilt) {
         configure_args.push_back("-DAVA_PACK_USE_PREBUILT_AVALANG=ON");
         configure_args.push_back("-DAVA_PREBUILT_AVALANG_DIR=" + prebuilt_dir.string());
     } else {
-        std::cout << "[info] no se encontraron avalang.dll/avalang.lib/avalang_ui.dll/"
-                     "avalang_ui.lib prebuilt junto a ava_cli.exe -- se compilara avalang "
-                     "desde fuente en build_pack (mas lento).\n";
+        std::cout << "[info] no se encontraron los binarios prebuilt de avalang junto a "
+                     "ava_cli.exe -- se compilara avalang desde fuente en build_pack (mas "
+                     "lento).\n";
     }
     if (!key_file_abs.empty()) {
         configure_args.push_back("-DAVAPACK_KEY_FILE=" + key_file_abs.string());
@@ -1487,8 +1581,41 @@ int RunBuildCommand(int argc, char** argv) {
     if (opts.output_kind == "library") {
         configure_args.push_back("-DAVAPACK_BUILD_LIBRARY=ON");
         std::cout << "[info] --output-kind library is active: the output is a dynamic library "
-                     "exporting avapack_run() instead of an executable (see "
-                     "runtime/avapack/src/lib_api.h).\n";
+                     "exporting avapack_run()/avapack_init()/avapack_call()/avapack_shutdown() "
+                     "instead of an executable (see runtime/avapack/src/lib_api.h).\n";
+        if (!opts.with_ui) {
+            configure_args.push_back("-DAVA_BUILD_UI=OFF");
+            if (project_has_avaui) {
+                std::cout << "[warning] se encontraron archivos .avaui en el proyecto pero no se "
+                             "paso --with-ui -- los componentes de UI no van a funcionar. Pasa "
+                             "--with-ui si tu app los usa.\n";
+            }
+            std::cout << "[info] AVA_BUILD_UI=OFF (default for --output-kind library) -- if "
+                         "avalang is compiled from source in this build_pack (no prebuilt "
+                         "avalang.dll found next to ava_cli.exe), the resulting library will not "
+                         "depend on avalang_ui.dll. If a prebuilt avalang.dll IS being reused and "
+                         "it was itself built with UI support, this flag cannot strip that "
+                         "already-baked-in dependency -- see AVAPACK_LIBRARY_OUTPUT_INJECTION_"
+                         "ANALYSIS.md.\n";
+        }
+    } else if (!needs_ui) {
+        configure_args.push_back("-DAVA_BUILD_UI=OFF");
+        if (project_has_avaui) {
+            std::cout << "[warning] se encontraron archivos .avaui en el proyecto pero no se paso "
+                         "--with-ui -- el binario resultante NO va a depender de avalang_ui.dll/.so "
+                         "y esos componentes de UI no van a funcionar. Pasa --with-ui si tu app los "
+                         "usa.\n";
+        } else {
+            std::cout << "[info] AVA_BUILD_UI=OFF (default) -- el binario resultante no depende de "
+                         "avalang_ui.dll/.so. Pasa --with-ui si tu proyecto usa componentes de UI.\n";
+        }
+    } else {
+        std::cout << "[info] --with-ui: AVA_BUILD_UI=ON.\n";
+    }
+    if (opts.static_crt) {
+        configure_args.push_back("-DAVA_STATIC_CRT=ON");
+        std::cout << "[info] --static-crt is active: avalang and the packaged output link the "
+                     "MSVC CRT statically (/MT) instead of dynamically (/MD).\n";
     }
     if (const char* vcpkg_root = std::getenv("VCPKG_ROOT")) {
         fs::path toolchain = fs::path(vcpkg_root) / "scripts" / "buildsystems" / "vcpkg.cmake";
@@ -1541,7 +1668,9 @@ int RunBuildCommand(int argc, char** argv) {
     fs::path built_dir = built->parent_path();
     fs::path out_dir = out_path_abs.parent_path();
     CopyRuntimeDllIfPresent(built_dir, out_dir, kAvalangRuntimeLib);
-    CopyAvaUiDllIfAvailable(built_dir, out_dir, repo_root, build_config);
+    if (needs_ui) {
+        CopyAvaUiDllIfAvailable(built_dir, out_dir, repo_root, build_config);
+    }
     if (fs::exists(libraries_dir, ec) && fs::is_directory(libraries_dir, ec)) {
         CopyExternNativeLibraries(project_dir_abs, libraries_dir, out_dir);
     }

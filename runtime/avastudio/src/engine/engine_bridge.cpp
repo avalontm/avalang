@@ -235,11 +235,11 @@ EngineBridge::DemoTree EngineBridge::BuildDemoComponentTree() {
 
     AvaComponent* text = ava_ui_create_component("text");
     ava_value_t text_value = ava_string_create(vm_, "Hello", 5);
-    ava_ui_set_property(text, "value", text_value);
+    ava_ui_set_property(vm_, text, "value", text_value);
 
     AvaComponent* button = ava_ui_create_component("button");
     ava_value_t button_text = ava_string_create(vm_, "Save", 4);
-    ava_ui_set_property(button, "text", button_text);
+    ava_ui_set_property(vm_, button, "text", button_text);
 
     ava_ui_add_child(stack, text);
     ava_ui_add_child(stack, button);

@@ -1,6 +1,14 @@
 import system
 import Models.Dog
 
+func test()
+    print("test")
+end
+
+func sumar(a, b)
+    return a + b
+end
+
 print("Hello, AvaLang!")
 
 Console.WriteLine("Rulas")
@@ -9,10 +17,10 @@ date = DateTime.Now()
 
 print(date.Ticks)
 
-func test()
-    print("test")
-end
-
 dog = new Dog()
 
 dog.Eat()
+
+resta = (a, b) => a - b
+print($"resta: {resta(4, 2)}")
+print(sumar(15,8))

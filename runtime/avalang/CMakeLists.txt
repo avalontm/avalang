@@ -182,10 +182,6 @@ set(PUBLIC_SOURCES
     api/src/c_api.cpp
 )
 
-if(AVA_BUILD_UI)
-    list(APPEND PUBLIC_SOURCES api/src/c_api_ui.cpp)
-endif()
-
 if(AVA_TARGET_BAREKERNEL)
     # CMAKE_SYSTEM_NAME=Generic (necesario para cross-compilar contra el
     # toolchain freestanding i686-elf, ver cmake/toolchain-i686-elf.cmake)
@@ -289,12 +285,7 @@ target_include_directories(avalang
         ${CMAKE_CURRENT_SOURCE_DIR}/api/src
         ${CMAKE_CURRENT_SOURCE_DIR}/api/include
         ${GENERATED_DIR}
-        ${CMAKE_SOURCE_DIR}/runtime/avaui/src
 )
-
-if(AVA_BUILD_UI)
-    target_link_libraries(avalang PRIVATE avalang_ui)
-endif()
 
 if(AVA_HAVE_ANTLR)
     # El paquete de vcpkg "antlr4-runtime" NO expone un target llamado

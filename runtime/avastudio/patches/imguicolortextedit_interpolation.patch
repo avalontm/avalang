@@ -1,5 +1,5 @@
 diff --git a/TextEditor.cpp b/TextEditor.cpp
-index a25a42b..838a16d 100644
+index b23157f..0371036 100644
 --- a/TextEditor.cpp
 +++ b/TextEditor.cpp
 @@ -2320,6 +2320,7 @@ const TextEditor::Palette& TextEditor::GetDarkPalette() {
@@ -18,7 +18,7 @@ index a25a42b..838a16d 100644
  		IM_COL32(  0,   0,   0, 255),	// punctuation
  		IM_COL32( 96,  96,  64, 255),	// preprocessor
  		IM_COL32( 64,  64,  64, 255),	// identifier
-@@ -3647,6 +3649,13 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
+@@ -3647,8 +3649,50 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
  	auto nonWhiteSpace = false;
  	auto glyph = line.begin();
  
@@ -29,30 +29,68 @@ index a25a42b..838a16d 100644
 +	// line-based colorizer, see patches/README in the AvaLang repo.
 +	int interpolationDepth = 0;
 +
++	// AvaLang addition: which string state to return to once the
++	// outermost '{' of an interpolation is closed by its matching '}'.
++	auto interpolationReturnState = State::inOtherString;
++
  	while (glyph < line.end()) {
  		if (state == State::inText) {
++			// AvaLang addition: while inside a {expr} interpolation we are
++			// still in State::inText (see the inOtherString branch below,
++			// which switches into inText instead of hand-coloring the
++			// expression), so everything else in this branch -- identifiers,
++			// numbers, keywords, operators -- already colors correctly on
++			// its own. We only need to watch for the '}' that closes the
++			// interpolation (and count nested '{'/'}' from the expression
++			// itself, e.g. a block or dict literal, so we don't close early).
++			if (interpolationDepth > 0) {
++				if (glyph->codepoint == '}') {
++					if (--interpolationDepth == 0) {
++						// this was the outermost '}', closing the interpolation
++						state = interpolationReturnState;
++						(glyph++)->color = Color::interpolation;
++
++					} else {
++						// a '}' that belongs to a nested block/dict literal
++						// inside the expression -- color like any other
++						// punctuation, not like the interpolation delimiter
++						(glyph++)->color = Color::punctuation;
++					}
++
++					continue;
++
++				} else if (glyph->codepoint == '{') {
++					++interpolationDepth;
++					(glyph++)->color = Color::punctuation;
++					continue;
++				}
++			}
++
  			// special handling for preprocessor lines
-@@ -3796,14 +3805,29 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
+ 			if (!nonWhiteSpace && language->preprocess && glyph->codepoint != language->preprocess && !CodePoint::isWhiteSpace(glyph->codepoint)) {
+ 				nonWhiteSpace = true;
+@@ -3796,6 +3840,20 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
  					(glyph++)->color = Color::string;
  				}
  
--			} else if (matches(glyph, line.end(), language->otherStringEnd)) {
-+			// AvaLang addition: track {expr} interpolation nesting and color
-+			// it separately from the surrounding string. A '"' inside an
-+			// open interpolation (interpolationDepth > 0) must NOT end the
-+			// string -- see the interpolationDepth == 0 guard below.
++			// AvaLang addition: on '{', hand off to the normal tokenizer
++			// (State::inText) instead of hand-coloring the expression as a
++			// single flat color. This is what actually gives identifiers,
++			// numbers and operators inside {expr} their real syntax colors;
++			// the matching '}' is caught by the interpolationDepth check we
++			// added at the top of the inText branch above, which switches
++			// state back to interpolationReturnState (this state) once the
++			// outermost '{' has been closed.
 +			} else if (glyph->codepoint == '{') {
 +				++interpolationDepth;
++				interpolationReturnState = state;
++				state = State::inText;
 +				(glyph++)->color = Color::interpolation;
 +
-+			} else if (glyph->codepoint == '}' && interpolationDepth > 0) {
-+				--interpolationDepth;
-+				(glyph++)->color = Color::interpolation;
-+
-+			} else if (interpolationDepth == 0 && matches(glyph, line.end(), language->otherStringEnd)) {
+ 			} else if (matches(glyph, line.end(), language->otherStringEnd)) {
  				auto size = language->otherStringEnd.size();
  				setColor(glyph, glyph + size, Color::string);
- 				glyph += size;
+@@ -3803,7 +3861,10 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
  				state = State::inText;
  
  			} else {
@@ -60,15 +98,15 @@ index a25a42b..838a16d 100644
 +				// AvaLang fix: upstream colored this Color::comment, which
 +				// made f-string bodies render in the comment color instead
 +				// of the string color. See patches/README.
-+				(glyph++)->color = interpolationDepth > 0 ? Color::interpolation : Color::string;
++				(glyph++)->color = Color::string;
  			}
  
  		} else if (state == State::inOtherStringAlt) {
 diff --git a/TextEditor.h b/TextEditor.h
-index ba41bd8..bc95977 100644
+index 9cb81b8..8fdb8ad 100644
 --- a/TextEditor.h
 +++ b/TextEditor.h
-@@ -332,6 +332,7 @@ public:
+@@ -330,6 +330,7 @@ public:
  		declaration,
  		number,
  		string,

@@ -35,6 +35,13 @@ struct AvaProjFile {
     bool flatten_control_flow = false;
     bool zero_disk = false;
     bool debug_unencrypted = false;
+    // No expuesto como checkbox en Project Properties -- se edita a mano en
+    // el .avaproj (<UsesUi>true</UsesUi> bajo el PropertyGroup Label="Build")
+    // para proyectos que importan componentes .avaui. Controla si el build
+    // (ava_cli build, ver build_panel.cpp) pasa --with-ui -- sin esto,
+    // AVA_BUILD_UI es OFF por default y el binario no depende de
+    // avalang_ui.dll/.so.
+    bool uses_ui = false;
 
     std::vector<AvaProjReference> references;
 };

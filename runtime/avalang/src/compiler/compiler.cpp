@@ -4524,10 +4524,74 @@ std::shared_ptr<ExprNode> Compiler::ParsePostfix(const std::string& s, size_t& p
     return expr;
 }
 
+std::shared_ptr<ExprNode> Compiler::TryParseLambda(const std::string& s, size_t& pos) {
+    size_t start = pos;
+    size_t p = SkipWhitespace(s, pos);
+    std::vector<std::string> params;
+    bool matched_head = false;
+
+    if (p < s.size() && s[p] == '(') {
+        size_t q = SkipWhitespace(s, p + 1);
+        bool ok = true;
+        if (q < s.size() && s[q] != ')') {
+            while (true) {
+                q = SkipWhitespace(s, q);
+                if (q >= s.size() || !IsAlpha(s[q])) {
+                    ok = false;
+                    break;
+                }
+                params.push_back(ParseIdent(s, q));
+                q = SkipWhitespace(s, q);
+                if (q < s.size() && s[q] == ',') {
+                    q++;
+                    continue;
+                }
+                break;
+            }
+        }
+        q = SkipWhitespace(s, q);
+        if (ok && q < s.size() && s[q] == ')') {
+            q = SkipWhitespace(s, q + 1);
+            if (q + 1 < s.size() && s[q] == '=' && s[q + 1] == '>') {
+                p = q + 2;
+                matched_head = true;
+            }
+        }
+    } else if (p < s.size() && IsAlpha(s[p])) {
+        size_t q = p;
+        std::string name = ParseIdent(s, q);
+        q = SkipWhitespace(s, q);
+        if (q + 1 < s.size() && s[q] == '=' && s[q + 1] == '>') {
+            params.push_back(name);
+            p = q + 2;
+            matched_head = true;
+        }
+    }
+
+    if (!matched_head) {
+        pos = start;
+        return nullptr;
+    }
+
+    auto body_expr = ParseExpr(s, p);
+    pos = p;
+
+    std::vector<std::pair<std::string, std::shared_ptr<ExprNode>>> defaults;
+    for (auto& name : params) {
+        defaults.push_back({name, nullptr});
+    }
+    std::vector<std::shared_ptr<StmtNode>> body_stmts = {std::make_shared<ReturnStmt>(body_expr)};
+    return std::make_shared<LambdaExpr>("<lambda>", defaults, body_stmts, false);
+}
+
 std::shared_ptr<ExprNode> Compiler::ParsePrimary(const std::string& s, size_t& pos) {
     pos = SkipWhitespace(s, pos);
     if (pos >= s.size()) {
         return std::make_shared<NilExpr>();
+    }
+
+    if (auto lambda = TryParseLambda(s, pos)) {
+        return lambda;
     }
 
     if (s[pos] == '$' && pos + 1 < s.size() && s[pos + 1] == '"') {
@@ -4703,7 +4767,13 @@ std::shared_ptr<ExprNode> Compiler::ParsePrimary(const std::string& s, size_t& p
 }
 
 uint16_t Compiler::CompileFStringExpression(const std::string& expr_str) {
-    auto expr = ParseFStringExpr(expr_str);
+    size_t pos = 0;
+    auto expr = ParseExpr(expr_str, pos);
+    pos = SkipWhitespace(expr_str, pos);
+    if (pos != expr_str.size()) {
+        throw AvaError("unexpected text in f-string expression: '" + expr_str.substr(pos) + "'",
+                        current_line_, current_col_, source_name_);
+    }
     return CompileExpr(expr);
 }
 

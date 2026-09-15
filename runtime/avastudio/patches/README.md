@@ -307,19 +307,59 @@ editor itself auto-inserted (the library doesn't track provenance per
 pair) -- same as VS Code's smart backspace, which does the same thing
 by adjacency, not by history.
 
+## imguicolortextedit_scroll_offset.patch
+
+Reported bug: diagnostic/incomplete-interface squiggles in the Code
+Editor didn't track scrolling -- they visibly lagged behind the text
+and only caught up in whole-line jumps instead of moving smoothly
+with it.
+
+Root cause: `firstVisibleLine`/`firstVisibleColumn` are
+`floor(ImGui::GetScrollY() / glyphSize.y)` /
+`floor(ImGui::GetScrollX() / glyphSize.x)` -- integers, quantized to
+whole lines/columns. `editor_panel.cpp`'s `EstimateCaretScreenPos`
+positions every overlay (squiggles, inlay hints, the dot-completion
+popup, etc.) using only that integer delta from the current
+line/column, so it drops the sub-line/sub-column pixel remainder of
+the actual scroll offset. `TextEditor::Render`'s own text rendering
+doesn't have this problem -- it lays out glyphs inside the real
+ImGui child window, which scrolls at pixel precision -- so only our
+own overlays drifted from it.
+
+The library has no accessor for the raw pixel scroll offset, only
+for the quantized line/column it derives from it.
+
+This patch:
+- Adds a `currentScrollX`/`currentScrollY` member pair, set from
+  `ImGui::GetScrollX()`/`GetScrollY()` right where
+  `firstVisibleColumn`/`firstVisibleLine` are computed from them, and
+  exposes them as `GetCurrentScrollX()`/`GetCurrentScrollY()`.
+- Named `current...` rather than `scrollX`/`scrollY` because
+  `Render()` already has local variables with those exact names for
+  a pending `ScrollToLine`/`SetCursor` request; reusing the name
+  would have shadowed them silently.
+
+`editor_panel.cpp`'s `EstimateCaretScreenPos`/`ScreenPosToCursor` use
+these to position from the exact pixel offset instead of snapping to
+the current line/column, so overlays move continuously with scroll.
+
 ## Application order
-`CMakeLists.txt` applies all seven patches in a single call to
+`CMakeLists.txt` applies all eight patches in a single call to
 `git apply` (it accepts multiple files and applies them in order on
 the clean clone): `imguicolortextedit_interpolation.patch`,
 `imguicolortextedit_bold_keywords.patch`,
 `imguicolortextedit_doc_comment.patch`,
 `imguicolortextedit_import_path.patch`,
 `imguicolortextedit_interface_name.patch`,
-`imguicolortextedit_variable_name.patch`, then
-`imguicolortextedit_smart_backspace_pair.patch`. They don't overlap --
-each touches a distinct part of the file (or, for four of them,
-appends its own enum entry and palette lines right after the previous
-patch's), and the last one only touches `handleBackspace`, which none
-of the others go near -- but if another patch is ever added, keep the
-order and test `git apply patch1 patch2 ... patchN` by hand on a
-clean clone before pushing it (see AvaStudio.md).
+`imguicolortextedit_variable_name.patch`,
+`imguicolortextedit_smart_backspace_pair.patch`,
+`imguicolortextedit_dot_trigger.patch`, then
+`imguicolortextedit_scroll_offset.patch`. They don't overlap -- each
+touches a distinct part of the file (or, for four of them, appends
+its own enum entry and palette lines right after the previous
+patch's), and the scroll-offset patch only adds two members/accessors
+and rewrites the four lines that compute
+`firstVisibleColumn`/`firstVisibleLine` in place -- but if another
+patch is ever added, keep the order and test
+`git apply patch1 patch2 ... patchN` by hand on a clean clone before
+pushing it (see AvaStudio.md).

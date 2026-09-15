@@ -339,22 +339,26 @@ set_target_properties(ava_apphdr_writer PROPERTIES
 ava_apply_optimization_options(ava_apphdr_writer)
 
 if(AVA_PACK_USE_PREBUILT_AVALANG)
+    set(_ava_prebuilt_runtime_files "$<TARGET_FILE:avalang>")
+    if(AVA_BUILD_UI)
+        list(APPEND _ava_prebuilt_runtime_files "$<TARGET_FILE:avalang_ui>")
+    endif()
     add_custom_command(TARGET avapack_gen POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_FILE:avalang> $<TARGET_FILE:avalang_ui>
+                ${_ava_prebuilt_runtime_files}
                 $<TARGET_FILE_DIR:avapack_gen>
-        COMMENT "avapack: copiando avalang.dll/avalang_ui.dll (prebuilt) junto a avapack_gen.exe"
+        COMMENT "avapack: copiando avalang.dll (prebuilt, +avalang_ui.dll si AVA_BUILD_UI=ON) junto a avapack_gen.exe"
     )
     add_custom_command(TARGET ${AVAPACK_OUT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_FILE:avalang> $<TARGET_FILE:avalang_ui>
+                ${_ava_prebuilt_runtime_files}
                 $<TARGET_FILE_DIR:${AVAPACK_OUT_NAME}>
-        COMMENT "avapack: copiando avalang.dll/avalang_ui.dll (prebuilt) junto al ejecutable empacado"
+        COMMENT "avapack: copiando avalang.dll (prebuilt, +avalang_ui.dll si AVA_BUILD_UI=ON) junto al ejecutable/libreria empacado"
     )
     add_custom_command(TARGET avapack_stub POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_FILE:avalang> $<TARGET_FILE:avalang_ui>
+                ${_ava_prebuilt_runtime_files}
                 $<TARGET_FILE_DIR:avapack_stub>
-        COMMENT "avapack: copiando avalang.dll/avalang_ui.dll (prebuilt) junto a avapack_stub.exe"
+        COMMENT "avapack: copiando avalang.dll (prebuilt, +avalang_ui.dll si AVA_BUILD_UI=ON) junto a avapack_stub.exe"
     )
 endif()

@@ -1,0 +1,43 @@
+diff --git a/TextEditor.h b/TextEditor.h
+index 0000000..0000000 100644
+--- a/TextEditor.h
++++ b/TextEditor.h
+@@ -184,6 +184,8 @@
+ 	inline int GetLastVisibleLine() const { return lastVisibleLine; }
+ 	inline int GetFirstVisibleColumn() const { return firstVisibleColumn; }
+ 	inline int GetLastVisibleColumn() const { return lastVisibleColumn; }
++	inline float GetCurrentScrollX() const { return currentScrollX; }
++	inline float GetCurrentScrollY() const { return currentScrollY; }
+ 
+ 	inline float GetLineHeight() const { return glyphSize.y; }
+ 	inline float GetGlyphWidth() const { return glyphSize.x; }
+@@ -1330,6 +1332,8 @@
+ 	int visibleColumns;
+ 	int firstVisibleColumn;
+ 	int lastVisibleColumn;
++	float currentScrollX;
++	float currentScrollY;
+ 	float verticalScrollBarSize;
+ 	float horizontalScrollBarSize;
+ 	float cursorAnimationTimer = 0.0f;
+diff --git a/TextEditor.cpp b/TextEditor.cpp
+index 0000000..0000000 100644
+--- a/TextEditor.cpp
++++ b/TextEditor.cpp
+@@ -207,10 +207,12 @@
+ 	languageChanged = false;
+ 
+ 	// determine view parameters
+-	firstVisibleColumn = std::max(static_cast<int>(std::floor(ImGui::GetScrollX() / glyphSize.x)), 0);
+-	lastVisibleColumn = static_cast<int>(std::floor((ImGui::GetScrollX() + visibleWidth) / glyphSize.x));
+-	firstVisibleLine = std::max(static_cast<int>(std::floor(ImGui::GetScrollY() / glyphSize.y)), 0);
+-	lastVisibleLine = std::min(static_cast<int>(std::floor((ImGui::GetScrollY() + visibleHeight) / glyphSize.y)), document.lineCount() - 1);
++	currentScrollX = ImGui::GetScrollX();
++	currentScrollY = ImGui::GetScrollY();
++	firstVisibleColumn = std::max(static_cast<int>(std::floor(currentScrollX / glyphSize.x)), 0);
++	lastVisibleColumn = static_cast<int>(std::floor((currentScrollX + visibleWidth) / glyphSize.x));
++	firstVisibleLine = std::max(static_cast<int>(std::floor(currentScrollY / glyphSize.y)), 0);
++	lastVisibleLine = std::min(static_cast<int>(std::floor((currentScrollY + visibleHeight) / glyphSize.y)), document.lineCount() - 1);
+ 
+ 	// render editor parts
+ 	renderSelections();

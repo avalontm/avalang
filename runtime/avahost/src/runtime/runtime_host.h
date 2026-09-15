@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "avalang.h"
+#include "avaui_c_api.h"
 
 namespace avahost {
 

@@ -80,11 +80,106 @@ ScanResult ScanText(const std::string& text) {
     std::string prev_word;
     bool prev_was_dot = false;
 
+    // Records a plain identifier occurrence/call-site/member-access. Shared
+    // between the top-level loop and the {expr} interpolation scanner below
+    // so a symbol referenced only inside an f-string -- e.g. the 'resta' in
+    // $"resta: {resta(4, 2)}" -- is tracked the same as one referenced in
+    // plain code, instead of being swallowed as inert string text. Does not
+    // handle 'import'/'new'/'as' statement forms, which can't appear inside
+    // an interpolation expression.
+    auto record_identifier = [&](const std::string& word, int line, int col_start, int col_end,
+                                  size_t word_start) {
+        if (!prev_was_dot) {
+            size_t after_ws = word_start + word.size();
+            SkipInlineWhitespace(text, after_ws);
+            const bool is_call = after_ws < text.size() && text[after_ws] == '(' &&
+                                  !KeywordAndBuiltinNames().count(word);
+
+            if (prev_word == "new") {
+                result.new_exprs.push_back({word, line, col_start, col_end});
+            } else if (prev_word == "as") {
+                result.as_types.push_back({word, line, col_start, col_end});
+            } else if (is_call && word != "func" && prev_word != "func") {
+                result.calls.push_back({word, line, col_start, col_end});
+            }
+
+            if (!KeywordAndBuiltinNames().count(word)) {
+                result.occurrences[word].push_back({line, col_start, col_end, word_start});
+            }
+        } else {
+            result.member_occurrences[word].push_back({line, col_start, col_end, word_start});
+        }
+        prev_was_dot = false;
+        prev_word = word;
+    };
+
     while (i < text.size()) {
         char c = text[i];
 
         if (c == '#') {
             while (i < text.size() && text[i] != '\n') ++i;
+            continue;
+        }
+        // f-string ($"...", languages::AvaLang()'s otherStringStart/otherStringEnd,
+        // see avalang_language.cpp). Handled before the generic quote branch below
+        // because its body isn't inert text: a {expr} interpolation inside it is
+        // live AvaLang code and has to be scanned for identifier usage, the same
+        // way Compiler::ParsePrimary (compiler.cpp) parses it at compile time.
+        // '{{'/'}}' are literal braces (no interpolation), matching the compiler.
+        if (c == '$' && i + 1 < text.size() && text[i + 1] == '"') {
+            i += 2;
+            while (i < text.size() && text[i] != '"') {
+                if (text[i] == '\\' && i + 1 < text.size()) {
+                    i += 2;
+                    continue;
+                }
+                if (text[i] == '{') {
+                    if (i + 1 < text.size() && text[i + 1] == '{') {
+                        i += 2;
+                        continue;
+                    }
+                    ++i;
+                    int depth = 1;
+                    while (i < text.size() && depth > 0) {
+                        const char ic = text[i];
+                        if (ic == '{') {
+                            ++depth;
+                            ++i;
+                        } else if (ic == '}') {
+                            --depth;
+                            ++i;
+                        } else if (ic == '\'' || ic == '"') {
+                            const char iq = ic;
+                            ++i;
+                            while (i < text.size() && text[i] != iq) {
+                                if (text[i] == '\\' && i + 1 < text.size()) i += 2; else ++i;
+                            }
+                            if (i < text.size()) ++i;
+                        } else if (IsIdentStart(ic)) {
+                            const size_t word_start = i;
+                            const int line = LineAt(text, word_start);
+                            const int col_start = ColumnAt(text, word_start);
+                            std::string word = ReadIdent(text, i);
+                            const int col_end = col_start + static_cast<int>(word.size());
+                            record_identifier(word, line, col_start, col_end, word_start);
+                        } else if (ic == '.') {
+                            prev_was_dot = true;
+                            ++i;
+                        } else {
+                            prev_was_dot = false;
+                            ++i;
+                        }
+                    }
+                    continue;
+                }
+                if (text[i] == '}' && i + 1 < text.size() && text[i + 1] == '}') {
+                    i += 2;
+                    continue;
+                }
+                ++i;
+            }
+            if (i < text.size()) ++i;
+            prev_was_dot = false;
             continue;
         }
         if (c == '\'' || c == '"') {
@@ -156,29 +251,7 @@ ScanResult ScanText(const std::string& text) {
                 continue;
             }
 
-            if (!prev_was_dot) {
-                size_t after_ws = i;
-                SkipInlineWhitespace(text, after_ws);
-                const bool is_call = after_ws < text.size() && text[after_ws] == '(' &&
-                                      !KeywordAndBuiltinNames().count(word);
-
-                if (prev_word == "new") {
-                    result.new_exprs.push_back({word, line, col_start, col_end});
-                } else if (prev_word == "as") {
-                    result.as_types.push_back({word, line, col_start, col_end});
-                } else if (is_call && word != "func" && prev_word != "func") {
-                    result.calls.push_back({word, line, col_start, col_end});
-                }
-
-                if (!KeywordAndBuiltinNames().count(word)) {
-                    result.occurrences[word].push_back({line, col_start, col_end, word_start});
-                }
-            } else {
-                result.member_occurrences[word].push_back({line, col_start, col_end, word_start});
-            }
-
-            prev_was_dot = false;
-            prev_word = word;
+            record_identifier(word, line, col_start, col_end, word_start);
             continue;
         }
 

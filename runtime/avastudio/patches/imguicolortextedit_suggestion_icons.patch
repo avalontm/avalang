@@ -1,0 +1,135 @@
+diff --git a/TextEditor.cpp b/TextEditor.cpp
+index a1800e4..eea7bda 100644
+--- a/TextEditor.cpp
++++ b/TextEditor.cpp
+@@ -4738,8 +4738,33 @@ void TextEditor::Autocomplete::cancel() {
+ //	renderSuggestion
+ //
+ 
+-static bool renderSuggestion(const std::string_view& suggestion, const std::string_view& searchTerm, float width, bool selected) {
++// optional leading kind tag: '\x01' + one kind char, stripped before display and used
++// to pick an icon (custom AvaLang addition, see patches/imguicolortextedit_suggestion_icons.patch)
++static ImU32 suggestionIconColor(char kind) {
++	switch (kind) {
++		case 'M': return IM_COL32(220, 160, 100, 255);	// method
++		case 'F': return IM_COL32(110, 170, 220, 255);	// field / property
++		case 'C': return IM_COL32(180, 130, 220, 255);	// class / interface
++		case 'K': return IM_COL32(190, 100, 120, 255);	// keyword
++		default:  return IM_COL32(150, 150, 150, 255);	// variable / unknown
++	}
++}
++
++static std::string_view splitSuggestionKind(const std::string_view& suggestion, char* outKind) {
++	if (suggestion.size() >= 2 && suggestion[0] == '\x01') {
++		*outKind = suggestion[1];
++		return suggestion.substr(2);
++	}
++
++	*outKind = 0;
++	return suggestion;
++}
++
++static bool renderSuggestion(const std::string_view& rawSuggestion, const std::string_view& searchTerm, float width, bool selected) {
+ 	// custom widget to render an autocomplete suggestion in the style of Visual Studio Code
++	char kind = 0;
++	auto suggestion = splitSuggestionKind(rawSuggestion, &kind);
++
+ 	auto glyphPos = ImGui::GetCursorScreenPos();
+ 	auto size = ImVec2(width, ImGui::GetFrameHeightWithSpacing());
+ 	auto clicked = ImGui::InvisibleButton("suggestion", size);
+@@ -4751,7 +4776,17 @@ static bool renderSuggestion(const std::string_view& suggestion, const std::stri
+ 
+ 	// highlight selected item
+ 	if (selected) {
+-		drawList->AddRectFilled(glyphPos, glyphPos + size, ImGui::GetColorU32(ImGuiCol_Header));
++		drawList->AddRectFilled(glyphPos, glyphPos + size, ImGui::GetColorU32(ImGuiCol_Header), 3.0f);
++	}
++
++	// draw a small filled square icon in front of the label, colored by kind
++	// (method/field/class/keyword), matching the dot-completion popup style
++	if (kind != 0) {
++		auto iconSize = fontSize * 0.55f;
++		auto iconMin = ImVec2(glyphPos.x + ImGui::GetStyle().FramePadding.x,
++		                       glyphPos.y + (size.y - iconSize) * 0.5f);
++		drawList->AddRectFilled(iconMin, iconMin + ImVec2(iconSize, iconSize), suggestionIconColor(kind), 2.0f);
++		glyphPos.x += iconSize + ImGui::GetStyle().FramePadding.x * 2.0f;
+ 	}
+ 
+ 	// process all UTF-8 glyphs in suggestion
+@@ -4818,6 +4853,13 @@ bool TextEditor::Autocomplete::render(Document& document, Cursors& cursors, cons
+ 			// get initial list of suggestions from the app
+ 			refreshSuggestions();
+ 
++			// app can veto the popup for this activation (custom AvaLang addition, see
++			// patches/imguicolortextedit_suggestion_icons.patch) -- e.g. when it already shows
++			// its own popup for this exact context
++			if (state.suppressPopup) {
++				return false;
++			}
++
+ 			// show autocomplete popup window
+ 			ImGui::OpenPopup("AutoCompleteContextMenu");
+ 			active = true;
+@@ -4877,6 +4919,10 @@ bool TextEditor::Autocomplete::render(Document& document, Cursors& cursors, cons
+ 		ImGuiWindowFlags_NoFocusOnAppearing |
+ 		ImGuiWindowFlags_NoNav;
+ 
++	// rounded corners, matching Visual Studio's suggestion popup
++	ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 6.0f);
++	ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
++
+ 	if (ImGui::BeginPopup("AutoCompleteContextMenu", flags)) {
+ 		if (ImGui::IsWindowAppearing()) {
+ 			ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+@@ -4954,6 +5000,8 @@ bool TextEditor::Autocomplete::render(Document& document, Cursors& cursors, cons
+ 		active = false;
+ 	}
+ 
++	ImGui::PopStyleVar(2);
++
+ 	return result;
+ }
+ 
+@@ -5039,6 +5087,10 @@ void TextEditor::Autocomplete::updateState(Document& document, const Language* l
+ //
+ 
+ void TextEditor::Autocomplete::refreshSuggestions() {
++	// reset before each call so a stale suppression from a previous activation never lingers
++	// (custom AvaLang addition, see patches/imguicolortextedit_suggestion_icons.patch)
++	state.suppressPopup = false;
++
+ 	// populate suggestion list through callback (or clear it if there is none)
+ 	if (configuration.callback) {
+ 		configuration.callback(state);
+diff --git a/TextEditor.h b/TextEditor.h
+index 3ff13de..af6e9eb 100644
+--- a/TextEditor.h
++++ b/TextEditor.h
+@@ -549,6 +549,12 @@ public:
+ 		// set this to true if you are building the suggestion list asynchronously and provide it later
+ 		// this way autocomplete is not cancelled if the suggestion list is empty and the user hits tab or enter
+ 		bool suggestionsPromise = false;
++
++		// set this to true from the callback to prevent the popup from opening this activation
++		// (custom AvaLang addition, see patches/imguicolortextedit_suggestion_icons.patch) -- used
++		// when the app already shows its own popup for this exact context and doesn't want a
++		// second, empty one layered on top of it; reset to false before every callback invocation
++		bool suppressPopup = false;
+ 	};
+ 
+ 	// autocomplete configuration (defaults are like Visual Studio Code)
+@@ -1190,7 +1196,13 @@ protected:
+ 		bool isSpecialKeyPressed() const;
+ 		inline ImGuiKeyChord getTriggerShortcut() const { return configuration.triggerShortcut; }
+ 		inline Coordinate getStart() const { return startLocation; }
+-		inline std::string getReplacement() { return currentSelection < state.suggestions.size() ? state.suggestions[currentSelection] : ""; }
++		// strips the optional '\x01' + kind tag (custom AvaLang addition, see
++		// patches/imguicolortextedit_suggestion_icons.patch) so only the real text is inserted
++		inline std::string getReplacement() {
++			if (currentSelection >= state.suggestions.size()) return "";
++			const auto& suggestion = state.suggestions[currentSelection];
++			return (suggestion.size() >= 2 && suggestion[0] == '\x01') ? suggestion.substr(2) : suggestion;
++		}
+ 
+ 	private:
+ 		// properties

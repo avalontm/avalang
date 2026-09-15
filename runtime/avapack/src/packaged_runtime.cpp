@@ -1,12 +1,3 @@
-// Implementacion de avapack::RunPackagedProgram -- ver packaged_runtime.h.
-// Extraida palabra por palabra de src/main.cpp (Fases 1-8: temp dir + hooks
-// de Fase 4, verificacion de integridad de Fase 5, entry-como-bytecode de
-// Fase 6) al moverla a una funcion parametrizada por avapack::PackagedManifest
-// en vez de leer los symbols extern (kEmbeddedFiles, kEntryFile, ...)
-// directo del namespace -- el comportamiento para src/main.cpp no cambia
-// (ver el nuevo main() ahi, que arma el manifest desde esos mismos symbols
-// y llama para aca).
-
 #include "packaged_runtime.h"
 
 #include <algorithm>
@@ -23,7 +14,7 @@
 
 #include "avalang.h"
 #include "vm/vm.h"
-#include "embedded_crypto.h" // DecryptWith/VerifyIntegrityWith/BuildFileMapFrom (Fase 9)
+#include "embedded_crypto.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -51,25 +42,12 @@ fs::path MakeTempDir() {
     return {};
 }
 
-struct TempDirGuard {
-    fs::path dir;
-    ~TempDirGuard() {
-        if (!dir.empty()) {
-            std::error_code ec;
-            fs::remove_all(dir, ec);
-        }
-    }
-};
-
 #ifdef _WIN32
 void MarkTemporary(const fs::path& path) {
     SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_TEMPORARY);
 }
 #else
-void MarkTemporary(const fs::path&) {
-    // No implementado fuera de Windows -- ver Fase 8 (multiplataforma),
-    // hoy bloqueada por platform/linux|macos siendo stub.
-}
+void MarkTemporary(const fs::path&) {}
 #endif
 
 void ZeroAndRemove(const fs::path& path) {
@@ -92,11 +70,6 @@ std::string ToRelativePosix(const fs::path& temp_dir, const std::string& resolve
     return rel.generic_string();
 }
 
-// Descifra un archivo embebido y lo escribe en disco real bajo `out_path`,
-// exactamente la misma logica que ya usaba el lambda de
-// SetBeforeModuleReadHook mas abajo (factorizada aca para poder llamarla
-// tambien antes de compilar el entry -- ver comentario en
-// RunPackagedProgram sobre por que hace falta).
 void DecryptAndWriteFile(const avapack::EmbeddedFile& file, unsigned char key[32],
                           bool debug_build, const fs::path& out_path) {
     std::vector<unsigned char> plaintext = avapack::DecryptWith(file, key, debug_build);
@@ -127,52 +100,38 @@ void SetScriptArgsGlobal(ava::VM* raw_vm, int argc, char** argv) {
     raw_vm->SetGlobal("args", args_value);
 }
 
-} // namespace
+struct PreparedModule {
+    AvaVM* vm = nullptr;
+    ava::VM* raw_vm = nullptr;
+    AvaModule* module = nullptr;
+    bool ok = false;
+    std::string error;
+};
 
-namespace avapack {
+PreparedModule PrepareAndCompile(int argc, char** argv, const avapack::PackagedManifest& manifest,
+                                  unsigned char key[32], const fs::path& temp_dir,
+                                  avapack::FileMap& file_map) {
+    PreparedModule result;
 
-int RunPackagedProgram(int argc, char** argv, const PackagedManifest& manifest,
-                        unsigned char key[32]) {
-    fs::path temp_dir = MakeTempDir();
-    if (temp_dir.empty()) {
-        std::fprintf(stderr, "error: no se pudo crear directorio temporal\n");
-        return 1;
-    }
-    TempDirGuard temp_guard{temp_dir};
-
-    if (!VerifyIntegrityWith(manifest.files, manifest.file_count, manifest.integrity_mac, key)) {
-        std::fprintf(stderr,
-                      "error: verificacion de integridad fallida -- el contenido embebido "
-                      "no coincide con el esperado (binario posiblemente modificado)\n");
-        std::memset(key, 0, 32);
-        return 1;
+    if (!avapack::VerifyIntegrityWith(manifest.files, manifest.file_count, manifest.integrity_mac, key)) {
+        result.error = "verificacion de integridad fallida -- el contenido embebido no coincide "
+                        "con el esperado (binario posiblemente modificado)";
+        return result;
     }
 
-    FileMap file_map = BuildFileMapFrom(manifest.files, manifest.file_count);
+    file_map = avapack::BuildFileMapFrom(manifest.files, manifest.file_count);
 
     auto entry_it = file_map.find(manifest.entry_file);
     if (entry_it == file_map.end()) {
-        std::fprintf(stderr, "error: entry file no encontrado entre los archivos embebidos: %s\n",
-                     manifest.entry_file.c_str());
-        std::memset(key, 0, 32);
-        return 1;
+        result.error = "entry file no encontrado entre los archivos embebidos: " + manifest.entry_file;
+        return result;
     }
-    std::vector<unsigned char> entry_plain = DecryptWith(*entry_it->second, key, manifest.debug_build);
+    std::vector<unsigned char> entry_plain = avapack::DecryptWith(*entry_it->second, key, manifest.debug_build);
 
     AvaVM* vm = ava_vm_create();
     ava::VM* raw_vm = reinterpret_cast<ava::VM*>(vm);
     raw_vm->GetModuleResolver().AddSearchPath(temp_dir.string());
     SetScriptArgsGlobal(raw_vm, argc, argv);
-
-    raw_vm->SetBeforeModuleReadHook([&file_map, &key, &temp_dir, &manifest](
-                                         const std::string& resolved_path) {
-        std::string rel = ToRelativePosix(temp_dir, resolved_path);
-        auto it = file_map.find(rel);
-        if (it == file_map.end()) {
-            return;
-        }
-        DecryptAndWriteFile(*it->second, key, manifest.debug_build, fs::path(resolved_path));
-    });
 
     raw_vm->SetAfterModuleReadHook([](const std::string& resolved_path) {
         ZeroAndRemove(fs::path(resolved_path));
@@ -187,48 +146,12 @@ int RunPackagedProgram(int argc, char** argv, const PackagedManifest& manifest,
             ava_module_deobfuscate_strings(module, manifest.entry_obfuscate_seed);
         }
         if (!module) {
-            std::fprintf(stderr, "error: entry .avbc invalido: %s\n", error ? error : "unknown error");
+            result.error = std::string("entry .avbc invalido: ") + (error ? error : "unknown error");
             if (error) ava_string_free(error);
-            std::memset(key, 0, 32);
             ava_vm_destroy(vm);
-            return 1;
+            return result;
         }
     } else {
-        // Bug real (encontrado esta sesion): Compiler::RegisterImportedClasses
-        // (compiler.cpp) -- el harvesting estatico de clases para el chequeo
-        // de 'new' -- corre DURANTE ava_compile() del entry, es decir ANTES
-        // de que el entry ejecute ningun `import` en runtime. Pero los
-        // siblings (ej. app.ava) solo se descifran y escriben a disco real
-        // de forma perezosa, en SetBeforeModuleReadHook, disparado recien
-        // cuando el VM resuelve ESE import durante la ejecucion -- que
-        // todavia no paso en este punto. Entonces ResolveSiblingImportFile
-        // (via VmPlatformAccessor, disco real en este target -- este
-        // ejecutable NO usa MemoryOverridePlatform, eso es exclusivo de
-        // --zero-disk/main_zerodisk.cpp) siempre encontraba "no existe" y
-        // `new app()` fallaba con "'app' is not a class" pese a que el
-        // import se resuelva perfecto despues.
-        //
-        // Ademas -- segundo bug independiente que este solo no alcanzaba
-        // para arreglar -- el `source_name` pasado a ava_compile era
-        // `manifest.entry_file` a secas ("main.ava", sin ruta), asi que
-        // Compiler::current_file_dir_ quedaba vacio y
-        // ResolveSiblingImportFile buscaba el sibling relativo al cwd real
-        // del proceso empacado (donde el usuario corrio el .exe), no
-        // relativo a `temp_dir` (donde los siblings realmente se
-        // materializan). Aunque los siblings ya hubiesen existido en disco,
-        // se los buscaba en el lugar equivocado.
-        //
-        // Fix: materializar TODOS los archivos embebidos en temp_dir de
-        // una sola vez, antes de compilar el entry (no cambia ninguna
-        // garantia de este modo -- a diferencia de --zero-disk, este
-        // camino siempre escribio plano a disco real para cada import; solo
-        // se adelanta el momento). Y pasar como source_name la ruta
-        // absoluta del entry YA DENTRO de temp_dir, para que
-        // current_file_dir_ apunte al lugar correcto. El hook de arriba
-        // sigue re-escribiendo/borrando cada archivo al importarlo de
-        // verdad en runtime (ver DecryptAndWriteFile/ZeroAndRemove) -- este
-        // adelanto no cambia ese comportamiento, solo el timing para el
-        // chequeo estatico de clases.
         for (const auto& [rel, file] : file_map) {
             DecryptAndWriteFile(*file, key, manifest.debug_build, temp_dir / rel);
         }
@@ -239,37 +162,160 @@ int RunPackagedProgram(int argc, char** argv, const PackagedManifest& manifest,
         module = ava_compile(vm, entry_source.c_str(), entry_source_name.c_str(), &error);
         entry_source.assign(entry_source.size(), '\0');
         if (!module) {
-            std::fprintf(stderr, "compile error: %s\n", error ? error : "unknown error");
+            result.error = std::string("compile error: ") + (error ? error : "unknown error");
             if (error) ava_string_free(error);
-            std::memset(key, 0, 32);
             ava_vm_destroy(vm);
-            return 1;
+            return result;
         }
     }
 
-    ava_value_t result{};
-    ava_run(vm, module, &result, &error);
-    if (error) {
-        std::fprintf(stderr, "runtime error: %s\n", error);
-        ava_string_free(error);
-        std::memset(key, 0, 32);
-        ava_vm_destroy(vm);
-        ava_module_destroy(module);
+    result.vm = vm;
+    result.raw_vm = raw_vm;
+    result.module = module;
+    result.ok = true;
+    return result;
+}
+
+} // namespace
+
+namespace avapack {
+
+struct PackagedInstance {
+    fs::path temp_dir;
+    FileMap file_map;
+    std::string entry_file;
+    bool debug_build = false;
+    unsigned char key[32] = {0};
+    AvaVM* vm = nullptr;
+    ava::VM* raw_vm = nullptr;
+    AvaModule* module = nullptr;
+};
+
+int RunPackagedProgram(int argc, char** argv, const PackagedManifest& manifest,
+                        unsigned char key[32]) {
+    fs::path temp_dir = MakeTempDir();
+    if (temp_dir.empty()) {
+        std::fprintf(stderr, "error: no se pudo crear directorio temporal\n");
         return 1;
     }
 
-    {
-        while (raw_vm->HasPendingAsyncWork()) {
-            raw_vm->PumpAsyncEvents();
+    FileMap file_map;
+    PreparedModule prepared = PrepareAndCompile(argc, argv, manifest, key, temp_dir, file_map);
+    if (!prepared.ok) {
+        std::fprintf(stderr, "error: %s\n", prepared.error.c_str());
+        std::memset(key, 0, 32);
+        std::error_code ec;
+        fs::remove_all(temp_dir, ec);
+        return 1;
+    }
+
+    prepared.raw_vm->SetBeforeModuleReadHook(
+        [&file_map, &key, &temp_dir, &manifest](const std::string& resolved_path) {
+            std::string rel = ToRelativePosix(temp_dir, resolved_path);
+            auto it = file_map.find(rel);
+            if (it == file_map.end()) return;
+            DecryptAndWriteFile(*it->second, key, manifest.debug_build, fs::path(resolved_path));
+        });
+
+    ava_value_t result{};
+    char* error = nullptr;
+    ava_run(prepared.vm, prepared.module, &result, &error);
+    int exit_code = 0;
+    if (error) {
+        std::fprintf(stderr, "runtime error: %s\n", error);
+        ava_string_free(error);
+        exit_code = 1;
+    } else {
+        while (prepared.raw_vm->HasPendingAsyncWork()) {
+            prepared.raw_vm->PumpAsyncEvents();
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
     }
 
     std::memset(key, 0, 32);
+    ava_vm_destroy(prepared.vm);
+    ava_module_destroy(prepared.module);
+    std::error_code ec;
+    fs::remove_all(temp_dir, ec);
+    return exit_code;
+}
 
-    ava_vm_destroy(vm);
-    ava_module_destroy(module);
-    return 0;
+PackagedInstance* LoadPackagedProgram(int argc, char** argv, const PackagedManifest& manifest,
+                                       unsigned char key[32], std::string* out_error) {
+    fs::path temp_dir = MakeTempDir();
+    if (temp_dir.empty()) {
+        if (out_error) *out_error = "no se pudo crear directorio temporal";
+        return nullptr;
+    }
+
+    auto* instance = new PackagedInstance();
+    instance->temp_dir = temp_dir;
+    instance->entry_file = manifest.entry_file;
+    instance->debug_build = manifest.debug_build;
+    std::memcpy(instance->key, key, 32);
+
+    PreparedModule prepared = PrepareAndCompile(argc, argv, manifest, key, temp_dir, instance->file_map);
+    if (!prepared.ok) {
+        if (out_error) *out_error = prepared.error;
+        std::error_code ec;
+        fs::remove_all(temp_dir, ec);
+        delete instance;
+        return nullptr;
+    }
+
+    instance->vm = prepared.vm;
+    instance->raw_vm = prepared.raw_vm;
+    instance->module = prepared.module;
+
+    instance->raw_vm->SetBeforeModuleReadHook(
+        [instance](const std::string& resolved_path) {
+            std::string rel = ToRelativePosix(instance->temp_dir, resolved_path);
+            auto it = instance->file_map.find(rel);
+            if (it == instance->file_map.end()) return;
+            DecryptAndWriteFile(*it->second, instance->key, instance->debug_build, fs::path(resolved_path));
+        });
+
+    ava_value_t result{};
+    char* error = nullptr;
+    ava_run(instance->vm, instance->module, &result, &error);
+    if (error) {
+        if (out_error) *out_error = std::string("runtime error: ") + error;
+        ava_string_free(error);
+        std::memset(instance->key, 0, 32);
+        ava_vm_destroy(instance->vm);
+        ava_module_destroy(instance->module);
+        std::error_code ec;
+        fs::remove_all(instance->temp_dir, ec);
+        delete instance;
+        return nullptr;
+    }
+
+    while (instance->raw_vm->HasPendingAsyncWork()) {
+        instance->raw_vm->PumpAsyncEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    return instance;
+}
+
+AvaVM* PackagedInstanceVM(PackagedInstance* instance) {
+    return instance ? instance->vm : nullptr;
+}
+
+void UnloadPackagedProgram(PackagedInstance* instance) {
+    if (!instance) return;
+
+    while (instance->raw_vm->HasPendingAsyncWork()) {
+        instance->raw_vm->PumpAsyncEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    std::memset(instance->key, 0, 32);
+    ava_vm_destroy(instance->vm);
+    ava_module_destroy(instance->module);
+    std::error_code ec;
+    fs::remove_all(instance->temp_dir, ec);
+    delete instance;
 }
 
 } // namespace avapack

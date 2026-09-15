@@ -104,6 +104,7 @@ std::optional<AvaProjFile> LoadAvaProjFile(const std::string& path) {
         data.flatten_control_flow = build_group.child("FlattenControlFlow").text().as_bool();
         data.zero_disk = build_group.child("ZeroDisk").text().as_bool();
         data.debug_unencrypted = build_group.child("DebugUnencrypted").text().as_bool();
+        data.uses_ui = build_group.child("UsesUi").text().as_bool();
     }
 
     for (pugi::xml_node item_group : project_node.children("ItemGroup")) {
@@ -178,6 +179,7 @@ bool SaveAvaProjFile(const std::string& path, const AvaProjFile& data) {
     build_group.append_child("FlattenControlFlow").text().set(data.flatten_control_flow);
     build_group.append_child("ZeroDisk").text().set(data.zero_disk);
     build_group.append_child("DebugUnencrypted").text().set(data.debug_unencrypted);
+    build_group.append_child("UsesUi").text().set(data.uses_ui);
 
     if (!data.references.empty()) {
         pugi::xml_node item_group = project_node.append_child("ItemGroup");

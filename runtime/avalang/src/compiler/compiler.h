@@ -240,6 +240,7 @@ private:
     std::shared_ptr<ExprNode> ParsePower(const std::string& s, size_t& pos);
     std::shared_ptr<ExprNode> ParsePostfix(const std::string& s, size_t& pos);
     std::shared_ptr<ExprNode> ParsePrimary(const std::string& s, size_t& pos);
+    std::shared_ptr<ExprNode> TryParseLambda(const std::string& s, size_t& pos);
 };
 
 } // namespace ava

@@ -4,7 +4,7 @@
     <ProjectName>test</ProjectName>
     <EntryFile>main.ava</EntryFile>
     <Target>Desktop</Target>
-    <OutputType>Library</OutputType>
+    <OutputType>Exe</OutputType>
     <ModulesPath></ModulesPath>
     <Icon></Icon>
     <OutDir>bin</OutDir>

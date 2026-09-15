@@ -138,6 +138,8 @@ set(AVA_UI_SOURCES
     # type registry: single source for the catalog avastudio currently
     # keeps by hand.
     src/registry/ComponentTypeRegistry.cpp
+
+    src/capi/avaui_c_api.cpp
 )
 
 # Platform bridge backend (compile-time selection, no runtime OS
@@ -195,7 +197,10 @@ target_compile_definitions(avalang_ui PRIVATE AVA_UI_BUILDING_LIBRARY)
 
 target_include_directories(avalang_ui PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/api/include
 )
+
+target_link_libraries(avalang_ui PRIVATE avalang)
 
 target_include_directories(avalang_ui PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src

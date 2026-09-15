@@ -1,21 +1,24 @@
 cmake_minimum_required(VERSION 3.20)
-# LANGUAGES CXX C: el C se agregó en Fase 3 de avapack, único punto del repo
-# que compila fuente C directa (tiny-AES-c, ver
-# runtime/avapack/third_party/tiny-aes-c/VENDOR.md) -- sin esto, CMake no
-# tiene un compilador C configurado y (según el generador) puede terminar
-# compilando aes.c como C++ igual, produciendo símbolos con name mangling
-# que no matchean las declaraciones `extern "C"` del lado que lo consume.
 project(avalang LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Force vcpkg to use static-md triplet where antlr4-runtime is installed
-# (Windows only -- en Linux/macOS se usan deps del sistema via find_package)
+option(AVA_STATIC_CRT
+    "Linkea el CRT de MSVC estatico (/MT) en vez de dinamico (/MD) y usa el triplet x64-windows-static de vcpkg. Recomendado para binarios (.exe/.dll) que se distribuyen sueltos sin instalar el redistributable de VC++."
+    OFF)
+
 if(WIN32)
-    set(VCPKG_TARGET_TRIPLET x64-windows-static-md)
-    set(ENV{VCPKG_TARGET_TRIPLET} x64-windows-static-md)
-    list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/vcpkg/installed/x64-windows-static-md")
+    if(AVA_STATIC_CRT)
+        set(VCPKG_TARGET_TRIPLET x64-windows-static)
+        set(ENV{VCPKG_TARGET_TRIPLET} x64-windows-static)
+        list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/vcpkg/installed/x64-windows-static")
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    else()
+        set(VCPKG_TARGET_TRIPLET x64-windows-static-md)
+        set(ENV{VCPKG_TARGET_TRIPLET} x64-windows-static-md)
+        list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/vcpkg/installed/x64-windows-static-md")
+    endif()
 endif()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
@@ -59,15 +62,19 @@ include(FindLibFFI)
 
 if(AVA_PACK_USE_PREBUILT_AVALANG)
     if("${AVA_PREBUILT_AVALANG_DIR}" STREQUAL "")
-        message(FATAL_ERROR "AVA_PACK_USE_PREBUILT_AVALANG=ON requiere -DAVA_PREBUILT_AVALANG_DIR=<carpeta con avalang.dll/avalang.lib/avalang_ui.dll/avalang_ui.lib>")
+        message(FATAL_ERROR "AVA_PACK_USE_PREBUILT_AVALANG=ON requiere -DAVA_PREBUILT_AVALANG_DIR=<carpeta con avalang.dll/avalang.lib (y avalang_ui.dll/avalang_ui.lib si AVA_BUILD_UI=ON)>")
     endif()
-    foreach(_ava_prebuilt_file avalang.dll avalang.lib avalang_ui.dll avalang_ui.lib)
+    set(_ava_prebuilt_required_files avalang.dll avalang.lib)
+    if(AVA_BUILD_UI)
+        list(APPEND _ava_prebuilt_required_files avalang_ui.dll avalang_ui.lib)
+    endif()
+    foreach(_ava_prebuilt_file ${_ava_prebuilt_required_files})
         if(NOT EXISTS "${AVA_PREBUILT_AVALANG_DIR}/${_ava_prebuilt_file}")
             message(FATAL_ERROR "AVA_PACK_USE_PREBUILT_AVALANG=ON pero no se encontro '${_ava_prebuilt_file}' en AVA_PREBUILT_AVALANG_DIR ('${AVA_PREBUILT_AVALANG_DIR}'). Compila build_cli primero (ver build_cli.bat) o desactiva esta opcion para compilar avalang desde fuente.")
         endif()
     endforeach()
 
-    message(STATUS "avalang: usando avalang.dll/avalang_ui.dll ya compilados en ${AVA_PREBUILT_AVALANG_DIR} (AVA_PACK_USE_PREBUILT_AVALANG=ON, no se recompila desde fuente)")
+    message(STATUS "avalang: usando avalang.dll ya compilado en ${AVA_PREBUILT_AVALANG_DIR} (AVA_PACK_USE_PREBUILT_AVALANG=ON, no se recompila desde fuente)")
 
     add_library(avalang SHARED IMPORTED GLOBAL)
     set_target_properties(avalang PROPERTIES
@@ -75,11 +82,16 @@ if(AVA_PACK_USE_PREBUILT_AVALANG)
         IMPORTED_IMPLIB "${AVA_PREBUILT_AVALANG_DIR}/avalang.lib"
         INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/runtime/avalang/api/include"
     )
-    add_library(avalang_ui SHARED IMPORTED GLOBAL)
-    set_target_properties(avalang_ui PROPERTIES
-        IMPORTED_LOCATION "${AVA_PREBUILT_AVALANG_DIR}/avalang_ui.dll"
-        IMPORTED_IMPLIB "${AVA_PREBUILT_AVALANG_DIR}/avalang_ui.lib"
-    )
+    if(AVA_BUILD_UI)
+        add_library(avalang_ui SHARED IMPORTED GLOBAL)
+        set_target_properties(avalang_ui PROPERTIES
+            IMPORTED_LOCATION "${AVA_PREBUILT_AVALANG_DIR}/avalang_ui.dll"
+            IMPORTED_IMPLIB "${AVA_PREBUILT_AVALANG_DIR}/avalang_ui.lib"
+        )
+        message(STATUS "avalang: usando avalang_ui.dll ya compilado en ${AVA_PREBUILT_AVALANG_DIR} (AVA_BUILD_UI=ON)")
+    else()
+        message(STATUS "avalang: AVA_BUILD_UI=OFF -- no se requiere/importa avalang_ui.dll. OJO: si este avalang.dll prebuilt fue compilado con AVA_BUILD_UI=ON en su momento, YA tiene la dependencia a avalang_ui.dll horneada en su propio binario -- este flag no puede quitarla retroactivamente. Para un avalang.dll realmente libre de avalang_ui necesitas un prebuilt generado con AVA_BUILD_UI=OFF, o compilar avalang desde fuente (AVA_PACK_USE_PREBUILT_AVALANG=OFF).")
+    endif()
 else()
     add_subdirectory(runtime/avalang)
 endif()
