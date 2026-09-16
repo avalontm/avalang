@@ -4,28 +4,9 @@
 #include <unordered_map>
 #include <memory>
 
-namespace avalang::ui {
+namespace avalang {
+namespace ui {
 
-/**
- * Default light theme (Windows Fluent-inspired palette).
- * 
- * Color palette:
- *   Primary: #0078D4 (Windows blue)
- *   Background: #FFFFFF, #F3F3F3 (surface)
- *   Text: #333333, #767676 (secondary)
- *   Borders: #CCCCCC, #E0E0E0 (light)
- *   Semantic: #107C10 (success), #D83B01 (error), #FFB900 (warning)
- * 
- * Typography:
- *   Heading1: Segoe UI, 28pt, Bold
- *   Heading2: Segoe UI, 20pt, Bold
- *   Body: Segoe UI, 12pt, Normal
- *   Caption: Segoe UI, 11pt, Normal
- *   Button: Segoe UI, 12pt, Normal
- * 
- * Spacing:
- *   Padding: 8px, Margin: 4px, BorderWidth: 1px, BorderRadius: 4px
- */
 class DefaultTheme : public ITheme {
 public:
     DefaultTheme();
@@ -49,9 +30,6 @@ private:
     void InitFonts();
 };
 
-/**
- * Theme provider: holds multiple themes, switches between them.
- */
 class ThemeProvider : public IThemeProvider {
 public:
     ThemeProvider();
@@ -66,4 +44,5 @@ private:
     ITheme* current_;
 };
 
-} // namespace avalang::ui
+}
+}

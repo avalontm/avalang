@@ -26,6 +26,14 @@ ava_value_t builtin_typeof(AvaVM* vm, const ava_value_t* args, size_t count, voi
 ava_value_t builtin_str(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_int(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_float(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
+
+// hex(x) -- conversor a numero interpretando el argumento en base 16.
+// Acepta string ("5F000" o "0x5F000", con o sin prefijo, mayus/minusculas)
+// o un numero (se trunca a entero y se reinterpreta como si sus digitos
+// decimales fueran hex no tiene sentido, asi que un Number de entrada se
+// devuelve tal cual truncado -- el caso de uso real es siempre string).
+// Entrada invalida -> 0, mismo criterio que AsNumber() en builtin_shared.cpp.
+ava_value_t builtin_hex(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_print(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 ava_value_t builtin_input(AvaVM* vm, const ava_value_t* args, size_t count, void* user_data);
 

@@ -6,7 +6,9 @@
 #include <string>
 #include <functional>
 
-namespace avalang::ui::controls {
+namespace avalang {
+namespace ui {
+namespace controls {
 
 using ComboBoxChangeCallback = std::function<void(ComponentId comboBoxId, const std::string& newValue)>;
 
@@ -24,4 +26,6 @@ AVA_UI_API std::string GetSelectedLabel(IComponent* comboBoxComponent);
 AVA_UI_API void BindComboBoxChange(ComponentId comboBoxId, ComboBoxChangeCallback callback);
 AVA_UI_API void UnbindComboBoxChange(ComponentId comboBoxId);
 
-} // namespace avalang::ui::controls
+}
+}
+}

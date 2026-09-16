@@ -7,7 +7,8 @@
 #include <string>
 #include <vector>
 
-namespace avalang::ui {
+namespace avalang {
+namespace ui {
 
 static std::string Lowercase(const std::string& s) {
     std::string result = s;
@@ -28,7 +29,7 @@ static std::string ResolveStyleFontFamily(const std::string& typeKey,
                                            const std::string& fontNameOrPath) {
     const std::filesystem::path asPath(fontNameOrPath);
     if (!asPath.has_extension()) {
-        return fontNameOrPath; 
+        return fontNameOrPath;
     }
     const std::string family = "ProjectStyle:" + typeKey;
     if (!layout::FontRegistry::Instance().HasFont(family)) {
@@ -91,11 +92,6 @@ static std::vector<std::string> SplitStyleClassTokens(const std::string& raw) {
     return tokens;
 }
 
-// Pure layout wrappers (row/column/stack/hstack/vstack/flex) have no card of
-// their own -- they exist to position children, not to be seen. `container`
-// is the explicit "this is a card" component and keeps its surface/margin
-// defaults. Grid/scrollview/page also keep current behavior; they weren't
-// part of the bug being fixed here.
 static bool IsPureLayoutType(const std::string& type) {
     return type == "row" || type == "column" || type == "stack" ||
            type == "hstack" || type == "vstack" || type == "flex";
@@ -104,7 +100,6 @@ static bool IsPureLayoutType(const std::string& type) {
 static void ApplyTypeDefaults(IComponent* comp, ITheme* theme, bool isRoot) {
     std::string type = Lowercase(comp->TypeName());
 
-    // Button
     if (type == "button") {
         if (!comp->GetProperty("backgroundColor")) {
             auto color = theme->Color("buttonPrimary");
@@ -131,7 +126,6 @@ static void ApplyTypeDefaults(IComponent* comp, ITheme* theme, bool isRoot) {
         }
     }
 
-    // Text
     if (type == "text") {
         if (!comp->GetProperty("fontSize")) {
             auto font = ResolveFont(theme, "body");
@@ -147,7 +141,6 @@ static void ApplyTypeDefaults(IComponent* comp, ITheme* theme, bool isRoot) {
         }
     }
 
-    // Link
     if (type == "link") {
         if (!comp->GetProperty("fontSize")) {
             auto font = ResolveFont(theme, "link");
@@ -163,7 +156,6 @@ static void ApplyTypeDefaults(IComponent* comp, ITheme* theme, bool isRoot) {
         }
     }
 
-    // TextBox (input)
     if (type == "textbox" || type == "textinput" || type == "input") {
         if (!comp->GetProperty("backgroundColor")) {
             auto color = theme->Color("inputBackground");
@@ -209,7 +201,7 @@ static void ApplyTypeDefaults(IComponent* comp, ITheme* theme, bool isRoot) {
         }
     }
 
-    if (type == "container" || type == "row" || type == "column" || 
+    if (type == "container" || type == "row" || type == "column" ||
         type == "stack" || type == "hstack" || type == "vstack" ||
         type == "scrollview" || type == "scroll" || type == "flex" ||
         type == "grid" || type == "page") {
@@ -306,7 +298,7 @@ bool RenderTheme::Apply(ComponentTree* tree, ITheme* theme, const theme::Project
         return false;
     }
 
-    return ApplyToComponent(root, theme, styles, /*isRoot=*/true);
+    return ApplyToComponent(root, theme, styles, true);
 }
 
 bool RenderTheme::ApplyToComponent(IComponent* component, ITheme* theme,
@@ -349,4 +341,5 @@ bool RenderTheme::ApplyToComponent(IComponent* component, ITheme* theme,
     return true;
 }
 
-} // namespace avalang::ui
+}
+}

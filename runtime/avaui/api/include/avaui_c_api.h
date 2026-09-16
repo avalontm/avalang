@@ -7,10 +7,18 @@
 extern "C" {
 #endif
 
-#if defined(_WIN32)
-  #define AVAUI_API __declspec(dllexport)
+#if defined(AVA_UI_BUILD_SHARED)
+#  if defined(_WIN32)
+#    if defined(AVA_UI_BUILDING_LIBRARY)
+#      define AVAUI_API __declspec(dllexport)
+#    else
+#      define AVAUI_API __declspec(dllimport)
+#    endif
+#  else
+#    define AVAUI_API __attribute__((visibility("default")))
+#  endif
 #else
-  #define AVAUI_API __attribute__((visibility("default")))
+#  define AVAUI_API
 #endif
 
 typedef struct AvaComponent AvaComponent;

@@ -1,5 +1,11 @@
 #include "WinWindow.h"
+#include "WinInputState.h"
+#include <shellscalingapi.h>
+#include <imm.h>
 #include <string>
+#include <vector>
+
+#pragma comment(lib, "imm32.lib")
 
 namespace avalang {
 namespace ui {
@@ -8,6 +14,13 @@ namespace windows {
 
 const wchar_t* WinWindow::ClassName() {
     return L"AvaUIWindowClass";
+}
+
+void WinWindow::EnsureProcessDpiAware() {
+    static bool applied = false;
+    if (applied) return;
+    SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
+    applied = true;
 }
 
 void WinWindow::EnsureClassRegistered(HINSTANCE instance) {
@@ -27,6 +40,61 @@ void WinWindow::EnsureClassRegistered(HINSTANCE instance) {
     registered = true;
 }
 
+namespace {
+
+void HandleTouchMessage(HWND hwnd, WPARAM wParam, LPARAM lParam) {
+    UINT pointCount = LOWORD(wParam);
+    if (pointCount == 0) return;
+
+    std::vector<TOUCHINPUT> inputs(pointCount);
+    HTOUCHINPUT handle = reinterpret_cast<HTOUCHINPUT>(lParam);
+    if (!GetTouchInputInfo(handle, pointCount, inputs.data(), sizeof(TOUCHINPUT))) {
+        CloseTouchInputHandle(handle);
+        return;
+    }
+
+    std::vector<ava::platform::ui::NativeTouchPoint> points;
+    for (const auto& input : inputs) {
+        if (input.dwFlags & (TOUCHEVENTF_DOWN | TOUCHEVENTF_MOVE)) {
+            POINT pt{input.x / 100, input.y / 100};
+            ScreenToClient(hwnd, &pt);
+            points.push_back({static_cast<uint64_t>(input.dwID), pt.x, pt.y});
+        }
+    }
+
+    WinInput_SetTouchPoints(points);
+    CloseTouchInputHandle(handle);
+}
+
+void HandleImeComposition(HWND hwnd, LPARAM lParam) {
+    if (!(lParam & GCS_COMPSTR)) return;
+
+    HIMC himc = ImmGetContext(hwnd);
+    if (!himc) return;
+
+    LONG byteLen = ImmGetCompositionStringW(himc, GCS_COMPSTR, nullptr, 0);
+    std::string text;
+    if (byteLen > 0) {
+        std::vector<wchar_t> buffer(static_cast<size_t>(byteLen) / sizeof(wchar_t));
+        ImmGetCompositionStringW(himc, GCS_COMPSTR, buffer.data(), static_cast<DWORD>(byteLen));
+
+        int utf8Len = WideCharToMultiByte(CP_UTF8, 0, buffer.data(), static_cast<int>(buffer.size()),
+                                          nullptr, 0, nullptr, nullptr);
+        if (utf8Len > 0) {
+            text.resize(static_cast<size_t>(utf8Len));
+            WideCharToMultiByte(CP_UTF8, 0, buffer.data(), static_cast<int>(buffer.size()),
+                                text.data(), utf8Len, nullptr, nullptr);
+        }
+    }
+
+    LONG cursor = ImmGetCompositionStringW(himc, GCS_CURSORPOS, nullptr, 0);
+    ImmReleaseContext(hwnd, himc);
+
+    WinInput_SetImeComposition(byteLen > 0, text, static_cast<int>(cursor));
+}
+
+}
+
 LRESULT CALLBACK WinWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     WinWindow* self = reinterpret_cast<WinWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 
@@ -41,6 +109,38 @@ LRESULT CALLBACK WinWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             if (self) self->closed_ = true;
             if (msg == WM_DESTROY) PostQuitMessage(0);
             break;
+        case WM_MOUSEWHEEL: {
+            float delta = static_cast<float>(static_cast<short>(HIWORD(wParam))) / WHEEL_DELTA;
+            WinInput_PushWheelDelta(0.0f, delta);
+            break;
+        }
+        case WM_MOUSEHWHEEL: {
+            float delta = static_cast<float>(static_cast<short>(HIWORD(wParam))) / WHEEL_DELTA;
+            WinInput_PushWheelDelta(delta, 0.0f);
+            break;
+        }
+        case WM_CHAR:
+            WinInput_PushChar(static_cast<unsigned int>(wParam));
+            break;
+        case WM_TOUCH:
+            HandleTouchMessage(hwnd, wParam, lParam);
+            break;
+        case WM_IME_COMPOSITION:
+            HandleImeComposition(hwnd, lParam);
+            break;
+        case WM_IME_ENDCOMPOSITION:
+            WinInput_SetImeComposition(false, std::string(), 0);
+            break;
+        case WM_DPICHANGED: {
+            if (self) self->dpi_ = LOWORD(wParam);
+            auto* suggested = reinterpret_cast<RECT*>(lParam);
+            if (suggested) {
+                SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
+                             suggested->right - suggested->left, suggested->bottom - suggested->top,
+                             SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            break;
+        }
         default:
             break;
     }
@@ -56,6 +156,8 @@ WinWindow::~WinWindow() {
 
 void WinWindow::Create(int width, int height, const char* title) {
     if (hwnd_) return;
+
+    EnsureProcessDpiAware();
 
     HINSTANCE instance = GetModuleHandleW(nullptr);
     EnsureClassRegistered(instance);
@@ -80,6 +182,11 @@ void WinWindow::Create(int width, int height, const char* title) {
     );
 
     closed_ = (hwnd_ == nullptr);
+
+    if (hwnd_) {
+        RegisterTouchWindow(hwnd_, 0);
+        dpi_ = GetDpiForWindow(hwnd_);
+    }
 }
 
 void WinWindow::Destroy() {
@@ -105,58 +212,6 @@ void WinWindow::Hide() {
     if (hwnd_) ShowWindow(hwnd_, SW_HIDE);
 }
 
-ava::platform::ui::WindowState WinWindow::State() const {
-    if (!hwnd_) return ava::platform::ui::WindowState::Normal;
-
-    if (IsIconic(hwnd_)) return ava::platform::ui::WindowState::Minimized;
-    if (IsZoomed(hwnd_)) return ava::platform::ui::WindowState::Maximized;
-
-    LONG_PTR style = GetWindowLongPtrW(hwnd_, GWL_STYLE);
-    if ((style & WS_OVERLAPPEDWINDOW) == 0) {
-        // Fullscreen is implemented as a borderless window covering the
-        // monitor -- see SetState(); a plain WS_OVERLAPPEDWINDOW loss is
-        // the signal we used to enter it.
-        return ava::platform::ui::WindowState::Fullscreen;
-    }
-    return ava::platform::ui::WindowState::Normal;
-}
-
-void WinWindow::SetState(ava::platform::ui::WindowState state) {
-    if (!hwnd_) return;
-
-    switch (state) {
-        case ava::platform::ui::WindowState::Normal:
-            SetWindowLongPtrW(hwnd_, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
-            ShowWindow(hwnd_, SW_RESTORE);
-            SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-            break;
-
-        case ava::platform::ui::WindowState::Minimized:
-            ShowWindow(hwnd_, SW_MINIMIZE);
-            break;
-
-        case ava::platform::ui::WindowState::Maximized:
-            ShowWindow(hwnd_, SW_MAXIMIZE);
-            break;
-
-        case ava::platform::ui::WindowState::Fullscreen: {
-            HMONITOR monitor = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTOPRIMARY);
-            MONITORINFO mi{};
-            mi.cbSize = sizeof(MONITORINFO);
-            GetMonitorInfoW(monitor, &mi);
-
-            SetWindowLongPtrW(hwnd_, GWL_STYLE, WS_POPUP | WS_VISIBLE);
-            SetWindowPos(hwnd_, HWND_TOP,
-                         mi.rcMonitor.left, mi.rcMonitor.top,
-                         mi.rcMonitor.right - mi.rcMonitor.left,
-                         mi.rcMonitor.bottom - mi.rcMonitor.top,
-                         SWP_FRAMECHANGED);
-            break;
-        }
-    }
-}
-
 bool WinWindow::PumpMessages() {
     MSG msg;
     while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -169,7 +224,7 @@ bool WinWindow::PumpMessages() {
     return !closed_;
 }
 
-} // namespace windows
-} // namespace platform
-} // namespace ui
-} // namespace avalang
+}
+}
+}
+}

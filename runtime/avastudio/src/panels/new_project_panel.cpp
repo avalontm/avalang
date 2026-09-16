@@ -30,17 +30,16 @@ const char* kMainAvaContentConsole =
     "\n"
     "print(\"Hello, AvaLang!\")\n";
 
-// UI template's main.ava: kept as plain console boilerplate on purpose --
-// there's no native call yet (e.g. a Window.Show-style API) that opens an
-// .avaui screen from a running script. Screens under views/ are edited and
-// previewed from AvaStudio's Preview panel, not launched from here.
+// Desktop template's main.ava: launches views/Home.avaui through the
+// native Application class (PLAN_AVAUI_VISTAS_COMO_CLASES.md Fase 4) --
+// avanative registers Application.run(viewPath) before running this
+// script, so this is a real, working entrypoint, not just a placeholder.
+// Screens under views/ can still be edited/previewed from AvaStudio's
+// Preview panel; main.ava is what actually opens the window when the
+// project runs standalone (avanative / Desktop build).
 const char* kMainAvaContentUi =
-    "import system\n"
-    "\n"
-    "# Las pantallas de este proyecto viven en views/ (ver views/Home.avaui).\n"
-    "# Se editan y se previsualizan desde el panel Preview de AvaStudio.\n"
-    "\n"
-    "print(\"Hello, AvaLang!\")\n";
+    "app as Application = new Application()\n"
+    "app.run(\"views/Home.avaui\")\n";
 
 const char* kAppAvaContentUi =
     "style \"styles.ava\"\n";
@@ -75,8 +74,10 @@ struct ProjectTemplate {
 constexpr ProjectTemplate kTemplates[] = {
     {NewProjectTemplateKind::kConsole, "console", palette::kPrimary, "new_project.template_console",
      "new_project.template_console", "new_project.template_console_desc"},
-    {NewProjectTemplateKind::kUi, "ui", palette::kAccentGold, "new_project.template_ui", "new_project.template_ui",
-     "new_project.template_ui_desc"},
+    {NewProjectTemplateKind::kDesktopUi, "desktop", palette::kInfo, "new_project.template_desktop",
+     "new_project.template_desktop", "new_project.template_desktop_desc"},
+    {NewProjectTemplateKind::kLibrary, "library", palette::kWarning, "new_project.template_library",
+     "new_project.template_library", "new_project.template_library_desc"},
 };
 
 std::string ToLower(std::string value) {
@@ -176,7 +177,6 @@ void OpenNewProjectDialog(NewProjectState& state, const std::string& default_des
     state.name.clear();
     state.destination = default_destination;
     state.template_kind = NewProjectTemplateKind::kConsole;
-    state.output_type = AvaProjOutputType::kExe;
     state.template_search.clear();
     state.template_category.clear();
     state.error_key.clear();
@@ -275,27 +275,6 @@ NewProjectDrawResult DrawNewProjectDialog(NewProjectState& state) {
 
     ImGui::Spacing();
     ImGui::Spacing();
-    ImGui::TextDisabled("%s", util::Tr("new_project.section_output_type").c_str());
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    const bool is_exe = state.output_type == AvaProjOutputType::kExe;
-    if (ImGui::RadioButton(util::Tr("new_project.output_type_exe").c_str(), is_exe)) {
-        state.output_type = AvaProjOutputType::kExe;
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", util::Tr("new_project.output_type_exe_hint").c_str());
-    ImGui::SameLine(0.0f, 24.0f);
-    if (ImGui::RadioButton(util::Tr("new_project.output_type_library").c_str(), !is_exe)) {
-        state.output_type = AvaProjOutputType::kLibrary;
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", util::Tr("new_project.output_type_library_hint").c_str());
-    if (!is_exe) {
-        ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s",
-                            util::Tr("new_project.output_type_library_hint").c_str());
-    }
-
-    ImGui::Spacing();
-    ImGui::Spacing();
     ImGui::TextDisabled("%s", util::Tr("new_project.section_location").c_str());
     ImGui::Separator();
     ImGui::Spacing();
@@ -358,7 +337,7 @@ NewProjectDrawResult DrawNewProjectDialog(NewProjectState& state) {
         } else {
             std::error_code ec;
             const fs::path destination_path(state.destination);
-            if (!fs::is_directory(destination_path, ec)) {
+            if (!fs::is_directory(destination_path, ec) && !fs::create_directories(destination_path, ec)) {
                 state.error_key = "new_project.error_destination_missing";
             } else {
                 const fs::path project_dir = destination_path / state.name;
@@ -369,7 +348,8 @@ NewProjectDrawResult DrawNewProjectDialog(NewProjectState& state) {
                     if (ec) {
                         state.error_key = "new_project.error_create_failed";
                     } else {
-                        const bool is_ui = state.template_kind == NewProjectTemplateKind::kUi;
+                        const bool is_ui = state.template_kind == NewProjectTemplateKind::kDesktopUi;
+                        const bool is_library = state.template_kind == NewProjectTemplateKind::kLibrary;
 
                         const fs::path main_ava = project_dir / "main.ava";
                         std::ofstream out(main_ava.string(), std::ios::binary);
@@ -401,7 +381,8 @@ NewProjectDrawResult DrawNewProjectDialog(NewProjectState& state) {
                         avaproj.project_name = state.name;
                         avaproj.entry_file = "main.ava";
                         avaproj.out_dir = "bin";
-                        avaproj.output_type = state.output_type;
+                        avaproj.output_type = is_library ? AvaProjOutputType::kLibrary : AvaProjOutputType::kExe;
+                        if (is_ui) avaproj.uses_ui = true;
                         SaveAvaProjFile((project_dir / (state.name + ".avaproj")).string(), avaproj);
                         EnsureGitignoreEntry(project_dir.string(), "*.avaproj.user");
 

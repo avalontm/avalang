@@ -9,6 +9,8 @@
 #include "panels/properties_panel.h"
 #include "util/log_bridge.h"
 
+struct AvaVM;
+
 namespace studio {
 
 constexpr const char* kNodeMoveDragDropId = "AVAUI_NODE_MOVE";
@@ -20,5 +22,7 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
                                                    LogBridge* log_bridge = nullptr);
 
 void InvalidateDesignerVmCache(int tab_id);
+
+AvaVM* GetDesignerStateVM(int tab_id);
 
 }

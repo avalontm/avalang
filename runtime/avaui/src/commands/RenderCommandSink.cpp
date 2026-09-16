@@ -203,9 +203,32 @@ void RenderCommandSink::DrawLink(
     Emit(cmd);
 }
 
+void RenderCommandSink::DrawPath(
+    float x, float y,
+    const std::vector<render::PathSegment>& segments,
+    const Color& fillColor,
+    const Color& borderColor, float borderWidth,
+    bool closed,
+    const std::string& clickHandler,
+    const std::string& className
+) {
+    RenderCommand cmd;
+    cmd.type = RenderCommandType::DrawPath;
+    cmd.drawPath.x = x;
+    cmd.drawPath.y = y;
+    cmd.drawPath.segments = segments;
+    cmd.drawPath.fillColor = fillColor;
+    cmd.drawPath.borderColor = borderColor;
+    cmd.drawPath.borderWidth = borderWidth;
+    cmd.drawPath.closed = closed;
+    cmd.drawPath.clickHandler = clickHandler;
+    cmd.drawPath.className = className;
+    Emit(cmd);
+}
+
 std::unique_ptr<IRenderCommandSink> IRenderCommandSink::Create() {
     return std::make_unique<RenderCommandSink>();
 }
 
-} // namespace ui
-} // namespace avalang
+}
+}

@@ -9,5 +9,5 @@ std::unique_ptr<ComponentTree> ComponentTree::Create() {
     return std::make_unique<components::ComponentTreeImpl>();
 }
 
-} // namespace ui
-} // namespace avalang
+}
+}

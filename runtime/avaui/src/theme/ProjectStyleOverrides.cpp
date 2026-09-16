@@ -5,7 +5,9 @@
 #include <filesystem>
 #include <fstream>
 
-namespace avalang::ui::theme {
+namespace avalang {
+namespace ui {
+namespace theme {
 
 namespace {
 
@@ -61,7 +63,6 @@ bool IsRecognizedState(const std::string& stateLower) {
     return stateLower == "hover" || stateLower == "focus" ||
            stateLower == "active" || stateLower == "disabled";
 }
-
 
 std::string StripComment(const std::string& line) {
     const std::size_t hash = line.find('#');
@@ -133,7 +134,7 @@ void ApplyStyleProperty(const std::string& key, const std::string& rawValue,
     }
 }
 
-} // namespace
+}
 
 void ControlStyleOverride::MergeOnto(ControlStyleOverride& base) const {
     if (backgroundColor) base.backgroundColor = backgroundColor;
@@ -153,11 +154,6 @@ ControlStyleOverride ProjectStyleSheet::Resolve(const std::string& typeLower,
     ControlStyleOverride result;
     if (hasGlobal_) {
         if (isPureLayoutContainer) {
-            // Layout-only wrappers don't have a visual box of their own, so a
-            // global reset shouldn't hand them a margin or a background --
-            // that's what produces a grey box that doesn't match the content
-            // it wraps. Keep the rest of the global reset (fonts, text color,
-            // padding, etc.), which is harmless on an invisible wrapper.
             ControlStyleOverride globalForLayout = global_;
             globalForLayout.margin.reset();
             globalForLayout.backgroundColor.reset();
@@ -168,8 +164,6 @@ ControlStyleOverride ProjectStyleSheet::Resolve(const std::string& typeLower,
     }
     const auto it = perType_.find(typeLower);
     if (it != perType_.end()) {
-        // An explicit `style row` / `style column` / etc. block is the
-        // author opting a specific type back in, so it always wins.
         it->second.MergeOnto(result);
     }
     return result;
@@ -228,13 +222,15 @@ void MergeStyleFileInto(const std::string& styleFilePath, const std::string& pro
     };
 
     std::string line;
-    std::string currentTarget; 
-    std::string currentState;  
+    std::string currentTarget;
+    std::string currentState;
     bool inBlock = false;
-    bool blockValid = true; 
-    bool currentIsNamed = false; 
-    bool currentIsClassScoped = false; 
+    bool blockValid = true;
+    bool currentIsNamed = false;
+    bool currentIsClassScoped = false;
     std::string currentClass;
+    bool currentIsResponsive = false;
+    uint32_t currentBreakpointMinWidth = 0;
     ControlStyleOverride current;
 
     while (std::getline(file, line)) {
@@ -247,7 +243,7 @@ void MergeStyleFileInto(const std::string& styleFilePath, const std::string& pro
                 continue;
             }
             const std::string target = Trim(stripped.substr(5));
-            if (target.empty()) continue; 
+            if (target.empty()) continue;
 
             currentIsNamed = (target.front() == '"');
             if (currentIsNamed) {
@@ -263,26 +259,50 @@ void MergeStyleFileInto(const std::string& styleFilePath, const std::string& pro
             currentState.clear();
             currentClass.clear();
             currentIsClassScoped = false;
+            currentIsResponsive = false;
+            currentBreakpointMinWidth = 0;
             blockValid = true;
+
+            const std::size_t at = targetLower.find('@');
+            if (at != std::string::npos) {
+                const std::string widthStr = targetLower.substr(at + 1);
+                targetLower = targetLower.substr(0, at);
+                double widthNum = 0.0;
+                if (targetLower.empty() || !ParseNumber(widthStr, &widthNum) || widthNum < 0) {
+                    blockValid = false;
+                } else {
+                    currentIsResponsive = true;
+                    currentBreakpointMinWidth = static_cast<uint32_t>(widthNum);
+                }
+            }
+
             const std::size_t colon = targetLower.find(':');
             if (colon != std::string::npos) {
-                currentState = targetLower.substr(colon + 1);
-                targetLower = targetLower.substr(0, colon);
-                if (targetLower.empty() || !IsRecognizedState(currentState)) {
+                if (currentIsResponsive) {
                     blockValid = false;
+                } else {
+                    currentState = targetLower.substr(colon + 1);
+                    targetLower = targetLower.substr(0, colon);
+                    if (targetLower.empty() || !IsRecognizedState(currentState)) {
+                        blockValid = false;
+                    }
                 }
             }
 
             const std::size_t dot = targetLower.find('.');
             if (dot != std::string::npos) {
-                currentClass = targetLower.substr(dot + 1);
-                targetLower = targetLower.substr(0, dot);
-                if (targetLower.empty() || currentClass.empty()) {
-                    blockValid = false;
-                } else if (!currentState.empty()) {
+                if (currentIsResponsive) {
                     blockValid = false;
                 } else {
-                    currentIsClassScoped = true;
+                    currentClass = targetLower.substr(dot + 1);
+                    targetLower = targetLower.substr(0, dot);
+                    if (targetLower.empty() || currentClass.empty()) {
+                        blockValid = false;
+                    } else if (!currentState.empty()) {
+                        blockValid = false;
+                    } else {
+                        currentIsClassScoped = true;
+                    }
                 }
             }
             currentTarget = targetLower;
@@ -314,6 +334,24 @@ void MergeStyleFileInto(const std::string& styleFilePath, const std::string& pro
                         ? sheet.stateGlobal_[currentState]
                         : sheet.statePerType_[currentTarget + ":" + currentState];
                     current.MergeOnto(bucket);
+                } else if (currentIsResponsive) {
+                    BreakpointOverride* breakpoint = nullptr;
+                    for (BreakpointOverride& candidate : sheet.breakpoints_) {
+                        if (candidate.minWidthPx == currentBreakpointMinWidth) {
+                            breakpoint = &candidate;
+                            break;
+                        }
+                    }
+                    if (!breakpoint) {
+                        sheet.breakpoints_.push_back(BreakpointOverride{currentBreakpointMinWidth});
+                        breakpoint = &sheet.breakpoints_.back();
+                    }
+                    if (currentTarget == "*") {
+                        current.MergeOnto(breakpoint->global);
+                        breakpoint->hasGlobal = true;
+                    } else {
+                        current.MergeOnto(breakpoint->perType[currentTarget]);
+                    }
                 } else if (currentTarget == "*") {
                     if (sheet.hasGlobal_) {
                         current.MergeOnto(sheet.global_);
@@ -336,11 +374,13 @@ void MergeStyleFileInto(const std::string& styleFilePath, const std::string& pro
             currentIsNamed = false;
             currentIsClassScoped = false;
             currentClass.clear();
+            currentIsResponsive = false;
+            currentBreakpointMinWidth = 0;
             continue;
         }
 
         const std::size_t eq = stripped.find('=');
-        if (eq == std::string::npos) continue; // not a property line, skip
+        if (eq == std::string::npos) continue;
         const std::string key = Trim(stripped.substr(0, eq));
         const std::string value = Trim(stripped.substr(eq + 1));
         if (key.empty() || value.empty()) continue;
@@ -372,4 +412,6 @@ ProjectStyleSheet LoadProjectStyleOverrides(const std::string& projectRoot) {
     return sheet;
 }
 
-} // namespace avalang::ui::theme
+}
+}
+}

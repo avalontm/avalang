@@ -78,14 +78,43 @@ bool AncestorIsScrolled(const std::shared_ptr<scene::ISceneNode>& node) {
     return NearestScrollAncestor(node) != nullptr;
 }
 
-} // namespace
+bool RectContainsPoint(float x, float y, float w, float h, int px, int py) {
+    return px >= x && px <= x + w && py >= y && py <= y + h;
+}
 
-void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink, IRenderer& renderer) {
-    Walk(scene, sink, renderer, std::string());
+std::string ActiveInteractiveState(const render::IRenderNode& node, const InteractiveState& interactive,
+                                    float x, float y, float w, float h) {
+    if (node.Disabled()) return "disabled";
+    const bool hit = RectContainsPoint(x, y, w, h, interactive.pointerX, interactive.pointerY);
+    if (hit && interactive.pointerDown) return "active";
+    if (interactive.focused != 0 && interactive.focused == node.Id()) return "focus";
+    if (hit) return "hover";
+    return std::string();
+}
+
+theme::ControlStyleOverride ResolveInteractiveOverride(const render::IRenderNode& node,
+                                                        const InteractiveState* interactive,
+                                                        const char* typeName,
+                                                        float x, float y, float w, float h) {
+    if (!interactive || !interactive->styles || !interactive->styles->HasAnyStateStyles()) {
+        return theme::ControlStyleOverride{};
+    }
+    const std::string state = ActiveInteractiveState(node, *interactive, x, y, w, h);
+    if (state.empty()) {
+        return theme::ControlStyleOverride{};
+    }
+    return interactive->styles->ResolveState(typeName, state);
+}
+
 }
 
 void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink, IRenderer& renderer,
-                               std::string slotContent) {
+                               const InteractiveState* interactive) {
+    Walk(scene, sink, renderer, std::string(), interactive);
+}
+
+void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink, IRenderer& renderer,
+                               std::string slotContent, const InteractiveState* interactive) {
     sink.BeginFrame();
     renderer.BeginFrame();
 
@@ -209,11 +238,20 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
             float borderWidth = renderNode->ShouldStroke()
                                      ? static_cast<float>(renderNode->StrokeWidth())
                                      : 0.0f;
+            float borderRadius = static_cast<float>(renderNode->BorderRadius());
+
+            const theme::ControlStyleOverride override =
+                ResolveInteractiveOverride(*renderNode, interactive, "button", x, y, w, h);
+            if (override.backgroundColor) fillColor = common::ParseColor(*override.backgroundColor);
+            if (override.borderColor) borderColor = common::ParseColor(*override.borderColor);
+            if (override.textColor) textColor = common::ParseColor(*override.textColor);
+            if (override.borderWidth) borderWidth = static_cast<float>(*override.borderWidth);
+            if (override.borderRadius) borderRadius = static_cast<float>(*override.borderRadius);
 
             sink.DrawButton(x, y, w, h, text.c_str(),
                              static_cast<float>(renderNode->FontSize()), fontName.c_str(),
                              textColor, fillColor, borderColor, borderWidth,
-                             static_cast<float>(renderNode->BorderRadius()),
+                             borderRadius,
                              renderNode->Disabled(), handler, cssClass);
             return;
         }
@@ -226,6 +264,10 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
 
             const std::string& fgColor = renderNode->ForegroundColor();
             Color textColor = fgColor.empty() ? Color{0, 0, 238, 255} : common::ParseColor(fgColor);
+
+            const theme::ControlStyleOverride override =
+                ResolveInteractiveOverride(*renderNode, interactive, "link", x, y, w, h);
+            if (override.textColor) textColor = common::ParseColor(*override.textColor);
 
             sink.DrawLink(x, y, text.c_str(),
                           static_cast<float>(renderNode->FontSize()), fontName.c_str(),
@@ -275,7 +317,22 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
             return;
         }
 
-        if (renderNode->ShouldFill() || renderNode->ShouldStroke()) {
+        if (renderNode->Type() == render::RenderNodeType::Path && !renderNode->PathSegments().empty()) {
+            Color fill = renderNode->ShouldFill()
+                             ? common::ParseColor(renderNode->BackgroundColor())
+                             : Color{0, 0, 0, 0};
+            Color border = renderNode->ShouldStroke()
+                               ? common::ParseColor(renderNode->BorderColor())
+                               : Color{0, 0, 0, 0};
+            float borderWidth = renderNode->ShouldStroke()
+                                     ? static_cast<float>(renderNode->StrokeWidth())
+                                     : 0.0f;
+            sink.DrawPath(x, y, renderNode->PathSegments(), fill, border, borderWidth,
+                          renderNode->PathClosed(), handler, cssClass);
+        }
+
+        if (renderNode->Type() != render::RenderNodeType::Path &&
+            (renderNode->ShouldFill() || renderNode->ShouldStroke())) {
             Color fill = renderNode->ShouldFill()
                              ? common::ParseColor(renderNode->BackgroundColor())
                              : Color{0, 0, 0, 0};
@@ -387,7 +444,7 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
             return;
         }
         if (renderNode && renderNode->Type() == render::RenderNodeType::ScrollView) {
-            drawSubtree(node, /*isRoot=*/true);
+            drawSubtree(node, true);
             return;
         }
         drawNode(node);
@@ -409,7 +466,7 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
                 "<div class=\"ava-overlay-backdrop\" style=\"position:fixed; inset:0; "
                 "background:rgba(0,0,0,0.65);\"></div>");
         }
-        drawSubtree(root, /*isRoot=*/true);
+        drawSubtree(root, true);
         sink.DrawHtmlFragment("</div>");
     }
 
@@ -419,5 +476,5 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
     renderer.EndFrame();
 }
 
-} // namespace ui
-} // namespace avalang
+}
+}

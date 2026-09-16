@@ -6,57 +6,18 @@
 #include "Export.h"
 #include <memory>
 
-namespace avalang::ui {
+namespace avalang {
+namespace ui {
 
-/**
- * Helper to apply theme defaults to a ComponentTree.
- * 
- * Usage:
- *   auto theme = CreateDefaultThemeProvider()->Current();
- *   ComponentTree* tree = parser.Parse(avaui_file);
- *   RenderTheme::Apply(tree, theme);
- *   // Now tree's components have filled-in properties from theme
- *   layoutEngine.Layout(tree);  // ... continues with pipeline
- * 
- * Design:
- * - Walks all components in the tree
- * - For each component:
- *   - Checks component type (Button, Text, etc.)
- *   - Applies theme roles for that type (e.g., Button -> buttonPrimary + button font)
- *   - Only fills EMPTY properties (component-specific values are never overwritten)
- * 
- * This ensures theme acts as a "default stylesheet", not a "forced override".
- */
 class AVA_UI_API RenderTheme {
 public:
-    /**
-     * Apply theme defaults to all components in tree.
-     *
-     * @param tree ComponentTree to modify (in-place)
-     * @param theme Theme providing defaults
-     * @param styles Optional project styles.ava overrides (see
-     *   theme/ProjectStyleOverrides.h). When non-null, a field a
-     *   `style *`/`style <type>` block set wins over `theme`'s role
-     *   lookup for that field -- component-authored properties in the
-     *   .avaui source still win over both (see RenderTheme.cpp's
-     *   `!comp->GetProperty(...)` guards). May be nullptr (equivalent
-     *   to a project with no styles.ava).
-     * @return true if application succeeded
-     */
     static bool Apply(ComponentTree* tree, ITheme* theme,
                        const theme::ProjectStyleSheet* styles = nullptr);
 
-    /**
-     * Apply theme to a single component node.
-     *
-     * @param component Component to theme
-     * @param theme Theme providing defaults
-     * @param styles Optional project styles.ava overrides, see Apply().
-     * @return true if application succeeded
-     */
     static bool ApplyToComponent(IComponent* component, ITheme* theme,
                                   const theme::ProjectStyleSheet* styles = nullptr,
                                   bool isRoot = false);
 };
 
-} // namespace avalang::ui
+}
+}

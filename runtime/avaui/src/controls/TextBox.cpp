@@ -5,14 +5,16 @@
 #include <unordered_map>
 #include <mutex>
 
-namespace avalang::ui::controls {
+namespace avalang {
+namespace ui {
+namespace controls {
 
 namespace {
 
 std::unordered_map<ComponentId, TextBoxChangeCallback> g_textBoxCallbacks;
 std::mutex g_callbackMutex;
 
-}  // anonymous namespace
+}
 
 IComponent* CreateTextBox(ComponentTree* tree, const std::string& placeholder) {
     if (!tree) {
@@ -29,8 +31,6 @@ IComponent* CreateTextBox(ComponentTree* tree, const std::string& placeholder) {
     comp->SetProperty("isFocused", PropertyValue(false));
     comp->SetProperty("isEnabled", PropertyValue(true));
 
-    // backgroundColor / borderColor / borderWidth / fontSize filled by
-    // RenderTheme::Apply() (type == "textbox" branch).
     return comp;
 }
 
@@ -79,7 +79,7 @@ struct TextBoxTypeRegistration {
     TextBoxTypeRegistration() {
         using namespace avalang::ui::registry;
         RegisterComponentType({
-            "TextBox", "Text Box", /*is_container=*/false,
+            "TextBox", "Text Box", false,
             {
                 {"text", PropertyValue("")},
                 {"placeholder", PropertyValue("")},
@@ -90,6 +90,8 @@ struct TextBoxTypeRegistration {
     }
 };
 static TextBoxTypeRegistration _textbox_type_registration;
-} // namespace
+}
 
-} // namespace avalang::ui::controls
+}
+}
+}

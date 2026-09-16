@@ -109,6 +109,13 @@ properties.column_property,Property
 properties.section_events,Events
 properties.column_event,Event
 properties.column_handler,Handler
+panel.state.title,State
+state.empty_selection,Open a .avaui design tab to view and edit its initial state.
+state.section_variables,State variables
+state.column_name,Name
+state.column_initial,Initial value
+state.column_evaluated,Evaluated
+state.new_variable_hint,new variable
 panel.logs.title,Logs
 logs.section_label,General logs
 logs.copy_all_button,Copy all
@@ -211,7 +218,11 @@ project_properties.tab_references,References
 project_properties.name_label,Project name
 project_properties.entry_file_label,"Entry script (.ava)"
 project_properties.target_label,Target
-project_properties.output_type_label,Output type
+project_properties.kind_label,Project kind
+project_properties.kind_console,Console
+project_properties.kind_desktop_ui,Desktop
+project_properties.kind_library,Library
+project_properties.kind_desktop_ui_barekernel_tooltip,"Desktop isn't available for the BareKernel target."
 project_properties.output_exe_desktop,Executable%s
 project_properties.output_exe_plain,Executable
 project_properties.output_library_desktop,Library%s
@@ -247,11 +258,6 @@ quick_open.hint,Go to file...
 quick_open.no_results,No matching files.
 quick_open.no_project_files,No .ava/.avaui files found in this project.
 menu.file.new_project,New Project...
-new_project.section_output_type,Output type
-new_project.output_type_exe,Executable
-new_project.output_type_exe_hint,A standalone program you run directly.
-new_project.output_type_library,Library
-new_project.output_type_library_hint,"A reusable module (.dll/.so/.dylib) for other programs to load and invoke, instead of a standalone executable."
 new_project.section_location,Location
 new_project.name_label,Project name
 new_project.name_hint,MyProject
@@ -259,15 +265,13 @@ new_project.destination_label,Destination folder
 new_project.section_template,Project template
 new_project.template_console,Console
 new_project.template_console_desc,"A single main.ava -- ideal for scripts, tools and console programs."
-new_project.template_ui,UI
-new_project.template_ui_desc,"Adds app.ava, styles.ava and a starter screen under views/, ready to design interfaces."
 new_project.search_hint,Search for templates
 new_project.filter_all,All categories
 new_project.no_results,No templates match your search.
 new_project.create_button,Create Project
 new_project.error_name_required,Enter a project name.
 new_project.error_destination_required,Choose a destination folder.
-new_project.error_destination_missing,Destination folder does not exist.
+new_project.error_destination_missing,Could not find or create the destination folder.
 new_project.error_already_exists,"A folder with that name already exists there."
 new_project.error_create_failed,Could not create the project folder.
 editor.context.implement_interface,Implement Interface '%s'
@@ -280,3 +284,19 @@ editor.context.remove_unreachable,Remove unreachable code
 editor.quickfix.tooltip,Quick Fix... (%s)
 editor.hint.missing_interface_members,%s does not implement %s:
 explorer.new_item_name_label,Name:
+build.section_run_target,Build & Run
+build.run_target_label,Run target
+build.run_target_console,Console
+build.run_target_desktop_ui,Desktop (UI)
+build.run_target_library,Library
+build.run_target_desktop_ui_unsupported_tooltip,"avalang_ui_win doesn't exist yet for this host."
+build.build_and_run_button,Build & Run
+build.build_only_button,Build
+build.run_button,Run
+build.first_run_build_notice,"First build can take several minutes (compiles avalang + avalang_ui + avalang_ui_win + avanative)."
+build.error_ui_entry_missing,"could not find a .avaui screen file in the project (expected, e.g. views/Home.avaui)."
+build.error_desktop_ui_windows_only,"Desktop (UI) is only supported on Windows for now."
+new_project.template_desktop,Desktop
+new_project.template_desktop_desc,"Adds app.ava, styles.ava and a starter screen under views/, ready to run as a native desktop window."
+new_project.template_library,Library
+new_project.template_library_desc,"A single main.ava with no UI files, saved as a reusable module (.dll/.so/.dylib) instead of a standalone executable."

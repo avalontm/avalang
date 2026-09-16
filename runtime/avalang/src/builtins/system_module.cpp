@@ -157,7 +157,11 @@ ava_value_t datetime_to_string(AvaVM*, const ava_value_t* args, size_t count, vo
     return ToCNew(Value::String(s));
 }
 
-ava_value_t datetime_sleep(AvaVM*, const ava_value_t* args, size_t count, void*) {
+// System.Threading.Thread.Sleep(ms) en C# real -- NUNCA existio bajo
+// DateTime (el error CS0117 del usuario lo confirma). El nombre de la
+// funcion C se deja neutral (no "datetime_sleep") porque ahora vive bajo
+// el namespace Thread, no DateTime.
+ava_value_t thread_sleep(AvaVM*, const ava_value_t* args, size_t count, void*) {
     double ms = ArgAsNumber(args, count, 0, 0.0);
     if (ms < 0) ms = 0;
     VmPlatformAccessor::Get().Clock().SleepMs(static_cast<uint32_t>(ms));
@@ -169,7 +173,13 @@ Value BuildDateTimeNamespace() {
         {"Now", datetime_now},
         {"UtcNow", datetime_utc_now},
         {"ToString", datetime_to_string},
-        {"Sleep", datetime_sleep},
+    });
+}
+
+// System.Threading.Thread en C# real: Sleep(ms) vive aca, no en DateTime.
+Value BuildThreadNamespace() {
+    return BuildNativeNamespace({
+        {"Sleep", thread_sleep},
     });
 }
 
@@ -305,11 +315,15 @@ ava_value_t environment_get_command_line_args(AvaVM*, const ava_value_t*, size_t
 }
 
 Value BuildEnvironmentNamespace() {
+    // Nota: "SetCurrentDirectory" se saco de aca -- en C# real no existe
+    // Environment.SetCurrentDirectory (Environment.CurrentDirectory es
+    // una propiedad con setter, no un metodo con ese nombre). El metodo
+    // estatico SetCurrentDirectory(path) que si existe de verdad es
+    // System.IO.Directory.SetCurrentDirectory -- ver BuildDirectoryNamespace.
     return BuildNativeNamespace({
         {"GetEnvironmentVariable", environment_get_variable},
         {"SetEnvironmentVariable", environment_set_variable},
         {"GetCurrentDirectory", environment_get_current_directory},
-        {"SetCurrentDirectory", environment_set_current_directory},
         {"GetCommandLineArgs", environment_get_command_line_args},
     });
 }
@@ -403,10 +417,19 @@ ava_value_t directory_enumerate(AvaVM*, const ava_value_t* args, size_t count, v
 
 Value BuildDirectoryNamespace() {
     return BuildNativeNamespace({
-        {"Create", directory_create},
+        // Antes decia "Create" -- en C# real ese nombre corto es de
+        // File.Create (crea un archivo). El metodo real de Directory se
+        // llama CreateDirectory(path).
+        {"CreateDirectory", directory_create},
         {"Delete", directory_delete},
         {"Exists", directory_exists},
         {"Enumerate", directory_enumerate},
+        // Movidos aca desde Environment (ver BuildEnvironmentNamespace):
+        // los estaticos reales System.IO.Directory.GetCurrentDirectory()
+        // y Directory.SetCurrentDirectory(path) viven en esta clase, no
+        // en Environment.
+        {"GetCurrentDirectory", environment_get_current_directory},
+        {"SetCurrentDirectory", environment_set_current_directory},
     });
 }
 
@@ -466,11 +489,22 @@ Value BuildDiagnosticsNamespace() {
 
 void RegisterSystemModule(VM& vm) {
 
-    vm.RegisterNativeModule("system", [](VM&) -> Value {
+    // Registrado en minuscula ("system") y en mayuscula ("System",
+    // como en el "using System;" real de C#) apuntando a los MISMOS
+    // builders -- import System (mayuscula) es la forma "correcta"/
+    // recomendada de ahora en mas, pero se deja "system" funcionando
+    // igual para no romper scripts ya escritos con minuscula.
+    auto register_both_cases = [&vm](const char* lower, const char* upper, VM::NativeModuleFactory fn) {
+        vm.RegisterNativeModule(lower, fn);
+        vm.RegisterNativeModule(upper, fn);
+    };
+
+    register_both_cases("system", "System", [](VM&) -> Value {
         Value root = MakeDict();
 
         SetDictEntry(root, "Console", BuildConsoleNamespace());
         SetDictEntry(root, "DateTime", BuildDateTimeNamespace());
+        SetDictEntry(root, "Thread", BuildThreadNamespace());
         SetDictEntry(root, "Environment", BuildEnvironmentNamespace());
         SetDictEntry(root, "IO", BuildIONamespace());
         SetDictEntry(root, "Diagnostics", BuildDiagnosticsNamespace());
@@ -478,19 +512,22 @@ void RegisterSystemModule(VM& vm) {
         return root;
     });
 
-    vm.RegisterNativeModule("system.console", [](VM&) -> Value {
+    register_both_cases("system.console", "System.Console", [](VM&) -> Value {
         return BuildConsoleNamespace();
     });
-    vm.RegisterNativeModule("system.datetime", [](VM&) -> Value {
+    register_both_cases("system.datetime", "System.DateTime", [](VM&) -> Value {
         return BuildDateTimeNamespace();
     });
-    vm.RegisterNativeModule("system.environment", [](VM&) -> Value {
+    register_both_cases("system.thread", "System.Thread", [](VM&) -> Value {
+        return BuildThreadNamespace();
+    });
+    register_both_cases("system.environment", "System.Environment", [](VM&) -> Value {
         return BuildEnvironmentNamespace();
     });
-    vm.RegisterNativeModule("system.io", [](VM&) -> Value {
+    register_both_cases("system.io", "System.IO", [](VM&) -> Value {
         return BuildIONamespace();
     });
-    vm.RegisterNativeModule("system.diagnostics", [](VM&) -> Value {
+    register_both_cases("system.diagnostics", "System.Diagnostics", [](VM&) -> Value {
         return BuildDiagnosticsNamespace();
     });
 }

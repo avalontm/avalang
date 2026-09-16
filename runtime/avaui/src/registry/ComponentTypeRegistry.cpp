@@ -13,7 +13,7 @@ std::vector<ComponentTypeDescriptor>& MutableRegistry() {
     return registry;
 }
 
-} // namespace
+}
 
 void RegisterComponentType(ComponentTypeDescriptor desc) {
     std::vector<ComponentTypeDescriptor>& registry = MutableRegistry();
@@ -41,6 +41,6 @@ const ComponentTypeDescriptor* FindComponentType(const std::string& type) {
     return it != registry.end() ? &(*it) : nullptr;
 }
 
-} // namespace registry
-} // namespace ui
-} // namespace avalang
+}
+}
+}

@@ -1,5 +1,4 @@
-#ifndef AVA_UI_COMPONENTS_COMPONENTTREEIMPL_H
-#define AVA_UI_COMPONENTS_COMPONENTTREEIMPL_H
+#pragma once
 
 #include <memory>
 #include <unordered_map>
@@ -25,8 +24,6 @@ private:
     IComponent* root_ = nullptr;
 };
 
-} // namespace components
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_COMPONENTS_COMPONENTTREEIMPL_H
+}
+}
+}

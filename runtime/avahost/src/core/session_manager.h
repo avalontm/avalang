@@ -69,6 +69,9 @@ public:
     // values forever.
     void EraseStateForFile(const std::string& routeFilePath);
 
+    bool TryGetStorage(const std::string& sessionId, std::string& outStorageJson) const;
+    void SetStorage(const std::string& sessionId, const std::string& storageJson);
+
     // Drops every session whose lastAccess is older than TtlSeconds().
     // Cheap to call periodically (see app.cpp's session-reaper
     // background thread) -- a no-op pass over an empty/small map costs
@@ -80,6 +83,7 @@ public:
 private:
     struct Session {
         std::unordered_map<std::string, std::string> stateCache; // routeFilePath -> state JSON
+        std::string storageJson = "{}";
         std::chrono::steady_clock::time_point lastAccess;
     };
 

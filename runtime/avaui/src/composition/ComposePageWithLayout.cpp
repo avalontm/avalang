@@ -20,7 +20,7 @@ IComponent* FindComponentByType(IComponent* root, const std::string& typeName) {
     return nullptr;
 }
 
-} // namespace
+}
 
 ComposedSlotInfo LocateLayoutSlot(ComponentTree* layoutTree,
                                   int viewportWidth,
@@ -50,5 +50,5 @@ ComposedSlotInfo LocateLayoutSlot(ComponentTree* layoutTree,
     return result;
 }
 
-} // namespace ui
-} // namespace avalang
+}
+}

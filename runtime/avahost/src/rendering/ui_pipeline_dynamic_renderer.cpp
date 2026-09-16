@@ -7,6 +7,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <vector>
 
 #include "components/ComponentTree.h"
 #include "composition/ComposePageWithLayout.h"
@@ -32,6 +33,7 @@
 #include "ui_component_resolver.h"
 #include "ui_pipeline_static_renderer.h"
 #include "ui_vm_event_bridge.h"
+#include "ui_vm_lifecycle.h"
 #include "ui_vm_state_bridge.h"
 
 namespace fs = std::filesystem;
@@ -68,6 +70,22 @@ bool ReadFile(const fs::path& path, std::string& out, std::string& outError) {
     buf << in.rdbuf();
     out = buf.str();
     return true;
+}
+
+std::string SanitizeViewNameSegment(const std::string& raw) {
+    std::string out;
+    for (char c : raw) {
+        if (std::isalnum(static_cast<unsigned char>(c))) out += c;
+    }
+    return out;
+}
+
+std::string DeriveViewClassName(const std::string& avauiPath) {
+    std::string name = SanitizeViewNameSegment(fs::path(avauiPath).stem().string());
+    if (name.empty()) name = "View";
+    if (std::isdigit(static_cast<unsigned char>(name.front()))) name = "View" + name;
+    name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(name[0])));
+    return name;
 }
 
 bool RenderTreeFragment(avalang::ui::ComponentTree* tree,
@@ -592,29 +610,25 @@ bool RenderAvauiDynamicWithState(RuntimeHost& host, const std::string& avauiSour
         UiComponentResolver resolver(options.projectRoot, options.componentsDir);
         ResolveImportsAndMergeState(resolver, parsed, mergedState);
 
+        avalang::ui::IComponent* root = parsed.tree->Root();
+
         VmStateBridge stateBridge(host);
         stateBridge.BindWithOverlay(mergedState, cachedStateJson);
 
-        std::string codeError;
-        if (!host.BindCodeBehind(parsed.code, &codeError)) {
-            outError = "code block failed to bind: " + codeError;
+        std::string viewError;
+        if (!host.LoadView(DeriveViewClassName(avauiPath), parsed.code, root, viewError)) {
+            outError = "view failed to load: " + viewError;
             return false;
         }
-
-        avalang::ui::IComponent* root = parsed.tree->Root();
 
         std::unique_ptr<avalang::ui::events::IEventDispatcher> dispatcher(
             avalang::ui::events::IEventDispatcher::Create());
         WireVmEventHandlers(root, *dispatcher, host, stateBridge);
 
         std::string handlerError;
-        BindComponentRefs(host, root);
-        if (!host.InvokeHandlerIfDefined("OnLoad", handlerError)) {
-            outError = "OnLoad handler failed: " + handlerError;
+        if (!VmLifecycle::NotifyMount(host, stateBridge, root, outError)) {
             return false;
         }
-        ExportComponentProps(host, root);
-        stateBridge.RefreshAll();
 
         if (!pendingHandler.empty()) {
             ApplyPendingControlValue(stateBridge, root, pendingCompId, pendingValue);
@@ -740,18 +754,18 @@ bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, Runtim
             }
         }
 
+        avalang::ui::IComponent* root = parsed.tree->Root();
+
         stage = "bind state (VmStateBridge::BindWithOverlay)";
         VmStateBridge stateBridge(host);
         stateBridge.BindWithOverlay(mergedState, cachedStateJson);
 
-        stage = "bind code-behind";
-        std::string codeError;
-        if (!host.BindCodeBehind(parsed.code, &codeError)) {
-            outError = "code block failed to bind: " + codeError;
+        stage = "load view";
+        std::string viewError;
+        if (!host.LoadView(DeriveViewClassName(avauiPath), parsed.code, root, viewError)) {
+            outError = "view failed to load: " + viewError;
             return false;
         }
-
-        avalang::ui::IComponent* root = parsed.tree->Root();
 
         stage = "wire event handlers (page)";
         std::unique_ptr<avalang::ui::events::IEventDispatcher> dispatcher(
@@ -763,25 +777,12 @@ bool RenderAvauiDynamicWithLayoutAndState(const std::string& projectRoot, Runtim
         }
 
         std::string handlerError;
-        stage = "bind component refs (pre-OnLoad, page)";
-        BindComponentRefs(host, root);
-        if (haveLayout) {
-            stage = "bind component refs (pre-OnLoad, layout)";
-            BindComponentRefs(host, layoutParsed.tree->Root());
-        }
-        stage = "invoke OnLoad";
-        if (!host.InvokeHandlerIfDefined("OnLoad", handlerError)) {
-            outError = "OnLoad handler failed: " + handlerError;
+        stage = "invoke lifecycle mount (OnLoad)";
+        std::vector<avalang::ui::IComponent*> mountRoots{root};
+        if (haveLayout) mountRoots.push_back(layoutParsed.tree->Root());
+        if (!VmLifecycle::NotifyMount(host, stateBridge, mountRoots, outError)) {
             return false;
         }
-        stage = "export component props (post-OnLoad, page)";
-        ExportComponentProps(host, root);
-        if (haveLayout) {
-            stage = "export component props (post-OnLoad, layout)";
-            ExportComponentProps(host, layoutParsed.tree->Root());
-        }
-        stage = "refresh state (post-OnLoad)";
-        stateBridge.RefreshAll();
 
         if (!pendingHandler.empty()) {
             stage = "apply pending control value";

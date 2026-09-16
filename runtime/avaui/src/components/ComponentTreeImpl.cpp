@@ -20,15 +20,12 @@ void ComponentTreeImpl::DestroyComponent(ComponentId id) {
 
     Component* comp = it->second.get();
 
-    // Detach from parent's slot list.
     if (IComponent* parent = comp->Parent()) {
         parent->RemoveChild(comp);
     }
 
-    // Orphan children instead of recursively destroying them (see
-    // ComponentTree::DestroyComponent doc comment).
     for (IComponent* child : comp->Children()) {
-        static_cast<Component*>(child)->SetParent(nullptr);
+        child->SetParent(nullptr);
     }
 
     if (root_ == comp) {
@@ -51,6 +48,6 @@ void ComponentTreeImpl::SetRoot(IComponent* root) {
     root_ = root;
 }
 
-} // namespace components
-} // namespace ui
-} // namespace avalang
+}
+}
+}

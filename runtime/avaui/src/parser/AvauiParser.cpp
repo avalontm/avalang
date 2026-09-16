@@ -24,9 +24,6 @@ ParseError::ParseError(const std::string& message, int line, int column,
 
 namespace {
 
-// Fase 3: line-lookup half of the ported formatError -- same approach as
-// frontend_antlr.cpp's getLine (1-based line numbers, strip a trailing
-// \r so Windows-authored .avaui files don't leave a stray caret column).
 std::string GetSourceLine(const std::string& text, int lineNum) {
     if (lineNum <= 0) return "";
     std::istringstream iss(text);
@@ -42,7 +39,7 @@ std::string GetSourceLine(const std::string& text, int lineNum) {
     return "";
 }
 
-}  // namespace
+}
 
 std::string FormatParseError(const ParseErrorInfo& info, const std::string& sourceText) {
     std::ostringstream out;
@@ -158,15 +155,6 @@ bool IsPropertyLine(const std::string& text) {
     size_t eq = text.find('=');
     if (eq == std::string::npos) return false;
     std::string key = Trim(text.substr(0, eq));
-    // A real property's left-hand side is exactly one identifier, e.g.
-    // `gap`, `source`, `click` -- nothing else, checked directly rather
-    // than by ruling out individual disqualifying characters (space,
-    // '(', etc. -- new syntax that puts something else before '=' would
-    // otherwise need its own carve-out here every time). Anything that
-    // isn't a bare identifier -- `ListView source` (component header
-    // with inline property), `CartItem(name` (component call with inline
-    // args) -- falls through to ParseComponent instead of being consumed
-    // as a property here.
     return IsIdentifier(key);
 }
 
@@ -174,13 +162,6 @@ IComponent* ParseComponent(const std::vector<Line>& lines, size_t& idx, Componen
                            std::vector<AnimationSpec>* animations);
 
 bool IsTemplateHeader(const std::string& text) {
-    // `template ... end` inside a container (ListView, For, etc.) is a real
-    // sub-block, like `state`/`params`/`view`/`properties` elsewhere in the
-    // language: everything above it are the container's own properties,
-    // everything inside it are the item's template children. This is
-    // purely readability sugar -- children added this way end up as direct
-    // children of the enclosing component, same as if `template` wasn't
-    // there at all.
     return text == "template";
 }
 
@@ -214,9 +195,6 @@ std::pair<std::string, std::string> SplitProperty(const Line& line) {
     std::string key = Trim(line.text.substr(0, eq));
     std::string value = Trim(line.text.substr(eq + 1));
     if (key.empty()) {
-        // Fase 5: point at the '=' itself -- that's where the reader's eye
-        // lands when the key to its left is blank, same convention
-        // formatError's caret uses for a "nothing here" error.
         throw ParseError("empty property name", line.lineNo,
                           line.indent + static_cast<int>(eq) + 1);
     }
@@ -244,12 +222,6 @@ bool IsComponentCall(const std::string& text, std::string* nameOut, std::string*
     return true;
 }
 
-// Fase 5: `argsBaseColumn` is the 1-based column where `argsText` starts
-// in the original header line (right after the opening '('), so the two
-// throws below can point at the actual offending argument instead of
-// defaulting to column 0. `start` (byte offset of each part within the
-// untrimmed `args`) plus that base gets us close -- same "good enough,
-// cheap" tier as the rest of Fase 5, not a full token scan.
 void ParseComponentCallArgs(const std::string& argsText, IComponent* comp, int lineNo,
                              int argsBaseColumn) {
     std::string args = Trim(argsText);
@@ -325,10 +297,6 @@ void ParseAnimateBlock(const std::vector<Line>& lines, size_t& idx, int headerIn
 
         ++idx;
     }
-    // Fase 5: previously threw `headerIndent` as the *line* argument here
-    // (a pre-existing bug -- it reported the block's indent column as if
-    // it were a line number). headerLine is the animate header's real
-    // line, threaded in from the call site below.
     throw ParseError("unterminated 'animate' block (missing 'end')", headerLine,
                       headerIndent + 1);
 }
@@ -445,9 +413,6 @@ IComponent* ParseComponent(const std::vector<Line>& lines, size_t& idx, Componen
 
         comp->SetProperty("__unresolvedImportCall", PropertyValue(true));
 
-        // Fase 5: 1-based column right after the '(' -- header.indent is
-        // the column the header line starts at, '(' is somewhere in
-        // header.text, args start one char past it.
         size_t openParen = header.text.find('(');
         int argsBaseColumn = header.indent + static_cast<int>(openParen) + 2;
         ParseComponentCallArgs(callArgs, comp, header.lineNo, argsBaseColumn);
@@ -464,16 +429,12 @@ IComponent* ParseComponent(const std::vector<Line>& lines, size_t& idx, Componen
     if (!rest.empty()) {
         size_t eq = rest.find('=');
         if (eq != std::string::npos) {
-            // Inline property right on the header line, e.g.
-            // `ListView source = cart` -- lets ListView (and any other
-            // component) bind a property without a separate body line.
             std::string key = Trim(rest.substr(0, eq));
             std::string value = Trim(rest.substr(eq + 1));
             if (!key.empty() && !value.empty()) {
                 SetPropertyWithAlias(comp, key, InferValue(value));
             }
         } else {
-            // `Type id` form, e.g. `Button submitBtn`.
             comp->SetProperty("id", PropertyValue(rest));
         }
     }
@@ -506,11 +467,8 @@ std::vector<IComponent*> ParseViewBody(const std::vector<Line>& lines, size_t& i
         }
         created.push_back(ParseComponent(lines, idx, tree, animations));
     }
-    // Fase 5: same pre-existing headerIndent-as-line bug as
-    // ParseAnimateBlock, fixed the same way via a threaded headerLine.
     throw ParseError("unterminated 'view' block (missing 'end')", headerLine, headerIndent + 1);
 }
-
 
 void ParseFlatBlock(const std::vector<Line>& lines, size_t& idx, int headerIndent,
                      int headerLine, std::unordered_map<std::string, std::string>* out) {
@@ -614,13 +572,6 @@ RouteDeclaration ParseRoute(const std::string& template_str) {
 
 namespace {
 
-// Fase 2: the actual line-by-line parse, unaware of sourcePath -- every
-// `throw ParseError(msg, line.lineNo)` call site inside this function
-// (and the helpers it calls) keeps constructing ParseError the same way
-// it always has, with source left as "". AvauiParser::Parse below is the
-// only place that knows sourcePath, so it's the only place that needs to
-// touch it: one catch/relabel/rethrow at the boundary instead of editing
-// every one of the ~20 existing throw sites.
 ParsedAvaui ParseImpl(const std::string& source) {
     std::vector<Line> lines = Tokenize(source);
 
@@ -695,18 +646,12 @@ ParsedAvaui ParseImpl(const std::string& source) {
     return result;
 }
 
-}  // namespace
+}
 
 ParsedAvaui AvauiParser::Parse(const std::string& source, const std::string& sourcePath) {
     try {
         return ParseImpl(source);
     } catch (const ParseError& e) {
-        // Relabel with sourcePath, preserving the original message/line/
-        // column. Only relabel if we actually have a path to attach and
-        // the error doesn't already carry one -- a nested Parse() call
-        // (e.g. Fase 6's imported-component parse) will already have
-        // stamped its own file by the time it gets here, and that's the
-        // one we want to keep, not overwrite with the outer caller's path.
         if (sourcePath.empty() || !e.Source().empty()) {
             throw;
         }

@@ -2,12 +2,15 @@
 
 #include "Export.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
-namespace avalang::ui::theme {
+namespace avalang {
+namespace ui {
+namespace theme {
 
 struct ControlStyleOverride {
     std::optional<std::string> backgroundColor;
@@ -20,9 +23,16 @@ struct ControlStyleOverride {
     std::optional<double> borderRadius;
     std::optional<double> padding;
     std::optional<double> margin;
-    std::optional<double> spacing; 
+    std::optional<double> spacing;
 
     void MergeOnto(ControlStyleOverride& base) const;
+};
+
+struct BreakpointOverride {
+    uint32_t minWidthPx = 0;
+    ControlStyleOverride global;
+    bool hasGlobal = false;
+    std::unordered_map<std::string, ControlStyleOverride> perType;
 };
 
 class ProjectStyleSheet;
@@ -33,14 +43,6 @@ class AVA_UI_API ProjectStyleSheet {
 public:
     ProjectStyleSheet() = default;
 
-    // isPureLayoutContainer: pass true for components that are pure layout
-    // wrappers (row/column/stack/hstack/vstack/flex) rather than visible
-    // surfaces (container/dialog/...). Pure layout wrappers have no card of
-    // their own, so a `style *` reset that sets `margin`/`backgroundColor`
-    // for every component would otherwise silently give them a box that
-    // doesn't line up with the content they wrap. For those types, the
-    // global `style *` values for margin/backgroundColor are ignored unless
-    // a `style row`/`style column`/etc. block explicitly sets them.
     ControlStyleOverride Resolve(const std::string& typeLower,
                                   bool isPureLayoutContainer = false) const;
 
@@ -57,8 +59,12 @@ public:
     ControlStyleOverride ResolveClasses(const std::string& typeLower,
                                          const std::vector<std::string>& classesLower) const;
 
+    const std::vector<BreakpointOverride>& Breakpoints() const { return breakpoints_; }
+
+    bool HasAnyResponsiveStyles() const { return !breakpoints_.empty(); }
+
 private:
-    friend ProjectStyleSheet LoadProjectStyleOverrides(const std::string&);
+    friend AVA_UI_API ProjectStyleSheet LoadProjectStyleOverrides(const std::string&);
 
     friend void MergeStyleFileInto(const std::string& styleFilePath, const std::string& projectRoot,
                                     ProjectStyleSheet& sheet);
@@ -73,6 +79,10 @@ private:
     std::unordered_map<std::string, ControlStyleOverride> named_;
 
     std::unordered_map<std::string, ControlStyleOverride> classPerType_;
+
+    std::vector<BreakpointOverride> breakpoints_;
 };
 
-} // namespace avalang::ui::theme
+}
+}
+}

@@ -5,6 +5,7 @@
 
 #include "layout/LayoutProperties.h"
 #include "layout/TextMeasure.h"
+#include "layout/DensityScale.h"
 #include "components/PropertyValue.h"
 
 namespace avalang {
@@ -43,12 +44,6 @@ bool IsSlot(const IComponent* component) {
     return component->TypeName() == "Slot";
 }
 
-// A grid cell's default alignment depends on whether the item opts out of
-// stretching via an explicit width/height. No explicit size -> fill the
-// cell (Stretch), matching every other container. An explicit size means
-// the item won't fill the cell either way, so it defaults to Center
-// instead of Stretch (which visually behaves like Start, pinning the item
-// to the cell's top-left corner). An explicit align-h/align-v always wins.
 LayoutAlignment ReadGridChildAlignment(const IComponent* component, const std::string& alignProp,
                                         const std::string& sizeProp) {
     const PropertyValue* alignValue = component->GetProperty(alignProp);
@@ -75,24 +70,49 @@ bool ShouldGrow(const IComponent* component) {
     return IsSlot(component);
 }
 
-} // namespace
+}
 
 ILayoutNode* LayoutEngineImpl::Compute(IComponent* componentRoot, const LayoutRect& available) {
+    LayoutConstraints constraints{0.0, available.width, 0.0, available.height};
+    Measure(componentRoot, constraints);
+    return Arrange(componentRoot, available);
+}
+
+ILayoutNode* LayoutEngineImpl::ComputeFromPhysicalPixels(IComponent* componentRoot,
+                                                          const LayoutRect& physicalAvailable) {
+    LayoutRect logicalAvailable;
+    logicalAvailable.x = layout::PhysicalToLogical(physicalAvailable.x);
+    logicalAvailable.y = layout::PhysicalToLogical(physicalAvailable.y);
+    logicalAvailable.width = layout::PhysicalToLogical(physicalAvailable.width);
+    logicalAvailable.height = layout::PhysicalToLogical(physicalAvailable.height);
+    return Compute(componentRoot, logicalAvailable);
+}
+
+LayoutSize LayoutEngineImpl::Measure(IComponent* componentRoot, const LayoutConstraints& constraints) {
     nodes_.clear();
     intrinsic_.clear();
     root_ = nullptr;
-    rootViewport_ = available;
 
     if (!componentRoot) {
-        return nullptr;
+        return LayoutSize{};
     }
 
     root_ = BuildTree(componentRoot, nullptr);
+    IntrinsicSize size = ComputeIntrinsicSize(componentRoot);
 
-    ComputeIntrinsicSize(componentRoot);
+    LayoutSize result;
+    result.width = constraints.ClampWidth(size.width);
+    result.height = constraints.ClampHeight(size.height);
+    return result;
+}
 
-    LayoutNodeRecursive(componentRoot, root_, available, LayoutAlignment::Stretch, LayoutAlignment::Stretch);
+ILayoutNode* LayoutEngineImpl::Arrange(IComponent* componentRoot, const LayoutRect& finalRect) {
+    if (!componentRoot || !root_) {
+        return nullptr;
+    }
 
+    rootViewport_ = finalRect;
+    LayoutNodeRecursive(componentRoot, root_, finalRect, LayoutAlignment::Stretch, LayoutAlignment::Stretch);
     return root_;
 }
 
@@ -103,30 +123,33 @@ IntrinsicSize LayoutEngineImpl::ComputeIntrinsicSize(IComponent* component) {
     }
 
     std::vector<IComponent*> children = component->Children();
-    // childSizes holds each child's own content size (no margin) --
-    // this is what gets cached in intrinsic_[] and is what
-    // ArrangeRowOrColumn/PlaceComponent read later, adding the
-    // child's margin back in separately when carving up the actual
-    // slot. childBoxSizes is the margin BOX size (content + margin)
-    // and is what a *parent* must use when it aggregates children to
-    // size itself -- otherwise the parent bubbles up a size that has
-    // no room for its children's margins, and by the time Arrange
-    // reserves that margin space at render time there's nothing left
-    // to reserve it from (the child's explicit size gets clamped down
-    // to fit the leftover sliver). See CartItem's circular remove
-    // button losing its height to exactly this.
+
+    auto cacheIt = intrinsicCache_.find(component->Id());
+    const bool cacheValid = cacheIt != intrinsicCache_.end() && cacheIt->second.first == component->Version();
+
     std::vector<IntrinsicSize> childSizes;
     std::vector<IntrinsicSize> childBoxSizes;
-    childSizes.reserve(children.size());
-    childBoxSizes.reserve(children.size());
+    if (!cacheValid) {
+        childSizes.reserve(children.size());
+        childBoxSizes.reserve(children.size());
+    }
     for (IComponent* child : children) {
         IntrinsicSize childSize = ComputeIntrinsicSize(child);
+        if (cacheValid) {
+            continue;
+        }
         EdgeInsets childMargin = ReadEdgeInsets(child, "margin");
         IntrinsicSize childBoxSize;
         childBoxSize.width = childSize.width + childMargin.left + childMargin.right;
         childBoxSize.height = childSize.height + childMargin.top + childMargin.bottom;
         childSizes.push_back(childSize);
         childBoxSizes.push_back(childBoxSize);
+    }
+
+    if (cacheValid) {
+        size = cacheIt->second.second;
+        intrinsic_[component->Id()] = size;
+        return size;
     }
 
     const std::string& typeName = component->TypeName();
@@ -137,12 +160,6 @@ IntrinsicSize LayoutEngineImpl::ComputeIntrinsicSize(IComponent* component) {
         std::string text;
         if (const PropertyValue* value = component->GetProperty("text")) {
             if (value->Type() == PropertyType::String) {
-                // `text` may be a literal or a bare state-bound
-                // identifier/expression -- both parse to the same
-                // PropertyType::String (see LayoutEngine::SetTextEvaluator);
-                // EvalText resolves the latter to its runtime value so
-                // this measures what will actually be displayed instead
-                // of the identifier's own source text.
                 text = EvalText(value->AsString());
             }
         }
@@ -293,6 +310,7 @@ IntrinsicSize LayoutEngineImpl::ComputeIntrinsicSize(IComponent* component) {
     }
 
     intrinsic_[component->Id()] = size;
+    intrinsicCache_[component->Id()] = {component->Version(), size};
     return size;
 }
 
@@ -358,22 +376,6 @@ LayoutRect LayoutEngineImpl::PlaceComponent(IComponent* component, LayoutNode* n
         height = isDialog ? intrinsicSize.height : std::min(intrinsicSize.height, marginedBox.height);
     }
 
-    // maxHeight caps whatever height was just resolved above -- explicit,
-    // stretched, or (the interesting case) intrinsic/content-driven. That
-    // last one is what lets a box "grow with its content up to a limit,
-    // then scroll": no `height` set at all means `height` above is the
-    // content's own intrinsic size (grows freely), and maxHeight then
-    // clamps that final box size down. Paired with a ScrollView (which
-    // already lays out its children with allowOverflow=true and paints
-    // `overflow-y: auto` at whatever final height ends up in this node's
-    // rect -- see LayoutNodeRecursive's "ScrollView" branch and
-    // SceneCommandWalker's ava-scrollview emission), content shorter than
-    // maxHeight sizes the box exactly to itself (no dead space, no
-    // scrollbar); content taller than maxHeight stops growing at
-    // maxHeight and the browser's native scrollbar takes over -- without
-    // this, only a fixed `height` was possible, which is either too tall
-    // (empty space) or too short (always scrolling) for variable-length
-    // content like a stack trace.
     double maxHeight;
     if (TryReadNumber(component, "maxHeight", &maxHeight)) {
         height = std::min(height, maxHeight);
@@ -406,17 +408,16 @@ void LayoutEngineImpl::LayoutNodeRecursive(IComponent* component, LayoutNode* no
 
     const std::string& typeName = component->TypeName();
     if (typeName == "Row") {
-        ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/true, /*allowOverflow=*/false);
+        ArrangeRowOrColumn(component, node, contentBox, true);
     } else if (typeName == "Column" || typeName == "For" || typeName == "If") {
-        ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/false, /*allowOverflow=*/false);
+        ArrangeRowOrColumn(component, node, contentBox, false);
     } else if (typeName == "ScrollView" || typeName == "ListView") {
-        ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/IsHorizontalDirection(component), /*allowOverflow=*/true);
+        ArrangeRowOrColumn(component, node, contentBox, IsHorizontalDirection(component), true);
     } else if (typeName == "Flex") {
-        ArrangeRowOrColumn(component, node, contentBox, /*isRow=*/IsHorizontalDirection(component), /*allowOverflow=*/true);
+        ArrangeRowOrColumn(component, node, contentBox, IsHorizontalDirection(component), true);
     } else if (typeName == "Grid") {
         ArrangeGrid(component, node, contentBox);
     } else {
-
         ArrangeStack(component, node, contentBox);
     }
 }
@@ -557,6 +558,6 @@ void LayoutEngineImpl::ArrangeGrid(IComponent* component, LayoutNode* node, cons
     }
 }
 
-} // namespace layout
-} // namespace ui
-} // namespace avalang
+}
+}
+}

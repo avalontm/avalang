@@ -1,11 +1,13 @@
-#ifndef AVA_UI_IRENDERER_H
-#define AVA_UI_IRENDERER_H
+#pragma once
 
 #include "commands/RenderCommand.h"
+#include "commands/RenderCommandBounds.h"
 #include "Export.h"
+
+#include <functional>
 #include <memory>
-#include <vector>
 #include <string>
+#include <vector>
 
 namespace avalang {
 namespace ui {
@@ -25,6 +27,13 @@ public:
     virtual void SetViewport(int width, int height) = 0;
 
     virtual void ProcessCommands(const std::vector<RenderCommand>& commands) = 0;
+
+    virtual void ProcessCommandsIncremental(
+        const std::vector<RenderCommand>& commands,
+        const std::vector<DirtyRect>& dirtyRegions
+    ) {
+        ProcessCommands(commands);
+    }
 
     virtual void DrawRectangle(
         float x, float y, float width, float height,
@@ -83,7 +92,15 @@ public:
         const std::string& className = std::string()
     ) = 0;
 
-    virtual void DrawPath(const char* pathData) {}
+    virtual void DrawPath(
+        float x, float y,
+        const std::vector<render::PathSegment>& segments,
+        const Color& fillColor,
+        const Color& borderColor, float borderWidth,
+        bool closed = false,
+        const std::string& clickHandler = std::string(),
+        const std::string& className = std::string()
+    ) = 0;
 
     virtual void PushClipRect(float x, float y, float width, float height) = 0;
 
@@ -105,21 +122,15 @@ public:
 
     virtual const char* GetOutput() const { return nullptr; }
 
-    // Fase 24 -- ScrollView. Whether this renderer can host a real
-    // nested scrolling coordinate space (a DOM element with its own
-    // `overflow: auto` and its own containing block for descendants).
-    // Only HTMLRenderer overrides this to true today. GdiRenderer
-    // (desktop) has no such concept yet, so SceneCommandWalker falls
-    // back to drawing a ScrollView's children inline, unclipped, exactly
-    // like a plain Container there -- same "web works, desktop stub" gap
-    // Link/ComboBox interactivity/TextBox editing already have.
     virtual bool SupportsScrollRegions() const { return false; }
+
+    using CreateFn = std::function<std::unique_ptr<IRenderer>(int width, int height)>;
 
     static std::unique_ptr<IRenderer> Create(const char* backend = "html",
                                              int width = 800, int height = 600);
+
+    static void RegisterBackend(const std::string& name, CreateFn factory);
 };
 
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_IRENDERER_H
+}
+}

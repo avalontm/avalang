@@ -1,7 +1,3 @@
-// Canonical default font for AvaUI: JetBrains Mono Regular, embedded so
-// every renderer (GDI, HTML, the AvaStudio editor/preview) measures and
-// paints the exact same glyphs -- see docs note in layout/TextMeasure.h.
-// Originally generated from JetBrainsMono-Regular.ttf by tools/embed_font.py.
 #pragma once
 
 namespace avalang::ui::fonts {
@@ -13706,4 +13702,4 @@ inline constexpr unsigned char kDefaultFontRegularTTF[] = {
 
 inline constexpr unsigned int kDefaultFontRegularTTFLen = sizeof(kDefaultFontRegularTTF);
 
-} // namespace avalang::ui::fonts
+}

@@ -34,6 +34,6 @@ void LayoutNode::AddChild(LayoutNode* child) {
     children_.push_back(child);
 }
 
-} // namespace layout
-} // namespace ui
-} // namespace avalang
+}
+}
+}

@@ -7,27 +7,26 @@
 
 namespace studio {
 
-// kConsole: plain main.ava, no UI files (previously "Empty").
-// kUi: main.ava + app.ava (font/style declarations, same convention already
-// used by AvaHost projects, see samples/web/testproj/app.ava) + styles.ava +
-// a views/ folder with one starter screen (views/Home.avaui, built from the
-// same BuildScaffoldContent(kScreen, ...) the Explorer's "Generate > Screen"
-// action already uses) -- previously "With example screen", which only
-// dropped a single screen.avaui at the project root with no app.ava/styles.
-enum class NewProjectTemplateKind { kConsole, kUi };
+// kConsole: plain main.ava, no UI files (previously "Empty"). Saved as
+// OutputType=Exe, UsesUi=false.
+// kDesktopUi: main.ava + app.ava (font/style declarations, same convention
+// already used by AvaHost projects, see samples/web/testproj/app.ava) +
+// styles.ava + a views/ folder with one starter screen (views/Home.avaui,
+// built from the same BuildScaffoldContent(kScreen, ...) the Explorer's
+// "Generate > Screen" action already uses). Saved as OutputType=Exe,
+// UsesUi=true so the project starts ready for the Desktop (UI) run target
+// in the Build panel (see build_panel.cpp).
+// kLibrary: plain main.ava, no UI files. Saved as OutputType=Library,
+// UsesUi=false. BareKernel isn't offered here -- it stays a
+// Properties-panel-only choice made after creation, since it also needs a
+// toolchain path configured, not something a brand new project has yet.
+enum class NewProjectTemplateKind { kConsole, kDesktopUi, kLibrary };
 
 struct NewProjectState {
     std::string name;
     std::string destination;
 
     NewProjectTemplateKind template_kind = NewProjectTemplateKind::kConsole;
-
-    // Executable vs Library, written straight into the new .avaproj's
-    // OutputType (see AvaProjOutputType). BareKernel isn't offered here --
-    // it stays a Properties-panel-only choice made after creation, since
-    // it also needs a toolchain path configured, not something a brand
-    // new project has yet.
-    AvaProjOutputType output_type = AvaProjOutputType::kExe;
 
     // Visual Studio-style template browser: free-text search plus a
     // category filter, both applied against the data-driven template list

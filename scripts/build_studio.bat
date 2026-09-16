@@ -53,7 +53,14 @@ if "%CLEAN%"=="1" (
 
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
-set "CMAKE_CONFIGURE_ARGS=-DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DAVA_BUILD_STUDIO=ON -DAVA_BUILD_PACK=ON -DAVA_ENABLE_LTO=OFF"
+REM AVA_BUILD_AVAHOST_NATIVE_LIB=ON deja disponible avahost_native (y por lo
+REM tanto el target avapack_stub_ui de mas abajo) sin compilar el avahost
+REM completo (web server) -- sin esto, `ava_cli build --with-ui --target
+REM desktop` corrido desde AvaStudio nunca encuentra avapack_stub_ui.exe
+REM prebuilt junto a ava_cli.exe y cae al empaquetado lento con CMake
+REM (recompilando avaui en build_pack\ en cada build). Con esto, AvaStudio
+REM queda listo "de fabrica" para el camino rapido sin-repo (Fase 9).
+set "CMAKE_CONFIGURE_ARGS=-DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DAVA_BUILD_STUDIO=ON -DAVA_BUILD_PACK=ON -DAVA_BUILD_AVAHOST_NATIVE_LIB=ON -DAVA_ENABLE_LTO=OFF"
 
 if defined VCPKG_ROOT (
     echo Using vcpkg toolchain: %VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake
@@ -127,6 +134,28 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM avapack_stub_ui (Fase 21.x -- variante Desktop UI de avapack_stub, ver
+REM runtime/avapack/CMakeLists.txt) se pide aparte y de forma no fatal: solo
+REM existe como target cuando avahost_native se pudo compilar (Windows +
+REM AVA_BUILD_UI_BACKEND_WIN, ambos default ON aca). Si por algun motivo no
+REM esta disponible en este checkout, `ava_cli build --with-ui --target
+REM desktop` sigue funcionando iguial, solo que cayendo al empaquetado con
+REM CMake (mas lento) en vez del camino rapido sin-repo.
+echo.
+echo Building avapack_stub_ui (Desktop UI packaging tool) ...
+if "%USE_FAST_BUILD%"=="1" (
+    "!MSBUILD_EXE!" "!SLN_FILE!" /p:Configuration=%BUILD_TYPE% /m /nodeReuse:false /t:avapack_stub_ui
+) else (
+    cmake --build "%BUILD_DIR%" --config %BUILD_TYPE% --target avapack_stub_ui --parallel
+)
+if errorlevel 1 (
+    echo [WARNING] avapack_stub_ui no se pudo compilar -- revisa que
+    echo           AVA_BUILD_UI_BACKEND_WIN este ON ^(default en Windows^).
+    echo           `ava_cli build --with-ui --target desktop` seguira
+    echo           funcionando, pero cayendo al empaquetado con CMake en
+    echo           vez del camino rapido sin-repo.
+)
+
 set "STUDIO_EXE=%BUILD_DIR%\runtime\avastudio\%BUILD_TYPE%\ava_studio.exe"
 if not exist "%STUDIO_EXE%" set "STUDIO_EXE=%BUILD_DIR%\runtime\avastudio\ava_studio.exe"
 
@@ -174,8 +203,11 @@ echo                 %STUDIO_EXE_DIR%avalang_ui.dll
 echo plugins:        %PLUGINS_DIR%\ai_agent.dll
 echo                 %PLUGINS_DIR%\hello_world.dll
 echo modules:        %MODULES_DIR%
-echo ava_cli.exe / avapack_gen.exe / avapack_stub.exe:
+echo ava_cli.exe / avapack_gen.exe / avapack_stub.exe / avapack_stub_ui.exe:
 echo                 %AVA_CLI_TOOLS_DIR%\ava_cli.exe
+echo                 ^(si avapack_stub_ui.exe y avalang_ui_win.dll estan ahi,
+echo                  `ava_cli build --with-ui --target desktop` usa el
+echo                  camino rapido sin-repo -- sin CMake, sin compilar^)
 echo =====================================================================
 
 if "%RUN_AFTER%"=="1" (

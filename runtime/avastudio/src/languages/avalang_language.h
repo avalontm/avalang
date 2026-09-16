@@ -53,6 +53,15 @@ void UpdateKnownClassNames(const std::unordered_set<std::string>& removed,
 
 int KnownClassNamesGeneration();
 
+// Clases provistas por el runtime (avahost/avanative), nunca declaradas
+// como `class X` en ningun .ava del proyecto -- hoy solo "Application"
+// (ver ApplicationClassSource en native_app_host.cpp). A diferencia de
+// UpdateKnownClassNames/IsKnownClassName (que depende de escanear los tabs
+// abiertos), esta lista es fija y siempre conocida, asi que tanto el
+// coloreado de `x as Tipo` como el autocompletado (RebuildAutocompleteTrie
+// en editor_panel.cpp) deben consultarla ademas de KnownClassRefCounts.
+const std::unordered_set<std::string>& NativeClassNames();
+
 // Scans `text` for every NAME that AvaLangTokenizer would color as
 // Color::variableName -- a plain or augmented assignment target
 // (`x = ...`, `x += ...`), a typed declaration/assignment (`x as Type`),

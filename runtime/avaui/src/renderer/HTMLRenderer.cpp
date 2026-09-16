@@ -13,28 +13,8 @@ namespace ui {
 
 namespace {
 
-// Canonical CSS family name used for text/buttons/links that don't
-// specify a fontName (or pass "Arial"/"" from an old .avaui that never
-// set one). Deliberately NOT "Arial" -- naming it after AvaUI's own
-// default keeps the @font-face rule from silently colliding with a
-// real "Arial" a page author might reference some other way, and makes
-// it obvious in devtools that this family is AvaUI's embedded default
-// rather than a system font.
 constexpr const char* kDefaultCssFontFamily = "AvaDefaultFont";
 
-// A `click`/`change` handler is normally just a bare call like
-// `OnAcceptConfirm()`, but it can just as legitimately carry string
-// arguments (`OpenConfirmDialog("Eliminar elemento", "¿Deseas...?")`,
-// see ConfirmDialog.avaui) -- those embedded double quotes were being
-// written straight into `data-handler="..."` with no escaping at all,
-// so the attribute value ended at the FIRST one (right after the
-// opening paren), silently truncating the handler to
-// `OpenConfirmDialog(` before it ever reached the browser's click
-// listener. `&`/`<` are escaped too for the same reason OnDrawLink's
-// `safeHref` already escapes its own attribute -- an HTML parser
-// decodes entities back to the real characters when reading the
-// attribute value, so this round-trips exactly, unlike the previous
-// raw embed.
 std::string EscapeHtmlAttr(const std::string& raw) {
     std::string out;
     out.reserve(raw.size());
@@ -50,9 +30,6 @@ std::string EscapeHtmlAttr(const std::string& raw) {
     return out;
 }
 
-// Minimal, dependency-free base64 encoder for embedding font bytes as
-// a data: URI in @font-face -- see EmitFontFaceRules. Not performance
-// sensitive (runs once per unique font per frame, not per glyph).
 std::string Base64Encode(const unsigned char* data, std::size_t size) {
     static const char kTable[] =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -83,10 +60,6 @@ std::string Base64Encode(const unsigned char* data, std::size_t size) {
     return out;
 }
 
-// `font-family` values get sent through as attribute-adjacent CSS text
-// (inside style="..."); a font name with a literal quote in it (rare,
-// but project-supplied font family names are technically free-form)
-// could otherwise break out of the quoted family name below.
 std::string EscapeForCssString(const std::string& s) {
     std::string out;
     out.reserve(s.size());
@@ -99,15 +72,6 @@ std::string EscapeForCssString(const std::string& s) {
     return out;
 }
 
-// Turns a font family name (a free-form string -- a plain family like
-// "AvaDefaultFont", a project asset path like
-// "assets/fonts/Poppins-Regular.ttf" used verbatim as its own family
-// name, or a synthetic "ProjectStyle:text" key, see RenderTheme.cpp's
-// ResolveStyleFontFamily) into a flat, filesystem- and URL-safe file
-// name for wwwroot/fonts/<name>.ttf. Keeps [A-Za-z0-9-_], maps
-// everything else (path separators, ':', spaces, ...) to '_' so the
-// result can never contain ".." or a leading '/' that could escape
-// the fonts/ directory.
 std::string SanitizeFontFileName(const std::string& family) {
     std::string out;
     out.reserve(family.size());
@@ -120,13 +84,6 @@ std::string SanitizeFontFileName(const std::string& family) {
     return out + ".ttf";
 }
 
-// Resolved opacity/duration/easing values for one dialog open or
-// close transition, after ResolveDialogAnimation has already merged
-// the project's `animation dialog:<trigger>` override (if any, see
-// theme/ProjectAnimationOverrides.h) on top of the built-in default --
-// every field here is guaranteed to have a value, unlike
-// theme::AnimationOverride's std::optional ones, so EmitHTMLHeader's
-// call site never needs a fallback of its own.
 struct DialogAnimationValues {
     double from;
     double to;
@@ -134,11 +91,6 @@ struct DialogAnimationValues {
     std::string easing;
 };
 
-// Merges the project-declared `animation dialog:<trigger>` block (if
-// `animations` is non-null and declares one) on top of the given
-// built-in defaults, field by field -- a project that only sets e.g.
-// `duration` still gets the built-in `from`/`to`/`easing`. `trigger`
-// is "open" or "close"; see EmitHTMLHeader's two call sites.
 DialogAnimationValues ResolveDialogAnimation(const theme::ProjectAnimationSheet* animations,
                                               const std::string& trigger,
                                               double defaultFrom, double defaultTo,
@@ -154,17 +106,6 @@ DialogAnimationValues ResolveDialogAnimation(const theme::ProjectAnimationSheet*
     return result;
 }
 
-// Maps a lowercased .avaui component type name to the stable CSS
-// class HTMLRenderer (or SceneCommandWalker, for textbox/combobox)
-// already gives every no-custom-class instance of it -- see
-// OnDrawButton/OnDrawLink/OnDrawText below and SceneCommandWalker's
-// <input>/<select> markup. This is the complete list of types
-// EmitProjectStateCSS can target: row/column/container/dialog/... all
-// funnel through OnDrawRectangle's generic "ava-element" class with
-// no per-type marker (see OnDrawRectangle's className handling below),
-// so there's no selector for a project's `style container:hover`
-// block to attach to, and it's intentionally left out here rather
-// than papering over that with a wrong/misleading class name.
 const char* CssClassForControlType(const std::string& typeLower) {
     if (typeLower == "button") return "ava-button";
     if (typeLower == "textbox") return "ava-input";
@@ -174,21 +115,6 @@ const char* CssClassForControlType(const std::string& typeLower) {
     return nullptr;
 }
 
-// Appends one `property: value !important;` per field `o` actually
-// set. `!important` is required, not decorative: every base/normal
-// style this renderer emits (backgroundColor, textColor, ...) is
-// written as an inline `style="..."` attribute (see OnDrawButton
-// etc.), and inline styles beat ANY class-based rule regardless of
-// specificity -- without `!important` here, a `.ava-button:hover`
-// rule would parse fine but never visibly win over the button's own
-// inline background-color.
-//
-// fontName/padding/margin/spacing are deliberately never written here:
-// those affect layout, which LayoutEngine already computed (and baked
-// into this element's inline left/top/width/height) before the
-// browser ever sees this rule -- swapping them per :hover/:focus would
-// desync the painted box from its measured one instead of just
-// repainting it.
 void AppendStateDeclarations(std::stringstream& css, const theme::ControlStyleOverride& o) {
     if (o.backgroundColor) css << "background-color: #" << *o.backgroundColor << " !important; ";
     if (o.textColor) css << "color: #" << *o.textColor << " !important; ";
@@ -198,10 +124,10 @@ void AppendStateDeclarations(std::stringstream& css, const theme::ControlStyleOv
     if (o.fontSize) css << "font-size: " << *o.fontSize << "px !important; ";
 }
 
-} // namespace
+}
 
 HTMLRenderer::HTMLRenderer(int width, int height)
-    : BaseRenderer(width, height), outputDirty_(true) {
+    : BaseRenderer(width, height) {
 }
 
 const char* HTMLRenderer::GetOutput() const {
@@ -263,11 +189,6 @@ std::string HTMLRenderer::ResolveCssFontFamily(const char* fontName) {
     const std::string family = (fontName && fontName[0] != '\0' && std::string(fontName) != "Arial")
         ? std::string(fontName)
         : std::string(kDefaultCssFontFamily);
-    // The result is embedded inside a single-quoted CSS string within an
-    // already double-quoted HTML `style="..."` attribute (see OnDrawLabel/
-    // OnDrawButton/OnDrawLink) -- strip both quote characters so neither
-    // delimiter can be broken out of, regardless of what a project's
-    // styles.ava/app.ava font name/path happens to contain.
     std::string sanitized;
     sanitized.reserve(family.size());
     for (char c : family) {
@@ -278,25 +199,6 @@ std::string HTMLRenderer::ResolveCssFontFamily(const char* fontName) {
 }
 
 std::string HTMLRenderer::EmitFontFaceRules() const {
-    // One @font-face per family name actually referenced this frame,
-    // backed by the EXACT bytes FontRegistry measured that name
-    // against (registered custom font, or the embedded default if the
-    // name was never registered -- GetFontBytes always resolves to
-    // one or the other, see FontRegistry::Resolve). This is what makes
-    // the browser paint the same glyphs AvaUI's layout math already
-    // assumed: the CSS family name is just a label, but the bytes
-    // behind it are pinned, not resolved independently by the browser
-    // the way a bare `font-family: Arial` would be.
-    // Union of fonts THIS renderer instance actually drew
-    // (usedFontNames_) and every font the project has registered
-    // (FontRegistry::RegisteredFontNames) -- the latter is what makes
-    // a font referenced only inside a different renderer's spliced-in
-    // fragment (e.g. a page's title font, when the page and its layout
-    // are rendered as two separate HTMLRenderer instances -- see
-    // ui_pipeline_dynamic_renderer.cpp's RenderTreeFragment) still get
-    // its @font-face rule emitted here. A std::set keeps this
-    // deduplicated and gives EmitFontFaceRules its output in a stable
-    // order.
     std::set<std::string> allFamilies = usedFontNames_;
     for (const std::string& registered : layout::FontRegistry::Instance().RegisteredFontNames()) {
         allFamilies.insert(registered);
@@ -306,36 +208,18 @@ std::string HTMLRenderer::EmitFontFaceRules() const {
     for (const std::string& family : allFamilies) {
         const unsigned char* data = nullptr;
         std::size_t size = 0;
-        // FontRegistry::Instance() is the same global instance
-        // TextMeasure.cpp/LayoutEngineImpl used to size this text in
-        // the first place -- must stay the same instance, not a fresh
-        // one, or "the bytes it measured" and "the bytes we embed"
-        // could drift.
         if (!layout::FontRegistry::Instance().GetFontBytes(family, &data, &size) ||
             data == nullptr || size == 0) {
             continue;
         }
         const std::string safeFamily = EscapeForCssString(family);
 
-        // Prefer a real file under wwwroot/fonts/, served by
-        // StaticFileServer at "/fonts/<name>.ttf" -- keeps the emitted
-        // HTML free of a multi-KB inline base64 blob per font. Only
-        // falls back to the old data: URI when this renderer wasn't
-        // given a wwwroot dir (SetWwwRootDir never called) or the
-        // write fails for some reason (read-only filesystem, disk
-        // full, ...) -- either way the page must still render
-        // correctly, just back to the previous embedded behavior.
         std::string fontUrl;
         if (!wwwRootDir_.empty()) {
             const std::string fileName = SanitizeFontFileName(family);
             std::filesystem::path fontsDir = std::filesystem::path(wwwRootDir_) / "fonts";
             std::filesystem::path fontFile = fontsDir / fileName;
             std::error_code ec;
-            // Bytes for a given family are pinned for this registry's
-            // lifetime (RegisterFontFile replaces, never mutates in
-            // place -- see FontRegistry.h), so an existing file with
-            // the right name is already the right content; skip
-            // rewriting it every request.
             if (!std::filesystem::exists(fontFile, ec)) {
                 std::filesystem::create_directories(fontsDir, ec);
                 std::ofstream out(fontFile, std::ios::binary | std::ios::trunc);
@@ -364,15 +248,6 @@ std::string HTMLRenderer::EmitFontFaceRules() const {
 }
 
 std::string HTMLRenderer::EmitStaticBaseCssLink() const {
-    // The handful of rules that never vary by request or by project
-    // (unlike @font-face -- per font family, see EmitFontFaceRules --
-    // or the dialog keyframes/EmitProjectStateCSS below, both of which
-    // depend on this project's animation/style overrides). Same
-    // externalize-once-then-link approach as the runtime JS files
-    // (ava-viewport.js/ava-hotreload.js/ava-runtime.js, see app.cpp's
-    // WriteStaticAssetIfMissing) and as fonts (wwwroot/fonts/*.ttf,
-    // see EmitFontFaceRules above) -- keeps this out of every response
-    // body instead of re-sending the same bytes on every page load.
     static const std::string kBaseCss =
         "html, body { margin: 0; padding: 0; width: 100%; height: 100%; "
         "font-family: \"" + std::string(kDefaultCssFontFamily) + "\", sans-serif; "
@@ -389,10 +264,6 @@ std::string HTMLRenderer::EmitStaticBaseCssLink() const {
         std::filesystem::path cssDir = std::filesystem::path(wwwRootDir_) / "css";
         std::filesystem::path cssFile = cssDir / "ava-runtime.css";
         std::error_code ec;
-        // Content is a compile-time constant (kBaseCss never changes
-        // between calls), so -- same as the font files -- an existing
-        // file with this name is already the right content; skip
-        // rewriting it every request.
         if (!std::filesystem::exists(cssFile, ec)) {
             std::filesystem::create_directories(cssDir, ec);
             std::ofstream out(cssFile, std::ios::binary | std::ios::trunc);
@@ -404,22 +275,10 @@ std::string HTMLRenderer::EmitStaticBaseCssLink() const {
             return "<link rel=\"stylesheet\" href=\"/css/ava-runtime.css\">\n";
         }
     }
-    // No wwwroot dir set (CLI render-static, tests, RenderTreeFragment's
-    // isolated-fragment callers) or the write failed -- fall back to
-    // the previous inline behavior so the page still renders correctly.
     return "<style>\n" + kBaseCss + "</style>\n";
 }
 
 std::string HTMLRenderer::EmitProjectCssLink(const std::string& dynamicCss) const {
-    // Unlike EmitStaticBaseCssLink's kBaseCss, this content is NOT a
-    // compile-time constant -- it's built fresh per frame from
-    // whatever @font-face/keyframes/state rules this project/page
-    // currently resolves to (fonts registered, projectAnimations_,
-    // projectStyles_), any of which can change between requests via
-    // hot-reload (see ava-hotreload.js). So, unlike the base file,
-    // this one is overwritten unconditionally every call rather than
-    // written-once-if-missing -- an existing file here is NOT
-    // necessarily still the right content.
     if (!wwwRootDir_.empty()) {
         std::filesystem::path cssDir = std::filesystem::path(wwwRootDir_) / "css";
         std::filesystem::path cssFile = cssDir / "ava-project.css";
@@ -434,18 +293,10 @@ std::string HTMLRenderer::EmitProjectCssLink(const std::string& dynamicCss) cons
             }
         }
         if (wrote) {
-            // Cache-bust: a stale browser-cached copy of ava-project.css
-            // would otherwise keep an old font/animation/state set after
-            // a hot-reload swaps this file's content out from under the
-            // same URL. Content hash keeps it deterministic (same
-            // content -> same URL, so normal repeat requests still hit
-            // cache) without needing a version counter anywhere.
             const std::string tag = std::to_string(std::hash<std::string>{}(dynamicCss));
             return "<link rel=\"stylesheet\" href=\"/css/ava-project.css?v=" + tag + "\">\n";
         }
     }
-    // No wwwroot dir set, or the write failed -- fall back to the
-    // previous inline behavior so the page still renders correctly.
     return "<style>\n" + dynamicCss + "</style>\n";
 }
 
@@ -458,18 +309,52 @@ std::string HTMLRenderer::EmitProjectStateCSS() const {
     std::stringstream css;
     for (const char* type : kTypes) {
         const char* cssClass = CssClassForControlType(type);
-        if (!cssClass) continue; // unreachable for kTypes today, kept defensive
+        if (!cssClass) continue;
         for (const char* state : kStates) {
             const theme::ControlStyleOverride o = projectStyles_->ResolveState(type, state);
             std::stringstream decls;
             AppendStateDeclarations(decls, o);
             const std::string declStr = decls.str();
-            if (declStr.empty()) continue; // project declared nothing for this type:state
+            if (declStr.empty()) continue;
             const std::string pseudo = (std::string(state) == "disabled")
                 ? std::string(":disabled")
                 : (":" + std::string(state));
             css << "." << cssClass << pseudo << " { " << declStr << "}\n";
         }
+    }
+    return css.str();
+}
+
+std::string HTMLRenderer::EmitProjectResponsiveCSS() const {
+    if (!projectStyles_ || !projectStyles_->HasAnyResponsiveStyles()) return "";
+
+    static const char* kTypes[] = {"button", "textbox", "combobox", "link", "text"};
+
+    std::stringstream css;
+    for (const theme::BreakpointOverride& breakpoint : projectStyles_->Breakpoints()) {
+        std::stringstream body;
+        if (breakpoint.hasGlobal) {
+            std::stringstream decls;
+            AppendStateDeclarations(decls, breakpoint.global);
+            const std::string declStr = decls.str();
+            if (!declStr.empty()) {
+                body << ".ava-element { " << declStr << "}\n";
+            }
+        }
+        for (const char* type : kTypes) {
+            const char* cssClass = CssClassForControlType(type);
+            if (!cssClass) continue;
+            const auto it = breakpoint.perType.find(type);
+            if (it == breakpoint.perType.end()) continue;
+            std::stringstream decls;
+            AppendStateDeclarations(decls, it->second);
+            const std::string declStr = decls.str();
+            if (declStr.empty()) continue;
+            body << "." << cssClass << " { " << declStr << "}\n";
+        }
+        const std::string bodyStr = body.str();
+        if (bodyStr.empty()) continue;
+        css << "@media (min-width: " << breakpoint.minWidthPx << "px) {\n" << bodyStr << "}\n";
     }
     return css.str();
 }
@@ -484,79 +369,15 @@ std::string HTMLRenderer::EmitHTMLHeader() {
     html_ << "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
     html_ << "<title>" << title_ << "</title>\n";
     if (!extraHead_.empty()) html_ << extraHead_;
-    // The static base rules (html/body reset, #ava-scaler, .ava-viewport,
-    // .ava-element, .ava-button) live in wwwroot/css/ava-runtime.css when
-    // a wwwroot dir is available -- same externalize-once-and-link
-    // approach as the runtime JS files and per-font @font-face files
-    // below -- falling back to an inline <style> block otherwise.
-    // Emitted before the project CSS link below so cascade order
-    // matches the previous single-block behavior: nothing in this file
-    // shares a selector's specificity with @font-face, the dialog
-    // keyframes, or EmitProjectStateCSS's `:hover`/`:focus`/`:active`/
-    // `:disabled` rules (those all win on specificity regardless of
-    // source order), so splitting it out here changes nothing visually.
     html_ << EmitStaticBaseCssLink();
-    // Everything else in the old single <style> block -- @font-face,
-    // dialog keyframes, and project state (:hover/:focus/:active/
-    // :disabled) rules -- varies with this project's fonts/animations/
-    // styles rather than being fixed across every AvaHost project, so
-    // it's built into its own buffer and handed to EmitProjectCssLink
-    // instead of streamed straight into an inline <style> tag; see
-    // that method for why it's written fresh every call rather than
-    // written-once like EmitStaticBaseCssLink's file.
     std::stringstream dynamicCss;
-    // @font-face rules first: every family name any element below
-    // referenced (see ResolveCssFontFamily), each backed by the actual
-    // TTF bytes FontRegistry resolved it to -- must precede the rules
-    // below so `html, body { font-family: ... }`'s default resolves to
-    // an already-declared face rather than a same-named system font
-    // the browser found first.
     dynamicCss << EmitFontFaceRules();
-    // Fase C, opcion 2 (AVAUI_NATIVE_RENDERING_FIX_PLAN.md): the
-    // viewport fills 100% of the browser window natively -- no CSS
-    // transform: scale() anymore. LayoutEngine::Compute already ran
-    // against width_ x height_, which is the browser's *real*
-    // window.innerWidth/innerHeight rounded to kViewportResizeThresholdPx
-    // (see AvaHostApp::RenderAvaUiRoute in app.cpp), so every child's
-    // logical px position/size already matches the actual window --
-    // .ava-viewport just needs to fill it 1:1, not scale a fixed
-    // 1280x720 canvas up/down into it (the old option 1 behavior).
-    // `#ava-scaler` stays as the 100vw x 100vh outer clip box;
-    // `.ava-viewport` now tracks it at 100%/100% instead of a fixed px
-    // size, so no transform-origin/scale is needed on it at all. A
-    // resize big enough to matter is instead handled by re-requesting
-    // the page with updated avaui_vw/avaui_vh cookies -- see the resize
-    // listener in EmitHTMLFooter below -- so LayoutEngine actually
-    // reflows at the new size server-side rather than a CSS transform
-    // faking it client-side.
-    // Dialog open/close animation. `.ava-overlay-fragment` (see
-    // SceneCommandWalker.cpp) already wraps the backdrop AND every
-    // element the open dialog draws -- all of them siblings in a flat,
-    // fully-absolute-positioned DOM (not actually nested), so `opacity`
-    // is the only property that can animate the whole group in unison
-    // without becoming a new containing block for those absolute
-    // children (which `transform` would, desyncing their baked-in
-    // coordinates -- see the animation plan notes). Opening: the
-    // fragment is a brand-new DOM node on the render that sets
-    // isOpen=true (DecomposeDialog skips closed dialogs entirely, so
-    // there's no toggle to transition from), and a CSS `animation`
-    // plays automatically on insertion, unlike `transition`. Closing:
-    // the same isOpen=false render omits the fragment outright, so
-    // EventScriptTag's applyHtml() clones it before swapping, tags the
-    // clone `.ava-dialog-closing`, and removes it once this animation
-    // ends.
-    // Fields left unset by the project (or no `animation "..."` file
-    // declared at all -- projectAnimations_ is then either null or an
-    // empty sheet, ResolveDialogAnimation handles both the same way)
-    // fall back to these same built-in values, so a project that only
-    // overrides e.g. `duration` still gets the stock opacity range and
-    // easing for everything it didn't mention.
     const DialogAnimationValues openAnim = ResolveDialogAnimation(
-        projectAnimations_, "open", /*defaultFrom=*/0.0, /*defaultTo=*/1.0,
-        /*defaultDuration=*/"160ms", /*defaultEasing=*/"ease-out");
+        projectAnimations_, "open", 0.0, 1.0,
+        "160ms", "ease-out");
     const DialogAnimationValues closeAnim = ResolveDialogAnimation(
-        projectAnimations_, "close", /*defaultFrom=*/1.0, /*defaultTo=*/0.0,
-        /*defaultDuration=*/"160ms", /*defaultEasing=*/"ease-in");
+        projectAnimations_, "close", 1.0, 0.0,
+        "160ms", "ease-in");
     dynamicCss << "@keyframes ava-overlay-fade-in { from { opacity: " << openAnim.from
                << "; } to { opacity: " << openAnim.to << "; } }\n";
     dynamicCss << "@keyframes ava-overlay-fade-out { from { opacity: " << closeAnim.from
@@ -566,10 +387,8 @@ std::string HTMLRenderer::EmitHTMLHeader() {
     dynamicCss << ".ava-overlay-fragment.ava-dialog-closing { "
                << "animation: ava-overlay-fade-out " << closeAnim.duration << " " << closeAnim.easing
                << " forwards; pointer-events: none; }\n";
-    // Project-declared `style <type>:hover` / `:focus` / `:active` /
-    // `:disabled` blocks (app.ava's `style "..."` files) -- "" when
-    // none were declared, see EmitProjectStateCSS.
     dynamicCss << EmitProjectStateCSS();
+    dynamicCss << EmitProjectResponsiveCSS();
     html_ << EmitProjectCssLink(dynamicCss.str());
     html_ << "</head>\n";
     html_ << "<body>\n";
@@ -583,18 +402,6 @@ std::string HTMLRenderer::EmitHTMLFooter() {
     std::stringstream html_;
     html_ << "</div>\n";
     html_ << "</div>\n";
-    // No client-side scale-to-fit and no resize-triggered reload here --
-    // .ava-viewport is 100%/100% natively (see EmitHTMLHeader), and the
-    // responsive-resize listener (Fase C, opcion 2) lives entirely in
-    // AvaHostApp::EventScriptTag() (avahost/src/web/server/app.cpp)
-    // instead of here. That's a deliberate move, not an oversight: the
-    // resize flow needs to fetch the route and swap #ava-viewport's
-    // content back in, which means it needs the same DOMParser/
-    // scroll-restore plumbing the click/data-handler event flow already
-    // has -- putting both in one place means one shared helper instead
-    // of two copies, and it means the only kViewportResizeThresholdPx
-    // that exists lives next to the cookies it reads/writes (app.cpp),
-    // with no cross-library constant to keep in sync here in avaui.
 
     if (!extraBodyEnd_.empty()) html_ << extraBodyEnd_;
     html_ << "</body>\n";
@@ -605,26 +412,12 @@ std::string HTMLRenderer::EmitHTMLFooter() {
 void HTMLRenderer::OnBeginFrame() {
     bodyHtml_.str("");
     bodyHtml_.clear();
-    styleRules_.clear();
     usedFontNames_.clear();
-    // Always declare the default family, even if this particular frame
-    // happens to only draw elements that pass an explicit custom
-    // fontName -- `html, body`'s font-family rule (see EmitHTMLHeader)
-    // references it unconditionally, and an @font-face-less fallback
-    // there would silently drop back to a real system sans-serif for
-    // any inherited text.
     usedFontNames_.insert(kDefaultCssFontFamily);
 }
 
 void HTMLRenderer::OnEndFrame() {
-    // The header can only be built now: EmitFontFaceRules (called from
-    // EmitHTMLHeader) needs usedFontNames_, which OnDrawText/
-    // OnDrawButton/OnDrawLink only finished populating once the body
-    // above had actually been drawn. Assemble header + body + footer
-    // here instead of streaming the header out first the way the
-    // fixed, state-independent parts of a page normally could.
     cachedOutput_ = EmitHTMLHeader() + bodyHtml_.str() + EmitHTMLFooter();
-    outputDirty_ = false;
 }
 
 void HTMLRenderer::OnDrawRectangle(
@@ -636,26 +429,6 @@ void HTMLRenderer::OnDrawRectangle(
     const std::string& className
 ) {
     const bool hasClass = !className.empty();
-    // .ava-element ships position:absolute plus this function always used
-    // to emit background-color/border inline regardless of hasClass.
-    // Inline style beats any class by specificity, so a Tailwind class
-    // like "border-b border-gray-200" was silently overridden by the
-    // "border: 0px solid #000000" this function always wrote -- and the
-    // element was still yanked out of flow by .ava-element's position:
-    // absolute. When the user supplied their own class, give it full,
-    // unfought control: skip the ava-element class and every
-    // presentation default (position/size/background/border) this
-    // function would otherwise inject, and rely on their CSS entirely.
-    //
-    // `className`/`class=` is a not-recommended escape hatch: it only
-    // has meaning here, in HTMLRenderer -- GdiRenderer (desktop)
-    // ignores it entirely (see GdiRenderer.cpp), so a component styled
-    // via `class=` renders correctly on web but falls back to raw,
-    // unstyled layout on desktop. The supported, platform-parity path
-    // is native LayoutEngine properties (row/column, width/height,
-    // padding, gap, align, borderWidth/borderColor/borderRadius,
-    // backgroundColor), which both renderers honor identically -- see
-    // docs/AVAUI_NATIVE_RENDERING_FIX_PLAN.md.
     if (hasClass) {
         bodyHtml_ << "<div class=\"" << className << "\" style=\"";
     } else {
@@ -690,12 +463,6 @@ void HTMLRenderer::OnDrawEllipse(
     const float top = cy - ry;
     const float width = rx * 2.0f;
     const float height = ry * 2.0f;
-    // See OnDrawRectangle: a user class gets full, unfought control --
-    // no ava-element, no inline position/size/background/border. Same
-    // caveat applies: `class=` only works here (HTMLRenderer); it's a
-    // not-recommended escape hatch because GdiRenderer ignores it, so
-    // it breaks desktop/web parity -- prefer native LayoutEngine
-    // properties instead (see docs/AVAUI_NATIVE_RENDERING_FIX_PLAN.md).
     if (hasClass) {
         bodyHtml_ << "<div class=\"" << className << "\" style=\"";
     } else {
@@ -714,6 +481,61 @@ void HTMLRenderer::OnDrawEllipse(
         bodyHtml_ << " data-event=\"click\" data-handler=\"" << EscapeHtmlAttr(clickHandler) << "\"";
     }
     bodyHtml_ << "></div>\n";
+}
+
+std::string HTMLRenderer::BuildSvgPathData(const std::vector<render::PathSegment>& segments, bool closed) const {
+    std::ostringstream d;
+    for (const render::PathSegment& segment : segments) {
+        switch (segment.type) {
+            case render::PathSegmentType::MoveTo:
+                d << "M " << segment.x << " " << segment.y << " ";
+                break;
+            case render::PathSegmentType::LineTo:
+                d << "L " << segment.x << " " << segment.y << " ";
+                break;
+            case render::PathSegmentType::CubicCurveTo:
+                d << "C " << segment.cx1 << " " << segment.cy1 << " "
+                  << segment.cx2 << " " << segment.cy2 << " "
+                  << segment.x << " " << segment.y << " ";
+                break;
+            case render::PathSegmentType::Close:
+                d << "Z ";
+                break;
+        }
+    }
+    if (closed) {
+        d << "Z";
+    }
+    return d.str();
+}
+
+void HTMLRenderer::OnDrawPath(
+    float x, float y,
+    const std::vector<render::PathSegment>& segments,
+    const Color& fillColor,
+    const Color& borderColor, float borderWidth,
+    bool closed,
+    const std::string& clickHandler,
+    const std::string& className
+) {
+    if (segments.empty()) {
+        return;
+    }
+
+    const bool hasClass = !className.empty();
+    bodyHtml_ << "<svg class=\"" << (hasClass ? className : std::string("ava-element")) << "\" "
+              << "style=\"position: absolute; left: " << x << "px; top: " << y << "px; "
+              << "overflow: visible; opacity: " << currentOpacity_ << "; "
+              << GetTransformCSS() << " "
+              << GetClipCSS()
+              << "\" width=\"0\" height=\"0\"";
+    if (!clickHandler.empty()) {
+        bodyHtml_ << " data-event=\"click\" data-handler=\"" << EscapeHtmlAttr(clickHandler) << "\"";
+    }
+    bodyHtml_ << "><path d=\"" << BuildSvgPathData(segments, closed) << "\" "
+              << "fill=\"" << ColorToHex(fillColor) << "\" "
+              << "stroke=\"" << ColorToHex(borderColor) << "\" "
+              << "stroke-width=\"" << borderWidth << "\" /></svg>\n";
 }
 
 void HTMLRenderer::OnDrawText(
@@ -822,11 +644,6 @@ void HTMLRenderer::OnDrawLink(
     const std::string& clickHandler,
     const std::string& className
 ) {
-    // Minimal attribute-safe escape for href -- same rationale as
-    // EscapeHtmlText in SceneCommandWalker.cpp: href is normally a
-    // developer-authored string from the .avaui source, not
-    // end-user input, but escaping the one character that could break
-    // out of the "..." attribute (a literal quote) costs nothing.
     std::string safeHref;
     safeHref.reserve(href.size());
     for (char c : href) {
@@ -859,5 +676,5 @@ void HTMLRenderer::OnDrawLink(
     bodyHtml_ << ">" << (text ? text : "") << "</a>\n";
 }
 
-} // namespace ui
-} // namespace avalang
+}
+}

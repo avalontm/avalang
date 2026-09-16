@@ -9,7 +9,9 @@ cd /d "%~dp0.."
 REM =====================================================================
 REM Fase 9 (runtime/avapack/README.md) -- compila UNA VEZ las herramientas
 REM que `ava_cli build` (target desktop) necesita para empacar proyectos
-REM SIN el repo/CMake al lado: avapack_gen.exe + avapack_stub.exe.
+REM SIN el repo/CMake al lado: avapack_gen.exe + avapack_stub.exe (+
+REM avapack_stub_ui.exe, Fase 21.x -- variante para proyectos "Desktop"
+REM que usan `Application.run(...)`, ver runtime/avapack/CMakeLists.txt).
 REM
 REM A diferencia de build_cli.bat/build_studio.bat (que compilan binarios
 REM para USAR), esto es un paso de "preparar distribucion" -- se corre una
@@ -49,7 +51,11 @@ if errorlevel 1 (
 
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
-set "CMAKE_CONFIGURE_ARGS=-DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DAVA_BUILD_PACK=ON -DAVA_BUILD_CLI=OFF -DAVA_BUILD_STUDIO=OFF -DAVA_BUILD_AVAHOST=OFF"
+REM AVA_BUILD_AVAHOST_NATIVE_LIB=ON (sin AVA_BUILD_AVAHOST) deja disponible
+REM el target avahost_native (Application class + loop de ventana nativa,
+REM ver runtime/avahost/CMakeLists.txt) sin compilar el avahost completo
+REM (web server) -- necesario para avapack_stub_ui de mas abajo.
+set "CMAKE_CONFIGURE_ARGS=-DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DAVA_BUILD_PACK=ON -DAVA_BUILD_CLI=OFF -DAVA_BUILD_STUDIO=OFF -DAVA_BUILD_AVAHOST=OFF -DAVA_BUILD_AVAHOST_NATIVE_LIB=ON"
 
 if defined VCPKG_ROOT (
     echo Usando vcpkg toolchain: %VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake
@@ -73,11 +79,26 @@ if errorlevel 1 (
 )
 
 echo.
-echo Compilando avapack_gen + avapack_stub ^(%BUILD_TYPE%^) ...
+REM avapack_stub_ui (Fase 21.x) solo existe como target de CMake cuando
+REM avahost_native se pudo compilar (WIN32 + avalang_ui_win, ver
+REM runtime/avahost/CMakeLists.txt y runtime/avapack/CMakeLists.txt) --
+REM AVA_BUILD_AVAHOST_NATIVE_LIB=ON de arriba deberia garantizarlo en
+REM Windows, pero lo pedimos como target separado (no --target por target
+REM fijo en la misma linea que los otros) para poder seguir sin el si por
+REM algun motivo no esta disponible en este checkout.
+echo Compilando avapack_gen + avapack_stub + avapack_stub_ui ^(%BUILD_TYPE%^) ...
 cmake --build "%BUILD_DIR%" --target avapack_gen --target avapack_stub --config %BUILD_TYPE% --parallel
 if errorlevel 1 (
     echo [ERROR] el build fallo. Ver arriba.
     exit /b 1
+)
+cmake --build "%BUILD_DIR%" --target avapack_stub_ui --config %BUILD_TYPE% --parallel
+if errorlevel 1 (
+    echo [WARNING] avapack_stub_ui no se pudo compilar -- ^(revisa que
+    echo           AVA_BUILD_UI_BACKEND_WIN este ON, es el default en Windows^).
+    echo           `ava_cli build --with-ui --target desktop` seguira
+    echo           funcionando, pero cayendo al empaquetado con CMake
+    echo           ^(AVAPACK_DESKTOP_UI^) en vez del camino rapido sin-repo.
 )
 
 set "OUT_DIR=%BUILD_DIR%\runtime\avalang"
@@ -86,8 +107,10 @@ if "%USE_NINJA%"=="0" set "OUT_DIR=%BUILD_DIR%\runtime\avalang\%BUILD_TYPE%"
 if not exist "%DIST_DIR%" mkdir "%DIST_DIR%"
 copy /y "%OUT_DIR%\avapack_gen.exe" "%DIST_DIR%\" >nul
 copy /y "%OUT_DIR%\avapack_stub.exe" "%DIST_DIR%\" >nul
+copy /y "%OUT_DIR%\avapack_stub_ui.exe" "%DIST_DIR%\" >nul 2>nul
 copy /y "%OUT_DIR%\avalang.dll" "%DIST_DIR%\" >nul 2>nul
 copy /y "%OUT_DIR%\avalang_ui.dll" "%DIST_DIR%\" >nul 2>nul
+copy /y "%OUT_DIR%\avalang_ui_win.dll" "%DIST_DIR%\" >nul 2>nul
 
 echo.
 echo Listo. Copia el contenido de %DIST_DIR%\ junto a ava_cli.exe para que

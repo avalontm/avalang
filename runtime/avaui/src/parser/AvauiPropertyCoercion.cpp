@@ -128,7 +128,7 @@ PropertyValue InferValueScalarOrList(const std::string& raw) {
     return PropertyValue(raw);
 }
 
-}  // namespace
+}
 
 PropertyValue InferValue(const std::string& raw) {
     return InferValueScalarOrList(raw);

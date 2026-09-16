@@ -387,6 +387,10 @@ HttpResponse AvaHostApp::RenderAvaUiRoute(const std::string& filePath, const Req
     const std::string cachedForCall =
         !seedStateJson.empty() ? seedStateJson : (haveCachedState ? cachedState : std::string());
 
+    std::string cachedStorage;
+    sessions_.TryGetStorage(sessionId, cachedStorage);
+    runtime_.BindStorage(cachedStorage);
+
     logger_.Info("request " + filePath + " session=" + sessionId.substr(0, 8) + "... " +
                  (isNewSession ? "[new]" : "[existing]") +
                  (haveCachedState ? " state=hit" : " state=miss") +
@@ -537,6 +541,7 @@ HttpResponse AvaHostApp::RenderAvaUiRoute(const std::string& filePath, const Req
         sessions_.SetState(sessionId, filePath, outStateJson);
         logger_.Info("saved state for " + filePath + " session=" + sessionId.substr(0, 8) + "...");
     }
+    sessions_.SetStorage(sessionId, runtime_.ExportStorageJson());
 
     HttpResponse response = HttpResponse::Html(statusCode, outHtml);
     response.SetHeader("Set-Cookie", BuildSessionSetCookie(sessionId, sessions_.TtlSeconds()));
@@ -811,6 +816,27 @@ std::string AvaHostApp::EventScriptTag() const {
            "      fireHandler(handler, avauiName === 'click' || avauiName === 'onsubmit', ev, el);\n"
            "    }, avauiName === 'onfocus' || avauiName === 'onblur');\n"
            "  });\n"
+           "  var touchStartX = 0, touchStartY = 0, touchMoved = false;\n"
+           "  document.body.addEventListener('touchstart', function(ev){\n"
+           "    if (!ev.touches || !ev.touches.length) return;\n"
+           "    touchStartX = ev.touches[0].clientX;\n"
+           "    touchStartY = ev.touches[0].clientY;\n"
+           "    touchMoved = false;\n"
+           "  }, true);\n"
+           "  document.body.addEventListener('touchmove', function(ev){\n"
+           "    if (!ev.touches || !ev.touches.length) return;\n"
+           "    var dx = ev.touches[0].clientX - touchStartX;\n"
+           "    var dy = ev.touches[0].clientY - touchStartY;\n"
+           "    if (Math.sqrt(dx * dx + dy * dy) > 10) touchMoved = true;\n"
+           "  }, true);\n"
+           "  document.body.addEventListener('touchend', function(ev){\n"
+           "    if (touchMoved) return;\n"
+           "    var el = ev.target.closest ? ev.target.closest('[data-handler],[data-handler-2],[data-handler-3],[data-handler-4],[data-handler-5]') : null;\n"
+           "    if (!el) return;\n"
+           "    var handler = findHandler(el, 'click');\n"
+           "    if (!handler) return;\n"
+           "    fireHandler(handler, true, ev, el);\n"
+           "  }, true);\n"
            "  document.addEventListener('load', function(ev){\n"
            "    var el = ev.target && ev.target.closest ? ev.target.closest('[data-handler],[data-handler-2],[data-handler-3],[data-handler-4],[data-handler-5]') : null;\n"
            "    if (!el) return;\n"

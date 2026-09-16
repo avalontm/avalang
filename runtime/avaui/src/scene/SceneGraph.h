@@ -1,5 +1,4 @@
-#ifndef AVA_UI_SCENE_SCENE_GRAPH_H
-#define AVA_UI_SCENE_SCENE_GRAPH_H
+#pragma once
 
 #include "scene/ISceneGraph.h"
 #include "scene/SceneNode.h"
@@ -26,6 +25,8 @@ public:
     void ForEachInRenderOrder(std::function<void(const std::shared_ptr<ISceneNode>&)> visitor) override;
     void ForEachDirtyNode(std::function<void(const std::shared_ptr<ISceneNode>&)> visitor) override;
 
+    std::vector<DirtyRegion> CollectDirtyRects() override;
+
     void Invalidate() override { dirty_ = true; }
     bool IsDirty() const override { return dirty_; }
 
@@ -46,8 +47,6 @@ private:
     bool dirty_ = true;
 };
 
-} // namespace scene
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_SCENE_SCENE_GRAPH_H
+}
+}
+}

@@ -3,7 +3,9 @@
 #include "components/PropertyValue.h"
 #include "registry/ComponentTypeRegistry.h"
 
-namespace avalang::ui::controls {
+namespace avalang {
+namespace ui {
+namespace controls {
 
 IComponent* CreateText(ComponentTree* tree, const std::string& text) {
     if (!tree) {
@@ -16,7 +18,6 @@ IComponent* CreateText(ComponentTree* tree, const std::string& text) {
     }
 
     comp->SetProperty("text", PropertyValue(text));
-    // fontName/fontSize/textColor filled by RenderTheme::Apply().
     return comp;
 }
 
@@ -32,7 +33,7 @@ struct TextTypeRegistration {
     TextTypeRegistration() {
         using namespace avalang::ui::registry;
         RegisterComponentType({
-            "Text", "Text", /*is_container=*/false,
+            "Text", "Text", false,
             {
                 {"text", PropertyValue("Text")},
             },
@@ -40,6 +41,8 @@ struct TextTypeRegistration {
     }
 };
 static TextTypeRegistration _text_type_registration;
-} // namespace
+}
 
-} // namespace avalang::ui::controls
+}
+}
+}

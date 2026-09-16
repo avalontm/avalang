@@ -1,7 +1,7 @@
-#ifndef AVA_UI_NULL_RENDERER_H
-#define AVA_UI_NULL_RENDERER_H
+#pragma once
 
 #include "renderer/BaseRenderer.h"
+
 #include <string>
 
 namespace avalang {
@@ -74,7 +74,5 @@ protected:
     ) override;
 };
 
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_NULL_RENDERER_H
+}
+}

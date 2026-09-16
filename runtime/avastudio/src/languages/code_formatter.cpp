@@ -149,18 +149,6 @@ char FirstNonSpace(const std::string& mask) {
     return '\0';
 }
 
-int NetOpenDelta(const std::vector<std::string>& words) {
-    int delta = 0;
-    for (const std::string& word : words) {
-        if (word == "end") {
-            --delta;
-        } else if (OpenKeywords().count(word)) {
-            ++delta;
-        }
-    }
-    return delta;
-}
-
 int BracketDelta(const std::string& mask) {
     int delta = 0;
     for (const char c : mask) {
@@ -195,7 +183,7 @@ std::string FormatAvalangSource(const std::string& source, int indent_width) {
     std::vector<std::string> output;
     output.reserve(lines.size());
 
-    int depth = 0;
+    std::vector<std::string> block_stack;
     int bracket_depth = 0;
     bool previous_was_blank = false;
 
@@ -213,6 +201,7 @@ std::string FormatAvalangSource(const std::string& source, int indent_width) {
         const std::string first_word = FirstWord(mask);
         const char first_char = FirstNonSpace(mask);
 
+        const int depth = static_cast<int>(block_stack.size());
         const int keyword_dedent = MidKeywords().count(first_word) ? 1 : 0;
         const int bracket_dedent = (first_char == ')' || first_char == ']' || first_char == '}') ? 1 : 0;
 
@@ -221,7 +210,18 @@ std::string FormatAvalangSource(const std::string& source, int indent_width) {
 
         output.push_back(std::string(static_cast<size_t>(line_level) * indent_width, ' ') + trimmed);
 
-        depth = std::max(0, depth + NetOpenDelta(ExtractWords(mask)));
+        const bool headerless_func = first_word == "func" && !block_stack.empty() &&
+                                      (block_stack.back() == "extern" || block_stack.back() == "interface");
+
+        for (const std::string& word : ExtractWords(mask)) {
+            if (word == "end") {
+                if (!block_stack.empty()) block_stack.pop_back();
+            } else if (OpenKeywords().count(word)) {
+                if (word == "func" && headerless_func) continue;
+                block_stack.push_back(word);
+            }
+        }
+
         bracket_depth = std::max(0, bracket_depth + BracketDelta(mask));
     }
 

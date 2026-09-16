@@ -9,9 +9,9 @@
 
 #ifdef AVAHOST_HAS_UI_PIPELINE
 #include "parser/AvauiPropertyCoercion.h"
+#include "runtime/vm_ava_view.h"
 using avalang::ui::parser::InferValue;
 using avalang::ui::parser::NumberToDisplayString;
-using avalang::ui::parser::LooksLikeCall;
 #endif
 
 using nlohmann::json;
@@ -141,6 +141,7 @@ bool RuntimeHost::RunScript(const std::string& source, const std::string& script
         ava_string_free(runError);
         return false;
     }
+    DrainAsync();
     return true;
 }
 
@@ -330,99 +331,104 @@ void RuntimeHost::BindState(const std::string& stateJson) {
     }
 }
 
-bool RuntimeHost::BindCodeBehind(const std::string& methodsText, std::string* outError) {
-    if (outError) outError->clear();
-    if (!vm_ || methodsText.empty()) return true;
+void RuntimeHost::BindStorage(const std::string& storageJson) {
+    if (!vm_) return;
 
-    char* compileError = nullptr;
-    AvaModule* module = ava_compile(vm_, methodsText.c_str(), "<avaui-code>", &compileError);
-    if (!module) {
-        if (compileError) {
-            if (outError) *outError = compileError;
-            ava_string_free(compileError);
-        } else if (outError) {
-            *outError = "unknown compile error in code block";
+    ava_value_t storage = ava_dict_create(vm_);
+
+    json parsed;
+    bool parsedOk = false;
+    try {
+        parsed = json::parse(storageJson.empty() ? "{}" : storageJson);
+        parsedOk = parsed.is_object();
+    } catch (const json::exception&) {
+        parsedOk = false;
+    }
+
+    if (parsedOk) {
+        for (auto it = parsed.begin(); it != parsed.end(); ++it) {
+            const std::string value = it.value().is_string() ? it.value().get<std::string>() : it.value().dump();
+            ava_dict_set(vm_, storage, it.key().c_str(), ava_string_create(vm_, value.data(), value.size()));
         }
-        return false;
     }
 
-    ava_value_t result{};
-    char* runError = nullptr;
-    ava_run(vm_, module, &result, &runError);
-    ava_module_destroy(module);
-    if (runError) {
-        if (outError) *outError = runError;
-        ava_string_free(runError);
-        return false;
-    }
-    return true;
+    ava_set_global(vm_, "Storage", storage);
+    ava_value_release(vm_, storage);
 }
 
-bool RuntimeHost::InvokeHandler(const std::string& handlerName, std::string& outError) {
-    if (!vm_ || handlerName.empty()) return false;
-    const std::string source = "__avahost_invoke__ = " + handlerName +
+std::string RuntimeHost::ExportStorageJson() {
+    if (!vm_) return "{}";
+
+    ava_value_t storage = ava_get_global(vm_, "Storage");
+    if (storage.type != AVA_DICT) {
+        ava_value_release(vm_, storage);
+        return "{}";
+    }
+
+    json out = json::object();
+    void* rawEntries = nullptr;
+    size_t n = ava_dict_entries(vm_, storage, &rawEntries);
+    auto* entries = static_cast<ava_dict_pair_t*>(rawEntries);
+    for (size_t i = 0; i < n; ++i) {
+        const std::string key(entries[i].key, entries[i].key_len);
+        const ava_value_t& value = entries[i].value;
+        if (value.type == AVA_STRING) {
+            size_t len = 0;
+            const char* data = ava_string_data(vm_, value, &len);
+            out[key] = std::string(data, len);
+        } else {
+            out[key] = SerializeAvaValueToLiteral(vm_, value);
+        }
+    }
+
+    ava_value_release(vm_, storage);
+    return out.dump();
+}
+
 #ifdef AVAHOST_HAS_UI_PIPELINE
-                                (LooksLikeCall(handlerName) ? "" : "()");
-#else
-                                "()";
+bool RuntimeHost::LoadView(const std::string& viewName, const std::string& codeBehind,
+                            avalang::ui::IComponent* root, std::string& outError) {
+    outError.clear();
+    if (!vm_) {
+        outError = "cannot load view '" + viewName + "' -- VM not initialized";
+        return false;
+    }
+
+    if (!avaView_) {
+        avaView_ = std::make_unique<VmAvaView>(vm_);
+    }
+
+    return avaView_->Load(viewName, codeBehind, root, outError);
+}
 #endif
 
-    {
-        std::string calleeName = handlerName;
-        auto paren = calleeName.find('(');
-        if (paren != std::string::npos) calleeName = calleeName.substr(0, paren);
-        ava_value_t calleeVal = ava_get_global(vm_, calleeName.c_str());
-        bool calleeIsCallable = calleeVal.type == AVA_FUNCTION || calleeVal.type == AVA_NATIVE ||
-                                 calleeVal.type == AVA_BOUND || calleeVal.type == AVA_CLASS;
-        AvaValueType calleeType = calleeVal.type;
-        ava_value_release(vm_, calleeVal);
-        if (!calleeIsCallable) {
-            outError = "handler '" + handlerName + "' resolves '" + calleeName +
-                        "' to a non-callable global (type=" + std::to_string(static_cast<int>(calleeType)) +
-                        ", 0=nil/1=bool/2=number/3=string/4=list/5=dict/6=function/7=instance/8=class/9=coroutine/10=native/11=bound/12=exception/13=module)"
-                        " -- it was never bound as a function, or something reassigned that name, before this handler ran."
-                        " Check that the `code`/`methods` block actually declares `func " + calleeName + "(...)` and that"
-                        " BindCodeBehind is being called (and succeeding) before this request's handler dispatch.";
-            return false;
-        }
+bool RuntimeHost::InvokeHandler(const std::string& handlerName, std::string& outError) {
+#ifdef AVAHOST_HAS_UI_PIPELINE
+    if (avaView_ && avaView_->IsLoaded()) {
+        bool ok = avaView_->InvokeHandler(handlerName, outError);
+        DrainAsync();
+        return ok;
     }
-
-    char* compileError = nullptr;
-    AvaModule* module = ava_compile(vm_, source.c_str(), "<avahost-handler-call>", &compileError);
-    if (!module) {
-        if (compileError) {
-            outError = compileError;
-            ava_string_free(compileError);
-        } else {
-            outError = "unknown compile error invoking " + handlerName;
-        }
-        return false;
-    }
-
-    ava_value_t result{};
-    char* runError = nullptr;
-    ava_run(vm_, module, &result, &runError);
-    ava_module_destroy(module);
-    if (runError) {
-        outError = runError;
-        ava_string_free(runError);
-        return false;
-    }
-
-    ava_value_t invokeResult = ava_get_global(vm_, "__avahost_invoke__");
-    if (invokeResult.type == AVA_STRING) ava_value_release(vm_, invokeResult);
-    return true;
+#endif
+    outError = "InvokeHandler: no view is loaded for '" + handlerName + "' -- LoadView must succeed first";
+    return false;
 }
 
-bool RuntimeHost::InvokeHandlerIfDefined(const std::string& handlerName, std::string& outError) {
-    if (!vm_ || handlerName.empty()) return true;
+void RuntimeHost::PumpAsyncOnce() {
+    if (!vm_) return;
+    ava_vm_pump_async(vm_);
+}
 
-    ava_value_t existing = ava_get_global(vm_, handlerName.c_str());
-    bool isFunction = (existing.type == AVA_FUNCTION);
-    ava_value_release(vm_, existing);
-    if (!isFunction) return true;
+void RuntimeHost::DrainAsync() {
+    if (!vm_) return;
+    while (ava_vm_has_pending_async(vm_)) {
+        ava_vm_pump_async(vm_);
+    }
+}
 
-    return InvokeHandler(handlerName, outError);
+bool RuntimeHost::HasPendingAsync() const {
+    if (!vm_) return false;
+    return ava_vm_has_pending_async(vm_) != 0;
 }
 
 std::string RuntimeHost::EvalPropertyExpr(const std::string& rawValue) {

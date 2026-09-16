@@ -5,7 +5,9 @@
 #include <unordered_map>
 #include <mutex>
 
-namespace avalang::ui::controls {
+namespace avalang {
+namespace ui {
+namespace controls {
 
 namespace {
 
@@ -26,7 +28,7 @@ void NotifyChange(IComponent* checkBoxComponent, bool isChecked) {
     }
 }
 
-}  // anonymous namespace
+}
 
 IComponent* CreateCheckBox(ComponentTree* tree, const std::string& label, bool isChecked) {
     if (!tree) {
@@ -42,7 +44,6 @@ IComponent* CreateCheckBox(ComponentTree* tree, const std::string& label, bool i
     comp->SetProperty("isChecked", PropertyValue(isChecked));
     comp->SetProperty("isEnabled", PropertyValue(true));
 
-    // borderColor / borderWidth filled by RenderTheme::Apply().
     return comp;
 }
 
@@ -89,7 +90,7 @@ struct CheckBoxTypeRegistration {
     CheckBoxTypeRegistration() {
         using namespace avalang::ui::registry;
         RegisterComponentType({
-            "CheckBox", "CheckBox", /*is_container=*/false,
+            "CheckBox", "CheckBox", false,
             {
                 {"label", PropertyValue("CheckBox")},
                 {"isChecked", PropertyValue(false)},
@@ -99,6 +100,8 @@ struct CheckBoxTypeRegistration {
     }
 };
 static CheckBoxTypeRegistration _checkbox_type_registration;
-} // namespace
+}
 
-} // namespace avalang::ui::controls
+}
+}
+}

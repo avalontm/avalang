@@ -42,5 +42,5 @@ const PropertyList& PropertyValue::AsList() const {
     return list_ ? *list_ : kEmpty;
 }
 
-} // namespace ui
-} // namespace avalang
+}
+}

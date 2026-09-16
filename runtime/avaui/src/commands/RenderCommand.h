@@ -1,9 +1,11 @@
-#ifndef AVA_UI_RENDER_COMMAND_H
-#define AVA_UI_RENDER_COMMAND_H
+#pragma once
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
+
+#include "render_tree/PathGeometry.h"
 
 namespace avalang {
 namespace ui {
@@ -21,6 +23,7 @@ enum class RenderCommandType : std::uint8_t {
     DrawHtmlFragment,
     DrawButton,
     DrawLink,
+    DrawPath,
 };
 
 struct Color {
@@ -101,9 +104,18 @@ struct RenderCommand {
         std::string clickHandler;
         std::string className;
     } drawLink;
+
+    struct {
+        float x, y;
+        std::vector<render::PathSegment> segments;
+        Color fillColor;
+        Color borderColor;
+        float borderWidth;
+        bool closed;
+        std::string clickHandler;
+        std::string className;
+    } drawPath;
 };
 
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_RENDER_COMMAND_H
+}
+}

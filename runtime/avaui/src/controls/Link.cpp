@@ -3,7 +3,9 @@
 #include "components/PropertyValue.h"
 #include "registry/ComponentTypeRegistry.h"
 
-namespace avalang::ui::controls {
+namespace avalang {
+namespace ui {
+namespace controls {
 
 IComponent* CreateLink(ComponentTree* tree, const std::string& text, const std::string& href) {
     if (!tree) {
@@ -39,7 +41,7 @@ struct LinkTypeRegistration {
     LinkTypeRegistration() {
         using namespace avalang::ui::registry;
         RegisterComponentType({
-            "Link", "Link", /*is_container=*/false,
+            "Link", "Link", false,
             {
                 {"text", PropertyValue("Link")},
                 {"href", PropertyValue("")},
@@ -48,6 +50,8 @@ struct LinkTypeRegistration {
     }
 };
 static LinkTypeRegistration _link_type_registration;
-} // namespace
+}
 
-} // namespace avalang::ui::controls
+}
+}
+}

@@ -3,9 +3,10 @@
 #include "layout/ILayoutNode.h"
 #include "layout/LayoutEngine.h"
 #include "layout/TextMeasure.h"
-#include <functional>
+
 #include <algorithm>
 #include <cstdlib>
+#include <functional>
 
 namespace avalang {
 namespace ui {
@@ -28,9 +29,6 @@ bool RenderTree::EvalBool(IComponent* comp, const char* propName, bool defaultVa
 
 void RenderTree::CheckBindingWarning(IComponent* comp, std::shared_ptr<RenderNode> parent,
                                       const char* propName) const {
-    // Only controls wired for interactivity need two-way binding --
-    // one with no `change` handler at all is a legitimate static/
-    // display-only control, nothing to warn about.
     if (!comp->GetProperty("change")) return;
 
     const auto* prop = comp->GetProperty(propName);
@@ -72,7 +70,6 @@ void RenderTree::Build(IComponent* componentRoot, LayoutEngine* layoutEngine) {
 
     nodeMap_.clear();
     dirty_ = false;
-    lastLayoutEngine_ = layoutEngine;
 
     root_ = BuildComponent(componentRoot, layoutEngine);
 }
@@ -118,10 +115,6 @@ std::shared_ptr<IRenderNode> RenderTree::BuildComponent(IComponent* component,
     if (const auto* fgColor = component->GetProperty("textColor")) {
         if (fgColor->Type() == PropertyType::String) {
             renderNode->SetForegroundColor(Eval(fgColor->AsString()));
-        }
-    } else if (const auto* legacyColor = component->GetProperty("color")) {
-        if (legacyColor->Type() == PropertyType::String) {
-            renderNode->SetForegroundColor(Eval(legacyColor->AsString()));
         }
     }
 
@@ -209,19 +202,7 @@ void RenderTree::DecomposeButton(IComponent* comp, std::shared_ptr<RenderNode> p
         if (fgColor->Type() == PropertyType::String && !fgColor->AsString().empty()) {
             parent->SetForegroundColor(Eval(fgColor->AsString()));
         }
-    } else if (const auto* legacyColor = comp->GetProperty("color")) {
-        if (legacyColor->Type() == PropertyType::String && !legacyColor->AsString().empty()) {
-            parent->SetForegroundColor(Eval(legacyColor->AsString()));
-        }
     }
-    // fontSize/fontName: same pattern as DecomposeText below -- read
-    // whatever RenderTheme::Apply already resolved onto the component
-    // (theme default, or a project override from app.ava) and copy it
-    // onto the RenderNode. Previously this unconditionally hardcoded
-    // SetFontSize(12) and never called SetFontName at all, so a Button
-    // always painted with RenderNode's own "Arial" default regardless
-    // of theme/app.ava -- the one control type that silently ignored
-    // both the theme's button font size and any custom font.
     if (const auto* fontSize = comp->GetProperty("fontSize")) {
         if (fontSize->Type() == PropertyType::Number || fontSize->Type() == PropertyType::String) {
             parent->SetFontSize(static_cast<int>(EvalNumber(comp, "fontSize", parent->FontSize())));
@@ -330,9 +311,6 @@ void RenderTree::DecomposeTextBox(IComponent* comp, std::shared_ptr<RenderNode> 
             text = Eval(value->AsString());
         }
     }
-    // Actual value on Text(); placeholder reuses the OptionsData slot
-    // (generic string field, otherwise only used by ComboBox) so no
-    // interface change is needed to carry a second string.
     parent->SetText(text);
 
     std::string placeholder;
@@ -374,13 +352,6 @@ void RenderTree::DecomposeCheckBox(IComponent* comp, std::shared_ptr<RenderNode>
         boxNode->SetBackgroundColor("#0078D4");
         boxNode->SetShouldFill(true);
     }
-    // The parent node (Checkbox type, ShouldFill/ShouldStroke both false
-    // below) never draws anything itself -- its `change`-derived
-    // ClickHandler (set earlier in BuildComponent) would go nowhere
-    // unless propagated onto the actual elements the walker draws: the
-    // box and, if present, the label. Without this, clicking either one
-    // emits no data-event/data-handler at all and the control is
-    // permanently inert, `change` binding notwithstanding.
     boxNode->SetClickHandler(parent->ClickHandler());
     parent->AddChild(boxNode);
     parent->SetShouldFill(false);
@@ -426,10 +397,6 @@ void RenderTree::DecomposeRadioButton(IComponent* comp, std::shared_ptr<RenderNo
         boxNode->SetBackgroundColor("#0078D4");
         boxNode->SetShouldFill(true);
     }
-    // See DecomposeCheckBox's identical comment: the parent's
-    // `change`-derived ClickHandler goes nowhere unless propagated onto
-    // the elements actually drawn (box + label), or the control never
-    // responds to a click at all.
     boxNode->SetClickHandler(parent->ClickHandler());
     parent->AddChild(boxNode);
     parent->SetShouldFill(false);
@@ -456,7 +423,7 @@ void RenderTree::DecomposeRadioButton(IComponent* comp, std::shared_ptr<RenderNo
 }
 
 void RenderTree::DecomposeComboBox(IComponent* comp, std::shared_ptr<RenderNode> parent,
-                                  LayoutEngine* layout) {
+                                   LayoutEngine* layout) {
     parent->SetType(RenderNodeType::ComboBox);
 
     std::string selectedValue;
@@ -483,9 +450,6 @@ void RenderTree::DecomposeComboBox(IComponent* comp, std::shared_ptr<RenderNode>
 
 void RenderTree::DecomposeIcon(IComponent* comp, std::shared_ptr<RenderNode> parent,
                                LayoutEngine* layout) {
-    // Same contract as DecomposeImage: `source` is copied through as-is,
-    // resolution of @local/@icons/@fonts prefixes lives in the renderer
-    // (see ResourcePathResolver), not here.
     if (const auto* src = comp->GetProperty("source")) {
         if (src->Type() == PropertyType::String) {
             parent->SetImagePath(Eval(src->AsString()));
@@ -507,20 +471,6 @@ void RenderTree::DecomposeDialog(IComponent* comp, std::shared_ptr<RenderNode> p
     }
 
     if (!isOpen) {
-        // Closed dialog: no children, nothing painted. The generic
-        // property parsing in BuildComponent already ran with
-        // RenderTheme's type="dialog" defaults (overlay=true,
-        // backdrop=true, plus surface backgroundColor/borderColor/
-        // borderWidth/borderRadius) before this function was called --
-        // undo all of it here. Clearing overlay/backdrop alone isn't
-        // enough: BuildComponent also saw backgroundColor/borderColor
-        // as real properties on the component and already called
-        // SetShouldFill(true)/SetShouldStroke(true) on `parent`, so a
-        // closed dialog still hit SceneCommandWalker's generic
-        // ShouldFill()/ShouldStroke() draw path and painted its surface
-        // rectangle (theme surface/border colors) sitting inline in the
-        // layout -- exactly the empty bordered box that showed up in
-        // place of the dialog when isOpen=false.
         parent->SetOverlay(false);
         parent->SetBackdrop(false);
         parent->SetShouldFill(false);
@@ -554,13 +504,6 @@ void RenderTree::DecomposeScrollView(IComponent* comp, std::shared_ptr<RenderNod
         }
     }
 
-    // backgroundColor/borderColor/etc. were already read generically in
-    // BuildComponent above -- children are arranged by LayoutEngine
-    // exactly like a Column/Row (see LayoutEngineImpl.cpp's "ScrollView"
-    // branch), so their rects can legitimately extend past `parent`'s own
-    // Rect() on the scrolling axis. SceneCommandWalker is what turns that
-    // overflow into an actual native-scrolling region on web (see its
-    // "ScrollView" case) -- this function only builds the tree.
     for (const auto& child : comp->Children()) {
         auto childRender = BuildComponent(child, layout);
         if (childRender) {
@@ -621,6 +564,6 @@ void RenderTree::ForEachRecursive(const std::shared_ptr<IRenderNode>& node,
     }
 }
 
-} // namespace render
-} // namespace ui
-} // namespace avalang
+}
+}
+}

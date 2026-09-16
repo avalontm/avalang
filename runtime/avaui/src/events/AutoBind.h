@@ -1,5 +1,4 @@
-#ifndef AVA_UI_EVENTS_AUTO_BIND_H
-#define AVA_UI_EVENTS_AUTO_BIND_H
+#pragma once
 
 #include <string>
 #include <unordered_set>
@@ -17,7 +16,5 @@ AVA_UI_API bool IsEventPropertyName(const std::string& name);
 
 AVA_UI_API void AutoBindEvents(IComponent* root, const std::string& codeText);
 
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_EVENTS_AUTO_BIND_H
+}
+}

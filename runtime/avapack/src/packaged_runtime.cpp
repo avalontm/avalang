@@ -20,6 +20,11 @@
 #include <windows.h>
 #endif
 
+#if defined(_WIN32) && defined(AVAPACK_HAS_DESKTOP_UI_HOST)
+#include "native/native_app_host.h"
+#include "platform/windows/WinBackendEntry.h"
+#endif
+
 namespace fs = std::filesystem;
 
 namespace {
@@ -317,5 +322,67 @@ void UnloadPackagedProgram(PackagedInstance* instance) {
     fs::remove_all(instance->temp_dir, ec);
     delete instance;
 }
+
+#if defined(_WIN32) && defined(AVAPACK_HAS_DESKTOP_UI_HOST)
+
+int RunPackagedNativeApp(int argc, char** argv, const PackagedManifest& manifest,
+                          unsigned char key[32]) {
+    if (manifest.entry_is_bytecode) {
+
+        std::memset(key, 0, 32);
+        MessageBoxA(nullptr,
+                     "avapack: --obfuscate no esta soportado todavia para apps Desktop UI "
+                     "(--with-ui --target desktop sin --output-kind library) -- empaqueta "
+                     "sin --obfuscate mientras tanto.",
+                     "Avalang", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+
+    if (!avapack::VerifyIntegrityWith(manifest.files, manifest.file_count, manifest.integrity_mac, key)) {
+        std::memset(key, 0, 32);
+        MessageBoxA(nullptr,
+                     "avapack: verificacion de integridad fallida -- el contenido embebido no "
+                     "coincide con el esperado (binario posiblemente modificado)",
+                     "Avalang", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+
+    fs::path temp_dir = MakeTempDir();
+    if (temp_dir.empty()) {
+        std::memset(key, 0, 32);
+        MessageBoxA(nullptr, "avapack: no se pudo crear directorio temporal", "Avalang",
+                     MB_OK | MB_ICONERROR);
+        return 1;
+    }
+
+    avapack::FileMap file_map = avapack::BuildFileMapFrom(manifest.files, manifest.file_count);
+    for (const auto& [rel, file] : file_map) {
+        DecryptAndWriteFile(*file, key, manifest.debug_build, temp_dir / rel);
+    }
+    std::memset(key, 0, 32);
+
+    avalang::ui::platform::windows::LinkBackend();
+
+    int width = 1024;
+    int height = 720;
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::string(argv[i]) == "--width") width = std::atoi(argv[i + 1]);
+        else if (std::string(argv[i]) == "--height") height = std::atoi(argv[i + 1]);
+    }
+
+    std::string error;
+    int code = avahost::native::RunNativeApp(temp_dir.string(), manifest.entry_file, width,
+                                              height, error);
+    if (code != 0 && !error.empty()) {
+        std::string message = "avapack: " + error;
+        MessageBoxA(nullptr, message.c_str(), "Avalang", MB_OK | MB_ICONERROR);
+    }
+
+    std::error_code ec;
+    fs::remove_all(temp_dir, ec);
+    return code;
+}
+
+#endif // defined(_WIN32) && defined(AVAPACK_HAS_DESKTOP_UI_HOST)
 
 } // namespace avapack

@@ -9,6 +9,6 @@ IRenderTree* IRenderTree::Create() {
     return new RenderTree();
 }
 
-} // namespace render
-} // namespace ui
-} // namespace avalang
+}
+}
+}

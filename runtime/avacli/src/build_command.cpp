@@ -39,12 +39,18 @@ namespace {
 #if defined(_WIN32)
 constexpr const char* kAvalangRuntimeLib = "avalang.dll";
 constexpr const char* kAvalangUiRuntimeLib = "avalang_ui.dll";
+// Fase 21.x -- backend de plataforma que necesita el "native app host"
+// (avahost_native / Application.run(...), ver NeedsNativeUiHost mas abajo)
+// para poder abrir una ventana real. Solo existe en Windows por ahora.
+constexpr const char* kAvalangUiWinRuntimeLib = "avalang_ui_win.dll";
 #elif defined(__APPLE__)
 constexpr const char* kAvalangRuntimeLib = "libavalang.dylib";
 constexpr const char* kAvalangUiRuntimeLib = "libavalang_ui.dylib";
+constexpr const char* kAvalangUiWinRuntimeLib = ""; // ver comentario arriba -- no aplica fuera de Windows
 #else
 constexpr const char* kAvalangRuntimeLib = "libavalang.so";
 constexpr const char* kAvalangUiRuntimeLib = "libavalang_ui.so";
+constexpr const char* kAvalangUiWinRuntimeLib = ""; // ver comentario arriba -- no aplica fuera de Windows
 #endif
 
 fs::path GetSelfExecutableDir() {
@@ -588,6 +594,39 @@ bool ProjectUsesUi(const fs::path& project_dir, const std::vector<fs::path>& ext
     return false;
 }
 
+// Fase 21.x -- proyectos "Desktop" (New Project > Desktop en Ava Studio)
+// generan un main.ava con `Application.run(viewPath)`. Empacarlos con el
+// runtime de consola de siempre (avapack::RunPackagedProgram -- un ava_run
+// directo sobre el entry, no sabe nada de la clase Application) no
+// alcanza: Application.run() necesita el "native app host" (registro de
+// la clase Application + loop de ventana nativa via avalang_ui_win, ver
+// runtime/avahost/src/native/native_app_host.cpp) que hasta ahora solo
+// usaba avanative.exe (F5/Preview en Ava Studio).
+//
+// Esta funcion centraliza el criterio para elegir ese camino en `ava_cli
+// build`, tanto en TryFastPackWithPrebuiltStub (avapack_stub_ui.exe
+// prebuilt) como en el flujo con CMake mas abajo (AVAPACK_DESKTOP_UI):
+//   * --target desktop (no barekernel, que ni siquiera tiene UI)
+//   * --with-ui (el proyecto realmente enlaza avalang.ui)
+//   * --output-kind exe (una libreria no tiene loop de ventana propio --
+//     ver AVAPACK_DESKTOP_UI/AVAPACK_BUILD_LIBRARY mutuamente excluyentes
+//     en runtime/avapack/CMakeLists.txt)
+//
+// Solo tiene sentido en Windows por ahora -- avahost::native::RunNativeApp
+// (y por lo tanto avahost_native/avapack_stub_ui/AVAPACK_DESKTOP_UI) solo
+// esta implementado para el backend de Windows (ver el #else al final de
+// native_app_host.cpp). En otras plataformas esta funcion devuelve false
+// y `ava_cli build` sigue empacando con el runtime de consola de siempre
+// (aunque el proyecto pase --with-ui --target desktop).
+bool NeedsNativeUiHost(const BuildOptions& opts) {
+#if defined(_WIN32)
+    return opts.target == "desktop" && opts.with_ui && opts.output_kind != "library";
+#else
+    (void)opts;
+    return false;
+#endif
+}
+
 std::optional<fs::path> FindDllForExternName(const fs::path& libraries_dir, const std::string& name) {
     std::error_code ec;
     if (!fs::exists(libraries_dir, ec) || !fs::is_directory(libraries_dir, ec)) return std::nullopt;
@@ -707,17 +746,22 @@ bool SignBinary(ava::platform::IProcess& process, const fs::path& exe_path,
 // de una copia de avapack_stub.exe. Sin cmake, sin compilar nada, sin
 // necesitar el repo para nada mas que --extra-modules-dir (libraries/, si
 // existe -- opcional, no bloquea el camino rapido si no esta).
-bool FindPrebuiltPackTools(const fs::path& dir, bool require_ui_dll, fs::path& out_stub_exe,
-                            fs::path& out_gen_exe) {
+bool FindPrebuiltPackTools(const fs::path& dir, bool require_ui_dll, bool require_native_ui_host,
+                            fs::path& out_stub_exe, fs::path& out_gen_exe) {
     if (dir.empty()) return false;
-    fs::path stub = dir / ("avapack_stub" + std::string(AVACLI_EXE_SUFFIX));
+    // Fase 21.x -- proyectos Desktop UI (ver NeedsNativeUiHost) necesitan
+    // avapack_stub_ui.exe (WIN32_EXECUTABLE, linkea avahost_native) en vez
+    // de avapack_stub.exe (el stub de consola de siempre, que solo sabe
+    // correr avapack::RunPackagedProgram).
+    fs::path stub = dir / ((require_native_ui_host ? "avapack_stub_ui" : "avapack_stub") +
+                            std::string(AVACLI_EXE_SUFFIX));
     fs::path gen = dir / ("avapack_gen" + std::string(AVACLI_EXE_SUFFIX));
     std::error_code ec;
     if (!fs::exists(stub, ec) || !fs::exists(gen, ec)) return false;
     if (!fs::exists(dir / kAvalangRuntimeLib, ec)) {
-        // avapack_stub.exe necesita la misma avalang.dll que ava_cli para
-        // arrancar -- sin ella el .exe empacado tampoco va a poder correr,
-        // asi que no vale la pena intentar este camino.
+        // avapack_stub(_ui).exe necesita la misma avalang.dll que ava_cli
+        // para arrancar -- sin ella el .exe empacado tampoco va a poder
+        // correr, asi que no vale la pena intentar este camino.
         return false;
     }
     // avalang_ui.dll solo hace falta junto a avapack_stub.exe si el proyecto
@@ -726,6 +770,14 @@ bool FindPrebuiltPackTools(const fs::path& dir, bool require_ui_dll, fs::path& o
     // ava_ui_* en stub_main.cpp/packaged_runtime.cpp), asi que exigirla
     // aca solo bloqueaba el camino rapido sin necesidad para apps sin UI.
     if (require_ui_dll && !fs::exists(dir / kAvalangUiRuntimeLib, ec)) {
+        return false;
+    }
+    // avapack_stub_ui.exe ademas necesita avalang_ui_win.dll (el backend de
+    // plataforma -- ver runtime/avaui/CMakeLists.txt, ava_add_ui_backend)
+    // para poder abrir una ventana real; sin ella avahost_native's
+    // GetPlatform() revienta en runtime con "no platform backend
+    // registered".
+    if (require_native_ui_host && !fs::exists(dir / kAvalangUiWinRuntimeLib, ec)) {
         return false;
     }
     out_stub_exe = stub;
@@ -760,13 +812,21 @@ bool TryFastPackWithPrebuiltStub(ava::platform::IProcess& process, const BuildOp
     }
     const bool project_has_avaui = ProjectUsesUi(project_dir_abs, ui_scan_dirs);
     const bool needs_ui = opts.with_ui;
+    const bool needs_native_ui_host = NeedsNativeUiHost(opts);
 
     fs::path prebuilt_dir = GetSelfExecutableDir();
     fs::path stub_exe, gen_exe;
-    if (!FindPrebuiltPackTools(prebuilt_dir, needs_ui, stub_exe, gen_exe)) return false;
+    if (!FindPrebuiltPackTools(prebuilt_dir, needs_ui, needs_native_ui_host, stub_exe, gen_exe)) {
+        return false;
+    }
 
     std::cout << "ava_cli build: usando herramientas prebuilt (" << stub_exe.string() << " + "
               << gen_exe.string() << ") -- sin CMake ni repo.\n";
+    if (needs_native_ui_host) {
+        std::cout << "[info] proyecto Desktop UI detectado (--target desktop --with-ui, "
+                     "--output-kind exe) -- empaquetando con el native app host "
+                     "(avahost_native/Application.run) en vez del runtime de consola.\n";
+    }
     if (!needs_ui) {
         if (project_has_avaui) {
             std::cout << "[warning] se encontraron archivos .avaui en el proyecto pero no se paso "
@@ -869,6 +929,9 @@ bool TryFastPackWithPrebuiltStub(ava::platform::IProcess& process, const BuildOp
     CopyRuntimeDllIfPresent(prebuilt_dir, out_dir, kAvalangRuntimeLib);
     if (needs_ui) {
         CopyRuntimeDllIfPresent(prebuilt_dir, out_dir, kAvalangUiRuntimeLib);
+    }
+    if (needs_native_ui_host) {
+        CopyRuntimeDllIfPresent(prebuilt_dir, out_dir, kAvalangUiWinRuntimeLib);
     }
     if (fs::exists(libraries_dir, ec) && fs::is_directory(libraries_dir, ec)) {
         CopyExternNativeLibraries(project_dir_abs, libraries_dir, out_dir);
@@ -1513,13 +1576,41 @@ int RunBuildCommand(int argc, char** argv) {
     }
     const bool project_has_avaui = ProjectUsesUi(project_dir_abs, ui_scan_dirs);
     const bool needs_ui = opts.with_ui;
+    const bool needs_native_ui_host = NeedsNativeUiHost(opts);
 
-    bool needs_ui_prebuilt = needs_ui;
+    if (needs_native_ui_host) {
+        // AVAPACK_DESKTOP_UI (ver runtime/avapack/CMakeLists.txt) linkea
+        // avahost_native, que a su vez necesita el target avalang_ui_win
+        // -- eso solo existe cuando runtime/avaui se procesa con
+        // add_subdirectory en ESTE build_pack (no hay forma de "importar"
+        // un backend nativo suelto). Un avalang_ui.dll prebuilt no trae
+        // avalang_ui_win.dll (Fase 21: es un paquete de backend separado,
+        // ver runtime/avaui/CMakeLists.txt) ni el target de CMake que
+        // avapack necesita linkear -- asi que avaui SIEMPRE se compila
+        // desde fuente para este caso. Pero eso NO exige recompilar
+        // avalang (el motor: ANTLR, VM, etc.) -- avaui es independiente de
+        // avalang a nivel de fuente y linkea PRIVATE contra su import lib
+        // (ver AVA_PACK_BUILD_UI_FROM_SOURCE en el CMakeLists raiz), asi
+        // que si hay un avalang.dll/lib prebuilt lo seguimos reusando.
+        configure_args.push_back("-DAVAPACK_DESKTOP_UI=ON");
+        configure_args.push_back("-DAVA_BUILD_AVAHOST_NATIVE_LIB=ON");
+        configure_args.push_back("-DAVA_PACK_BUILD_UI_FROM_SOURCE=ON");
+        std::cout << "[info] proyecto Desktop UI detectado (--target desktop --with-ui, "
+                     "--output-kind exe) -- empaquetando con el native app host "
+                     "(avahost_native/Application.run) en vez del runtime de consola. Se "
+                     "compila avaui (backend nativo) desde fuente; avalang se reusa prebuilt "
+                     "si esta disponible.\n";
+    }
+
     fs::path prebuilt_dir = GetSelfExecutableDir();
+    // Para needs_native_ui_host solo hace falta que el NUCLEO de avalang
+    // (avalang.dll/.lib) este prebuilt -- avalang_ui se compila desde
+    // fuente en este caso (ver arriba), asi que no exigimos
+    // avalang_ui.dll/.lib prebuilt para poder reusar el nucleo.
     bool have_prebuilt = !prebuilt_dir.empty()
         && fs::exists(prebuilt_dir / "avalang.dll")
         && fs::exists(prebuilt_dir / "avalang.lib")
-        && (!needs_ui_prebuilt
+        && (!needs_ui || needs_native_ui_host
             || (fs::exists(prebuilt_dir / "avalang_ui.dll") && fs::exists(prebuilt_dir / "avalang_ui.lib")));
     if (have_prebuilt) {
         configure_args.push_back("-DAVA_PACK_USE_PREBUILT_AVALANG=ON");
@@ -1670,6 +1761,14 @@ int RunBuildCommand(int argc, char** argv) {
     CopyRuntimeDllIfPresent(built_dir, out_dir, kAvalangRuntimeLib);
     if (needs_ui) {
         CopyAvaUiDllIfAvailable(built_dir, out_dir, repo_root, build_config);
+    }
+    if (needs_native_ui_host) {
+        // avalang_ui_win (el backend de plataforma, ver
+        // runtime/avaui/CMakeLists.txt) se compila junto con
+        // avahost_native en ESTE build_pack (AVAPACK_DESKTOP_UI=ON fuerza
+        // a compilar desde fuente, ver arriba) -- termina en el mismo
+        // built_dir que el .exe empacado.
+        CopyRuntimeDllIfPresent(built_dir, out_dir, kAvalangUiWinRuntimeLib);
     }
     if (fs::exists(libraries_dir, ec) && fs::is_directory(libraries_dir, ec)) {
         CopyExternNativeLibraries(project_dir_abs, libraries_dir, out_dir);

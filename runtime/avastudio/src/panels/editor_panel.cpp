@@ -88,6 +88,13 @@ void RebuildAutocompleteTrie(EditorTab& tab) {
         (void)info;
         tab.autocomplete_trie.insert(name);
     }
+
+    // Clases nativas del runtime (Application, etc.) -- nunca aparecen
+    // como `class X` en el codigo, asi que tab.class_index (que escanea el
+    // texto) jamas las ve. Ver comentario en languages::NativeClassNames().
+    for (const auto& name : languages::NativeClassNames()) {
+        tab.autocomplete_trie.insert(name);
+    }
 }
 
 bool HeritageChainDeclares(const ClassIndex& class_index, const ClassIndex* fallback, const std::string& start,
@@ -186,8 +193,9 @@ void RebuildIndexAndTrie(EditorState& state, EditorTab& tab) {
     tab.variable_type_index.Rebuild(tab.GetText(), tab.class_index, tab.function_index, &workspace->classes,
                                      &workspace->functions);
 
-    tab.diagnostics = diagnostics::ComputeDiagnostics(tab.GetText(), dir, tab.modules_path, tab.class_index,
-                                                       tab.function_index, &workspace->classes, &workspace->functions);
+    tab.diagnostics = diagnostics::ComputeDiagnostics(tab.GetText(), dir, tab.modules_path, state.project_root,
+                                                       tab.class_index, tab.function_index, &workspace->classes,
+                                                       &workspace->functions);
 
     tab.inlay_hints = diagnostics::ComputeInlayHints(tab.GetText(), tab.variable_type_index, tab.function_index,
                                                       &workspace->classes, &workspace->functions);

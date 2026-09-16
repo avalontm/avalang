@@ -109,6 +109,9 @@ AVA_API char* ava_vm_get_stdlib_path(AvaVM* vm);
 
 AVA_API void ava_vm_collect_garbage(AvaVM* vm, int64_t* out_collected);
 
+AVA_API void ava_vm_pump_async(AvaVM* vm);
+AVA_API int  ava_vm_has_pending_async(AvaVM* vm);
+
 AVA_API void ava_vm_register_native(
     AvaVM* vm,
     const char* name,
@@ -203,6 +206,26 @@ AVA_API void ava_call(
 
 AVA_API ava_value_t ava_get_global(AvaVM* vm, const char* name);
 AVA_API void ava_set_global(AvaVM* vm, const char* name, ava_value_t value);
+
+AVA_API ava_value_t ava_new_instance(
+    AvaVM* vm,
+    ava_value_t class_value,
+    const ava_value_t* args,
+    size_t arg_count,
+    char** out_error
+);
+
+AVA_API ava_value_t ava_get_attr(AvaVM* vm, ava_value_t instance, const char* name);
+AVA_API void ava_set_attr(AvaVM* vm, ava_value_t instance, const char* name, ava_value_t value);
+
+AVA_API ava_value_t ava_call_method(
+    AvaVM* vm,
+    ava_value_t instance,
+    const char* name,
+    const ava_value_t* args,
+    size_t arg_count,
+    char** out_error
+);
 
 AVA_API ava_value_t ava_import(AvaVM* vm, const char* module_path, const char* alias, char** out_error);
 

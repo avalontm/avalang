@@ -1,14 +1,21 @@
-#ifndef AVA_UI_BASE_RENDERER_H
-#define AVA_UI_BASE_RENDERER_H
+#pragma once
 
 #include "renderer/IRenderer.h"
+#include "commands/RenderCommandBounds.h"
 #include "Export.h"
-#include <stack>
+
 #include <memory>
+#include <stack>
 #include <string>
 
 namespace avalang {
 namespace ui {
+
+struct RectGeometry {
+    float x, y, width, height;
+    std::string clickHandler;
+    std::string className;
+};
 
 class AVA_UI_API BaseRenderer : public IRenderer {
 public:
@@ -23,6 +30,11 @@ public:
     void SetViewport(int width, int height) override;
 
     void ProcessCommands(const std::vector<RenderCommand>& commands) override;
+
+    void ProcessCommandsIncremental(
+        const std::vector<RenderCommand>& commands,
+        const std::vector<DirtyRect>& dirtyRegions
+    ) override;
 
     void DrawRectangle(
         float x, float y, float width, float height,
@@ -81,6 +93,16 @@ public:
         const std::string& className = std::string()
     ) override;
 
+    void DrawPath(
+        float x, float y,
+        const std::vector<render::PathSegment>& segments,
+        const Color& fillColor,
+        const Color& borderColor, float borderWidth,
+        bool closed = false,
+        const std::string& clickHandler = std::string(),
+        const std::string& className = std::string()
+    ) override;
+
     void PushClipRect(float x, float y, float width, float height) override;
     void PopClipRect() override;
 
@@ -120,6 +142,18 @@ protected:
         const std::string& clickHandler,
         const std::string& className
     ) = 0;
+
+    virtual void OnDrawRectangleBatch(
+        const std::vector<RectGeometry>& rects,
+        const Color& fillColor,
+        const Color& borderColor, float borderWidth,
+        float borderRadius
+    ) {
+        for (const RectGeometry& rect : rects) {
+            OnDrawRectangle(rect.x, rect.y, rect.width, rect.height, fillColor, borderColor,
+                             borderWidth, borderRadius, rect.clickHandler, rect.className);
+        }
+    }
 
     virtual void OnDrawEllipse(
         float cx, float cy, float rx, float ry,
@@ -169,11 +203,22 @@ protected:
         const std::string& className
     ) = 0;
 
+    virtual void OnDrawPath(
+        float x, float y,
+        const std::vector<render::PathSegment>& segments,
+        const Color& fillColor,
+        const Color& borderColor, float borderWidth,
+        bool closed,
+        const std::string& clickHandler,
+        const std::string& className
+    ) {}
+
     virtual void OnBeginFrame() {}
     virtual void OnEndFrame() {}
+
+private:
+    void DispatchCommand(const RenderCommand& cmd);
 };
 
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_BASE_RENDERER_H
+}
+}

@@ -26,6 +26,15 @@ option(AVA_BUILD_SHARED "Build avalang as a shared library (.dll/.so)" ON)
 option(AVA_BUILD_CLI "Build the standalone ava_cli (compile/run scripts)" ON)
 option(AVA_BUILD_STUDIO "Build ava_studio, the ImGui-based IDE shell (fetches GLFW + Dear ImGui via CMake FetchContent)" OFF)
 option(AVA_BUILD_AVAHOST "Build avahost, the native C++ app hosting platform (links directly against avalang)" OFF)
+# Fase 21.x -- ver runtime/avahost/CMakeLists.txt. Permite procesar ese
+# subdirectorio SOLO para dejar disponible el target avahost_native
+# (Application class + view loop nativo) sin compilar el avahost
+# completo (web server, plugins, etc.) -- usado por el empaquetado de
+# apps Desktop UI de avapack (ver runtime/avapack/CMakeLists.txt,
+# AVAPACK_DESKTOP_UI, y runtime/avacli/src/build_command.cpp).
+option(AVA_BUILD_AVAHOST_NATIVE_LIB
+    "Process runtime/avahost only far enough to build avahost_native (the reusable native desktop app host), without the rest of AvaHost -- used by avapack's Desktop-UI packaging path"
+    OFF)
 option(AVA_BUILD_UI "Build avalang.ui.dll, the platform-independent UI framework (Phase 1: Core Architecture only)" ON)
 option(AVA_BUILD_PACK "Build avapack (ava_cli build / avapack_gen -- ver runtime/avapack/README.md)" OFF)
 
@@ -44,6 +53,20 @@ option(AVA_PACK_USE_PREBUILT_AVALANG
     OFF)
 set(AVA_PREBUILT_AVALANG_DIR "" CACHE PATH
     "Carpeta con avalang.dll/avalang.lib/avalang_ui.dll/avalang_ui.lib ya compilados (requerido si AVA_PACK_USE_PREBUILT_AVALANG=ON)")
+# Empaquetado Desktop UI (ver NeedsNativeUiHost en build_command.cpp):
+# avahost_native/avapack_stub_ui necesitan el target avalang_ui_win, que
+# solo existe si runtime/avaui se procesa con add_subdirectory (no hay
+# forma de "importar" un backend nativo suelto). Antes, pedir esto forzaba
+# tambien a recompilar avalang (el motor: ANTLR, VM, etc.) desde fuente,
+# porque runtime/avaui quedaba atado a NOT AVA_PACK_USE_PREBUILT_AVALANG
+# mas abajo. avaui es independiente de avalang a nivel de fuente (linkea
+# PRIVATE contra el target avalang via su import lib, ver
+# runtime/avaui/CMakeLists.txt) -- no hace falta que avalang tambien se
+# recompile. Esta opcion permite compilar SOLO avaui desde fuente mientras
+# avalang se sigue reusando prebuilt.
+option(AVA_PACK_BUILD_UI_FROM_SOURCE
+    "Compilar runtime/avaui (avalang_ui + backends nativos) desde fuente aunque AVA_PACK_USE_PREBUILT_AVALANG=ON este reusando el avalang.dll/lib prebuilt -- usado por el empaquetado Desktop UI de avapack"
+    OFF)
 
 # ---------------------------------------------------------------------
 # Fase 8 -- Optimizacion (ver avalang_runtime_stl_barekernel_plan.md).
@@ -65,7 +88,10 @@ if(AVA_PACK_USE_PREBUILT_AVALANG)
         message(FATAL_ERROR "AVA_PACK_USE_PREBUILT_AVALANG=ON requiere -DAVA_PREBUILT_AVALANG_DIR=<carpeta con avalang.dll/avalang.lib (y avalang_ui.dll/avalang_ui.lib si AVA_BUILD_UI=ON)>")
     endif()
     set(_ava_prebuilt_required_files avalang.dll avalang.lib)
-    if(AVA_BUILD_UI)
+    if(AVA_BUILD_UI AND NOT AVA_PACK_BUILD_UI_FROM_SOURCE)
+        # Si AVA_PACK_BUILD_UI_FROM_SOURCE=ON, avalang_ui se compila desde
+        # fuente mas abajo (add_subdirectory) en vez de importarse -- no
+        # hace falta que un avalang_ui.dll/lib prebuilt exista.
         list(APPEND _ava_prebuilt_required_files avalang_ui.dll avalang_ui.lib)
     endif()
     foreach(_ava_prebuilt_file ${_ava_prebuilt_required_files})
@@ -82,7 +108,9 @@ if(AVA_PACK_USE_PREBUILT_AVALANG)
         IMPORTED_IMPLIB "${AVA_PREBUILT_AVALANG_DIR}/avalang.lib"
         INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/runtime/avalang/api/include"
     )
-    if(AVA_BUILD_UI)
+    if(AVA_BUILD_UI AND AVA_PACK_BUILD_UI_FROM_SOURCE)
+        message(STATUS "avalang: AVA_PACK_BUILD_UI_FROM_SOURCE=ON -- avalang_ui (y sus backends nativos) se compilan desde fuente en runtime/avaui, linkeando contra el avalang.dll prebuilt de arriba (no se importa un avalang_ui.dll prebuilt).")
+    elseif(AVA_BUILD_UI)
         add_library(avalang_ui SHARED IMPORTED GLOBAL)
         set_target_properties(avalang_ui PROPERTIES
             IMPORTED_LOCATION "${AVA_PREBUILT_AVALANG_DIR}/avalang_ui.dll"
@@ -114,7 +142,7 @@ endif()
 # Subproyectos opcionales (OFF por defecto para que un `cmake ..` plano
 # no necesite red para bajar GLFW/ImGui/nlohmann-json vía FetchContent).
 # ---------------------------------------------------------------------
-if(AVA_BUILD_UI AND NOT AVA_PACK_USE_PREBUILT_AVALANG)
+if(AVA_BUILD_UI AND (NOT AVA_PACK_USE_PREBUILT_AVALANG OR AVA_PACK_BUILD_UI_FROM_SOURCE))
     add_subdirectory(runtime/avaui)
 endif()
 
@@ -125,7 +153,7 @@ if(AVA_BUILD_STUDIO)
     add_subdirectory(runtime/avastudio)
 endif()
 
-if(AVA_BUILD_AVAHOST)
+if(AVA_BUILD_AVAHOST OR AVA_BUILD_AVAHOST_NATIVE_LIB)
     add_subdirectory(runtime/avahost)
 endif()
 

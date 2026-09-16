@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -12,6 +13,8 @@
 #include "util/log_bridge.h"
 
 namespace studio {
+
+enum class RunTarget { kConsole, kDesktopUi, kLibrary };
 
 struct BuildPanelState {
     std::atomic<bool> building{false};
@@ -49,6 +52,14 @@ struct BuildPanelState {
     std::string::size_type vcpkg_log_forwarded_upto = 0;
     std::thread vcpkg_worker;
 
+    RunTarget selected_run_target = RunTarget::kConsole;
+    RunTarget last_built_target = RunTarget::kConsole;
+    bool run_target_preselected = false;
+
+    bool launch_on_success = false;
+
+    std::vector<std::string> launch_extra_args;
+
     ~BuildPanelState() {
         if (worker.joinable()) worker.join();
         if (vcpkg_worker.joinable()) vcpkg_worker.join();
@@ -77,7 +88,8 @@ struct BuildPanelResult {
 
 BuildPanelResult DrawBuildPanel(BuildPanelState& state, AvaProjFile& proj, AvaProjUserFile& user,
                                  const std::string& explorer_root_dir, BuildBrowseField browsed_field,
-                                 const std::string& browsed_value, LogBridge& log_bridge, bool* p_open = nullptr);
+                                 const std::string& browsed_value, LogBridge& log_bridge, bool project_ambiguous,
+                                 const std::vector<std::string>& avaproj_candidates, bool* p_open = nullptr);
 
 std::string NormalizeEntryFilePath(const std::string& project_dir, const std::string& picked_path);
 
@@ -86,15 +98,40 @@ struct TriggerBuildOutcome {
     std::string project_dir;
 };
 
+struct BuildStep {
+    std::string exe_path;
+    std::vector<std::string> args;
+    std::string step_label;
+};
+
+void StartMultiStepBuild(BuildPanelState& state, std::vector<BuildStep> steps, std::string expected_result_path);
+
 // Fix: `project_ambiguous`/`avaproj_candidates` vienen de
 // ProjectConfig::ambiguous_avaproj/avaproj_candidates (project_config.h) --
 // cuando `explorer_root_dir` contiene mas de un .avaproj, TriggerBuild
 // rechaza el build con un mensaje que lista los candidatos en vez de
 // adivinar cual proyecto compilar.
+//
+// `force_output_type`/`force_no_ui` permiten a un caller pedir esta corrida
+// con un output_type/uses_ui distinto al guardado en `proj`, sin tocar el
+// .avaproj real -- usado por el target Console (force kExe + force_no_ui)
+// y el target Library (force kLibrary) del selector de Build & Run.
 TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const AvaProjFile& proj, const AvaProjUserFile& user,
                                   const std::string& explorer_root_dir, LogBridge& log_bridge,
                                   bool project_ambiguous = false,
-                                  const std::vector<std::string>& avaproj_candidates = {});
+                                  const std::vector<std::string>& avaproj_candidates = {},
+                                  std::optional<AvaProjOutputType> force_output_type = std::nullopt,
+                                  bool force_no_ui = false);
+
+TriggerBuildOutcome TriggerDesktopUiRunBuild(BuildPanelState& state, const AvaProjFile& proj,
+                                              const AvaProjUserFile& user, const std::string& explorer_root_dir,
+                                              LogBridge& log_bridge, bool project_ambiguous = false,
+                                              const std::vector<std::string>& avaproj_candidates = {});
+
+TriggerBuildOutcome DispatchBuildAndRun(BuildPanelState& state, RunTarget target, const AvaProjFile& proj,
+                                         const AvaProjUserFile& user, const std::string& explorer_root_dir,
+                                         LogBridge& log_bridge, bool project_ambiguous = false,
+                                         const std::vector<std::string>& avaproj_candidates = {});
 
 void PollBuild(BuildPanelState& state, LogBridge& log_bridge);
 

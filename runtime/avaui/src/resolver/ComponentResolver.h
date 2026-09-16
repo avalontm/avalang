@@ -1,5 +1,4 @@
-#ifndef AVA_UI_RESOLVER_COMPONENT_RESOLVER_H
-#define AVA_UI_RESOLVER_COMPONENT_RESOLVER_H
+#pragma once
 
 #include <ctime>
 #include <memory>
@@ -30,12 +29,6 @@ public:
     ComponentResolver(ComponentResolver&&) = default;
     ComponentResolver& operator=(ComponentResolver&&) = default;
 
-    // expandLoops=true (default) statically expands "For"/"ListView" nodes
-    // using the literal initial state value — this is what AvaStudio's
-    // design canvas wants (no VM involved). Live runtime pipelines (avahost)
-    // must pass expandLoops=false so For/ListView templates are left intact
-    // for their own VM-driven, per-render expansion instead of being
-    // consumed here against the file's static initial state.
     void ResolveImports(ComponentTree* tree,
                         const std::vector<std::string>& imports,
                         std::unordered_map<std::string, std::string>& mergedState,
@@ -105,7 +98,5 @@ private:
     static constexpr int kMaxDepth = 32;
 };
 
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_RESOLVER_COMPONENT_RESOLVER_H
+}
+}

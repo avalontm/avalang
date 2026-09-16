@@ -3,7 +3,9 @@
 #include "components/PropertyValue.h"
 #include "registry/ComponentTypeRegistry.h"
 
-namespace avalang::ui::controls {
+namespace avalang {
+namespace ui {
+namespace controls {
 
 IComponent* CreateImage(ComponentTree* tree, const std::string& src) {
     if (!tree) {
@@ -32,7 +34,7 @@ struct ImageTypeRegistration {
     ImageTypeRegistration() {
         using namespace avalang::ui::registry;
         RegisterComponentType({
-            "Image", "Image", /*is_container=*/false,
+            "Image", "Image", false,
             {
                 {"source", PropertyValue("")},
                 {"alt", PropertyValue("")},
@@ -41,6 +43,8 @@ struct ImageTypeRegistration {
     }
 };
 static ImageTypeRegistration _image_type_registration;
-} // namespace
+}
 
-} // namespace avalang::ui::controls
+}
+}
+}

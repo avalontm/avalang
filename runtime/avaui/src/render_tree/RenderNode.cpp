@@ -1,4 +1,5 @@
 #include "render_tree/RenderNode.h"
+
 #include <algorithm>
 
 namespace avalang {
@@ -11,7 +12,6 @@ RenderNode::RenderNode(ComponentId componentId, RenderNodeType type)
 
 void RenderNode::AddChild(std::shared_ptr<IRenderNode> child) {
     if (!child) return;
-    // Check for duplicates
     for (const auto& existing : children_) {
         if (existing == child) return;
     }
@@ -26,6 +26,6 @@ void RenderNode::RemoveChild(const std::shared_ptr<IRenderNode>& child) {
     }
 }
 
-} // namespace render
-} // namespace ui
-} // namespace avalang
+}
+}
+}

@@ -20,10 +20,6 @@ void StateImpl::Set(PropertyValue value) {
     }
     value_ = std::move(value);
 
-    // Snapshot the handlers before invoking any of them: a handler is
-    // free to Subscribe() or Unsubscribe() (even unsubscribe itself)
-    // as a reaction to this very change, and mutating `handlers_`
-    // while iterating it directly would be undefined behavior.
     std::vector<ChangeHandler> snapshot;
     snapshot.reserve(handlers_.size());
     for (const auto& entry : handlers_) {
@@ -47,6 +43,6 @@ void StateImpl::Unsubscribe(std::size_t subscriptionId) {
     handlers_.erase(subscriptionId);
 }
 
-} // namespace state
-} // namespace ui
-} // namespace avalang
+}
+}
+}

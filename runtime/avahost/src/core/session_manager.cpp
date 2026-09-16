@@ -81,6 +81,21 @@ void SessionManager::SetState(const std::string& sessionId, const std::string& r
     sessionIt->second.stateCache[routeFilePath] = stateJson;
 }
 
+bool SessionManager::TryGetStorage(const std::string& sessionId, std::string& outStorageJson) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto sessionIt = sessions_.find(sessionId);
+    if (sessionIt == sessions_.end()) return false;
+    outStorageJson = sessionIt->second.storageJson;
+    return true;
+}
+
+void SessionManager::SetStorage(const std::string& sessionId, const std::string& storageJson) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto sessionIt = sessions_.find(sessionId);
+    if (sessionIt == sessions_.end()) return;
+    sessionIt->second.storageJson = storageJson;
+}
+
 void SessionManager::EraseStateForFile(const std::string& routeFilePath) {
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto& [id, session] : sessions_) {

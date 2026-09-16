@@ -1,5 +1,4 @@
-#ifndef AVA_UI_PARSER_AVAUIWRITER_H
-#define AVA_UI_PARSER_AVAUIWRITER_H
+#pragma once
 
 #include <string>
 #include <vector>
@@ -33,5 +32,3 @@ AVA_UI_API std::string WriteAvaui(const IComponent* root, const AvauiWriteOption
 }
 }
 }
-
-#endif

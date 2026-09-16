@@ -19,7 +19,6 @@ void SceneGraph::Build(const std::shared_ptr<render::IRenderNode>& renderRoot) {
     root_ = BuildNode(renderRoot);
     if (!root_) return;
 
-    // Mark all nodes as dirty initially
     for (auto& pair : nodeMap_) {
         if (auto node = std::dynamic_pointer_cast<SceneNode>(pair.second)) {
             node->MarkDirty();
@@ -38,7 +37,6 @@ std::shared_ptr<ISceneNode> SceneGraph::BuildNode(const std::shared_ptr<render::
 
     nodeMap_[renderNode->Id()] = sceneNode;
 
-    // Recursively build children
     for (const auto& child : renderNode->Children()) {
         BuildNodeRecursive(child, sceneNode);
     }
@@ -59,7 +57,6 @@ void SceneGraph::BuildNodeRecursive(const std::shared_ptr<render::IRenderNode>& 
     nodeMap_[renderNode->Id()] = sceneNode;
     sceneParent->AddChild(sceneNode);
 
-    // Recurse on children
     for (const auto& child : renderNode->Children()) {
         BuildNodeRecursive(child, sceneNode);
     }
@@ -76,7 +73,6 @@ std::shared_ptr<ISceneNode> SceneGraph::FindNode(ComponentId componentId) const 
 void SceneGraph::UpdateTransforms() {
     if (!root_) return;
 
-    // Start from root with identity transform
     Transform identity;
     if (auto sceneRoot = std::dynamic_pointer_cast<SceneNode>(root_)) {
         sceneRoot->UpdateWorldTransform(identity);
@@ -100,15 +96,12 @@ void SceneGraph::ComputeDirtyRegionsRecursive(const std::shared_ptr<ISceneNode>&
     auto sceneNode = std::dynamic_pointer_cast<SceneNode>(node);
     if (!sceneNode) return;
 
-    // Update world transform
     sceneNode->UpdateWorldTransform(parentTransform);
 
-    // Check if dirty
     if (sceneNode->GetDirtyRegion().isDirty) {
         dirtyNodes_.push_back(node);
     }
 
-    // Recurse on children
     for (const auto& child : node->Children()) {
         ComputeDirtyRegionsRecursive(child, sceneNode->WorldTransform());
     }
@@ -123,7 +116,6 @@ void SceneGraph::ForEachInRenderOrderRecursive(const std::shared_ptr<ISceneNode>
                                                std::function<void(const std::shared_ptr<ISceneNode>&)> visitor) {
     if (!node) return;
 
-    // Sort children by z-order before visiting
     auto children = node->Children();
     std::sort(children.begin(), children.end(),
               [](const auto& a, const auto& b) {
@@ -132,7 +124,6 @@ void SceneGraph::ForEachInRenderOrderRecursive(const std::shared_ptr<ISceneNode>
 
     visitor(node);
 
-    // Visit children in sorted order
     for (const auto& child : children) {
         ForEachInRenderOrderRecursive(child, visitor);
     }
@@ -144,6 +135,26 @@ void SceneGraph::ForEachDirtyNode(std::function<void(const std::shared_ptr<IScen
     }
 }
 
-} // namespace scene
-} // namespace ui
-} // namespace avalang
+std::vector<DirtyRegion> SceneGraph::CollectDirtyRects() {
+    ComputeDirtyRegions();
+
+    std::vector<DirtyRegion> rects;
+    rects.reserve(dirtyNodes_.size());
+
+    for (const auto& node : dirtyNodes_) {
+        auto sceneNode = std::dynamic_pointer_cast<SceneNode>(node);
+        if (!sceneNode) continue;
+
+        DirtyRegion region = sceneNode->GetDirtyRegion();
+        Transform world = sceneNode->WorldTransform();
+        region.x += world.position.x;
+        region.y += world.position.y;
+        rects.push_back(region);
+    }
+
+    return rects;
+}
+
+}
+}
+}

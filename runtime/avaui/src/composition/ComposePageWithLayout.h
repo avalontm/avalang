@@ -1,5 +1,4 @@
-#ifndef AVA_UI_COMPOSITION_COMPOSE_PAGE_WITH_LAYOUT_H
-#define AVA_UI_COMPOSITION_COMPOSE_PAGE_WITH_LAYOUT_H
+#pragma once
 
 #include <string>
 
@@ -19,7 +18,5 @@ AVA_UI_API ComposedSlotInfo LocateLayoutSlot(ComponentTree* layoutTree,
                                              int viewportWidth,
                                              int viewportHeight);
 
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_COMPOSITION_COMPOSE_PAGE_WITH_LAYOUT_H
+}
+}

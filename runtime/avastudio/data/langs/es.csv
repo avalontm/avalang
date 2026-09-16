@@ -109,6 +109,13 @@ properties.column_property,Propiedad
 properties.section_events,Eventos
 properties.column_event,Evento
 properties.column_handler,Manejador
+panel.state.title,Estado
+state.empty_selection,Abre una pestaña de diseño .avaui para ver y editar su estado inicial.
+state.section_variables,Variables de estado
+state.column_name,Nombre
+state.column_initial,Valor inicial
+state.column_evaluated,Evaluado
+state.new_variable_hint,nueva variable
 panel.logs.title,Registro
 logs.section_label,Registro general
 logs.copy_all_button,Copiar todo
@@ -211,7 +218,11 @@ project_properties.tab_references,Referencias
 project_properties.name_label,Nombre del proyecto
 project_properties.entry_file_label,"Script de entrada (.ava)"
 project_properties.target_label,Plataforma
-project_properties.output_type_label,Tipo de salida
+project_properties.kind_label,Tipo de proyecto
+project_properties.kind_console,Console
+project_properties.kind_desktop_ui,Desktop
+project_properties.kind_library,Library
+project_properties.kind_desktop_ui_barekernel_tooltip,"Desktop no está disponible para el target BareKernel."
 project_properties.output_exe_desktop,Ejecutable%s
 project_properties.output_exe_plain,Ejecutable
 project_properties.output_library_desktop,Biblioteca%s
@@ -247,11 +258,6 @@ quick_open.hint,Ir a un archivo...
 quick_open.no_results,No hay archivos que coincidan.
 quick_open.no_project_files,No se encontraron archivos .ava/.avaui en este proyecto.
 menu.file.new_project,Nuevo Proyecto...
-new_project.section_output_type,Tipo de salida
-new_project.output_type_exe,Ejecutable
-new_project.output_type_exe_hint,Un programa independiente que se ejecuta directamente.
-new_project.output_type_library,Biblioteca
-new_project.output_type_library_hint,"Un módulo reutilizable (.dll/.so/.dylib) para que otros programas lo carguen e invoquen, en vez de un ejecutable independiente."
 new_project.section_location,Ubicación
 new_project.name_label,Nombre del proyecto
 new_project.name_hint,MiProyecto
@@ -259,15 +265,13 @@ new_project.destination_label,Carpeta destino
 new_project.section_template,Plantilla de proyecto
 new_project.template_console,Consola
 new_project.template_console_desc,"Un solo main.ava -- ideal para scripts, herramientas y programas de consola."
-new_project.template_ui,UI
-new_project.template_ui_desc,"Agrega app.ava, styles.ava y una pantalla inicial en views/, lista para diseñar interfaces."
 new_project.search_hint,Buscar plantillas
 new_project.filter_all,Todas las categorías
 new_project.no_results,Ninguna plantilla coincide con tu búsqueda.
 new_project.create_button,Crear Proyecto
 new_project.error_name_required,Ingresá un nombre de proyecto.
 new_project.error_destination_required,Elegí una carpeta destino.
-new_project.error_destination_missing,La carpeta destino no existe.
+new_project.error_destination_missing,No se pudo encontrar ni crear la carpeta destino.
 new_project.error_already_exists,"Ya existe una carpeta con ese nombre ahí."
 new_project.error_create_failed,No se pudo crear la carpeta del proyecto.
 editor.context.implement_interface,Implementar interfaz '%s'
@@ -280,3 +284,19 @@ editor.context.remove_unreachable,Eliminar código inalcanzable
 editor.quickfix.tooltip,Quick Fix... (%s)
 editor.hint.missing_interface_members,%s no implementa %s:
 explorer.new_item_name_label,Nombre:
+build.section_run_target,Compilar y ejecutar
+build.run_target_label,Target de ejecución
+build.run_target_console,Consola
+build.run_target_desktop_ui,Desktop (UI)
+build.run_target_library,Biblioteca
+build.run_target_desktop_ui_unsupported_tooltip,"avalang_ui_win aún no existe para este host."
+build.build_and_run_button,Compilar y ejecutar
+build.build_only_button,Compilar
+build.run_button,Ejecutar
+build.first_run_build_notice,"El primer build puede tardar varios minutos (compila avalang + avalang_ui + avalang_ui_win + avanative)."
+build.error_ui_entry_missing,"no se encontró un archivo de pantalla .avaui en el proyecto (por ejemplo, views/Home.avaui)."
+build.error_desktop_ui_windows_only,"Desktop (UI) por ahora solo está soportado en Windows."
+new_project.template_desktop,Desktop
+new_project.template_desktop_desc,"Agrega app.ava, styles.ava y una pantalla inicial en views/, lista para correr como ventana nativa de escritorio."
+new_project.template_library,Biblioteca
+new_project.template_library_desc,"Un solo main.ava sin archivos de UI, guardado como módulo reutilizable (.dll/.so/.dylib) en vez de un ejecutable independiente."

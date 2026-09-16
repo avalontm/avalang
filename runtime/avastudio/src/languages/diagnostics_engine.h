@@ -14,6 +14,7 @@ enum class Severity { Error, Warning, Info, Hint };
 enum class Kind {
     UnresolvedSymbol,
     MissingImport,
+    UnresolvedImportPath,
     UnusedVariable,
     UnusedImport,
     UnusedPrivateMember,
@@ -38,7 +39,8 @@ struct InlayHint {
 };
 
 std::vector<Diagnostic> ComputeDiagnostics(const std::string& text, const std::string& current_file_dir,
-                                            const std::string& stdlib_dir, const ClassIndex& class_index,
+                                            const std::string& stdlib_dir, const std::string& project_root,
+                                            const ClassIndex& class_index,
                                             const FunctionIndex& function_index,
                                             const ClassIndex* workspace_classes,
                                             const FunctionIndex* workspace_functions);

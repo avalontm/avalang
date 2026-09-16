@@ -205,6 +205,40 @@ ScanResult ScanText(const std::string& text) {
             std::string word = ReadIdent(text, i);
             const int col_end = col_start + static_cast<int>(word.size());
 
+            if (word == "extern") {
+                size_t after_extern = i;
+                SkipInlineWhitespace(text, i);
+                if (i < text.size() && (text[i] == '"' || text[i] == '\'')) {
+                    char quote = text[i];
+                    ++i;
+                    while (i < text.size() && text[i] != quote) {
+                        if (text[i] == '\\' && i + 1 < text.size()) i += 2; else ++i;
+                    }
+                    if (i < text.size()) ++i;
+                }
+                size_t after_module_name = i;
+                SkipInlineWhitespace(text, i);
+                if (i < text.size() && IsIdentStart(text[i])) {
+                    std::string maybe_as = ReadIdent(text, i);
+                    if (maybe_as == "as") {
+                        SkipInlineWhitespace(text, i);
+                        if (i < text.size() && IsIdentStart(text[i])) {
+                            ReadIdent(text, i);
+                        } else {
+                            i = after_module_name;
+                        }
+                    } else {
+                        i = after_module_name;
+                    }
+                } else {
+                    i = after_module_name;
+                }
+                if (i == after_module_name) i = after_extern;
+                prev_was_dot = false;
+                prev_word = "extern";
+                continue;
+            }
+
             if (word == "import") {
                 ImportStatement stmt;
                 stmt.line = line;
@@ -317,6 +351,15 @@ void ResolveUnresolvedAndMissingImports(const std::vector<SymbolUse>& uses, bool
             is_class_target ? class_index.Find(use.name) != nullptr : function_index.Find(use.name) != nullptr;
         if (known_locally) continue;
 
+        // Clases nativas del runtime (Application, etc.) -- nunca
+        // aparecen como `class X` en ningun .ava, asi que class_index (que
+        // solo escanea texto de usuario) jamas las conoce. Sin este check
+        // se reportaban como "No se encontro la clase 'Application'" pese
+        // a existir siempre. Ver mismo problema/lista en
+        // AvaLangTokenizer/RebuildAutocompleteTrie (avalang_language.cpp,
+        // editor_panel.cpp) -- comentario en languages::NativeClassNames().
+        if (is_class_target && languages::NativeClassNames().count(use.name)) continue;
+
         const std::string dedup_key = use.name + (is_class_target ? "#class" : "#func");
         if (!already_reported.insert(dedup_key).second) continue;
 
@@ -367,8 +410,107 @@ void ResolveUnresolvedAndMissingImports(const std::vector<SymbolUse>& uses, bool
     }
 }
 
-void DetectUnusedImports(const ScanResult& scan, std::vector<Diagnostic>& out) {
+// Módulos nativos registrados en C++ (ver RegisterSystemModule en
+// system_module.cpp) -- no tienen un archivo .ava real por cada segmento
+// dotted (System.Console, System.Thread, etc. son un solo RegisterNativeModule
+// cada uno, sin archivo propio), así que no pasan por la resolución de
+// archivo como un import de usuario. Se los excluye del chequeo de módulo
+// no encontrado.
+const std::unordered_set<std::string> kNativeModuleRoots = {"System"};
+
+bool ImportPathResolves(const std::vector<std::string>& segments, const std::string& current_file_dir,
+                         const std::string& stdlib_dir, const std::string& project_root) {
+    namespace fs = std::filesystem;
+    if (segments.empty()) return true;
+    if (kNativeModuleRoots.count(segments.front())) return true;
+
+    std::string joined_path;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        if (i) joined_path += static_cast<char>(fs::path::preferred_separator);
+        joined_path += segments[i];
+    }
+
+    auto try_base = [&](const std::string& base) -> bool {
+        if (base.empty()) return false;
+        std::error_code ec;
+        fs::path root(base);
+        if (fs::exists(root / (joined_path + ".ava"), ec)) return true;
+        if (fs::exists(root / joined_path / "index.ava", ec)) return true;
+        return false;
+    };
+
+    if (try_base(current_file_dir)) return true;
+    if (try_base(stdlib_dir)) return true;
+    // Ver ResolveSiblingImportFiles (compiler.cpp): un archivo importado por
+    // ruta dotted (p.ej. "Models.Dog") puede a su vez importar algo relativo
+    // a la raiz del proyecto, no a su propia carpeta (p.ej. "Interfaces.IAnimal"
+    // ubicado junto a Models/, no adentro) -- sin este fallback, ese import
+    // valido se marcaria como "no encontrado" por error.
+    if (try_base(project_root)) return true;
+    return false;
+}
+
+void DetectUnresolvedImportPaths(const std::vector<ImportStatement>& imports, const std::string& current_file_dir,
+                                  const std::string& stdlib_dir, const std::string& project_root,
+                                  std::unordered_set<std::string>& unresolved_bound_names,
+                                  std::vector<Diagnostic>& out) {
+    for (const auto& stmt : imports) {
+        if (ImportPathResolves(stmt.segments, current_file_dir, stdlib_dir, project_root)) continue;
+
+        std::string joined;
+        for (size_t i = 0; i < stmt.segments.size(); ++i) {
+            if (i) joined += ".";
+            joined += stmt.segments[i];
+        }
+
+        unresolved_bound_names.insert(stmt.bound_name);
+
+        Diagnostic diag;
+        diag.severity = Severity::Error;
+        diag.kind = Kind::UnresolvedImportPath;
+        diag.line = stmt.line;
+        diag.column_start = stmt.column_start;
+        diag.column_end = stmt.column_end;
+        diag.symbol = stmt.bound_name;
+        diag.message = "No se encontró el módulo '" + joined + "' (ni en este proyecto ni en la librería estándar).";
+        out.push_back(std::move(diag));
+    }
+}
+
+bool ModuleExportIsUsed(const std::string& module_file, const std::vector<SymbolUse>& calls,
+                        const std::vector<SymbolUse>& new_exprs, const FunctionIndex& function_index,
+                        const ClassIndex& class_index, const FunctionIndex* workspace_functions,
+                        const ClassIndex* workspace_classes) {
+    if (module_file.empty()) return false;
+    namespace fs = std::filesystem;
+    std::error_code ec;
+
+    auto same_file = [&](const std::string& other) {
+        if (other.empty()) return false;
+        if (other == module_file) return true;
+        return fs::equivalent(fs::path(other), fs::path(module_file), ec);
+    };
+
+    for (const auto& use : calls) {
+        const FunctionSignature* sig = function_index.Find(use.name);
+        if (!sig && workspace_functions) sig = workspace_functions->Find(use.name);
+        if (sig && same_file(sig->source_file)) return true;
+    }
+    for (const auto& use : new_exprs) {
+        const ClassInfo* info = class_index.Find(use.name);
+        if (!info && workspace_classes) info = workspace_classes->Find(use.name);
+        if (info && same_file(info->source_file)) return true;
+    }
+    return false;
+}
+
+void DetectUnusedImports(const ScanResult& scan, const std::unordered_set<std::string>& unresolved_bound_names,
+                          const std::string& current_file_dir, const std::string& stdlib_dir,
+                          const FunctionIndex& function_index, const ClassIndex& class_index,
+                          const FunctionIndex* workspace_functions, const ClassIndex* workspace_classes,
+                          std::vector<Diagnostic>& out) {
     for (const auto& stmt : scan.imports) {
+        if (unresolved_bound_names.count(stmt.bound_name)) continue;
         if (!stmt.has_alias && stmt.segments.size() == 1) continue;
         auto occ_it = scan.occurrences.find(stmt.bound_name);
         const bool used = occ_it != scan.occurrences.end() &&
@@ -378,6 +520,14 @@ void DetectUnusedImports(const ScanResult& scan, std::vector<Diagnostic>& out) {
         auto member_it = scan.member_occurrences.find(stmt.bound_name);
         const bool used_as_member = member_it != scan.member_occurrences.end() && !member_it->second.empty();
         if (used || used_as_member) continue;
+
+        if (!stmt.has_alias) {
+            const std::string module_file = lexer::ResolveImportPath(stmt.segments, current_file_dir, stdlib_dir);
+            if (ModuleExportIsUsed(module_file, scan.calls, scan.new_exprs, function_index, class_index,
+                                   workspace_functions, workspace_classes)) {
+                continue;
+            }
+        }
 
         Diagnostic diag;
         diag.severity = Severity::Warning;
@@ -479,6 +629,7 @@ const std::unordered_set<std::string> kTerminatorWords = {"return", "break", "co
 void DetectUnreachableCode(const std::string& text, std::vector<Diagnostic>& out) {
     std::vector<std::string> lines = SplitLines(text);
     std::vector<bool> terminated_at_depth = {false};
+    std::vector<std::string> block_stack;
     int depth = 0;
 
     for (int line_no = 0; line_no < static_cast<int>(lines.size()); ++line_no) {
@@ -492,6 +643,7 @@ void DetectUnreachableCode(const std::string& text, std::vector<Diagnostic>& out
                 --depth;
                 terminated_at_depth.resize(static_cast<size_t>(depth) + 1);
             }
+            if (!block_stack.empty()) block_stack.pop_back();
             continue;
         }
 
@@ -514,10 +666,20 @@ void DetectUnreachableCode(const std::string& text, std::vector<Diagnostic>& out
 
         if (kTerminatorWords.count(leading)) {
             terminated_at_depth[static_cast<size_t>(depth)] = true;
+        } else if (leading == "extern") {
+            // extern itself never held open a diagnostic-relevant scope (it
+            // wasn't in IsBlockKeyword before this fix either); we still push
+            // it so nested bodyless `func` signatures below can see it as the
+            // enclosing block and know not to open a level of their own.
+            block_stack.push_back(leading);
         } else if (IsBlockKeyword(leading)) {
+            const bool headerless_func = leading == "func" && !block_stack.empty() &&
+                                          (block_stack.back() == "extern" || block_stack.back() == "interface");
+            if (headerless_func) continue;
             ++depth;
             if (static_cast<size_t>(depth) >= terminated_at_depth.size()) terminated_at_depth.push_back(false);
             else terminated_at_depth[static_cast<size_t>(depth)] = false;
+            block_stack.push_back(leading);
         }
     }
 }
@@ -525,7 +687,8 @@ void DetectUnreachableCode(const std::string& text, std::vector<Diagnostic>& out
 }
 
 std::vector<Diagnostic> ComputeDiagnostics(const std::string& text, const std::string& current_file_dir,
-                                            const std::string& stdlib_dir, const ClassIndex& class_index,
+                                            const std::string& stdlib_dir, const std::string& project_root,
+                                            const ClassIndex& class_index,
                                             const FunctionIndex& function_index,
                                             const ClassIndex* workspace_classes,
                                             const FunctionIndex* workspace_functions) {
@@ -543,7 +706,11 @@ std::vector<Diagnostic> ComputeDiagnostics(const std::string& text, const std::s
                                         function_index, workspace_classes, workspace_functions, scan.imports,
                                         local_variable_names, out);
 
-    DetectUnusedImports(scan, out);
+    std::unordered_set<std::string> unresolved_bound_names;
+    DetectUnresolvedImportPaths(scan.imports, current_file_dir, stdlib_dir, project_root, unresolved_bound_names, out);
+
+    DetectUnusedImports(scan, unresolved_bound_names, current_file_dir, stdlib_dir, function_index, class_index,
+                         workspace_functions, workspace_classes, out);
     DetectUnusedVariables(text, scan, out);
     DetectUnusedPrivateMembers(class_index, scan, out);
     DetectUnreachableCode(text, out);

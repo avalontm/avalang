@@ -1,6 +1,5 @@
 # ---------------------------------------------------------------------
-# avapack -- Fase 3 (contenido cifrado) + Fase 5 (integridad / modo
-# debug). Ver runtime/avapack/README.md.
+# avapack
 #
 # Dos piezas:
 #   avapack_gen         -- herramienta de host, standalone (no linkea
@@ -91,6 +90,29 @@ option(AVAPACK_BUILD_LIBRARY
     "Genera ${AVAPACK_OUT_NAME} como libreria dinamica (.dll/.so/.dylib) en vez de ejecutable -- exporta avapack_run() via lib_api.h"
     OFF)
 
+# Fase 21.x -- proyectos "Desktop" (New Project > Desktop, que generan
+# `Application.run(...)` en main.ava): el .exe empacado tiene que
+# correr con el mismo "native app host" que ya usa avanative.exe para
+# F5/Preview (registro de la clase Application + loop de ventana via
+# avalang_ui_win), no con el runtime de consola de siempre
+# (avapack::RunPackagedProgram, que solo hace ava_run directo sobre el
+# entry y no sabe nada de Application). `ava_cli build` fija esta
+# opcion automaticamente para ese caso (ver
+# runtime/avacli/src/build_command.cpp, NeedsNativeUiHost) -- no hace
+# falta pasarla a mano.
+option(AVAPACK_DESKTOP_UI
+    "Empaqueta una app Desktop UI: usa main_native.cpp + avahost_native (Application class + loop de ventana nativa, WIN32_EXECUTABLE) en vez de main.cpp (consola). Requiere avahost_native (ver runtime/avahost/CMakeLists.txt, AVA_BUILD_AVAHOST_NATIVE_LIB)."
+    OFF)
+if(AVAPACK_DESKTOP_UI AND NOT TARGET avahost_native)
+    message(FATAL_ERROR "avapack: AVAPACK_DESKTOP_UI=ON pero el target avahost_native no existe -- "
+                          "configura tambien -DAVA_BUILD_AVAHOST_NATIVE_LIB=ON (y asegurate de que "
+                          "AVA_BUILD_UI=ON y de que avalang_ui_win se compile desde fuente, no "
+                          "AVA_PACK_USE_PREBUILT_AVALANG=ON -- ver runtime/avahost/CMakeLists.txt).")
+endif()
+if(AVAPACK_DESKTOP_UI AND AVAPACK_BUILD_LIBRARY)
+    message(FATAL_ERROR "avapack: AVAPACK_DESKTOP_UI y AVAPACK_BUILD_LIBRARY son mutuamente excluyentes (una app Desktop UI no es una libreria)")
+endif()
+
 # --- Fase 9: avapack_stub -- binario generico, SIN proyecto embebido ---
 #
 # A diferencia de ${AVAPACK_OUT_NAME} (mas abajo), este target no depende de
@@ -128,6 +150,51 @@ elseif(APPLE)
     )
 endif()
 ava_apply_optimization_options(avapack_stub)
+
+# --- avapack_stub_ui: variante Desktop UI de avapack_stub (Fase 21.x) ---
+#
+# Mismo contrato de payload/footer que avapack_stub (src/stub_main_ui.cpp
+# reusa stub_main.cpp casi sin cambios), pero compilado WIN32_EXECUTABLE
+# (sin consola) y linkeando avahost_native en vez de solo avalang -- para
+# poder correr proyectos "Desktop" que llaman `Application.run(...)`
+# usando avapack::RunPackagedNativeApp (ver packaged_runtime.h/.cpp),
+# que delega en avahost::native::RunNativeApp -- la MISMA implementacion
+# que usa avanative.exe. `ava_cli build` elige este binario en vez de
+# avapack_stub.exe cuando el proyecto es --with-ui --target desktop sin
+# --output-kind library (ver runtime/avacli/src/build_command.cpp).
+#
+# Solo se define cuando avahost_native esta disponible (WIN32 +
+# avalang_ui_win + AVA_BUILD_AVAHOST_NATIVE_LIB/AVA_BUILD_AVAHOST, ver
+# runtime/avahost/CMakeLists.txt) -- si no, `ava_cli build --with-ui
+# --target desktop` simplemente no tiene el camino rapido de prebuilt
+# tools para Desktop UI y cae al empaquetado con CMake (AVAPACK_DESKTOP_UI
+# mas abajo).
+if(WIN32 AND TARGET avahost_native)
+    add_executable(avapack_stub_ui src/stub_main_ui.cpp src/packaged_runtime.cpp
+        "${AVAPACK_TINY_AES_SRC}" "${AVAPACK_CHECKSUM_SRC}")
+    target_link_libraries(avapack_stub_ui PRIVATE avalang avahost_native)
+    target_include_directories(avapack_stub_ui PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${AVAPACK_TINY_AES_DIR}
+        ${CMAKE_SOURCE_DIR}/runtime/avalang
+        ${CMAKE_SOURCE_DIR}/runtime/avalang/src
+        ${CMAKE_SOURCE_DIR}/runtime/avalang/api/src
+        ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
+    )
+    target_compile_definitions(avapack_stub_ui PRIVATE ${AVAPACK_TINY_AES_DEFS} AVAPACK_HAS_DESKTOP_UI_HOST)
+    # Sin consola: como avanative.exe (ver runtime/avahost/CMakeLists.txt),
+    # avapack_stub_ui.exe es la app final que el usuario corre por doble
+    # click, no una herramienta de linea de comandos. main() en vez de
+    # WinMain requiere forzar el entry point (mismo motivo que avanative).
+    set_target_properties(avapack_stub_ui PROPERTIES
+        WIN32_EXECUTABLE TRUE
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runtime/avalang"
+    )
+    if(MSVC)
+        target_link_options(avapack_stub_ui PRIVATE /ENTRY:mainCRTStartup)
+    endif()
+    ava_apply_optimization_options(avapack_stub_ui)
+endif()
 
 # --- proyecto de prueba a empacar (override con -DAVAPACK_PROJECT_DIR=...) ---
 set(AVAPACK_PROJECT_DIR "${CMAKE_SOURCE_DIR}/samples/web/testproj" CACHE PATH
@@ -215,6 +282,9 @@ add_custom_target(avapack_generate DEPENDS "${AVAPACK_GENERATED_CPP}")
 if(AVAPACK_ZERO_DISK AND AVAPACK_BUILD_LIBRARY)
     message(FATAL_ERROR "avapack: AVAPACK_ZERO_DISK y AVAPACK_BUILD_LIBRARY son mutuamente excluyentes por ahora (ver Fase L6 de plan_output_library.md)")
 endif()
+if(AVAPACK_ZERO_DISK AND AVAPACK_DESKTOP_UI)
+    message(FATAL_ERROR "avapack: AVAPACK_ZERO_DISK y AVAPACK_DESKTOP_UI son mutuamente excluyentes por ahora -- RunNativeApp (avahost_native) siempre lee del temp dir de Fase 4, no del filesystem virtual de Fase 7")
+endif()
 
 if(AVAPACK_ZERO_DISK)
     set(AVAPACK_MAIN_SRC src/main_zerodisk.cpp)
@@ -224,6 +294,10 @@ elseif(AVAPACK_BUILD_LIBRARY)
     set(AVAPACK_MAIN_SRC src/lib_main.cpp)
     set(AVAPACK_RUNTIME_EXTRA_SRC src/packaged_runtime.cpp)
     message(STATUS "avapack: AVAPACK_BUILD_LIBRARY=ON -- usando lib_main.cpp (exporta avapack_run via lib_api.h)")
+elseif(AVAPACK_DESKTOP_UI)
+    set(AVAPACK_MAIN_SRC src/main_native.cpp)
+    set(AVAPACK_RUNTIME_EXTRA_SRC src/packaged_runtime.cpp)
+    message(STATUS "avapack: AVAPACK_DESKTOP_UI=ON -- usando main_native.cpp + avahost_native (Application class + loop de ventana nativa)")
 else()
     set(AVAPACK_MAIN_SRC src/main.cpp)
     set(AVAPACK_RUNTIME_EXTRA_SRC src/packaged_runtime.cpp)
@@ -248,6 +322,9 @@ endif()
 add_dependencies(${AVAPACK_OUT_NAME} avapack_generate)
 
 target_link_libraries(${AVAPACK_OUT_NAME} PRIVATE avalang)
+if(AVAPACK_DESKTOP_UI)
+    target_link_libraries(${AVAPACK_OUT_NAME} PRIVATE avahost_native)
+endif()
 
 target_include_directories(${AVAPACK_OUT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -258,6 +335,18 @@ target_include_directories(${AVAPACK_OUT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
 )
 target_compile_definitions(${AVAPACK_OUT_NAME} PRIVATE ${AVAPACK_TINY_AES_DEFS})
+if(AVAPACK_DESKTOP_UI)
+    target_compile_definitions(${AVAPACK_OUT_NAME} PRIVATE AVAPACK_HAS_DESKTOP_UI_HOST)
+    # Igual que avanative/avapack_stub_ui: la app Desktop final no es una
+    # herramienta de consola -- sin esto Windows abre una consola detras
+    # de la ventana real ("flash" al lanzar el .exe), y con subsystem
+    # WINDOWS + main() (no WinMain) el linker de MSVC necesita el entry
+    # point forzado o falla con LNK2019.
+    set_target_properties(${AVAPACK_OUT_NAME} PROPERTIES WIN32_EXECUTABLE TRUE)
+    if(MSVC)
+        target_link_options(${AVAPACK_OUT_NAME} PRIVATE /ENTRY:mainCRTStartup)
+    endif()
+endif()
 
 # Igual que ava_cli: en Windows no hay RPATH, asi que el .exe empacado
 # necesita avalang.dll en su misma carpeta para poder arrancar.
@@ -343,6 +432,18 @@ if(AVA_PACK_USE_PREBUILT_AVALANG)
     if(AVA_BUILD_UI)
         list(APPEND _ava_prebuilt_runtime_files "$<TARGET_FILE:avalang_ui>")
     endif()
+    # Bug real (ver conversacion): esta lista nunca incluia
+    # avalang_ui_win.dll -- el backend de plataforma que
+    # IPlatform::Current() necesita para poder abrir una ventana (ver
+    # runtime/avaui/CMakeLists.txt sobre por que avalang_ui ya no lo
+    # trae adentro). En la practica AVAPACK_DESKTOP_UI nunca reusa
+    # AVA_PACK_USE_PREBUILT_AVALANG (ver runtime/avacli/src/
+    # build_command.cpp, NeedsNativeUiHost -- compila avalang_ui_win
+    # desde fuente), pero se agrega aca tambien por si en el futuro se
+    # habilita un camino que combine ambas cosas.
+    if(TARGET avalang_ui_win)
+        list(APPEND _ava_prebuilt_runtime_files "$<TARGET_FILE:avalang_ui_win>")
+    endif()
     add_custom_command(TARGET avapack_gen POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${_ava_prebuilt_runtime_files}
@@ -361,4 +462,12 @@ if(AVA_PACK_USE_PREBUILT_AVALANG)
                 $<TARGET_FILE_DIR:avapack_stub>
         COMMENT "avapack: copiando avalang.dll (prebuilt, +avalang_ui.dll si AVA_BUILD_UI=ON) junto a avapack_stub.exe"
     )
+    if(TARGET avapack_stub_ui)
+        add_custom_command(TARGET avapack_stub_ui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${_ava_prebuilt_runtime_files}
+                    $<TARGET_FILE_DIR:avapack_stub_ui>
+            COMMENT "avapack: copiando avalang.dll/avalang_ui.dll/avalang_ui_win.dll (prebuilt) junto a avapack_stub_ui.exe"
+        )
+    endif()
 endif()

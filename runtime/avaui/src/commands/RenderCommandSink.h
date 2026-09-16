@@ -1,5 +1,4 @@
-#ifndef AVA_UI_RENDER_COMMAND_SINK_H
-#define AVA_UI_RENDER_COMMAND_SINK_H
+#pragma once
 
 #include "commands/IRenderCommandSink.h"
 #include "Export.h"
@@ -91,6 +90,16 @@ public:
         const std::string& className = std::string()
     ) override;
 
+    void DrawPath(
+        float x, float y,
+        const std::vector<render::PathSegment>& segments,
+        const Color& fillColor,
+        const Color& borderColor, float borderWidth,
+        bool closed = false,
+        const std::string& clickHandler = std::string(),
+        const std::string& className = std::string()
+    ) override;
+
     const std::vector<RenderCommand>& GetCommands() const { return commands_; }
 
     const std::stack<ClipRect>& GetClipStack() const { return clipStack_; }
@@ -100,7 +109,5 @@ private:
     std::stack<ClipRect> clipStack_;
 };
 
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_RENDER_COMMAND_SINK_H
+}
+}

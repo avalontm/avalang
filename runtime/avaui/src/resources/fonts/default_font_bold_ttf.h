@@ -1,5 +1,3 @@
-// Canonical default BOLD font for AvaUI -- see default_font_regular_ttf.h.
-// Originally generated from JetBrainsMono-Bold.ttf by tools/embed_font.py.
 #pragma once
 
 namespace avalang::ui::fonts {
@@ -13714,4 +13712,4 @@ inline constexpr unsigned char kDefaultFontBoldTTF[] = {
 
 inline constexpr unsigned int kDefaultFontBoldTTFLen = sizeof(kDefaultFontBoldTTF);
 
-} // namespace avalang::ui::fonts
+}

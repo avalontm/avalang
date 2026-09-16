@@ -7,6 +7,10 @@
 #include "avalang.h"
 #include "avaui_c_api.h"
 
+#ifdef AVAHOST_HAS_UI_PIPELINE
+#include "view/IAvaView.h"
+#endif
+
 namespace avahost {
 
 struct RequestContext {
@@ -52,11 +56,17 @@ public:
     bool ValidateAvaUiFile(const std::string& text, std::string& outError) const;
 
     void BindState(const std::string& stateJson);
-    bool BindCodeBehind(const std::string& methodsText, std::string* outError = nullptr);
+    void BindStorage(const std::string& storageJson);
+    std::string ExportStorageJson();
+
+#ifdef AVAHOST_HAS_UI_PIPELINE
+    bool LoadView(const std::string& viewName, const std::string& codeBehind,
+                  avalang::ui::IComponent* root, std::string& outError);
+    avalang::ui::IAvaView* CurrentView() const { return avaView_.get(); }
+#endif
 
     bool InvokeHandler(const std::string& handlerName, std::string& outError);
 
-    bool InvokeHandlerIfDefined(const std::string& handlerName, std::string& outError);
     std::string EvalPropertyExpr(const std::string& rawValue);
 
     std::string EvalExprToLiteral(const std::string& expr, bool& ok);
@@ -69,11 +79,18 @@ public:
 
     std::string EndConsoleCapture();
 
+    void PumpAsyncOnce();
+    void DrainAsync();
+    bool HasPendingAsync() const;
+
     AvaVM* GetVM() const { return vm_; }
 
 private:
     AvaVM* vm_ = nullptr;
     std::string consoleCaptureBuffer_;
+#ifdef AVAHOST_HAS_UI_PIPELINE
+    std::unique_ptr<avalang::ui::IAvaView> avaView_;
+#endif
 
     static bool SplitNamespacedKey(const std::string& key, std::string& outNamespace, std::string& outField);
 

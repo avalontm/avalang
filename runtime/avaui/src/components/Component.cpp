@@ -28,11 +28,59 @@ IComponent* Component::Parent() const {
 }
 
 void Component::SetParent(IComponent* parent) {
+    bool wasMounted = mounted_;
     parent_ = parent;
+    mounted_ = (parent != nullptr);
+
+    if (mounted_ && !wasMounted) {
+        NotifyMount();
+    } else if (!mounted_ && wasMounted) {
+        NotifyUnmount();
+    }
+}
+
+bool Component::IsMounted() const {
+    return mounted_;
+}
+
+void Component::AddLifecycleObserver(ILifecycleObserver* observer) {
+    if (!observer) return;
+    lifecycleObservers_.push_back(observer);
+}
+
+void Component::RemoveLifecycleObserver(ILifecycleObserver* observer) {
+    lifecycleObservers_.erase(
+        std::remove(lifecycleObservers_.begin(), lifecycleObservers_.end(), observer),
+        lifecycleObservers_.end()
+    );
+}
+
+void Component::NotifyMount() {
+    for (ILifecycleObserver* observer : lifecycleObservers_) {
+        observer->OnMount(this);
+    }
+}
+
+void Component::NotifyUnmount() {
+    for (ILifecycleObserver* observer : lifecycleObservers_) {
+        observer->OnUnmount(this);
+    }
+}
+
+unsigned long long Component::Version() const {
+    return version_;
+}
+
+void Component::TouchVersion() {
+    ++version_;
+    if (parent_) {
+        parent_->TouchVersion();
+    }
 }
 
 void Component::SetProperty(const std::string& name, PropertyValue value) {
     properties_[name] = std::move(value);
+    TouchVersion();
 }
 
 const PropertyValue* Component::GetProperty(const std::string& name) const {
@@ -46,13 +94,14 @@ bool Component::HasProperty(const std::string& name) const {
 
 void Component::RemoveProperty(const std::string& name) {
     properties_.erase(name);
+    TouchVersion();
 }
 
 std::vector<std::string> Component::PropertyNames() const {
     std::vector<std::string> names;
     names.reserve(properties_.size());
-    for (const auto& [key, _] : properties_) {
-        names.push_back(key);
+    for (const auto& entry : properties_) {
+        names.push_back(entry.first);
     }
     return names;
 }
@@ -72,7 +121,8 @@ void Component::AddChild(IComponent* child, const std::string& slot) {
         return;
     }
     MutableSlot(slot).push_back(child);
-    static_cast<Component*>(child)->SetParent(this);
+    child->SetParent(this);
+    TouchVersion();
 }
 
 void Component::RemoveChild(IComponent* child) {
@@ -84,7 +134,8 @@ void Component::RemoveChild(IComponent* child) {
         auto it = std::find(children.begin(), children.end(), child);
         if (it != children.end()) {
             children.erase(it);
-            static_cast<Component*>(child)->SetParent(nullptr);
+            child->SetParent(nullptr);
+            TouchVersion();
             return;
         }
     }
@@ -117,6 +168,6 @@ std::vector<IComponent*> Component::Children() const {
     return all;
 }
 
-} // namespace components
-} // namespace ui
-} // namespace avalang
+}
+}
+}

@@ -1,5 +1,4 @@
-#ifndef AVA_UI_COMPONENTS_COMPONENT_H
-#define AVA_UI_COMPONENTS_COMPONENT_H
+#pragma once
 
 #include <unordered_map>
 #include <utility>
@@ -12,9 +11,6 @@ namespace avalang {
 namespace ui {
 namespace components {
 
-// Concrete IComponent. Internal -- consumers only ever see IComponent*,
-// obtained from ComponentTree. One instance per node; owned exclusively
-// by the ComponentTree that created it (see ComponentTreeImpl).
 class Component final : public IComponent, private common::NonCopyable {
 public:
     Component(ComponentId id, std::string typeName);
@@ -24,10 +20,10 @@ public:
     const std::string& TypeName() const override;
 
     IComponent* Parent() const override;
+    void SetParent(IComponent* parent) override;
 
-    // Not part of IComponent -- only ComponentTreeImpl and Component
-    // itself (via AddChild/RemoveChild) reassign parentage.
-    void SetParent(IComponent* parent);
+    unsigned long long Version() const override;
+    void TouchVersion() override;
 
     void SetProperty(const std::string& name, PropertyValue value) override;
     const PropertyValue* GetProperty(const std::string& name) const override;
@@ -41,25 +37,28 @@ public:
     std::vector<std::string> SlotNames() const override;
     std::vector<IComponent*> Children() const override;
 
+    void AddLifecycleObserver(ILifecycleObserver* observer) override;
+    void RemoveLifecycleObserver(ILifecycleObserver* observer) override;
+    bool IsMounted() const override;
+
 private:
     ComponentId id_;
     std::string node_id_;
     std::string typeName_;
     IComponent* parent_ = nullptr;
+    bool mounted_ = false;
+    unsigned long long version_ = 1;
 
     std::unordered_map<std::string, PropertyValue> properties_;
 
-    // Ordered slot names (declaration order) + children per slot
-    // (insertion order), kept as a single vector of pairs so both
-    // orders are preserved without a second lookup structure. UI trees
-    // have few slots per component -- a linear scan is fine.
     std::vector<std::pair<std::string, std::vector<IComponent*>>> slots_;
+    std::vector<ILifecycleObserver*> lifecycleObservers_;
 
     std::vector<IComponent*>& MutableSlot(const std::string& slot);
+    void NotifyMount();
+    void NotifyUnmount();
 };
 
-} // namespace components
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_COMPONENTS_COMPONENT_H
+}
+}
+}

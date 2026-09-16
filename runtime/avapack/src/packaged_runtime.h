@@ -23,6 +23,12 @@ struct PackagedManifest {
 int RunPackagedProgram(int argc, char** argv, const PackagedManifest& manifest,
                         unsigned char key[32]);
 
+#if defined(_WIN32) && defined(AVAPACK_HAS_DESKTOP_UI_HOST)
+
+int RunPackagedNativeApp(int argc, char** argv, const PackagedManifest& manifest,
+                          unsigned char key[32]);
+#endif
+
 struct PackagedInstance;
 
 PackagedInstance* LoadPackagedProgram(int argc, char** argv, const PackagedManifest& manifest,

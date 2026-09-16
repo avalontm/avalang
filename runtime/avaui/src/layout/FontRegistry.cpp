@@ -18,7 +18,6 @@ struct FontRegistry::LoadedFont {
     int ascent = 0;
     int descent = 0;
     int lineGap = 0;
-    int unitsPerEm = 1000; // stb_truetype default fallback; overwritten on load
 };
 
 FontRegistry& FontRegistry::Instance() {
@@ -46,12 +45,6 @@ bool FontRegistry::LoadInto(LoadedFont* slot, const unsigned char* ttfBytes, std
         return false;
     }
     stbtt_GetFontVMetrics(&slot->info, &slot->ascent, &slot->descent, &slot->lineGap);
-    // unitsPerEm isn't exposed as a direct getter in this stb_truetype
-    // version; scale is computed per-call via
-    // stbtt_ScaleForPixelHeight, which already divides by the font's
-    // internal units-per-em for us, so we don't need to store it
-    // separately -- kept as a documented field in case a future stb
-    // update needs it.
     slot->valid = true;
     return true;
 }
@@ -59,10 +52,6 @@ bool FontRegistry::LoadInto(LoadedFont* slot, const unsigned char* ttfBytes, std
 bool FontRegistry::RegisterFont(const std::string& familyName, const unsigned char* ttfBytes,
                                  std::size_t byteCount, bool copyBytes) {
     if (copyBytes) {
-        // stb_truetype keeps pointers INTO the buffer it was given (it
-        // doesn't copy glyph data out at InitFont time), so the copy
-        // has to outlive the LoadedFont -- store it in owned_bytes_
-        // before/alongside the slot, not as a temporary.
         std::vector<unsigned char> owned(ttfBytes, ttfBytes + byteCount);
         auto slot = std::make_unique<LoadedFont>();
         const bool ok = LoadInto(slot.get(), owned.data(), owned.size());
@@ -96,7 +85,7 @@ bool FontRegistry::RegisterFontFile(const std::string& familyName, const std::st
     if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
         return false;
     }
-    return RegisterFont(familyName, buffer.data(), buffer.size(), /*copyBytes=*/true);
+    return RegisterFont(familyName, buffer.data(), buffer.size(), true);
 }
 
 bool FontRegistry::HasFont(const std::string& familyName) const {
@@ -110,10 +99,6 @@ const FontRegistry::LoadedFont* FontRegistry::Resolve(const std::string& fontNam
             return it->second.get();
         }
     }
-    // Unregistered/empty family name falls back to the built-in
-    // default rather than reverting to the old per-character guess --
-    // every text control gets real metrics even with zero font
-    // configuration.
     return (default_font_ && default_font_->valid) ? default_font_.get() : nullptr;
 }
 
@@ -127,37 +112,10 @@ double FontRegistry::MeasureTextWidth(const std::string& text, double fontSize,
         return 0.0;
     }
 
-    // Must scale by the font's em-square (unitsPerEm), NOT by
-    // stbtt_ScaleForPixelHeight's (ascent-descent) span. CSS/HTML
-    // `font-size: Npx` -- which is what every renderer this measurement
-    // has to agree with (HTMLRenderer's inline style, GdiRenderer's
-    // point size) actually means -- maps 1 em to N px, i.e.
-    // stbtt_ScaleForMappingEmToPixels. Using ScaleForPixelHeight instead
-    // silently divides every glyph's advance by (ascent-descent)/unitsPerEm
-    // instead of by 1: for a font like Poppins (ascent 1050, descent
-    // -350, unitsPerEm 1000) that's a scale of 48/1400 instead of
-    // 48/1000, i.e. every measured width comes out ~28.6% too narrow.
-    // That understates intrinsic width for EVERY piece of text (not
-    // just long/bound ones), so LayoutEngine boxes elements too small
-    // and the renderer's unconditional `white-space: nowrap; overflow:
-    // hidden; text-overflow: ellipsis` (see HTMLRenderer::OnDrawText)
-    // then clips text that would otherwise have fit fine -- this is
-    // why even short static labels like "500"/"Linea"/"Columna" were
-    // getting cut off, not just long dynamic values.
     const float scale = stbtt_ScaleForMappingEmToPixels(const_cast<stbtt_fontinfo*>(&font->info),
                                                           static_cast<float>(fontSize));
     double width = 0.0;
     for (std::size_t i = 0; i < text.size();) {
-        // ASCII fast path; the embedded default (JetBrains Mono) and
-        // typical UI fonts are Latin-1-range for control labels, which
-        // is what GetGlyphRangesDefault() covers on the ImGui side too
-        // (see embedded_font.cpp). Multi-byte UTF-8 sequences are
-        // walked byte-by-byte here deliberately conservative: unknown
-        // continuation bytes fall back to the codepoint's own advance
-        // via stb, which treats them as their raw codepoint value --
-        // acceptable for the ASCII/Latin-1 labels AvaUI controls use
-        // today; full UTF-8 decoding is a follow-up if non-Latin text
-        // shows up in practice.
         const unsigned char c = static_cast<unsigned char>(text[i]);
         int advanceWidth = 0;
         int leftSideBearing = 0;
@@ -181,19 +139,11 @@ bool FontRegistry::GetFontBytes(const std::string& fontName, const unsigned char
     if (font == nullptr || outData == nullptr || outSize == nullptr) {
         return false;
     }
-    // stbtt_fontinfo::data already points at the exact TTF buffer this
-    // font was loaded from (see stb_truetype.h) -- no need to keep a
-    // second copy of the pointer/size around.
     const auto sizeIt = owned_bytes_.find(fontName);
     if (sizeIt != owned_bytes_.end()) {
         *outData = font->info.data;
         *outSize = sizeIt->second.size();
     } else if (!fontName.empty() && fonts_.find(fontName) != fonts_.end()) {
-        // Registered without copyBytes=true: caller-owned buffer, size
-        // isn't tracked here (RegisterFont's non-copy path is meant
-        // for callers who already know their own buffer's lifetime and
-        // size) -- fall back to the default font's known size instead
-        // of returning a wrong size.
         *outData = font->info.data;
         const fonts::FontBytes defaultBytes = fonts::DefaultRegular();
         *outSize = defaultBytes.size;
@@ -222,18 +172,11 @@ double FontRegistry::LineHeight(double fontSize, const std::string& fontName) co
     if (font == nullptr) {
         return 0.0;
     }
-    // Same em-square scale as MeasureTextWidth above, for the same
-    // reason: WrapTextLines/LayoutEngineImpl reserve vertical space
-    // using this value alongside horizontal widths from
-    // MeasureTextWidth, and HTMLRenderer positions each wrapped line's
-    // y-offset by it too -- all three have to agree with the browser's
-    // own (em-based) `font-size: Npx` line-height, not a
-    // ScaleForPixelHeight-flavored one.
     const float scale = stbtt_ScaleForMappingEmToPixels(const_cast<stbtt_fontinfo*>(&font->info),
                                                           static_cast<float>(fontSize));
     return (font->ascent - font->descent + font->lineGap) * scale;
 }
 
-} // namespace layout
-} // namespace ui
-} // namespace avalang
+}
+}
+}

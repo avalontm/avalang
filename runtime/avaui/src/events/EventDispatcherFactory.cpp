@@ -9,6 +9,6 @@ IEventDispatcher* IEventDispatcher::Create() {
     return new EventDispatcher();
 }
 
-} // namespace events
-} // namespace ui
-} // namespace avalang
+}
+}
+}

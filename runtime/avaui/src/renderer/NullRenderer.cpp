@@ -1,4 +1,5 @@
 #include "renderer/NullRenderer.h"
+
 #include <string>
 
 namespace avalang {
@@ -88,5 +89,5 @@ void NullRenderer::OnDrawLink(
     (void)color; (void)href; (void)clickHandler; (void)className;
 }
 
-} // namespace ui
-} // namespace avalang
+}
+}

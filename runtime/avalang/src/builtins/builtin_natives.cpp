@@ -44,6 +44,37 @@ ava_value_t builtin_float(AvaVM*, const ava_value_t* args, size_t count, void*) 
     return ToC(Value::Number(AsNumber(FromC(args[0]))));
 }
 
+ava_value_t builtin_hex(AvaVM*, const ava_value_t* args, size_t count, void*) {
+    if (count < 1) return ToC(Value::Number(0));
+    Value v = FromC(args[0]);
+    if (v.type == ValueType::Number) {
+        // Ya es numero: no hay texto que reinterpretar en base 16, se
+        // devuelve truncado a entero (mismo criterio que builtin_int).
+        return ToC(Value::Number(avastd::trunc(v.n)));
+    }
+    if (v.type != ValueType::String) return ToC(Value::Number(0));
+
+    avastd::string text = static_cast<StringObj*>(v.obj)->data;
+    size_t start = 0;
+    // Prefijo opcional 0x/0X, igual que el literal de la gramatica.
+    if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+        start = 2;
+    }
+    if (start >= text.size()) return ToC(Value::Number(0));
+
+    unsigned long long result = 0;
+    for (size_t i = start; i < text.size(); ++i) {
+        char c = text[i];
+        int digit;
+        if (c >= '0' && c <= '9') digit = c - '0';
+        else if (c >= 'a' && c <= 'f') digit = 10 + (c - 'a');
+        else if (c >= 'A' && c <= 'F') digit = 10 + (c - 'A');
+        else return ToC(Value::Number(0)); // caracter no-hex -> invalido
+        result = result * 16 + static_cast<unsigned long long>(digit);
+    }
+    return ToC(Value::Number(static_cast<double>(result)));
+}
+
 ava_value_t builtin_print(AvaVM* vm, const ava_value_t* args, size_t count, void*) {
 
     avastd::string line;

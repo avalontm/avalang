@@ -1,5 +1,4 @@
-#ifndef AVA_UI_IRENDER_COMMAND_SINK_H
-#define AVA_UI_IRENDER_COMMAND_SINK_H
+#pragma once
 
 #include "RenderCommand.h"
 #include <memory>
@@ -85,10 +84,18 @@ public:
         const std::string& className = std::string()
     ) = 0;
 
+    virtual void DrawPath(
+        float x, float y,
+        const std::vector<render::PathSegment>& segments,
+        const Color& fillColor,
+        const Color& borderColor, float borderWidth,
+        bool closed = false,
+        const std::string& clickHandler = std::string(),
+        const std::string& className = std::string()
+    ) = 0;
+
     static std::unique_ptr<IRenderCommandSink> Create();
 };
 
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_IRENDER_COMMAND_SINK_H
+}
+}

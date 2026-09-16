@@ -9,6 +9,7 @@ build_pack/
 build_barekernel/
 build_barekernel_pack/
 build_pack_barekernel/
+build_avastudio_run/
 bin/
 dist/
 out/

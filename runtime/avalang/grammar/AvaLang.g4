@@ -411,7 +411,8 @@ NAME
     ;
 
 NUMBER
-    : DIGIT+ ('.' DIGIT+)? EXPONENT?
+    : '0' [xX] HEXDIGIT+
+    | DIGIT+ ('.' DIGIT+)? EXPONENT?
     ;
 
 fragment EXPONENT
@@ -420,6 +421,10 @@ fragment EXPONENT
 
 fragment DIGIT
     : [0-9]
+    ;
+
+fragment HEXDIGIT
+    : [0-9a-fA-F]
     ;
 
 STRING

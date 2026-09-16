@@ -9,6 +9,6 @@ ISceneGraph* ISceneGraph::Create() {
     return new SceneGraph();
 }
 
-} // namespace scene
-} // namespace ui
-} // namespace avalang
+}
+}
+}

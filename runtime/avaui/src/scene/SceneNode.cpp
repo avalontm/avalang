@@ -15,17 +15,15 @@ SceneNode::~SceneNode() = default;
 
 void SceneNode::AddChild(std::shared_ptr<ISceneNode> child) {
     if (!child) return;
-    
-    // Check for duplicates
+
     for (const auto& existing : children_) {
         if (existing == child) return;
     }
-    
-    // Set parent reference
+
     if (auto childNode = std::dynamic_pointer_cast<SceneNode>(child)) {
         childNode->SetParent(shared_from_this());
     }
-    
+
     children_.push_back(child);
 }
 
@@ -39,18 +37,26 @@ void SceneNode::RemoveChild(const std::shared_ptr<ISceneNode>& child) {
 
 void SceneNode::SetLocalTransform(const Transform& t) {
     localTransform_ = t;
-    // Mark dirty so UpdateTransforms will recompute
     MarkDirty();
 }
 
+void SceneNode::MarkDirty() {
+    dirtyRegion_.isDirty = true;
+    if (!renderNode_) {
+        return;
+    }
+    LayoutRect rect = renderNode_->Rect();
+    dirtyRegion_.x = static_cast<float>(rect.x);
+    dirtyRegion_.y = static_cast<float>(rect.y);
+    dirtyRegion_.width = static_cast<float>(rect.width);
+    dirtyRegion_.height = static_cast<float>(rect.height);
+}
+
 void SceneNode::UpdateWorldTransform(const Transform& parentWorld) {
-    // Combine parent world transform with local transform
-    // For now: simple composition (no matrix multiplication for simplicity)
     worldTransform_.position = parentWorld.position + localTransform_.position;
     worldTransform_.rotation = parentWorld.rotation + localTransform_.rotation;
     worldTransform_.scale = parentWorld.scale * localTransform_.scale;
-    
-    // Update children recursively
+
     for (auto& child : children_) {
         if (auto sceneChild = std::dynamic_pointer_cast<SceneNode>(child)) {
             sceneChild->UpdateWorldTransform(worldTransform_);
@@ -58,6 +64,6 @@ void SceneNode::UpdateWorldTransform(const Transform& parentWorld) {
     }
 }
 
-} // namespace scene
-} // namespace ui
-} // namespace avalang
+}
+}
+}

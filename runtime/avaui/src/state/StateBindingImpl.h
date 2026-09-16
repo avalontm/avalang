@@ -1,5 +1,4 @@
-#ifndef AVA_UI_STATE_STATEBINDINGIMPL_H
-#define AVA_UI_STATE_STATEBINDINGIMPL_H
+#pragma once
 
 #include <cstddef>
 #include <string>
@@ -11,10 +10,6 @@ namespace avalang {
 namespace ui {
 namespace state {
 
-// Concrete StateBinding. Internal -- consumers only ever see
-// StateBinding*, obtained from StateBinding::Create(). See
-// StateBinding.h for the push-only, RAII-unsubscribe contract this
-// implements.
 class StateBindingImpl final : public StateBinding, private common::NonCopyable {
 public:
     StateBindingImpl(IState* state, IComponent* component, std::string propertyName);
@@ -28,8 +23,6 @@ private:
     bool subscribed_ = false;
 };
 
-} // namespace state
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_STATE_STATEBINDINGIMPL_H
+}
+}
+}

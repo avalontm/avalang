@@ -193,11 +193,36 @@ static void RejectDuplicateFieldDefs(const std::vector<std::shared_ptr<StmtNode>
     }
 }
 
+// Classes a host launcher defines natively (compiled into their own module
+// and registered into the VM's globals BEFORE the entry script's module
+// runs) rather than via `class X ... end` inside the file being compiled --
+// e.g. avahost's Application (see native_app_host.cpp::ApplicationClassSource).
+// Each ava_compile() call runs its own independent Compiler with no shared
+// state (see c_api.cpp::ava_compile), so compiled_classes_ never sees them:
+// they're real at runtime (the host already defined them in the same VM
+// before the entry runs) but invisible to this compile unit's static class
+// table, which otherwise makes `x as Application` / `new Application()`
+// fail as "unknown"/"not a class" even though it works fine at runtime.
+// This is the single place a host opts a class name into being recognized
+// by the static checks below without requiring it to be declared in the
+// file being compiled -- consistent with the rest of this file's
+// "never false-positive on something the compiler can't fully see"
+// approach (e.g. CheckMethodCallArgs skipping validation for an unknown
+// receiver class instead of erroring).
+static bool IsHostNativeClassName(const std::string& name) {
+    return name == "Application";
+}
+
+static bool IsKnownClassName(const std::string& name,
+                              const std::unordered_map<std::string, ClassObj*>& compiled_classes) {
+    return compiled_classes.count(name) != 0 || IsHostNativeClassName(name);
+}
+
 static TypeRef ResolveTypeNameAgainst(const std::string& name,
                                        const std::unordered_map<std::string, ClassObj*>& compiled_classes) {
     Type prim = TypeFromName(name);
     if (prim != Type::Unknown) return TypeRef{prim, "", nullptr, nullptr};
-    if (compiled_classes.count(name)) return TypeRef{Type::Object, name, nullptr, nullptr};
+    if (IsKnownClassName(name, compiled_classes)) return TypeRef{Type::Object, name, nullptr, nullptr};
     return TypeRef{Type::Unknown, "", nullptr, nullptr};
 }
 
@@ -772,7 +797,7 @@ uint16_t Compiler::CompileExpr(const std::shared_ptr<ExprNode>& expr) {
         int err_line = c->line != 0 ? c->line : current_line_;
         int err_col = c->col != 0 ? c->col : current_col_;
         if (auto* callee_name = dynamic_cast<NameExpr*>(c->callee.get())) {
-            bool is_class = compiled_classes_.count(callee_name->name) != 0;
+            bool is_class = IsKnownClassName(callee_name->name, compiled_classes_);
             if (is_class && !c->is_new) {
                 throw AvaError(
                     "class '" + callee_name->name + "' requires 'new' to instantiate -- use 'new " +
@@ -1145,7 +1170,7 @@ Type Compiler::InferExprType(const std::shared_ptr<ExprNode>& expr) {
         if (auto* callee_name = dynamic_cast<NameExpr*>(c->callee.get())) {
             auto it = known_func_returns_.find(callee_name->name);
             if (it != known_func_returns_.end()) return it->second.type;
-            if (compiled_classes_.count(callee_name->name)) return Type::Object;
+            if (IsKnownClassName(callee_name->name, compiled_classes_)) return Type::Object;
         }
         return Type::Unknown;
     }
@@ -1175,8 +1200,7 @@ TypeRef Compiler::InferExprTypeRef(const std::shared_ptr<ExprNode>& expr) {
 
     if (auto* c = dynamic_cast<CallExpr*>(expr.get())) {
         if (auto* callee_name = dynamic_cast<NameExpr*>(c->callee.get())) {
-            auto cit = compiled_classes_.find(callee_name->name);
-            if (cit != compiled_classes_.end()) {
+            if (IsKnownClassName(callee_name->name, compiled_classes_)) {
                 return TypeRef{Type::Object, callee_name->name, nullptr, nullptr};
             }
             auto rit = known_func_returns_.find(callee_name->name);
@@ -1309,7 +1333,7 @@ void Compiler::CheckCallArgs(const std::string& func_name, const CallExpr* c) {
         return;
     }
 
-    if (!compiled_classes_.count(func_name)) {
+    if (!IsKnownClassName(func_name, compiled_classes_)) {
 
         if (IsBuiltinGlobal(func_name)) return;
 
@@ -1354,6 +1378,7 @@ void Compiler::CheckMethodCallArgs(const AttrExpr* callee, const CallExpr* c) {
 
     TypeRef obj_type = InferExprTypeRef(callee->obj);
     if (obj_type.type != Type::Object || obj_type.class_name.empty()) return;
+    if (IsHostNativeClassName(obj_type.class_name)) return;
     auto cit = class_method_params_.find(obj_type.class_name);
     if (cit != class_method_params_.end()) {
         auto mit = cit->second.find(callee->attr);
@@ -3946,6 +3971,7 @@ void Compiler::AutoImportSiblings(const std::vector<std::shared_ptr<StmtNode>>& 
     for (auto& file : ListLooseAvaFiles(current_file_dir_)) {
         std::string name = std::filesystem::path(file).filename().string();
         if (name == self_name) continue;
+        if (name == "app.ava") continue;
         std::string module_name = name.substr(0, name.size() - 4);
         if (already_imported.count(module_name)) continue;
         siblings.push_back(module_name);

@@ -18,7 +18,7 @@ namespace {
 const std::set<std::string>& EventPropNamesSet() {
     static const std::set<std::string> names = {
         "click", "doubleClick", "rightClick",
-        "mouseDown", "mouseUp", "mouseMove", "mouseEnter", "mouseLeave",
+        "pointerDown", "pointerUp", "pointerMove", "pointerEnter", "pointerLeave",
         "keyDown", "keyUp", "keyPress",
         "change", "input", "submit", "focus", "blur",
         "load", "unload", "resize", "scroll",
@@ -37,8 +37,9 @@ const std::vector<DefaultEvents>& Defaults() {
         {"Button", "click"},
         {"Link", "click"},
         {"TextBox", "change"},
-        {"Checkbox", "change"},
+        {"CheckBox", "change"},
         {"RadioButton", "change"},
+        {"ComboBox", "change"},
         {"Image", "click"},
         {"Text", "click"},
         {"Divider", ""},
@@ -133,7 +134,7 @@ void AutoBindRecursive(IComponent* node, const std::set<std::string>& funcs) {
     }
 }
 
-} // namespace
+}
 
 const std::unordered_set<std::string>& EventPropNames() {
     static const std::unordered_set<std::string> set(
@@ -150,5 +151,5 @@ void AutoBindEvents(IComponent* root, const std::string& codeText) {
     AutoBindRecursive(root, funcs);
 }
 
-} // namespace ui
-} // namespace avalang
+}
+}

@@ -5,14 +5,16 @@
 #include <unordered_map>
 #include <mutex>
 
-namespace avalang::ui::controls {
+namespace avalang {
+namespace ui {
+namespace controls {
 
 namespace {
 
 std::unordered_map<ComponentId, ComboBoxChangeCallback> g_comboBoxCallbacks;
 std::mutex g_callbackMutex;
 
-}  // anonymous namespace
+}
 
 IComponent* CreateComboBox(ComponentTree* tree) {
     if (!tree) {
@@ -110,7 +112,7 @@ struct ComboBoxTypeRegistration {
     ComboBoxTypeRegistration() {
         using namespace avalang::ui::registry;
         RegisterComponentType({
-            "ComboBox", "Combo Box", /*is_container=*/false,
+            "ComboBox", "Combo Box", false,
             {
                 {"selectedValue", PropertyValue("")},
                 {"isEnabled", PropertyValue(true)},
@@ -119,6 +121,8 @@ struct ComboBoxTypeRegistration {
     }
 };
 static ComboBoxTypeRegistration _combobox_type_registration;
-} // namespace
+}
 
-} // namespace avalang::ui::controls
+}
+}
+}

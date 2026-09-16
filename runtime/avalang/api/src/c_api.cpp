@@ -1,8 +1,10 @@
 #include "vm/vm.h"
+#include "vm/vm_internal.h"
 #include "vm/value.h"
 #include "frontend/frontend.h"
 #include "builtins/builtin.h"
 #include "builtins/builtin_natives.h"
+#include "builtins/builtin_shared.h"
 #include "builtins/system_module.h"
 #include "ui/builtins.h"
 #include "compiler/proto_io.h"
@@ -27,6 +29,19 @@ static void ReportError(VM* raw_vm, const avastd::exception& e, bool has_pos,
         else raw_vm->last_error_source.clear();
     }
     if (out_error) *out_error = DupString(e.what());
+}
+
+// Un `raise <expr>` no atrapado llega hasta aca como AvaRaiseException,
+// cuyo what() es siempre el string fijo "ava raise" (ver vm_internal.h) --
+// el valor real que se raiseo NUNCA viaja en la excepcion de C++, viaja
+// aparte en VM::pending_exception_ (lo deja ahi OpRaise via
+// RaiseException(), y nada lo limpia mientras la excepcion se propaga sin
+// que ningun try/catch de AvaLang la agarre -- ver ExecuteFrame en
+// vm.cpp). Por eso el mensaje real hay que armarlo leyendo eso, no e.what().
+static void ReportRaise(VM* raw_vm, char** out_error) {
+    avastd::string msg = "uncaught raise: " +
+        ToDisplayString(raw_vm->GetAndClearException());
+    ReportError(raw_vm, avastd::runtime_error(msg), false, 0, 0, "", out_error);
 }
 
 extern "C" {
@@ -68,6 +83,14 @@ AVA_API void ava_vm_register_native(AvaVM* vm, const char* name, AvaNativeFn fn,
 AVA_API void ava_vm_collect_garbage(AvaVM* vm, int64_t* out_collected) {
     GcSweepStats stats = reinterpret_cast<VM*>(vm)->CollectGarbage();
     if (out_collected) *out_collected = stats.collected;
+}
+
+AVA_API void ava_vm_pump_async(AvaVM* vm) {
+    reinterpret_cast<VM*>(vm)->PumpAsyncEvents();
+}
+
+AVA_API int ava_vm_has_pending_async(AvaVM* vm) {
+    return reinterpret_cast<VM*>(vm)->HasPendingAsyncWork() ? 1 : 0;
 }
 
 AVA_API void ava_vm_set_print_callback(AvaVM* vm, AvaPrintFn fn, void* user_data) {
@@ -221,6 +244,9 @@ AVA_API void ava_run(AvaVM* vm, AvaModule* module, ava_value_t* out_result, char
 
         Retain(result);
         if (out_result) *out_result = ToC(result);
+    } catch (const AvaRaiseException&) {
+        ReportRaise(raw_vm, out_error);
+        if (out_result) out_result->type = AVA_NIL;
     } catch (const AvaError& e) {
         ReportError(raw_vm, e, true, e.line, e.column, e.source, out_error);
         if (out_result) out_result->type = AVA_NIL;
@@ -234,7 +260,9 @@ AVA_API void ava_run(AvaVM* vm, AvaModule* module, ava_value_t* out_result, char
         Retain(result); 
         if (out_result) *out_result = ToC(result);
     } AVA_CATCH(avastd::exception, e) {
-        if (e.ava_type_tag() == 2) {
+        if (e.ava_type_tag() == 1) {
+            ReportRaise(raw_vm, out_error);
+        } else if (e.ava_type_tag() == 2) {
             const auto& ae = static_cast<const AvaError&>(e);
             ReportError(raw_vm, e, true, ae.line, ae.column, ae.source, out_error);
         } else {
@@ -255,6 +283,9 @@ AVA_API void ava_call(AvaVM* vm, ava_value_t callable, const ava_value_t* args, 
         Value result = raw_vm->Call(FromC(callable), vargs);
         Retain(result);  
         if (out_result) *out_result = ToC(result);
+    } catch (const AvaRaiseException&) {
+        ReportRaise(raw_vm, out_error);
+        if (out_result) out_result->type = AVA_NIL;
     } catch (const AvaError& e) {
         ReportError(raw_vm, e, true, e.line, e.column, e.source, out_error);
         if (out_result) out_result->type = AVA_NIL;
@@ -271,7 +302,9 @@ AVA_API void ava_call(AvaVM* vm, ava_value_t callable, const ava_value_t* args, 
         Retain(result); 
         if (out_result) *out_result = ToC(result);
     } AVA_CATCH(avastd::exception, e) {
-        if (e.ava_type_tag() == 2) {
+        if (e.ava_type_tag() == 1) {
+            ReportRaise(raw_vm, out_error);
+        } else if (e.ava_type_tag() == 2) {
             const auto& ae = static_cast<const AvaError&>(e);
             ReportError(raw_vm, e, true, ae.line, ae.column, ae.source, out_error);
         } else {
@@ -290,6 +323,160 @@ AVA_API void ava_set_global(AvaVM* vm, const char* name, ava_value_t value) {
     reinterpret_cast<VM*>(vm)->SetGlobal(name, FromC(value));
 }
 
+AVA_API ava_value_t ava_new_instance(AvaVM* vm, ava_value_t class_value, const ava_value_t* args, size_t arg_count, char** out_error) {
+    auto* raw_vm = reinterpret_cast<VM*>(vm);
+#if AVA_HAVE_EXCEPTIONS
+    try {
+        avastd::vector<Value> vargs;
+        vargs.reserve(arg_count);
+        for (size_t i = 0; i < arg_count; ++i) vargs.push_back(FromC(args[i]));
+        Value result = raw_vm->NewInstance(FromC(class_value), vargs);
+        Retain(result);
+        return ToC(result);
+    } catch (const AvaRaiseException&) {
+        ReportRaise(raw_vm, out_error);
+        return ToC(Value::Nil());
+    } catch (const AvaError& e) {
+        ReportError(raw_vm, e, true, e.line, e.column, e.source, out_error);
+        return ToC(Value::Nil());
+    } catch (const avastd::exception& e) {
+        ReportError(raw_vm, e, false, 0, 0, "", out_error);
+        return ToC(Value::Nil());
+    }
+#else
+    ava_value_t result = ToC(Value::Nil());
+    AVA_TRY {
+        avastd::vector<Value> vargs;
+        vargs.reserve(arg_count);
+        for (size_t i = 0; i < arg_count; ++i) vargs.push_back(FromC(args[i]));
+        Value r = raw_vm->NewInstance(FromC(class_value), vargs);
+        Retain(r);
+        result = ToC(r);
+    } AVA_CATCH(avastd::exception, e) {
+        if (e.ava_type_tag() == 1) {
+            ReportRaise(raw_vm, out_error);
+        } else if (e.ava_type_tag() == 2) {
+            const auto& ae = static_cast<const AvaError&>(e);
+            ReportError(raw_vm, e, true, ae.line, ae.column, ae.source, out_error);
+        } else {
+            ReportError(raw_vm, e, false, 0, 0, "", out_error);
+        }
+        result = ToC(Value::Nil());
+    }
+    return result;
+#endif
+}
+
+AVA_API ava_value_t ava_get_attr(AvaVM* vm, ava_value_t instance, const char* name) {
+    auto* raw_vm = reinterpret_cast<VM*>(vm);
+#if AVA_HAVE_EXCEPTIONS
+    try {
+        Value result = raw_vm->GetAttr(FromC(instance), name ? name : "");
+        Retain(result);
+        return ToC(result);
+    } catch (const AvaRaiseException&) {
+        ReportRaise(raw_vm, nullptr);
+        return ToC(Value::Nil());
+    } catch (const AvaError& e) {
+        ReportError(raw_vm, e, true, e.line, e.column, e.source, nullptr);
+        return ToC(Value::Nil());
+    } catch (const avastd::exception& e) {
+        ReportError(raw_vm, e, false, 0, 0, "", nullptr);
+        return ToC(Value::Nil());
+    }
+#else
+    ava_value_t result = ToC(Value::Nil());
+    AVA_TRY {
+        Value r = raw_vm->GetAttr(FromC(instance), name ? name : "");
+        Retain(r);
+        result = ToC(r);
+    } AVA_CATCH(avastd::exception, e) {
+        if (e.ava_type_tag() == 1) {
+            ReportRaise(raw_vm, nullptr);
+        } else if (e.ava_type_tag() == 2) {
+            const auto& ae = static_cast<const AvaError&>(e);
+            ReportError(raw_vm, e, true, ae.line, ae.column, ae.source, nullptr);
+        } else {
+            ReportError(raw_vm, e, false, 0, 0, "", nullptr);
+        }
+        result = ToC(Value::Nil());
+    }
+    return result;
+#endif
+}
+
+AVA_API void ava_set_attr(AvaVM* vm, ava_value_t instance, const char* name, ava_value_t value) {
+    auto* raw_vm = reinterpret_cast<VM*>(vm);
+#if AVA_HAVE_EXCEPTIONS
+    try {
+        raw_vm->SetAttr(FromC(instance), name ? name : "", FromC(value));
+    } catch (const AvaRaiseException&) {
+        ReportRaise(raw_vm, nullptr);
+    } catch (const AvaError& e) {
+        ReportError(raw_vm, e, true, e.line, e.column, e.source, nullptr);
+    } catch (const avastd::exception& e) {
+        ReportError(raw_vm, e, false, 0, 0, "", nullptr);
+    }
+#else
+    AVA_TRY {
+        raw_vm->SetAttr(FromC(instance), name ? name : "", FromC(value));
+    } AVA_CATCH(avastd::exception, e) {
+        if (e.ava_type_tag() == 1) {
+            ReportRaise(raw_vm, nullptr);
+        } else if (e.ava_type_tag() == 2) {
+            const auto& ae = static_cast<const AvaError&>(e);
+            ReportError(raw_vm, e, true, ae.line, ae.column, ae.source, nullptr);
+        } else {
+            ReportError(raw_vm, e, false, 0, 0, "", nullptr);
+        }
+    }
+#endif
+}
+
+AVA_API ava_value_t ava_call_method(AvaVM* vm, ava_value_t instance, const char* name, const ava_value_t* args, size_t arg_count, char** out_error) {
+    auto* raw_vm = reinterpret_cast<VM*>(vm);
+#if AVA_HAVE_EXCEPTIONS
+    try {
+        avastd::vector<Value> vargs;
+        vargs.reserve(arg_count);
+        for (size_t i = 0; i < arg_count; ++i) vargs.push_back(FromC(args[i]));
+        Value result = raw_vm->CallMethod(FromC(instance), name ? name : "", vargs);
+        Retain(result);
+        return ToC(result);
+    } catch (const AvaRaiseException&) {
+        ReportRaise(raw_vm, out_error);
+        return ToC(Value::Nil());
+    } catch (const AvaError& e) {
+        ReportError(raw_vm, e, true, e.line, e.column, e.source, out_error);
+        return ToC(Value::Nil());
+    } catch (const avastd::exception& e) {
+        ReportError(raw_vm, e, false, 0, 0, "", out_error);
+        return ToC(Value::Nil());
+    }
+#else
+    ava_value_t result = ToC(Value::Nil());
+    AVA_TRY {
+        avastd::vector<Value> vargs;
+        vargs.reserve(arg_count);
+        for (size_t i = 0; i < arg_count; ++i) vargs.push_back(FromC(args[i]));
+        Value r = raw_vm->CallMethod(FromC(instance), name ? name : "", vargs);
+        Retain(r);
+        result = ToC(r);
+    } AVA_CATCH(avastd::exception, e) {
+        if (e.ava_type_tag() == 1) {
+            ReportRaise(raw_vm, out_error);
+        } else if (e.ava_type_tag() == 2) {
+            const auto& ae = static_cast<const AvaError&>(e);
+            ReportError(raw_vm, e, true, ae.line, ae.column, ae.source, out_error);
+        } else {
+            ReportError(raw_vm, e, false, 0, 0, "", out_error);
+        }
+        result = ToC(Value::Nil());
+    }
+    return result;
+#endif
+}
+
 AVA_API ava_value_t ava_import(AvaVM* vm, const char* module_path, const char* alias, char** out_error) {
     auto* raw_vm = reinterpret_cast<VM*>(vm);
 #if AVA_HAVE_EXCEPTIONS
@@ -297,6 +484,9 @@ AVA_API ava_value_t ava_import(AvaVM* vm, const char* module_path, const char* a
         Value result = raw_vm->DoImport(module_path, alias ? alias : "");
         Retain(result);  // ver comentario en ava_run sobre por que hace falta
         return ToC(result);
+    } catch (const AvaRaiseException&) {
+        ReportRaise(raw_vm, out_error);
+        return ToC(Value::Nil());
     } catch (const AvaError& e) {
         ReportError(raw_vm, e, true, e.line, e.column, e.source, out_error);
         return ToC(Value::Nil());
@@ -311,7 +501,9 @@ AVA_API ava_value_t ava_import(AvaVM* vm, const char* module_path, const char* a
         Retain(r);  // ver comentario en ava_run sobre por que hace falta
         result = ToC(r);
     } AVA_CATCH(avastd::exception, e) {
-        if (e.ava_type_tag() == 2) {
+        if (e.ava_type_tag() == 1) {
+            ReportRaise(raw_vm, out_error);
+        } else if (e.ava_type_tag() == 2) {
             const auto& ae = static_cast<const AvaError&>(e);
             ReportError(raw_vm, e, true, ae.line, ae.column, ae.source, out_error);
         } else {

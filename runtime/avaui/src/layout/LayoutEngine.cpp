@@ -9,5 +9,5 @@ std::unique_ptr<LayoutEngine> LayoutEngine::Create() {
     return std::make_unique<layout::LayoutEngineImpl>();
 }
 
-} // namespace ui
-} // namespace avalang
+}
+}

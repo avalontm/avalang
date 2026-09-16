@@ -17,4 +17,6 @@ void BindCodeBehind(AvaVM* vm, const DesignDocument& doc);
 
 bool InvokeHandler(AvaVM* vm, const std::string& handler_name, std::string* out_error = nullptr);
 
+void ReleasePreviewInstance(AvaVM* vm);
+
 }

@@ -55,6 +55,13 @@ std::string DetectEntryFile(const fs::path& project_dir) {
     return found.front();
 }
 
+bool DetectUsesUi(const fs::path& project_dir) {
+    for (const fs::path& file : ListSearchableFiles(project_dir)) {
+        if (file.extension() == ".avaui") return true;
+    }
+    return false;
+}
+
 std::vector<fs::path> ListSearchableFiles(const fs::path& project_dir) {
     std::vector<fs::path> out;
     std::error_code ec;

@@ -202,7 +202,7 @@ void ReleaseStoredEvent(IComponent* comp, const std::string& event) {
     if (compIt->second.empty()) EventFunctions().erase(compIt);
 }
 
-} // namespace
+}
 
 extern "C" {
 

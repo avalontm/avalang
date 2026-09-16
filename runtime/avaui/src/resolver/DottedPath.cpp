@@ -25,7 +25,7 @@ std::vector<std::string> SplitOnDots(const std::string& dotted) {
     return parts;
 }
 
-} // namespace
+}
 
 fs::path ResolveDottedAvauiPath(const std::string& projectRoot, const std::string& dotted) {
     if (dotted.empty()) return {};
@@ -45,5 +45,5 @@ std::string CallableTagFromDotted(const std::string& dotted) {
     return tag;
 }
 
-} // namespace ui
-} // namespace avalang
+}
+}

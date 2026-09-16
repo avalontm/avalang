@@ -364,7 +364,7 @@ void CheckNoHardcodedIdOnReusableComponent(const std::string& typeName,
     }
 }
 
-} // namespace
+}
 
 ComponentResolver::ComponentResolver(std::string projectRoot, std::string componentsDir)
     : projectRoot_(std::move(projectRoot)), componentsDir_(std::move(componentsDir)) {}
@@ -466,9 +466,6 @@ void ComponentResolver::ResolveChildrenOf(IComponent* parent,
     if (!parent || !tree || depth > kMaxDepth) return;
     if (parent->TypeName() == "For") {
         if (!expandLoops) {
-            // Runtime pipelines own For's per-render expansion (VM-driven).
-            // Leave the template untouched here so it isn't consumed
-            // against the file's static initial state.
             return;
         }
         std::vector<IComponent*> produced = ExpandForNode(parent, tree, mergedState, importMap);
@@ -479,8 +476,6 @@ void ComponentResolver::ResolveChildrenOf(IComponent* parent,
     }
     if (parent->TypeName() == "ListView") {
         if (!expandLoops) {
-            // Same reasoning as "For": the live runtime pipeline expands
-            // ListView itself using the current VM state per render.
             return;
         }
         std::vector<IComponent*> produced = ExpandListViewNode(parent, tree, mergedState, importMap);
@@ -592,10 +587,6 @@ std::vector<IComponent*> ComponentResolver::ExpandListViewNode(
         }
     }
 
-    // ListView doesn't need an explicit `for` child: its own children ARE
-    // the item template. Relabel to the properties ExpandForNode already
-    // knows how to consume and delegate, so both engines share one
-    // battle-tested expansion path instead of duplicating loop logic.
     listViewNode->SetProperty("loopVar", PropertyValue(loopVar));
     listViewNode->SetProperty("iterable", PropertyValue(sourceProp->AsString()));
     return ExpandForNode(listViewNode, tree, mergedState, importMap);
@@ -691,5 +682,5 @@ void ComponentResolver::ResolveImports(ComponentTree* tree,
     ResolveChildrenOf(root, tree, mergedState, importMap, 0, expandLoops);
 }
 
-} // namespace ui
-} // namespace avalang
+}
+}

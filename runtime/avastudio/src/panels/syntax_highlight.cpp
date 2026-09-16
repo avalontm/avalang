@@ -89,6 +89,17 @@ std::vector<Token> Tokenize(const std::string& text) {
 
         if (std::isdigit(static_cast<unsigned char>(c))) {
             const int s = i;
+            // Literal hex (0x.../0X...): mismo prefijo que reconoce ahora
+            // el lexer de ANTLR (AvaLang.g4) -- se consume entero como un
+            // solo token Number, sin pasar por la rama decimal/float de
+            // abajo (un hex nunca lleva '.').
+            if (c == '0' && i + 1 < n && (text[i + 1] == 'x' || text[i + 1] == 'X')) {
+                i += 2;
+                while (i < n && std::isxdigit(static_cast<unsigned char>(text[i]))) i++;
+                push(s, i, TokenKind::Number);
+                prev_keyword.clear();
+                continue;
+            }
             while (i < n && std::isdigit(static_cast<unsigned char>(text[i]))) i++;
             if (i < n && text[i] == '.' && i + 1 < n && std::isdigit(static_cast<unsigned char>(text[i + 1]))) {
                 i++;

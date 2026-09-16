@@ -83,9 +83,15 @@ void FunctionIndex::ScanText(const std::string& text, const std::string& source_
 
         if (IsIdentStart(c)) {
             std::string word = ReadIdent(text, i);
-            if (word == "class" || word == "interface") {
+            if (word == "class" || word == "interface" || word == "extern") {
+                // extern's `func Name(...)` lines are native signatures bound
+                // to the alias (`Alias.Name(...)`), not free functions -- they
+                // must not land in signatures_ as bare, globally-callable
+                // names. Same bodyless-signature convention as interface, so
+                // reuse is_interface_body to skip past them without needing
+                // an `end` per signature.
                 size_t body_end = 0;
-                FindMatchingEnd(text, i, body_end, word == "interface");
+                FindMatchingEnd(text, i, body_end, word != "class");
                 pending_doc.clear();
                 continue;
             }

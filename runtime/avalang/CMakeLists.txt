@@ -63,6 +63,7 @@ set(CORE_SOURCES
     src/vm/vm_compare.cpp
     src/vm/vm_containers.cpp
     src/vm/vm_classes.cpp
+    src/vm/vm_instance_api.cpp
     src/vm/vm_call_op.cpp
     src/vm/vm_slice.cpp
     src/vm/vm_exceptions.cpp

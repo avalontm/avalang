@@ -41,6 +41,7 @@
     X(str, builtin_str) \
     X(int, builtin_int) \
     X(float, builtin_float) \
+    X(hex, builtin_hex) \
     X(print, builtin_print) \
     X(input, builtin_input) \
     X(abs, builtin_abs) \

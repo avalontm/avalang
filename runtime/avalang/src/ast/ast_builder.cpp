@@ -1277,6 +1277,14 @@ std::any AstBuilder::visitNameAtom(AvaLangParser::NameAtomContext* ctx) {
 
 std::any AstBuilder::visitNumberAtom(AvaLangParser::NumberAtomContext* ctx) {
     std::string text = ctx->NUMBER()->getText();
+    // Literal hex (0x.../0X...): siempre entero, se parsea en base 16 y
+    // nunca pasa por stod (que no entiende el prefijo 0x). No compite con
+    // el chequeo de is_float de abajo porque un hex nunca lleva '.'/e/E
+    // dentro del propio literal (la gramatica ya lo garantiza).
+    if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+        double val = static_cast<double>(std::stoull(text.substr(2), nullptr, 16));
+        return std::make_shared<NumberExpr>(val, false);
+    }
     double val = std::stod(text);
     // Phase 5: `10` -> Int, `10.0` ->
     // Float (see NumberExpr::is_float in ast.h). Textual check, not a check

@@ -6,8 +6,6 @@
 #include "imgui.h"
 #include "imgui_stdlib.h"
 #include "palette.h"
-#include "project/output_type_labels.h"
-#include "util/host_platform.h"
 #include "util/i18n.h"
 #include "util/project_utils.h"
 #include "util/ui_widgets.h"
@@ -16,6 +14,32 @@ namespace studio {
 
 namespace {
 namespace fs = std::filesystem;
+
+enum class ProjectKind { kConsole, kDesktopUi, kLibrary };
+
+ProjectKind CurrentProjectKind(const AvaProjFile& proj) {
+    if (proj.output_type == AvaProjOutputType::kLibrary) return ProjectKind::kLibrary;
+    if (proj.uses_ui) return ProjectKind::kDesktopUi;
+    return ProjectKind::kConsole;
+}
+
+void ApplyProjectKind(AvaProjFile& proj, ProjectKind kind) {
+    switch (kind) {
+        case ProjectKind::kConsole:
+            proj.output_type = AvaProjOutputType::kExe;
+            proj.uses_ui = false;
+            break;
+        case ProjectKind::kDesktopUi:
+            proj.output_type = AvaProjOutputType::kExe;
+            proj.uses_ui = true;
+            break;
+        case ProjectKind::kLibrary:
+            proj.output_type = AvaProjOutputType::kLibrary;
+            proj.uses_ui = false;
+            proj.zero_disk = false;
+            break;
+    }
+}
 
 bool DrawPathRow(const char* label, const char* hint, std::string& value, const char* browse_id,
                   ProjectPropertiesBrowseField field, ProjectPropertiesResult& result) {
@@ -67,26 +91,45 @@ void DrawApplicationTab(AvaProjFile& proj, const std::string& project_dir, Proje
     ImGui::SetNextItemWidth(-1.0f);
     if (ImGui::Combo("##Target", &target_index, target_items, 2)) {
         proj.target = target_index == 1 ? AvaProjTarget::kBareKernel : AvaProjTarget::kDesktop;
+        if (proj.target == AvaProjTarget::kBareKernel) proj.uses_ui = false;
         result.dirty = true;
     }
     ImGui::Dummy(ImVec2(0.0f, 6.0f));
 
     ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s",
-                        util::Tr("project_properties.output_type_label").c_str());
+                        util::Tr("project_properties.kind_label").c_str());
     const bool target_is_barekernel = proj.target == AvaProjTarget::kBareKernel;
-    const util::HostPlatform host_platform = util::DetectedHostPlatform();
-    int output_type_index = proj.output_type == AvaProjOutputType::kLibrary ? 1 : 0;
-    const std::string output_exe = DescribeOutputType(host_platform, target_is_barekernel, AvaProjOutputType::kExe);
-    const std::string output_library =
-        DescribeOutputType(host_platform, target_is_barekernel, AvaProjOutputType::kLibrary);
-    const char* output_type_items[] = {output_exe.c_str(), output_library.c_str()};
+
+    const ProjectKind current_kind = CurrentProjectKind(proj);
+    const std::string kind_console = util::Tr("project_properties.kind_console");
+    const std::string kind_desktop_ui = util::Tr("project_properties.kind_desktop_ui");
+    const std::string kind_library = util::Tr("project_properties.kind_library");
+    auto KindLabel = [&](ProjectKind kind) -> const std::string& {
+        switch (kind) {
+            case ProjectKind::kConsole: return kind_console;
+            case ProjectKind::kDesktopUi: return kind_desktop_ui;
+            case ProjectKind::kLibrary: return kind_library;
+        }
+        return kind_console;
+    };
+
     ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::Combo("##OutputType", &output_type_index, output_type_items, 2)) {
-        proj.output_type = output_type_index == 1 ? AvaProjOutputType::kLibrary : AvaProjOutputType::kExe;
-        if (proj.output_type == AvaProjOutputType::kLibrary) proj.zero_disk = false;
-        result.dirty = true;
+    if (ImGui::BeginCombo("##ProjectKind", KindLabel(current_kind).c_str())) {
+        for (ProjectKind candidate : {ProjectKind::kConsole, ProjectKind::kDesktopUi, ProjectKind::kLibrary}) {
+            const bool disabled = candidate == ProjectKind::kDesktopUi && target_is_barekernel;
+            ImGui::BeginDisabled(disabled);
+            if (ImGui::Selectable(KindLabel(candidate).c_str(), current_kind == candidate)) {
+                ApplyProjectKind(proj, candidate);
+                result.dirty = true;
+            }
+            ImGui::EndDisabled();
+            if (disabled && ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", util::Tr("project_properties.kind_desktop_ui_barekernel_tooltip").c_str());
+            }
+        }
+        ImGui::EndCombo();
     }
-    if (proj.output_type == AvaProjOutputType::kLibrary && target_is_barekernel) {
+    if (current_kind == ProjectKind::kLibrary && target_is_barekernel) {
         ImGui::TextColored(palette::FromHex(palette::kWarning), "%s",
                             util::Tr("build.error_library_barekernel_not_supported").c_str());
     }

@@ -41,6 +41,9 @@
 #include "panels/preview_panel.h"
 #include "panels/problems_panel.h"
 #include "panels/properties_panel.h"
+#include "panels/state_panel.h"
+#include "panels/designer_canvas.h"
+#include "design/state_eval.h"
 #include "panels/project_properties_panel.h"
 #include "panels/quick_open_panel.h"
 #include "panels/build_panel.h"
@@ -56,6 +59,7 @@
 #include "theme.h"
 #include "util/ava_cli_locator.h"
 #include "util/data_dir.h"
+#include "util/host_platform.h"
 #include "util/i18n.h"
 #include "util/log_bridge.h"
 #include "util/project_utils.h"
@@ -277,6 +281,7 @@ int main(int argc, char** argv) {
             "el archivo a mano o restauralo desde una copia de seguridad / control de versiones.");
     }
     studio::PropertiesState properties_state;
+    studio::StateEditorState state_editor_state;
 
     editor_state.log_bridge = &log_bridge;
 
@@ -586,6 +591,7 @@ int main(int argc, char** argv) {
             ImGui::DockBuilderDockWindow("Toolbox###toolbox", dock_left);
             ImGui::DockBuilderDockWindow("Code Editor###code_editor", dock_center);
             ImGui::DockBuilderDockWindow("Properties###properties", dock_right);
+            ImGui::DockBuilderDockWindow("State###state", dock_right);
             ImGui::DockBuilderDockWindow("Settings###settings", dock_right);
             ImGui::DockBuilderDockWindow("Preview###preview", dock_bottom);
             ImGui::DockBuilderDockWindow("Terminal###terminal", dock_bottom);
@@ -671,6 +677,21 @@ int main(int argc, char** argv) {
 
             properties_state = editor_state.designer_selection ? *editor_state.designer_selection
                                                                  : studio::PropertiesState{};
+
+            state_editor_state = studio::StateEditorState{};
+            state_editor_state.source_tab_id = active->id;
+            state_editor_state.has_code_behind = true;
+            AvaVM* state_vm = studio::GetDesignerStateVM(active->id);
+            for (const studio::PropertyRow& row : active->design.initial_state) {
+                studio::StateVarRow var_row;
+                var_row.key = row.key;
+                var_row.value = row.value;
+                var_row.evaluated = state_vm ? studio::design::EvalPropertyExpr(state_vm, row.value) : row.value;
+                var_row.has_error = false;
+                state_editor_state.variables.push_back(std::move(var_row));
+            }
+        } else {
+            state_editor_state = studio::StateEditorState{};
         }
 
         if (editor_state.goto_definition_requested) {
@@ -755,7 +776,25 @@ int main(int argc, char** argv) {
         }
         if (editor_state.run_requested || want_run) {
 
-            if (terminal_state.run.running.load()) {
+            const bool ui_project = project_config.proj.uses_ui &&
+                                     studio::util::DetectedHostPlatform() == studio::util::HostPlatform::kWindows;
+
+            if (ui_project) {
+                if (!build_panel_state.building.load()) {
+                    const ProjectEntryResolution resolved = resolve_project_entry();
+                    if (!resolved.ok) {
+                        engine.AppendConsoleLine(studio::ConsoleLine::Kind::Error, resolved.error);
+                    } else {
+                        studio::SaveAllTabs(editor_state);
+                        build_panel_state.launch_on_success = true;
+                        studio::TriggerDesktopUiRunBuild(build_panel_state, project_config.proj,
+                                                          project_config.user, explorer_state.root_dir, log_bridge,
+                                                          project_config.ambiguous_avaproj,
+                                                          project_config.avaproj_candidates);
+                        open_panel_focused("Logs###logs");
+                    }
+                }
+            } else if (terminal_state.run.running.load()) {
 
             } else {
 
@@ -779,7 +818,25 @@ int main(int argc, char** argv) {
 
         if (editor_state.run_project_requested || want_run_project) {
 
-            if (terminal_state.run.running.load()) {
+            const bool ui_project = project_config.proj.uses_ui &&
+                                     studio::util::DetectedHostPlatform() == studio::util::HostPlatform::kWindows;
+
+            if (ui_project) {
+                if (!build_panel_state.building.load()) {
+                    const ProjectEntryResolution resolved = resolve_project_entry();
+                    if (!resolved.ok) {
+                        engine.AppendConsoleLine(studio::ConsoleLine::Kind::Error, resolved.error);
+                    } else {
+                        studio::SaveAllTabs(editor_state);
+                        build_panel_state.launch_on_success = true;
+                        studio::TriggerDesktopUiRunBuild(build_panel_state, project_config.proj,
+                                                          project_config.user, explorer_state.root_dir, log_bridge,
+                                                          project_config.ambiguous_avaproj,
+                                                          project_config.avaproj_candidates);
+                        open_panel_focused("Logs###logs");
+                    }
+                }
+            } else if (terminal_state.run.running.load()) {
 
             } else {
                 const ProjectEntryResolution resolved = resolve_project_entry();
@@ -1060,6 +1117,50 @@ int main(int argc, char** argv) {
             persist_if_closed("Properties###properties", open);
         }
 
+        if (bool& open = panel_open.try_emplace("State###state", true).first->second; open) {
+            if (auto edit = studio::DrawStatePanel(state_editor_state, &open)) {
+                for (auto& tab_ptr : editor_state.tabs) {
+                    studio::EditorTab& tab = *tab_ptr;
+                    if (tab.id != edit->tab_id || !tab.is_avaui) continue;
+
+                    auto find_var = [&tab](const std::string& key) {
+                        return std::find_if(tab.design.initial_state.begin(), tab.design.initial_state.end(),
+                                             [&key](const studio::PropertyRow& row) { return row.key == key; });
+                    };
+
+                    switch (edit->kind) {
+                        case studio::StateEditKind::kValue:
+                            if (auto it = find_var(edit->key); it != tab.design.initial_state.end()) {
+                                it->value = edit->new_value;
+                            }
+                            break;
+                        case studio::StateEditKind::kAddVariable:
+                            if (find_var(edit->key) == tab.design.initial_state.end()) {
+                                tab.design.initial_state.push_back(studio::PropertyRow{edit->key, edit->new_value});
+                            }
+                            break;
+                        case studio::StateEditKind::kRemoveVariable:
+                            if (auto it = find_var(edit->key); it != tab.design.initial_state.end()) {
+                                tab.design.initial_state.erase(it);
+                            }
+                            break;
+                        case studio::StateEditKind::kRenameVariable:
+                            if (auto it = find_var(edit->key); it != tab.design.initial_state.end() &&
+                                find_var(edit->new_key) == tab.design.initial_state.end()) {
+                                it->key = edit->new_key;
+                            }
+                            break;
+                    }
+
+                    studio::InvalidateDesignerVmCache(tab.id);
+                    tab.design.dirty = true;
+                    tab.dirty = true;
+                    break;
+                }
+            }
+            persist_if_closed("State###state", open);
+        }
+
         if (bool& open = panel_open.try_emplace("Settings###settings", true).first->second; open) {
             bool settings_dirty = false;
             bool settings_browse_requested = false;
@@ -1096,7 +1197,8 @@ int main(int argc, char** argv) {
             studio::BuildPanelResult build_result =
                 studio::DrawBuildPanel(build_panel_state, project_config.proj, project_config.user,
                                         explorer_state.root_dir, pending_build_browse_field,
-                                        pending_build_browse_value, log_bridge, &open);
+                                        pending_build_browse_value, log_bridge, project_config.ambiguous_avaproj,
+                                        project_config.avaproj_candidates, &open);
             pending_build_browse_field = studio::BuildBrowseField::kNone;
             pending_build_browse_value.clear();
             if (build_result.browse_requested != studio::BuildBrowseField::kNone) {
@@ -1160,7 +1262,7 @@ int main(int argc, char** argv) {
                 switch (properties_result.browse_requested) {
                     case studio::ProjectPropertiesBrowseField::kIcon:
                         picked = studio::titlebar::OpenFileDialog(window, path, explorer_state.root_dir,
-                                                                   "All Files (*.*)\0*.*\0");
+                                                                   "Icon Files (*.ico)\0*.ico\0All Files (*.*)\0*.*\0");
                         break;
                     case studio::ProjectPropertiesBrowseField::kAvaCliPath:
                         picked = studio::titlebar::OpenFileDialog(

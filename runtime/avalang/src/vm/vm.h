@@ -74,6 +74,11 @@ public:
     Value RunFile(const avastd::string& file_path);
 
     Value Call(const Value& callable, const avastd::vector<Value>& args);
+
+    Value NewInstance(const Value& class_value, const avastd::vector<Value>& args);
+    Value GetAttr(const Value& obj, const avastd::string& name);
+    void  SetAttr(const Value& obj, const avastd::string& name, const Value& value);
+    Value CallMethod(const Value& obj, const avastd::string& name, const avastd::vector<Value>& args);
     
     bool HasBuiltinMethod(const avastd::string& name) const;
     Value GetBuiltinMethod(const avastd::string& name) const;

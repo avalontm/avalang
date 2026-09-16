@@ -1,5 +1,4 @@
-#ifndef AVA_UI_RENDER_RENDER_NODE_H
-#define AVA_UI_RENDER_RENDER_NODE_H
+#pragma once
 
 #include "render_tree/IRenderNode.h"
 #include "layout/LayoutTypes.h"
@@ -13,7 +12,6 @@ public:
     RenderNode(ComponentId componentId, RenderNodeType type);
     ~RenderNode() = default;
 
-    // Non-copyable
     RenderNode(const RenderNode&) = delete;
     RenderNode& operator=(const RenderNode&) = delete;
 
@@ -57,7 +55,9 @@ public:
     std::string BindingWarning() const override { return bindingWarning_; }
     bool Wrap() const override { return wrap_; }
 
-    // Setters (used during tree build)
+    const PathData& PathSegments() const override { return pathSegments_; }
+    bool PathClosed() const override { return pathClosed_; }
+
     void SetBackgroundColor(const std::string& color) { bgColor_ = color; }
     void SetBorderColor(const std::string& color) { borderColor_ = color; }
     void SetForegroundColor(const std::string& color) { fgColor_ = color; }
@@ -81,16 +81,16 @@ public:
     void SetScrollDirection(std::string d) { scrollDirection_ = std::move(d); }
     void SetBindingWarning(std::string w) { bindingWarning_ = std::move(w); }
     void SetWrap(bool w) { wrap_ = w; }
+    void SetPathSegments(PathData segments) { pathSegments_ = std::move(segments); }
+    void SetPathClosed(bool closed) { pathClosed_ = closed; }
 
 private:
     avalang::ui::ComponentId componentId_;
     RenderNodeType type_;
     std::vector<std::shared_ptr<IRenderNode>> children_;
-
-    // Visual properties
-    std::string bgColor_;        // default: transparent
-    std::string borderColor_;    // default: black
-    std::string fgColor_;        // default: black (text)
+    std::string bgColor_;
+    std::string borderColor_;
+    std::string fgColor_;
     int borderWidth_ = 0;
     int borderRadius_ = 0;
     std::string text_;
@@ -98,16 +98,6 @@ private:
     std::string optionsData_;
     std::string fontName_ = "Arial";
     int fontSize_ = 12;
-
-    // Draw state. Default false: a node only paints a box once
-    // RenderTree actually sets an explicit color for it (see
-    // RenderTree.cpp's SetShouldFill/SetShouldStroke calls) -- an
-    // unset bgColor_/borderColor_ ("transparent"/"black" per the
-    // comments above) must not fall back to ColorParse's opaque-black
-    // default (ColorParse.cpp) for every container that never asked
-    // for a background at all. Found while running the Fase 14
-    // end-to-end demo: every Page/Column/Row/Text node was rendering
-    // as a solid black rectangle.
     bool shouldFill_ = false;
     bool shouldStroke_ = false;
     int strokeWidth_ = 1;
@@ -121,13 +111,11 @@ private:
     std::string scrollDirection_ = "vertical";
     std::string bindingWarning_;
     bool wrap_ = false;
-
-    // Layout-provided geometry
     LayoutRect rect_ = {0, 0, 0, 0};
+    PathData pathSegments_;
+    bool pathClosed_ = false;
 };
 
-} // namespace render
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_RENDER_RENDER_NODE_H
+}
+}
+}

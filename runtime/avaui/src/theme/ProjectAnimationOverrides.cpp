@@ -5,7 +5,9 @@
 #include <filesystem>
 #include <fstream>
 
-namespace avalang::ui::theme {
+namespace avalang {
+namespace ui {
+namespace theme {
 
 namespace {
 
@@ -106,7 +108,7 @@ void ApplyAnimationProperty(const std::string& key, const std::string& rawValue,
     }
 }
 
-} // namespace
+}
 
 void AnimationOverride::MergeOnto(AnimationOverride& base) const {
     if (from) base.from = from;
@@ -129,9 +131,9 @@ void MergeAnimationFileInto(const std::string& animationFilePath, ProjectAnimati
     if (!file) return;
 
     std::string line;
-    std::string currentKey; 
+    std::string currentKey;
     bool inBlock = false;
-    bool blockValid = true; 
+    bool blockValid = true;
     AnimationOverride current;
 
     while (std::getline(file, line)) {
@@ -183,7 +185,7 @@ void MergeAnimationFileInto(const std::string& animationFilePath, ProjectAnimati
         }
 
         const std::size_t eq = stripped.find('=');
-        if (eq == std::string::npos) continue; 
+        if (eq == std::string::npos) continue;
         const std::string key = Trim(stripped.substr(0, eq));
         const std::string value = Trim(stripped.substr(eq + 1));
         if (key.empty() || value.empty()) continue;
@@ -215,4 +217,6 @@ ProjectAnimationSheet LoadProjectAnimationOverrides(const std::string& projectRo
     return sheet;
 }
 
-} // namespace avalang::ui::theme
+}
+}
+}

@@ -9,5 +9,5 @@ std::unique_ptr<StateBinding> StateBinding::Create(IState* state, IComponent* co
     return std::make_unique<state::StateBindingImpl>(state, component, std::move(propertyName));
 }
 
-} // namespace ui
-} // namespace avalang
+}
+}

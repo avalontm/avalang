@@ -1,26 +1,20 @@
-import system
-import Models.Dog
+import System
+import Memory.readMemory
 
-func test()
-    print("test")
+nombreExe = "target.exe"
+health = 0x00E5F000
+
+try
+    pid = BuscarPidPorNombre(nombreExe)
+    print($"{nombreExe} encontrado, PID = {pid}")
+
+    i = 0
+    while i < 20
+        puntaje = LeerInt32(pid, health)
+        print($"Puntaje actual: {puntaje}")
+        Thread.Sleep(500)
+        i++
+    end
+catch (err)
+    print($"Error: {err}")
 end
-
-func sumar(a, b)
-    return a + b
-end
-
-print("Hello, AvaLang!")
-
-Console.WriteLine("Rulas")
-
-date = DateTime.Now()
-
-print(date.Ticks)
-
-dog = new Dog()
-
-dog.Eat()
-
-resta = (a, b) => a - b
-print($"resta: {resta(4, 2)}")
-print(sumar(15,8))

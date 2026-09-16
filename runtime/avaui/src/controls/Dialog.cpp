@@ -3,7 +3,9 @@
 #include "components/PropertyValue.h"
 #include "registry/ComponentTypeRegistry.h"
 
-namespace avalang::ui::controls {
+namespace avalang {
+namespace ui {
+namespace controls {
 
 IComponent* CreateDialog(ComponentTree* tree, const std::string& title) {
     if (!tree) {
@@ -18,10 +20,6 @@ IComponent* CreateDialog(ComponentTree* tree, const std::string& title) {
     dialog->SetProperty("title", PropertyValue(title));
     dialog->SetProperty("isOpen", PropertyValue(false));
     dialog->SetProperty("dismissible", PropertyValue(true));
-
-    // overlay/backdrop and surface/border colors are filled by
-    // RenderTheme::Apply() for type "dialog" -- not set here, same
-    // division of responsibility as Button's background/font.
 
     return dialog;
 }
@@ -38,7 +36,7 @@ struct DialogTypeRegistration {
     DialogTypeRegistration() {
         using namespace avalang::ui::registry;
         RegisterComponentType({
-            "Dialog", "Dialog", /*is_container=*/true,
+            "Dialog", "Dialog", true,
             {
                 {"title", PropertyValue("Dialog")},
                 {"isOpen", PropertyValue(false)},
@@ -48,6 +46,8 @@ struct DialogTypeRegistration {
     }
 };
 static DialogTypeRegistration _dialog_type_registration;
-} // namespace
+}
 
-} // namespace avalang::ui::controls
+}
+}
+}

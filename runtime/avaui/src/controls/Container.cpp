@@ -3,7 +3,9 @@
 #include "components/PropertyValue.h"
 #include "registry/ComponentTypeRegistry.h"
 
-namespace avalang::ui::controls {
+namespace avalang {
+namespace ui {
+namespace controls {
 
 namespace {
 
@@ -14,7 +16,7 @@ IComponent* CreateContainer(ComponentTree* tree, const std::string& typeName) {
     return tree->CreateComponent(typeName);
 }
 
-} // namespace
+}
 
 IComponent* CreateColumn(ComponentTree* tree) {
     return CreateContainer(tree, "Column");
@@ -39,23 +41,25 @@ namespace {
 struct ContainerTypeRegistrations {
     ContainerTypeRegistrations() {
         using namespace avalang::ui::registry;
-        RegisterComponentType({"Column", "Column", /*is_container=*/true, {}});
-        RegisterComponentType({"Row", "Row", /*is_container=*/true, {}});
-        RegisterComponentType({"Stack", "Stack", /*is_container=*/true, {}});
-        RegisterComponentType({"Page", "Page", /*is_container=*/true, {}});
-        RegisterComponentType({"ScrollView", "Scroll View", /*is_container=*/true, {}});
-        RegisterComponentType({"ListView", "List View", /*is_container=*/true, {}});
+        RegisterComponentType({"Column", "Column", true, {}});
+        RegisterComponentType({"Row", "Row", true, {}});
+        RegisterComponentType({"Stack", "Stack", true, {}});
+        RegisterComponentType({"Page", "Page", true, {}});
+        RegisterComponentType({"ScrollView", "Scroll View", true, {}});
+        RegisterComponentType({"ListView", "List View", true, {}});
         RegisterComponentType({
-            "Grid", "Grid", /*is_container=*/true,
+            "Grid", "Grid", true,
             {
                 {"columns", PropertyValue(2.0)},
                 {"rows", PropertyValue(2.0)},
             },
         });
-        RegisterComponentType({"Flex", "Flex", /*is_container=*/true, {}});
+        RegisterComponentType({"Flex", "Flex", true, {}});
     }
 };
 static ContainerTypeRegistrations _container_type_registrations;
-} // namespace
+}
 
-} // namespace avalang::ui::controls
+}
+}
+}

@@ -1,11 +1,12 @@
 #include "theme/DefaultTheme.h"
 
-namespace avalang::ui {
+namespace avalang {
+namespace ui {
 
 DefaultTheme::DefaultTheme() {
     InitColors();
     InitFonts();
-    
+
     spacing_.paddingPx = 8;
     spacing_.marginPx = 4;
     spacing_.borderWidthPx = 1;
@@ -15,38 +16,31 @@ DefaultTheme::DefaultTheme() {
 }
 
 void DefaultTheme::InitColors() {
-    // Primary and variants
-    colors_["primary"] = ThemeColor("0078D4");        // Windows blue
-    colors_["primaryLight"] = ThemeColor("2B88D9");   // Lighter variant
-    colors_["primaryDark"] = ThemeColor("005A9E");    // Darker variant
-    colors_["primaryAlt"] = ThemeColor("4B8AC8");     // Alt variant
+    colors_["primary"] = ThemeColor("0078D4");
+    colors_["primaryLight"] = ThemeColor("2B88D9");
+    colors_["primaryDark"] = ThemeColor("005A9E");
+    colors_["primaryAlt"] = ThemeColor("4B8AC8");
 
-    // Secondary
     colors_["secondary"] = ThemeColor("605E57");
 
-    // Backgrounds and surfaces
-    colors_["background"] = ThemeColor("FFFFFF");     // White
-    colors_["surface"] = ThemeColor("F3F3F3");        // Light gray
-    colors_["surfaceVariant"] = ThemeColor("E8E8E8"); // Darker gray
+    colors_["background"] = ThemeColor("FFFFFF");
+    colors_["surface"] = ThemeColor("F3F3F3");
+    colors_["surfaceVariant"] = ThemeColor("E8E8E8");
 
-    // Text colors
-    colors_["text"] = ThemeColor("333333");           // Dark gray (primary text)
-    colors_["textSecondary"] = ThemeColor("767676");  // Medium gray
-    colors_["textDisabled"] = ThemeColor("A19F9D");   // Light gray
-    colors_["textInverse"] = ThemeColor("FFFFFF");    // White (on dark bg)
+    colors_["text"] = ThemeColor("333333");
+    colors_["textSecondary"] = ThemeColor("767676");
+    colors_["textDisabled"] = ThemeColor("A19F9D");
+    colors_["textInverse"] = ThemeColor("FFFFFF");
 
-    // Borders
-    colors_["border"] = ThemeColor("CCCCCC");         // Light border
-    colors_["borderLight"] = ThemeColor("E0E0E0");    // Very light border
-    colors_["borderDark"] = ThemeColor("999999");     // Dark border
+    colors_["border"] = ThemeColor("CCCCCC");
+    colors_["borderLight"] = ThemeColor("E0E0E0");
+    colors_["borderDark"] = ThemeColor("999999");
 
-    // Semantic colors
-    colors_["success"] = ThemeColor("107C10");        // Green
-    colors_["error"] = ThemeColor("D83B01");          // Red-orange
-    colors_["warning"] = ThemeColor("FFB900");        // Amber
-    colors_["info"] = ThemeColor("0078D4");           // Same as primary
+    colors_["success"] = ThemeColor("107C10");
+    colors_["error"] = ThemeColor("D83B01");
+    colors_["warning"] = ThemeColor("FFB900");
+    colors_["info"] = ThemeColor("0078D4");
 
-    // Component specific
     colors_["buttonPrimary"] = ThemeColor("0078D4");
     colors_["buttonPrimaryHover"] = ThemeColor("2B88D9");
     colors_["buttonPrimaryActive"] = ThemeColor("005A9E");
@@ -67,7 +61,6 @@ void DefaultTheme::InitColors() {
 }
 
 void DefaultTheme::InitFonts() {
-    // Headings
     fonts_["heading1"] = ThemeFont("Segoe UI", 28);
     fonts_["heading1"].weight = 700;
 
@@ -77,7 +70,6 @@ void DefaultTheme::InitFonts() {
     fonts_["heading3"] = ThemeFont("Segoe UI", 16);
     fonts_["heading3"].weight = 700;
 
-    // Body text
     fonts_["body"] = ThemeFont("Segoe UI", 12);
     fonts_["body"].weight = 400;
 
@@ -87,14 +79,12 @@ void DefaultTheme::InitFonts() {
     fonts_["bodySemibold"] = ThemeFont("Segoe UI", 12);
     fonts_["bodySemibold"].weight = 600;
 
-    // Captions and labels
     fonts_["caption"] = ThemeFont("Segoe UI", 11);
     fonts_["caption"].weight = 400;
 
     fonts_["label"] = ThemeFont("Segoe UI", 12);
     fonts_["label"].weight = 600;
 
-    // Semantic/Component roles
     fonts_["button"] = ThemeFont("Segoe UI", 12);
     fonts_["button"].weight = 600;
 
@@ -138,12 +128,7 @@ bool DefaultTheme::HasFont(const std::string& roleName) const {
     return fonts_.find(roleName) != fonts_.end();
 }
 
-// ============================================================================
-// ThemeProvider implementation
-// ============================================================================
-
 ThemeProvider::ThemeProvider() : current_(nullptr) {
-    // Create and register default theme
     auto defaultTheme = std::make_unique<DefaultTheme>();
     current_ = defaultTheme.get();
     themes_["Default Light"] = std::move(defaultTheme);
@@ -168,7 +153,6 @@ bool ThemeProvider::Register(std::unique_ptr<ITheme> theme,
         return false;
     }
     themes_[name] = std::move(theme);
-    // Auto-switch to newly registered theme if no current theme set
     if (current_ == nullptr) {
         current_ = themes_[name].get();
     }
@@ -179,4 +163,5 @@ IThemeProvider* CreateDefaultThemeProvider() {
     return new ThemeProvider();
 }
 
-} // namespace avalang::ui
+}
+}

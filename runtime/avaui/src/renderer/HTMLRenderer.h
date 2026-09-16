@@ -1,9 +1,10 @@
-#ifndef AVA_UI_HTML_RENDERER_H
-#define AVA_UI_HTML_RENDERER_H
+#pragma once
 
 #include "renderer/BaseRenderer.h"
-#include "theme/ProjectStyleOverrides.h"
+#include "render_tree/PathGeometry.h"
 #include "theme/ProjectAnimationOverrides.h"
+#include "theme/ProjectStyleOverrides.h"
+
 #include <set>
 #include <sstream>
 #include <string>
@@ -25,49 +26,18 @@ public:
     void SetExtraBodyEnd(std::string html) { extraBodyEnd_ = std::move(html); }
     void SetFragmentOnly(bool fragmentOnly) { fragmentOnly_ = fragmentOnly; }
 
-    // Non-owning, same convention as ITheme* elsewhere (see
-    // theme::ProjectTheme's base_ member) -- caller (the render
-    // pipeline) keeps the ProjectStyleSheet alive for this renderer's
-    // one frame. When set and it declares any `style <type>:hover` /
-    // `:focus` / `:active` / `:disabled` blocks, EmitHTMLHeader emits
-    // matching CSS rules for the handful of control types that get a
-    // stable class (see EmitProjectStateCSS in the .cpp). Null (the
-    // default) or a sheet with no state blocks is a harmless no-op.
     void SetProjectStyles(const theme::ProjectStyleSheet* styles) { projectStyles_ = styles; }
 
-    // Non-owning, same convention as SetProjectStyles above -- caller
-    // (the render pipeline) keeps the ProjectAnimationSheet alive for
-    // this renderer's one frame. When set and it declares a
-    // `dialog:open` and/or `dialog:close` block (see
-    // theme/ProjectAnimationOverrides.h), EmitHTMLHeader uses those
-    // field(s) in place of the built-in 160ms ease-out/ease-in dialog
-    // fade -- any field the project didn't set keeps its built-in
-    // default. Null (the default) or a sheet with no `dialog:open`/
-    // `dialog:close` blocks is a harmless no-op (built-in fade only).
     void SetProjectAnimations(const theme::ProjectAnimationSheet* animations) {
         projectAnimations_ = animations;
     }
 
-    // Absolute path to the project's wwwroot/ (StaticFileServer's
-    // root -- see app.cpp's staticFiles_). When set (non-empty),
-    // EmitFontFaceRules writes each referenced font's bytes out to
-    // `<dir>/fonts/<family>.ttf` (once; skipped if the file is
-    // already there) and links to it with `url("/fonts/<family>.ttf")`
-    // instead of embedding the bytes as a base64 data: URI -- keeps
-    // the emitted HTML free of the multi-KB inline font blob. Left
-    // empty (the default), EmitFontFaceRules falls back to the
-    // previous inline-base64 behavior, which is still what any caller
-    // without a static file server to serve from (CLI render-static,
-    // tests, RenderTreeFragment's isolated-fragment callers) gets.
     void SetWwwRootDir(std::string dir) { wwwRootDir_ = std::move(dir); }
 
     const std::string& Title() const { return title_; }
 
     const char* GetOutput() const override;
 
-    // Fase 24 -- ScrollView. HTML is the only backend that can host a
-    // real nested scrolling coordinate space today (a DOM element with
-    // its own `overflow: auto`); GdiRenderer has no such concept yet.
     bool SupportsScrollRegions() const override { return true; }
 
 protected:
@@ -128,70 +98,42 @@ protected:
         const std::string& className
     ) override;
 
+    void OnDrawPath(
+        float x, float y,
+        const std::vector<render::PathSegment>& segments,
+        const Color& fillColor,
+        const Color& borderColor, float borderWidth,
+        bool closed,
+        const std::string& clickHandler,
+        const std::string& className
+    ) override;
+
     void OnBeginFrame() override;
     void OnEndFrame() override;
 
 private:
-    // Body markup only (everything between the .ava-viewport div and its
-    // close). The <head>, including @font-face rules, can't be known
-    // until AFTER the body is drawn -- OnDrawText/OnDrawButton/OnDrawLink
-    // only find out which font names are actually used as they run -- so
-    // the full document is assembled in OnEndFrame from bodyHtml_ +
-    // whatever fonts_ collected, instead of streaming a <head> up front.
     std::stringstream bodyHtml_;
     std::string cachedOutput_;
-    bool outputDirty_;
-    std::vector<std::string> styleRules_;
     std::string title_ = "AvaHost App";
     std::string extraHead_;
     std::string extraBodyEnd_;
     bool fragmentOnly_ = false;
 
-    // Font family names (as written into `font-family:` CSS) seen while
-    // drawing this frame's text/button/link elements. One @font-face
-    // rule per name is emitted at OnEndFrame, backed by whatever
-    // FontRegistry actually measured that name against -- see
-    // EmitFontFaceRules. A std::set keeps them de-duplicated and in a
-    // stable order without an extra lookup structure.
     std::set<std::string> usedFontNames_;
 
-    // Resolves `fontName` to the CSS `font-family` value to write
-    // inline (quotes it, falls back to a canonical name for an empty/
-    // null fontName) and records it in usedFontNames_ so OnEndFrame
-    // knows to emit a matching @font-face rule.
     std::string ResolveCssFontFamily(const char* fontName);
 
     std::string EmitHTMLHeader();
     std::string EmitHTMLFooter();
     std::string EmitFontFaceRules() const;
-    // Writes the static, never-varying base rules (html/body reset,
-    // #ava-scaler, .ava-viewport, .ava-element, .ava-button) out to
-    // `<wwwRootDir_>/css/ava-runtime.css` (once; skipped if already
-    // there, same convention as EmitFontFaceRules' per-font .ttf
-    // files) and returns a `<link rel="stylesheet" ...>` tag pointing
-    // at it. Falls back to an inline `<style>...</style>` block with
-    // the same rules when wwwRootDir_ is empty or the write fails --
-    // see the .cpp.
     std::string EmitStaticBaseCssLink() const;
-    // Builds the `.ava-<type>:hover { ... }` etc. CSS rules from
-    // projectStyles_ -- see the .cpp for the type->class map and why
-    // every declaration is `!important`. Returns "" when
-    // projectStyles_ is null or declares no state blocks.
     std::string EmitProjectStateCSS() const;
-    // Writes `dynamicCss` (the @font-face + dialog keyframes +
-    // EmitProjectStateCSS rules EmitHTMLHeader builds -- everything
-    // that varies with this project's fonts/animations/styles, unlike
-    // EmitStaticBaseCssLink's fixed rules) out to
-    // `<wwwRootDir_>/css/ava-project.css`, overwriting it every call
-    // since that content can change between requests (hot-reload).
-    // Returns a cache-busted `<link rel="stylesheet" ...>` tag: falls
-    // back to an inline `<style>...</style>` block with the same
-    // content when wwwRootDir_ is empty or the write fails -- see the
-    // .cpp.
+    std::string EmitProjectResponsiveCSS() const;
     std::string EmitProjectCssLink(const std::string& dynamicCss) const;
     void EmitCSSFromState();
 
     std::string ColorToHex(const Color& c) const;
+    std::string BuildSvgPathData(const std::vector<render::PathSegment>& segments, bool closed) const;
     std::string GetTransformCSS() const;
     std::string GetClipCSS() const;
 
@@ -200,7 +142,5 @@ private:
     std::string wwwRootDir_;
 };
 
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_HTML_RENDERER_H
+}
+}

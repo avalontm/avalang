@@ -14,6 +14,7 @@
 
 #include "runtime/runtime_host.h"
 #include "ui_vm_state_bridge.h"
+#include "view/IAvaView.h"
 #include "avalang.h"
 
 namespace avahost {
@@ -133,6 +134,29 @@ void ExportComponentPropsNative(AvaVM* vm, avalang::ui::IComponent* comp,
     }
 }
 
+// Same "first `id` wins" rule as ExportComponentPropsNative, but reads
+// each control's properties back from its own instance attribute
+// (IAvaView::ExportComponentRef) instead of a shared VM global -- two
+// clones of the same reusable component no longer share storage.
+void ExportComponentPropsFromView(avalang::ui::IAvaView& view, avalang::ui::IComponent* comp,
+                                   std::unordered_set<std::string>& seenIds) {
+    if (!comp) return;
+
+    const avalang::ui::PropertyValue* idProp = comp->GetProperty("id");
+    if (idProp && idProp->Type() == avalang::ui::PropertyType::String && !idProp->AsString().empty() &&
+        seenIds.insert(idProp->AsString()).second) {
+        avalang::ui::PropertyRecord record = view.ExportComponentRef(idProp->AsString());
+        for (const auto& [key, value] : record) {
+            if (key == "id") continue;
+            comp->SetProperty(key, value);
+        }
+    }
+
+    for (avalang::ui::IComponent* child : comp->Children()) {
+        ExportComponentPropsFromView(view, child, seenIds);
+    }
+}
+
 class VmEventHandler final : public avalang::ui::events::IEventHandler {
 public:
     VmEventHandler(RuntimeHost& host, VmStateBridge& stateBridge, std::string handlerName,
@@ -142,6 +166,19 @@ public:
 
     void OnEvent(avalang::ui::events::IEvent* event) override {
         if (!event) return;
+
+        avalang::ui::IAvaView* view = host_.CurrentView();
+        if (view && view->IsLoaded()) {
+            std::string error;
+            if (host_.InvokeHandler(handlerName_, error)) {
+                if (treeRoot_) {
+                    std::unordered_set<std::string> seenIds;
+                    ExportComponentPropsFromView(*view, treeRoot_, seenIds);
+                }
+                stateBridge_.RefreshAll();
+            }
+            return;
+        }
 
         if (vm_ && treeRoot_) {
             std::unordered_set<std::string> seenIds;
@@ -188,8 +225,8 @@ std::mutex g_eventHandlersMutex;
 const std::unordered_map<std::string, avalang::ui::events::EventType>& EventPropertyMap() {
     static const std::unordered_map<std::string, avalang::ui::events::EventType> map = {
         {"click", avalang::ui::events::EventType::Click},
-        {"mouseEnter", avalang::ui::events::EventType::MouseEnter},
-        {"mouseLeave", avalang::ui::events::EventType::MouseLeave},
+        {"pointerEnter", avalang::ui::events::EventType::PointerEnter},
+        {"pointerLeave", avalang::ui::events::EventType::PointerLeave},
         {"focus", avalang::ui::events::EventType::Focus},
         {"blur", avalang::ui::events::EventType::Blur},
         {"keyDown", avalang::ui::events::EventType::KeyDown},

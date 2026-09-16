@@ -6,7 +6,7 @@ namespace ui {
 const char* const* KnownComponentPropertyNames(std::size_t& count) {
     static const char* kNames[] = {
         "id", "text", "value", "placeholder", "class", "style",
-        "backgroundColor", "borderColor", "color", "textColor",
+        "backgroundColor", "borderColor", "textColor",
         "fontSize", "fontName",
         "source", "alt", "label", "checked", "isChecked", "isSelected",
         "selectedValue",
@@ -14,12 +14,12 @@ const char* const* KnownComponentPropertyNames(std::size_t& count) {
         "margin", "gap", "width", "height", "radius", "borderRadius",
         "borderWidth", "background", "fill", "spacing", "grow",
         "direction", "as",
-        "click", "onmouseenter", "onmouseleave", "onfocus", "onblur",
-        "onkeydown", "onkeyup"
+        "click",
+        "onfocus", "onblur", "onkeydown", "onkeyup"
     };
     count = sizeof(kNames) / sizeof(kNames[0]);
     return kNames;
 }
 
-} // namespace ui
-} // namespace avalang
+}
+}

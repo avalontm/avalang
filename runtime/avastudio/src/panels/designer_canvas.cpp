@@ -103,9 +103,48 @@ struct DesignerVmCacheEntry {
     int live_render_w = -1;
     int live_render_h = -1;
 
+    int device_preset_index = 0;
+
     std::string last_logged_live_render_error;
     std::string last_logged_missing_rects;
 };
+
+struct DevicePreset {
+    const char* name;
+    float width;
+    float height;
+};
+
+constexpr DevicePreset kDevicePresets[] = {
+    {"Responsive", 0.0f, 0.0f},
+    {"Desktop (1280x720)", 1280.0f, 720.0f},
+    {"Web (1366x768)", 1366.0f, 768.0f},
+    {"Android Phone (412x915)", 412.0f, 915.0f},
+    {"Android Tablet (800x1280)", 800.0f, 1280.0f},
+    {"iOS Phone (390x844)", 390.0f, 844.0f},
+    {"iOS Tablet (820x1180)", 820.0f, 1180.0f},
+};
+
+float DrawDevicePresetBar(int tab_id, DesignerVmCacheEntry* cache_entry) {
+    if (tab_id < 0 || cache_entry == nullptr) return 0.0f;
+
+    ImGui::SetNextItemWidth(220.0f);
+    const int count = static_cast<int>(sizeof(kDevicePresets) / sizeof(kDevicePresets[0]));
+    if (cache_entry->device_preset_index < 0 || cache_entry->device_preset_index >= count) {
+        cache_entry->device_preset_index = 0;
+    }
+    if (ImGui::BeginCombo("##device_preset", kDevicePresets[cache_entry->device_preset_index].name)) {
+        for (int i = 0; i < count; ++i) {
+            const bool is_selected = (i == cache_entry->device_preset_index);
+            if (ImGui::Selectable(kDevicePresets[i].name, is_selected)) {
+                cache_entry->device_preset_index = i;
+            }
+            if (is_selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    return ImGui::GetFrameHeightWithSpacing();
+}
 
 std::unordered_map<int, DesignerVmCacheEntry> g_designer_vm_cache;
 
@@ -946,7 +985,10 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
             entry.vm == nullptr || entry.last_dirty != doc.dirty || entry.cached_project_root != project_root;
         tree_state_rebuilt_this_frame = needs_rebuild;
         if (needs_rebuild) {
-            if (entry.vm) ava_vm_destroy(entry.vm);
+            if (entry.vm) {
+                design::ReleasePreviewInstance(entry.vm);
+                ava_vm_destroy(entry.vm);
+            }
             entry.vm = design::BuildStateVM(doc);
             design::BindCodeBehind(entry.vm, doc);
             entry.last_dirty = doc.dirty;
@@ -961,12 +1003,24 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
         design::BindCodeBehind(state_vm, doc);
     }
 
+    const float device_bar_height = DrawDevicePresetBar(tab_id, cache_entry_for_live_render);
     const float breadcrumb_height = DrawBreadcrumbBar(root_to_draw, doc, tab_id, selected);
     const float dialog_tray_height = DrawDialogTray(root_to_draw, doc, tab_id, selected);
     ImVec2 canvas_size = size;
-    const float reserved_height = breadcrumb_height + dialog_tray_height;
+    const float reserved_height = device_bar_height + breadcrumb_height + dialog_tray_height;
     if (reserved_height > 0.0f) {
         canvas_size.y = std::max(size.y - reserved_height, 1.0f);
+    }
+    if (cache_entry_for_live_render != nullptr && cache_entry_for_live_render->device_preset_index > 0) {
+        const DevicePreset& preset = kDevicePresets[cache_entry_for_live_render->device_preset_index];
+        canvas_size.x = preset.width;
+        canvas_size.y = preset.height;
+
+        const float avail_width = ImGui::GetContentRegionAvail().x;
+        if (avail_width > canvas_size.x) {
+            const float indent = (avail_width - canvas_size.x) * 0.5f;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + indent);
+        }
     }
 
     ImGui::BeginChild("##DesignerCanvas", canvas_size, true, ImGuiWindowFlags_HorizontalScrollbar);
@@ -1080,7 +1134,10 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
 
     DrawCanvasDeleteConfirmPopup(doc, tab_id, selected);
 
-    if (tab_id < 0 && state_vm) ava_vm_destroy(state_vm);
+    if (tab_id < 0 && state_vm) {
+        design::ReleasePreviewInstance(state_vm);
+        ava_vm_destroy(state_vm);
+    }
 
     return selected;
 }
@@ -1088,8 +1145,17 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
 void InvalidateDesignerVmCache(int tab_id) {
     auto it = g_designer_vm_cache.find(tab_id);
     if (it == g_designer_vm_cache.end()) return;
-    if (it->second.vm) ava_vm_destroy(it->second.vm);
+    if (it->second.vm) {
+        design::ReleasePreviewInstance(it->second.vm);
+        ava_vm_destroy(it->second.vm);
+    }
     g_designer_vm_cache.erase(it);
+}
+
+AvaVM* GetDesignerStateVM(int tab_id) {
+    auto it = g_designer_vm_cache.find(tab_id);
+    if (it == g_designer_vm_cache.end()) return nullptr;
+    return it->second.vm;
 }
 
 }

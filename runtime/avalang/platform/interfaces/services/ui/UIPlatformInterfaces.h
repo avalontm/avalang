@@ -17,5 +17,9 @@
 #include "ITimer.h"
 #include "IDisplay.h"
 #include "IPlatformServices.h"
+#include "IWheel.h"
+#include "ITextInput.h"
+#include "ITouch.h"
+#include "IIme.h"
 
 #endif // AVA_PLATFORM_SERVICES_UI_UIPLATFORMINTERFACES_H

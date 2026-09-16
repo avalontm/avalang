@@ -133,6 +133,7 @@ set(STUDIO_SOURCES
     src/panels/editor_panel.cpp
     src/panels/syntax_highlight.cpp
     src/panels/properties_panel.cpp
+    src/panels/state_panel.cpp
     src/panels/settings_panel.cpp
     src/panels/build_panel.cpp
     src/panels/project_properties_panel.cpp

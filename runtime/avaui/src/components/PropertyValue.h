@@ -1,5 +1,4 @@
-#ifndef AVA_UI_COMPONENTS_PROPERTYVALUE_H
-#define AVA_UI_COMPONENTS_PROPERTYVALUE_H
+#pragma once
 
 #include <memory>
 #include <string>
@@ -48,7 +47,5 @@ private:
     std::shared_ptr<PropertyList> list_;
 };
 
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_COMPONENTS_PROPERTYVALUE_H
+}
+}

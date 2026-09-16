@@ -5,6 +5,7 @@
 #include <unordered_set>
 
 #include "languages/lexer_utils.h"
+#include "src/builtins/builtin_names.h"
 
 namespace studio::languages {
 
@@ -30,6 +31,24 @@ bool MatchesKeywordAt(TextEditor::Iterator pos, TextEditor::Iterator end, const 
 TextEditor::Iterator GetAvaLangNumber(TextEditor::Iterator start, TextEditor::Iterator end) {
     TextEditor::Iterator i = start;
     if (i >= end || *i < '0' || *i > '9') return start;
+    // Literal hex (0x.../0X...): mismo prefijo que el lexer de ANTLR
+    // (AvaLang.g4) y el resaltador de syntax_highlight.cpp -- se consume
+    // entero y se corta antes de la rama decimal/float de abajo, porque
+    // un hex nunca lleva '.'.
+    if (*i == '0') {
+        TextEditor::Iterator afterZero = i;
+        ++afterZero;
+        if (afterZero < end && (*afterZero == 'x' || *afterZero == 'X')) {
+            TextEditor::Iterator afterX = afterZero;
+            ++afterX;
+            TextEditor::Iterator j = afterX;
+            auto isHexDigit = [](ImWchar c) {
+                return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            };
+            while (j < end && isHexDigit(*j)) ++j;
+            if (j > afterX) return j; // al menos un digito hex tras 0x/0X
+        }
+    }
     while (i < end && *i >= '0' && *i <= '9') ++i;
     if (i < end && *i == '.') {
         TextEditor::Iterator afterDot = i;
@@ -41,6 +60,38 @@ TextEditor::Iterator GetAvaLangNumber(TextEditor::Iterator start, TextEditor::It
     }
     return i;
 }
+
+// Namespaces del modulo nativo 'system' (runtime/avalang/src/builtins/
+// system_module.cpp): System, System.Console, System.DateTime,
+// System.Thread, System.Environment, System.IO.{File,Directory},
+// System.Diagnostics.Process. A diferencia de las clases declaradas por
+// el usuario (IsKnownClassName, alimentada por UpdateKnownClassNames a
+// partir de `class X` visto en algun tab abierto), estos nombres nunca
+// aparecen como `class X` en codigo AvaLang -- los registra el runtime
+// via RegisterNativeModule/SetDictEntry, no el parser -- asi que
+// KnownClassRefCounts() jamas los contiene y sin esta lista quedaban sin
+// colorear (texto plano) en vez de recibir el mismo preprocessor/kSynClass
+// verde-azulado que cualquier otra clase. Misma lista que
+// tools/vscode/syntaxes/avalang.tmLanguage.json#stdlib-namespaces, para
+// que AvaStudio y la extension de VS Code coincidan.
+const std::unordered_set<std::string> kNativeNamespaces = {
+    "System", "Console", "DateTime", "Thread", "Environment",
+    "IO", "File", "Directory", "Diagnostics", "Process",
+};
+
+// Clases nativas inyectadas por el host en runtime, no por el usuario --
+// hoy solo `Application` (ver ApplicationClassSource en
+// runtime/avahost/src/native/native_app_host.cpp: compila un
+// `class Application ... end` sintetico dentro de avanative.exe antes de
+// correr el entry file, nunca aparece como texto `class Application` en
+// ningun .ava del proyecto). Mismo problema que kNativeNamespaces arriba
+// pero para IsKnownClassName en vez de namespaces con '.': sin esta lista,
+// `app as Application` y el autocompletado no reconocen `Application` como
+// tipo -- ver su uso en AvaLangTokenizer (coloreado de `as Tipo`) y en
+// editor_panel.cpp::RebuildAutocompleteTrie (autocompletado).
+const std::unordered_set<std::string> kNativeClassNames = {
+    "Application",
+};
 
 const std::unordered_set<std::string> kNonFunctionWords = {
     "if", "then", "elif", "else", "end",
@@ -95,7 +146,7 @@ std::unordered_map<std::string, int>& KnownClassRefCounts() {
 }
 
 bool IsKnownClassName(const std::string& name) {
-    return KnownClassRefCounts().count(name) != 0;
+    return KnownClassRefCounts().count(name) != 0 || kNativeClassNames.count(name) != 0;
 }
 
 int& KnownClassGeneration() {
@@ -157,17 +208,26 @@ public:
         if (state_ == State::kExpectTypeName) {
             // The NAME right after `as` -- either a typeAnnotation's type
             // (`x as int`, `x as int = 1`) or an import alias
-            // (`import a as b`). Left unhandled (returns `start` below) on
-            // purpose: it must NOT go through the assignment/`as`/`in`
-            // checks further down, since a typed assignment's type name
-            // sits directly before the `=` too (`NAME 'as' NAME '=' expr`)
-            // and would otherwise get wrongly colored as the assignment
-            // target itself. Falling through lets the engine's own
-            // keyword/identifier tables color builtin type names
-            // (int/float/bool/string, via lang.identifiers) normally, and
-            // leaves anything else (a class/interface type, an import
-            // alias) as plain default text.
+            // (`import a as b`). A known class/interface type (project-
+            // declared via `class X`/`interface X`, or a native one like
+            // `Application` -- see kNativeClassNames above) gets colored
+            // the same way `new X` already does below, so `x as Application`
+            // and `new Application()` on the same line look consistent.
+            // Anything else (an import alias, a builtin primitive like
+            // int/float/bool/string, or a genuinely unknown name) is left
+            // unhandled (returns `start`) so the engine's own keyword/
+            // identifier tables color builtin type names via
+            // lang.identifiers, and everything else stays plain default
+            // text rather than risk mislabeling an import alias as a type.
             state_ = State::kIdle;
+            if (IsKnownInterfaceName(word)) {
+                color = TextEditor::Color::interfaceName;
+                return word_end;
+            }
+            if (IsKnownClassName(word)) {
+                color = TextEditor::Color::preprocessor;
+                return word_end;
+            }
             return start;
         }
         state_ = State::kIdle;
@@ -202,6 +262,16 @@ public:
             state_ = State::kExpectImportPath;
             return start;
         }
+        if (word == "extern") {
+            pending_extern_ = true;
+            return start;
+        }
+        if (word == "as" && pending_extern_) {
+            pending_extern_ = false;
+            color = TextEditor::Color::preprocessor;
+            return word_end;
+        }
+        pending_extern_ = false;
         if (word == "as") {
             state_ = State::kExpectTypeName;
             return start;
@@ -245,7 +315,8 @@ public:
                 color = TextEditor::Color::variableName;
                 return word_end;
             }
-            if (after_ws < end && *after_ws == '.' && IsKnownClassName(word)) {
+            if (after_ws < end && *after_ws == '.' &&
+                (IsKnownClassName(word) || kNativeNamespaces.count(word))) {
                 color = TextEditor::Color::preprocessor;
                 return word_end;
             }
@@ -263,6 +334,7 @@ private:
     State state_ = State::kIdle;
     bool declaring_interface_ = false;
     bool pending_new_ = false;
+    bool pending_extern_ = false;
     int paren_depth_ = 0;
 };
 
@@ -327,6 +399,8 @@ void UpdateKnownClassNames(const std::unordered_set<std::string>& removed,
 }
 
 int KnownClassNamesGeneration() { return KnownClassGeneration(); }
+
+const std::unordered_set<std::string>& NativeClassNames() { return kNativeClassNames; }
 
 std::unordered_set<std::string> ScanKnownVariableNames(const std::string& text) {
     using lexer::IsIdentChar;
@@ -432,9 +506,10 @@ const TextEditor::Language* AvaLang() {
         };
 
         lang.identifiers = {
-            "print", "type", "typeof", "str", "int", "float", "bool", "string", "list", "dict",
-            "abs", "round", "floor", "ceil", "min", "max", "pow", "sqrt", "sum",
-            "sorted", "reversed", "any", "all", "len", "range",
+#define AVA_LANG_IDENTIFIER(name, fn) #name,
+            AVA_BUILTIN_GLOBALS(AVA_LANG_IDENTIFIER)
+#undef AVA_LANG_IDENTIFIER
+            "bool", "string", "list", "dict",
         };
 
         lang.isPunctuation = [](ImWchar ch) {

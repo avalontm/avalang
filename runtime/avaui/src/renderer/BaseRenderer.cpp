@@ -1,5 +1,7 @@
 #include "renderer/BaseRenderer.h"
 #include "commands/RenderCommand.h"
+#include "resources/ResourceManager.h"
+
 #include <cmath>
 
 namespace avalang {
@@ -23,103 +25,181 @@ void BaseRenderer::SetViewport(int width, int height) {
     height_ = height;
 }
 
+namespace {
+
+bool SameRectStyle(const RenderCommand& a, const RenderCommand& b) {
+    const auto& ra = a.drawRect;
+    const auto& rb = b.drawRect;
+    return ra.fillColor.r == rb.fillColor.r && ra.fillColor.g == rb.fillColor.g &&
+           ra.fillColor.b == rb.fillColor.b && ra.fillColor.a == rb.fillColor.a &&
+           ra.borderColor.r == rb.borderColor.r && ra.borderColor.g == rb.borderColor.g &&
+           ra.borderColor.b == rb.borderColor.b && ra.borderColor.a == rb.borderColor.a &&
+           ra.borderWidth == rb.borderWidth && ra.borderRadius == rb.borderRadius;
+}
+
+RectGeometry ToRectGeometry(const RenderCommand& cmd) {
+    return RectGeometry{
+        cmd.drawRect.x, cmd.drawRect.y, cmd.drawRect.width, cmd.drawRect.height,
+        cmd.drawRect.clickHandler, cmd.drawRect.className
+    };
+}
+
+}
+
 void BaseRenderer::ProcessCommands(const std::vector<RenderCommand>& commands) {
-    for (const auto& cmd : commands) {
-        switch (cmd.type) {
-            case RenderCommandType::DrawRectangle:
-                OnDrawRectangle(
-                    cmd.drawRect.x, cmd.drawRect.y,
-                    cmd.drawRect.width, cmd.drawRect.height,
-                    cmd.drawRect.fillColor,
-                    cmd.drawRect.borderColor, cmd.drawRect.borderWidth,
-                    cmd.drawRect.borderRadius,
-                    cmd.drawRect.clickHandler,
-                    cmd.drawRect.className
-                );
-                break;
+    size_t i = 0;
+    while (i < commands.size()) {
+        if (commands[i].type == RenderCommandType::DrawRectangle) {
+            size_t j = i + 1;
+            std::vector<RectGeometry> batch;
+            batch.push_back(ToRectGeometry(commands[i]));
+            while (j < commands.size() && commands[j].type == RenderCommandType::DrawRectangle &&
+                   SameRectStyle(commands[i], commands[j])) {
+                batch.push_back(ToRectGeometry(commands[j]));
+                ++j;
+            }
 
-            case RenderCommandType::DrawEllipse:
-                OnDrawEllipse(
-                    cmd.drawEllipse.cx, cmd.drawEllipse.cy,
-                    cmd.drawEllipse.rx, cmd.drawEllipse.ry,
-                    cmd.drawEllipse.fillColor,
-                    cmd.drawEllipse.borderColor, cmd.drawEllipse.borderWidth,
-                    cmd.drawEllipse.clickHandler,
-                    cmd.drawEllipse.className
-                );
-                break;
-
-            case RenderCommandType::DrawText:
-                OnDrawText(
-                    cmd.drawText.x, cmd.drawText.y,
-                    cmd.drawText.text,
-                    cmd.drawText.fontSize, cmd.drawText.fontName,
-                    cmd.drawText.color,
-                    cmd.drawText.clickHandler,
-                    cmd.drawText.className,
-                    cmd.drawText.maxWidth,
-                    cmd.drawText.wrap
-                );
-                break;
-
-            case RenderCommandType::DrawImage:
-                OnDrawImage(
-                    cmd.drawImage.x, cmd.drawImage.y,
-                    cmd.drawImage.width, cmd.drawImage.height,
-                    cmd.drawImage.imagePath
-                );
-                break;
-
-            case RenderCommandType::DrawHtmlFragment:
-                OnDrawHtmlFragment(cmd.drawHtml.html);
-                break;
-
-            case RenderCommandType::DrawButton:
-                OnDrawButton(
-                    cmd.drawButton.x, cmd.drawButton.y,
-                    cmd.drawButton.width, cmd.drawButton.height,
-                    cmd.drawButton.text,
-                    cmd.drawButton.fontSize, cmd.drawButton.fontName,
-                    cmd.drawButton.textColor,
-                    cmd.drawButton.fillColor,
-                    cmd.drawButton.borderColor, cmd.drawButton.borderWidth, cmd.drawButton.borderRadius,
-                    cmd.drawButton.disabled,
-                    cmd.drawButton.clickHandler,
-                    cmd.drawButton.className
-                );
-                break;
-
-            case RenderCommandType::DrawLink:
-                OnDrawLink(
-                    cmd.drawLink.x, cmd.drawLink.y,
-                    cmd.drawLink.text,
-                    cmd.drawLink.fontSize, cmd.drawLink.fontName,
-                    cmd.drawLink.color,
-                    cmd.drawLink.href,
-                    cmd.drawLink.clickHandler,
-                    cmd.drawLink.className
-                );
-                break;
-
-            case RenderCommandType::Translate:
-                Translate(cmd.transform.x, cmd.transform.y);
-                break;
-
-            case RenderCommandType::Scale:
-                Scale(cmd.transform.sx, cmd.transform.sy);
-                break;
-
-            case RenderCommandType::Rotate:
-                Rotate(cmd.transform.angle);
-                break;
-
-            case RenderCommandType::PushClip:
-                break;
-
-            case RenderCommandType::PopClip:
-                PopClipRect();
-                break;
+            const auto& style = commands[i].drawRect;
+            if (batch.size() > 1) {
+                OnDrawRectangleBatch(batch, style.fillColor, style.borderColor,
+                                      style.borderWidth, style.borderRadius);
+            } else {
+                OnDrawRectangle(style.x, style.y, style.width, style.height, style.fillColor,
+                                 style.borderColor, style.borderWidth, style.borderRadius,
+                                 style.clickHandler, style.className);
+            }
+            i = j;
+            continue;
         }
+
+        DispatchCommand(commands[i]);
+        ++i;
+    }
+}
+
+void BaseRenderer::ProcessCommandsIncremental(
+    const std::vector<RenderCommand>& commands,
+    const std::vector<DirtyRect>& dirtyRegions
+) {
+    for (const auto& cmd : commands) {
+        if (!CommandIntersectsAny(cmd, dirtyRegions)) {
+            continue;
+        }
+        DispatchCommand(cmd);
+    }
+}
+
+void BaseRenderer::DispatchCommand(const RenderCommand& cmd) {
+    switch (cmd.type) {
+        case RenderCommandType::DrawRectangle:
+            OnDrawRectangle(
+                cmd.drawRect.x, cmd.drawRect.y,
+                cmd.drawRect.width, cmd.drawRect.height,
+                cmd.drawRect.fillColor,
+                cmd.drawRect.borderColor, cmd.drawRect.borderWidth,
+                cmd.drawRect.borderRadius,
+                cmd.drawRect.clickHandler,
+                cmd.drawRect.className
+            );
+            break;
+
+        case RenderCommandType::DrawEllipse:
+            OnDrawEllipse(
+                cmd.drawEllipse.cx, cmd.drawEllipse.cy,
+                cmd.drawEllipse.rx, cmd.drawEllipse.ry,
+                cmd.drawEllipse.fillColor,
+                cmd.drawEllipse.borderColor, cmd.drawEllipse.borderWidth,
+                cmd.drawEllipse.clickHandler,
+                cmd.drawEllipse.className
+            );
+            break;
+
+        case RenderCommandType::DrawText:
+            OnDrawText(
+                cmd.drawText.x, cmd.drawText.y,
+                cmd.drawText.text,
+                cmd.drawText.fontSize, cmd.drawText.fontName,
+                cmd.drawText.color,
+                cmd.drawText.clickHandler,
+                cmd.drawText.className,
+                cmd.drawText.maxWidth,
+                cmd.drawText.wrap
+            );
+            break;
+
+        case RenderCommandType::DrawImage: {
+            std::string resolvedPath = cmd.drawImage.imagePath
+                ? ResourceManager::Instance().ResolveImagePath(cmd.drawImage.imagePath)
+                : std::string();
+            OnDrawImage(
+                cmd.drawImage.x, cmd.drawImage.y,
+                cmd.drawImage.width, cmd.drawImage.height,
+                resolvedPath.c_str()
+            );
+            break;
+        }
+
+        case RenderCommandType::DrawHtmlFragment:
+            OnDrawHtmlFragment(cmd.drawHtml.html);
+            break;
+
+        case RenderCommandType::DrawButton:
+            OnDrawButton(
+                cmd.drawButton.x, cmd.drawButton.y,
+                cmd.drawButton.width, cmd.drawButton.height,
+                cmd.drawButton.text,
+                cmd.drawButton.fontSize, cmd.drawButton.fontName,
+                cmd.drawButton.textColor,
+                cmd.drawButton.fillColor,
+                cmd.drawButton.borderColor, cmd.drawButton.borderWidth, cmd.drawButton.borderRadius,
+                cmd.drawButton.disabled,
+                cmd.drawButton.clickHandler,
+                cmd.drawButton.className
+            );
+            break;
+
+        case RenderCommandType::DrawLink:
+            OnDrawLink(
+                cmd.drawLink.x, cmd.drawLink.y,
+                cmd.drawLink.text,
+                cmd.drawLink.fontSize, cmd.drawLink.fontName,
+                cmd.drawLink.color,
+                cmd.drawLink.href,
+                cmd.drawLink.clickHandler,
+                cmd.drawLink.className
+            );
+            break;
+
+        case RenderCommandType::DrawPath:
+            OnDrawPath(
+                cmd.drawPath.x, cmd.drawPath.y,
+                cmd.drawPath.segments,
+                cmd.drawPath.fillColor,
+                cmd.drawPath.borderColor, cmd.drawPath.borderWidth,
+                cmd.drawPath.closed,
+                cmd.drawPath.clickHandler,
+                cmd.drawPath.className
+            );
+            break;
+
+        case RenderCommandType::Translate:
+            Translate(cmd.transform.x, cmd.transform.y);
+            break;
+
+        case RenderCommandType::Scale:
+            Scale(cmd.transform.sx, cmd.transform.sy);
+            break;
+
+        case RenderCommandType::Rotate:
+            Rotate(cmd.transform.angle);
+            break;
+
+        case RenderCommandType::PushClip:
+            break;
+
+        case RenderCommandType::PopClip:
+            PopClipRect();
+            break;
     }
 }
 
@@ -196,6 +276,18 @@ void BaseRenderer::DrawLink(
     OnDrawLink(x, y, text, fontSize, fontName, color, href, clickHandler, className);
 }
 
+void BaseRenderer::DrawPath(
+    float x, float y,
+    const std::vector<render::PathSegment>& segments,
+    const Color& fillColor,
+    const Color& borderColor, float borderWidth,
+    bool closed,
+    const std::string& clickHandler,
+    const std::string& className
+) {
+    OnDrawPath(x, y, segments, fillColor, borderColor, borderWidth, closed, clickHandler, className);
+}
+
 void BaseRenderer::PushClipRect(float x, float y, float width, float height) {
     clipStack_.push({x, y, width, height});
 }
@@ -244,5 +336,5 @@ void BaseRenderer::ResetTransform() {
     currentOpacity_ = 1.0f;
 }
 
-} // namespace ui
-} // namespace avalang
+}
+}

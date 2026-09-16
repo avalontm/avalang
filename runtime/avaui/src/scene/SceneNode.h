@@ -1,5 +1,4 @@
-#ifndef AVA_UI_SCENE_SCENE_NODE_H
-#define AVA_UI_SCENE_SCENE_NODE_H
+#pragma once
 
 #include "scene/ISceneNode.h"
 #include "render_tree/IRenderNode.h"
@@ -15,7 +14,6 @@ public:
               const std::shared_ptr<render::IRenderNode>& renderNode);
     ~SceneNode();
 
-    // Non-copyable
     SceneNode(const SceneNode&) = delete;
     SceneNode& operator=(const SceneNode&) = delete;
 
@@ -48,14 +46,12 @@ public:
     DirtyRegion GetDirtyRegion() const override { return dirtyRegion_; }
     void SetDirtyRegion(const DirtyRegion& region) override { dirtyRegion_ = region; }
     void ClearDirtyRegion() override { dirtyRegion_.isDirty = false; }
-    void MarkDirty() override { dirtyRegion_.isDirty = true; }
+    void MarkDirty() override;
 
     const render::IRenderNode* GetRenderNode() const override { return renderNode_.get(); }
 
-    // Internal: set parent (called by parent during AddChild)
     void SetParent(std::shared_ptr<ISceneNode> parent) { parent_ = parent; }
 
-    // Internal: update world transform from parent
     void UpdateWorldTransform(const Transform& parentWorld);
 
 private:
@@ -77,8 +73,6 @@ private:
     DirtyRegion dirtyRegion_;
 };
 
-} // namespace scene
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_SCENE_SCENE_NODE_H
+}
+}
+}

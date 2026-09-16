@@ -1,0 +1,74 @@
+extern "kernel32" as Kernel
+    func CreateToolhelp32Snapshot(flags, pid)
+    func Process32First(hSnapshot, entry)
+    func Process32Next(hSnapshot, entry)
+    func CloseHandle(hObject)
+    func OpenProcess(desiredAccess, inheritHandle, processId)
+    func ReadProcessMemory(hProcess, baseAddress, buffer, size, bytesRead)
+end
+
+TH32CS_SNAPPROCESS = 2
+PROCESSENTRY32_SIZE = 304
+OFFSET_TH32PROCESSID = 8
+OFFSET_SZEXEFILE = 44
+
+PROCESS_QUERY_INFORMATION = 1024   # 0x0400
+PROCESS_VM_READ = 16               # 0x0010
+
+func BuscarPidPorNombre(nombreExe)
+    hSnapshot = Kernel.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if hSnapshot == 0 or hSnapshot == -1 then
+        raise "No se pudo crear el snapshot de procesos"
+    end
+
+    entry = mem_alloc(PROCESSENTRY32_SIZE)
+    mem_write_u32(entry, 0, PROCESSENTRY32_SIZE)  # dwSize obligatorio
+
+    pidEncontrado = nil
+    buscando = Kernel.Process32First(hSnapshot, entry)
+
+    while buscando
+        nombreProceso = mem_peek_string(entry + OFFSET_SZEXEFILE)
+        if nombreProceso.lower() == nombreExe.lower() then
+            pidEncontrado = mem_read_u32(entry, OFFSET_TH32PROCESSID)
+            buscando = false
+        else
+            buscando = Kernel.Process32Next(hSnapshot, entry)
+        end
+    end
+
+    mem_free(entry)
+    Kernel.CloseHandle(hSnapshot)
+
+    if pidEncontrado == nil then
+        raise $"No se encontro ningun proceso llamado {nombreExe}"
+    end
+
+    return pidEncontrado
+end
+
+func LeerInt32(pid, direccion)
+    permisos = PROCESS_QUERY_INFORMATION + PROCESS_VM_READ
+    hProceso = Kernel.OpenProcess(permisos, false, pid)
+
+    if hProceso == 0 then
+        raise $"No se pudo abrir el proceso {pid} (permisos insuficientes)"
+    end
+
+    buffer = mem_alloc(4)
+    ok = Kernel.ReadProcessMemory(hProceso, direccion, buffer, 4, nil)
+
+    valor = nil
+    if ok then
+        valor = mem_read_u32(buffer, 0)
+    end
+
+    mem_free(buffer)
+    Kernel.CloseHandle(hProceso)
+
+    if not ok then
+        raise $"ReadProcessMemory fallo en la direccion {direccion}"
+    end
+
+    return valor
+end

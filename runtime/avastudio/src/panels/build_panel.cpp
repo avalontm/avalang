@@ -144,8 +144,9 @@ fs::path DetectVcpkgRoot(const fs::path& repo_root) {
     return {};
 }
 
-void StartBuild(BuildPanelState& state, std::vector<std::string> args, std::string ava_cli_path,
-                 std::string expected_result_path) {
+}  // namespace
+
+void StartMultiStepBuild(BuildPanelState& state, std::vector<BuildStep> steps, std::string expected_result_path) {
     if (state.building.load()) return;
     if (state.worker.joinable()) state.worker.join();
 
@@ -160,50 +161,97 @@ void StartBuild(BuildPanelState& state, std::vector<std::string> args, std::stri
     state.building = true;
     state.build_started_at = std::chrono::steady_clock::now();
 
-    state.worker = std::thread([&state, args = std::move(args), ava_cli_path = std::move(ava_cli_path),
+    state.worker = std::thread([&state, steps = std::move(steps),
                                  expected_result_path = std::move(expected_result_path)]() {
         auto platform = ava::platform::Platform::Create();
         ava::platform::IProcess& process = platform->Process();
-
         auto* streaming = dynamic_cast<ava::platform::IProcessStream*>(&process);
 
-        bool launched = false;
-        int exit_code = -1;
+        bool all_succeeded = true;
 
-        if (streaming) {
-            launched = streaming->ExecuteStreaming(
-                ava_cli_path, args,
-                [&state](const std::string& chunk) {
-                    std::lock_guard<std::mutex> lock(state.mutex);
-                    state.log += chunk;
-                },
-                exit_code);
-        } else {
-            ava::platform::ProcessResult result;
-            launched = process.Execute(ava_cli_path, args, result);
-            if (launched) {
+        for (const BuildStep& step : steps) {
+            if (!step.step_label.empty()) {
                 std::lock_guard<std::mutex> lock(state.mutex);
-                state.log = result.stdout_output;
-                if (!result.stderr_output.empty()) {
-                    if (!state.log.empty()) state.log += "\n";
-                    state.log += result.stderr_output;
+                state.log += "$ " + step.step_label + "\n";
+            }
+
+            bool launched = false;
+            int exit_code = -1;
+
+            if (streaming) {
+                launched = streaming->ExecuteStreaming(
+                    step.exe_path, step.args,
+                    [&state](const std::string& chunk) {
+                        std::lock_guard<std::mutex> lock(state.mutex);
+                        state.log += chunk;
+                    },
+                    exit_code);
+            } else {
+                ava::platform::ProcessResult result;
+                launched = process.Execute(step.exe_path, step.args, result);
+                if (launched) {
+                    std::lock_guard<std::mutex> lock(state.mutex);
+                    state.log += result.stdout_output;
+                    if (!result.stderr_output.empty()) {
+                        if (!state.log.empty()) state.log += "\n";
+                        state.log += result.stderr_output;
+                    }
+                    exit_code = result.exit_code;
                 }
-                exit_code = result.exit_code;
+            }
+
+            if (!launched) {
+                std::lock_guard<std::mutex> lock(state.mutex);
+                state.log += "error: could not run '" + step.exe_path + "'\n";
+                all_succeeded = false;
+                break;
+            }
+            if (exit_code != 0) {
+                all_succeeded = false;
+                break;
             }
         }
 
         std::lock_guard<std::mutex> lock(state.mutex);
-        if (!launched) {
-            state.log = "error: could not run '" + ava_cli_path +
-                         "' -- check the ava_cli path under Advanced.\n";
-            state.last_success = false;
-        } else {
-            state.last_success = (exit_code == 0);
-            if (state.last_success) state.result_path = expected_result_path;
-        }
+        state.last_success = all_succeeded;
+        if (all_succeeded) state.result_path = expected_result_path;
         state.has_result = true;
         state.building = false;
     });
+}
+
+namespace {
+
+void StartBuild(BuildPanelState& state, std::vector<std::string> args, std::string ava_cli_path,
+                 std::string expected_result_path) {
+    StartMultiStepBuild(state, {BuildStep{std::move(ava_cli_path), std::move(args), ""}},
+                        std::move(expected_result_path));
+}
+
+void TriggerConsoleRun(BuildPanelState& state, const std::string& exe_path) {
+    StartMultiStepBuild(state, {BuildStep{exe_path, {}, ""}}, exe_path);
+}
+
+void LaunchDetachedProcess(const std::string& exe_path, const std::vector<std::string>& extra_args = {}) {
+#if defined(_WIN32)
+    STARTUPINFOA startup_info{};
+    startup_info.cb = sizeof(startup_info);
+    PROCESS_INFORMATION process_info{};
+    std::string command_line = "\"" + exe_path + "\"";
+    for (const std::string& arg : extra_args) {
+        command_line += " \"" + arg + "\"";
+    }
+    const fs::path working_dir = fs::path(exe_path).parent_path();
+    const std::string working_dir_str = working_dir.string();
+    if (CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, FALSE, 0, nullptr,
+                        working_dir_str.empty() ? nullptr : working_dir_str.c_str(), &startup_info, &process_info)) {
+        CloseHandle(process_info.hProcess);
+        CloseHandle(process_info.hThread);
+    }
+#else
+    (void)exe_path;
+    (void)extra_args;
+#endif
 }
 
 }  // namespace
@@ -328,12 +376,17 @@ void PollBuild(BuildPanelState& state, LogBridge& log_bridge) {
         state.dialog_success = state.last_success;
         state.dialog_result_path = state.result_path;
         state.show_result_dialog = true;
+
+        const bool should_launch = state.launch_on_success;
+        state.launch_on_success = false;
+        if (should_launch && state.last_success) LaunchDetachedProcess(state.result_path, state.launch_extra_args);
     }
 }
 
 TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const AvaProjFile& proj, const AvaProjUserFile& user,
                                   const std::string& explorer_root_dir, LogBridge& log_bridge,
-                                  bool project_ambiguous, const std::vector<std::string>& avaproj_candidates) {
+                                  bool project_ambiguous, const std::vector<std::string>& avaproj_candidates,
+                                  std::optional<AvaProjOutputType> force_output_type, bool force_no_ui) {
     TriggerBuildOutcome outcome;
     outcome.project_dir = explorer_root_dir;
     if (state.building.load()) return outcome;
@@ -367,7 +420,8 @@ TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const AvaProjFile& proj
 
     const fs::path project_dir(outcome.project_dir);
     const bool is_barekernel = (proj.target == AvaProjTarget::kBareKernel);
-    const bool is_library = (proj.output_type == AvaProjOutputType::kLibrary);
+    const bool is_library = force_output_type.has_value() ? (*force_output_type == AvaProjOutputType::kLibrary)
+                                                            : (proj.output_type == AvaProjOutputType::kLibrary);
 
     fs::path ava_cli = user.ava_cli_path.empty() ? DetectAvaCliPath() : fs::path(user.ava_cli_path);
     fs::path repo_root = user.repo_root.empty()
@@ -464,7 +518,7 @@ TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const AvaProjFile& proj
             }
             if (proj.zero_disk && !is_library) args.push_back("--zero-disk");
             if (proj.debug_unencrypted) args.push_back("--debug");
-            if (proj.uses_ui) args.push_back("--with-ui");
+            if (proj.uses_ui && !force_no_ui) args.push_back("--with-ui");
         }
 
         std::string entry_stem = fs::path(entry).stem().string();
@@ -499,6 +553,106 @@ TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const AvaProjFile& proj
 
 namespace {
 
+void ReportTriggerSetupError(BuildPanelState& state, LogBridge& log_bridge, const std::string& setup_error) {
+    std::lock_guard<std::mutex> lock(state.mutex);
+    state.log = "error: " + setup_error;
+    state.log_forwarded_upto = 0;
+    state.has_result = true;
+    state.last_success = false;
+    state.logged_to_output = false;
+    log_bridge.Log("[build] error: " + setup_error);
+    state.logged_to_output = true;
+}
+
+}  // namespace
+
+TriggerBuildOutcome TriggerDesktopUiRunBuild(BuildPanelState& state, const AvaProjFile& proj,
+                                              const AvaProjUserFile& user, const std::string& explorer_root_dir,
+                                              LogBridge& log_bridge, bool project_ambiguous,
+                                              const std::vector<std::string>& avaproj_candidates) {
+    TriggerBuildOutcome outcome;
+    outcome.project_dir = explorer_root_dir;
+    if (state.building.load()) return outcome;
+
+    if (project_ambiguous) {
+        std::string list;
+        for (const std::string& candidate : avaproj_candidates) {
+            if (!list.empty()) list += ", ";
+            list += candidate;
+        }
+        ReportTriggerSetupError(state, log_bridge,
+                                 "se encontraron varios .avaproj en " + explorer_root_dir + " (" + list +
+                                     ") -- Ava Studio no puede saber cual proyecto queres compilar. Abri la "
+                                     "subcarpeta del proyecto especifico (File > Open Folder) en vez de la "
+                                     "carpeta que los contiene a todos.");
+        return outcome;
+    }
+
+    if (util::DetectedHostPlatform() != util::HostPlatform::kWindows) {
+        ReportTriggerSetupError(state, log_bridge, util::Tr("build.error_desktop_ui_windows_only"));
+        return outcome;
+    }
+
+    const fs::path project_dir(outcome.project_dir);
+    fs::path repo_root = user.repo_root.empty()
+                              ? [&]() {
+                                    fs::path detected = DetectRepoRoot(SelfExecutableDir());
+                                    return detected.empty() ? DetectRepoRoot(project_dir) : detected;
+                                }()
+                              : fs::path(user.repo_root);
+
+    std::error_code ec;
+    std::string setup_error;
+    std::string entry = proj.entry_file.empty() ? DetectEntryFile(project_dir) : proj.entry_file;
+    if (repo_root.empty() || !LooksLikeRepoRoot(repo_root)) {
+        setup_error = util::Tr("build.error_repo_root_not_found");
+    } else if (!fs::exists(project_dir, ec) || !fs::is_directory(project_dir, ec)) {
+        setup_error = util::Tr("build.error_project_dir_missing");
+    } else if (entry.empty()) {
+        outcome.entry_file_missing = true;
+        setup_error = util::Tr("build.error_entry_file_missing");
+    } else if (!fs::exists(project_dir / entry, ec)) {
+        outcome.entry_file_missing = true;
+        setup_error = TrFormat("build.error_entry_file_not_found", (project_dir / entry).string());
+    }
+
+    if (!setup_error.empty()) {
+        ReportTriggerSetupError(state, log_bridge, setup_error);
+        return outcome;
+    }
+
+    const fs::path build_dir = repo_root / "build_avastudio_run";
+    const fs::path dist_dir = build_dir / "dist" / "win" / "avanative";
+    const fs::path expected_result_path = dist_dir / "avanative.exe";
+
+    state.launch_extra_args = {project_dir.string(), "--entry", entry};
+
+    std::error_code dist_ec;
+    const bool avanative_dlls_present = fs::exists(dist_dir / "avalang.dll", dist_ec) &&
+                                         fs::exists(dist_dir / "avalang_ui.dll", dist_ec) &&
+                                         fs::exists(dist_dir / "avalang_ui_win.dll", dist_ec);
+    if (fs::exists(expected_result_path, dist_ec) && avanative_dlls_present) {
+        StartMultiStepBuild(state, {}, expected_result_path.string());
+        return outcome;
+    }
+
+    log_bridge.Log("[build] " + util::Tr("build.first_run_build_notice"));
+
+    BuildStep configure_step{"cmake",
+                              {"-S", repo_root.string(), "-B", build_dir.string(), "-DAVA_BUILD_SHARED=ON",
+                               "-DAVA_BUILD_UI=ON", "-DAVA_BUILD_UI_BACKEND_WIN=ON", "-DAVA_BUILD_AVAHOST=ON",
+                               "-DAVA_PACKAGE_DIST=ON"},
+                              "cmake configure"};
+    BuildStep build_step{"cmake", {"--build", build_dir.string(), "--target", "avanative", "--config", "Release"},
+                         "cmake build"};
+
+    StartMultiStepBuild(state, {configure_step, build_step}, expected_result_path.string());
+
+    return outcome;
+}
+
+namespace {
+
 bool DrawPathRow(const char* label, const char* hint, std::string& value, const char* browse_id,
                   BuildBrowseField field, BuildPanelResult& result) {
     ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s", label);
@@ -515,11 +669,46 @@ bool DrawPathRow(const char* label, const char* hint, std::string& value, const 
     return committed;
 }
 
+RunTarget PreselectRunTarget(const AvaProjFile& proj, util::HostPlatform host_platform) {
+    if (proj.output_type == AvaProjOutputType::kLibrary) return RunTarget::kLibrary;
+    if (proj.uses_ui && host_platform == util::HostPlatform::kWindows) return RunTarget::kDesktopUi;
+    return RunTarget::kConsole;
+}
+
+const char* RunTargetLabelKey(RunTarget target) {
+    switch (target) {
+        case RunTarget::kConsole: return "build.run_target_console";
+        case RunTarget::kDesktopUi: return "build.run_target_desktop_ui";
+        case RunTarget::kLibrary: return "build.run_target_library";
+    }
+    return "build.run_target_console";
+}
+
 }  // namespace
+
+TriggerBuildOutcome DispatchBuildAndRun(BuildPanelState& state, RunTarget target, const AvaProjFile& proj,
+                                         const AvaProjUserFile& user, const std::string& explorer_root_dir,
+                                         LogBridge& log_bridge, bool project_ambiguous,
+                                         const std::vector<std::string>& avaproj_candidates) {
+    state.last_built_target = target;
+    switch (target) {
+        case RunTarget::kConsole:
+            return TriggerBuild(state, proj, user, explorer_root_dir, log_bridge, project_ambiguous,
+                                 avaproj_candidates, AvaProjOutputType::kExe, true);
+        case RunTarget::kDesktopUi:
+            return TriggerDesktopUiRunBuild(state, proj, user, explorer_root_dir, log_bridge, project_ambiguous,
+                                             avaproj_candidates);
+        case RunTarget::kLibrary:
+            return TriggerBuild(state, proj, user, explorer_root_dir, log_bridge, project_ambiguous,
+                                 avaproj_candidates, AvaProjOutputType::kLibrary, false);
+    }
+    return {};
+}
 
 BuildPanelResult DrawBuildPanel(BuildPanelState& state, AvaProjFile& proj, AvaProjUserFile& user,
                                  const std::string& explorer_root_dir, BuildBrowseField browsed_field,
-                                 const std::string& browsed_value, LogBridge& log_bridge, bool* p_open) {
+                                 const std::string& browsed_value, LogBridge& log_bridge, bool project_ambiguous,
+                                 const std::vector<std::string>& avaproj_candidates, bool* p_open) {
     BuildPanelResult result;
 
     if (browsed_field != BuildBrowseField::kNone && !browsed_value.empty()) {
@@ -546,6 +735,63 @@ BuildPanelResult DrawBuildPanel(BuildPanelState& state, AvaProjFile& proj, AvaPr
     if (ImGui::Button(open_properties_label.c_str())) {
         result.open_project_properties = true;
     }
+    ImGui::Dummy(ImVec2(0.0f, 10.0f));
+
+    const util::HostPlatform run_host_platform = util::DetectedHostPlatform();
+    if (!state.run_target_preselected) {
+        state.selected_run_target = PreselectRunTarget(proj, run_host_platform);
+        state.run_target_preselected = true;
+    }
+
+    ImGui::TextColored(palette::FromHex(palette::kInfo), "%s", util::Tr("build.section_run_target").c_str());
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0.0f, 4.0f));
+
+    ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s", util::Tr("build.run_target_label").c_str());
+    ImGui::SetNextItemWidth(-1.0f);
+    const bool desktop_ui_disabled = run_host_platform != util::HostPlatform::kWindows;
+    if (ImGui::BeginCombo("##run_target", util::Tr(RunTargetLabelKey(state.selected_run_target)).c_str())) {
+        for (RunTarget candidate : {RunTarget::kConsole, RunTarget::kDesktopUi, RunTarget::kLibrary}) {
+            const bool disabled = candidate == RunTarget::kDesktopUi && desktop_ui_disabled;
+            ImGui::BeginDisabled(disabled);
+            if (ImGui::Selectable(util::Tr(RunTargetLabelKey(candidate)).c_str(),
+                                   state.selected_run_target == candidate)) {
+                state.selected_run_target = candidate;
+            }
+            ImGui::EndDisabled();
+            if (disabled && ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", util::Tr("build.run_target_desktop_ui_unsupported_tooltip").c_str());
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::Dummy(ImVec2(0.0f, 6.0f));
+
+    const bool is_library_target = state.selected_run_target == RunTarget::kLibrary;
+    const std::string dispatch_label =
+        util::Tr(is_library_target ? "build.build_only_button" : "build.build_and_run_button");
+    ImGui::BeginDisabled(state.building.load());
+    if (ImGui::Button(dispatch_label.c_str())) {
+        DispatchBuildAndRun(state, state.selected_run_target, proj, user, explorer_root_dir, log_bridge,
+                             project_ambiguous, avaproj_candidates);
+    }
+    ImGui::EndDisabled();
+
+    const bool can_run =
+        state.has_result && state.last_success && !is_library_target && state.last_built_target == state.selected_run_target;
+    if (can_run) {
+        ImGui::SameLine();
+        ImGui::BeginDisabled(state.building.load());
+        if (ImGui::Button(util::Tr("build.run_button").c_str())) {
+            if (state.selected_run_target == RunTarget::kDesktopUi) {
+                LaunchDetachedProcess(state.result_path, state.launch_extra_args);
+            } else {
+                TriggerConsoleRun(state, state.result_path);
+            }
+        }
+        ImGui::EndDisabled();
+    }
+
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
     if (state.building.load()) {

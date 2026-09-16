@@ -4,6 +4,8 @@
 #include <fstream>
 #include <sstream>
 
+#include "util/project_utils.h"
+
 namespace studio {
 
 namespace fs = std::filesystem;
@@ -48,6 +50,7 @@ ProjectConfig LoadProjectConfig(const std::string& dir) {
         config.load_parse_failed = fs::exists(config.avaproj_path, exists_ec);
         config.proj = AvaProjFile{};
         config.proj.project_name = fs::path(dir).filename().string();
+        config.proj.uses_ui = DetectUsesUi(dir);
     }
 
     if (auto loaded_user = LoadAvaProjUserFile(UserFilePathFor(config.avaproj_path))) {

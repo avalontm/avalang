@@ -1,5 +1,4 @@
-#ifndef AVA_UI_RESOLVER_DOTTED_PATH_H
-#define AVA_UI_RESOLVER_DOTTED_PATH_H
+#pragma once
 
 #include <filesystem>
 #include <string>
@@ -14,7 +13,5 @@ AVA_UI_API std::filesystem::path ResolveDottedAvauiPath(const std::string& proje
 
 AVA_UI_API std::string CallableTagFromDotted(const std::string& dotted);
 
-} // namespace ui
-} // namespace avalang
-
-#endif // AVA_UI_RESOLVER_DOTTED_PATH_H
+}
+}

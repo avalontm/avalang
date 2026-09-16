@@ -15,5 +15,6 @@
     <FlattenControlFlow>false</FlattenControlFlow>
     <ZeroDisk>false</ZeroDisk>
     <DebugUnencrypted>false</DebugUnencrypted>
+    <UsesUi>false</UsesUi>
   </PropertyGroup>
 </Project>

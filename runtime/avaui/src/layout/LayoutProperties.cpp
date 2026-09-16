@@ -58,6 +58,6 @@ LayoutAlignment ReadAlignment(const IComponent* component, const std::string& na
     return LayoutAlignment::Stretch;
 }
 
-} // namespace layout
-} // namespace ui
-} // namespace avalang
+}
+}
+}

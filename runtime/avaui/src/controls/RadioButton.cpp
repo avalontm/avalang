@@ -7,11 +7,12 @@
 #include <mutex>
 #include <algorithm>
 
-namespace avalang::ui::controls {
+namespace avalang {
+namespace ui {
+namespace controls {
 
 namespace {
 
-// group name -> member components (process-wide; see header comment).
 std::unordered_map<std::string, std::vector<IComponent*>> g_groups;
 std::unordered_map<ComponentId, RadioButtonChangeCallback> g_callbacks;
 std::mutex g_mutex;
@@ -30,7 +31,7 @@ void NotifyChange(IComponent* comp, bool isSelected) {
     }
 }
 
-} // anonymous namespace
+}
 
 IComponent* CreateRadioButton(ComponentTree* tree, const std::string& label,
                                const std::string& group, bool isSelected) {
@@ -57,7 +58,6 @@ IComponent* CreateRadioButton(ComponentTree* tree, const std::string& label,
         SelectRadioButton(comp);
     }
 
-    // borderColor / borderWidth filled by RenderTheme::Apply().
     return comp;
 }
 
@@ -86,14 +86,12 @@ void SelectRadioButton(IComponent* radioButtonComponent) {
         const auto* current = member->GetProperty("isSelected");
         bool wasSelected = current && current->Type() == PropertyType::Bool && current->AsBool();
         if (wasSelected == shouldBeSelected) {
-            continue; // no change, no callback
+            continue;
         }
         member->SetProperty("isSelected", PropertyValue(shouldBeSelected));
         NotifyChange(member, shouldBeSelected);
     }
 
-    // In case radioButtonComponent wasn't found in its own group (e.g.
-    // group changed after creation), make sure it's still selected.
     const auto* selfProp = radioButtonComponent->GetProperty("isSelected");
     if (!selfProp || selfProp->Type() != PropertyType::Bool || !selfProp->AsBool()) {
         radioButtonComponent->SetProperty("isSelected", PropertyValue(true));
@@ -127,7 +125,7 @@ struct RadioButtonTypeRegistration {
     RadioButtonTypeRegistration() {
         using namespace avalang::ui::registry;
         RegisterComponentType({
-            "RadioButton", "Radio Button", /*is_container=*/false,
+            "RadioButton", "Radio Button", false,
             {
                 {"label", PropertyValue("RadioButton")},
                 {"group", PropertyValue("")},
@@ -138,6 +136,8 @@ struct RadioButtonTypeRegistration {
     }
 };
 static RadioButtonTypeRegistration _radiobutton_type_registration;
-} // namespace
+}
 
-} // namespace avalang::ui::controls
+}
+}
+}
