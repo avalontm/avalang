@@ -215,7 +215,7 @@ bool IsComponentCall(const std::string& text, std::string* nameOut, std::string*
     }
     if (std::isdigit(static_cast<unsigned char>(name[0]))) return false;
 
-    *nameOut = name;
+    if (nameOut) *nameOut = name;
     if (argsOut) {
         *argsOut = text.substr(open + 1, text.size() - open - 2);
     }
@@ -341,6 +341,27 @@ bool IsForHeader(const std::string& text, std::string* varOut, std::string* iter
 IComponent* ParseComponent(const std::vector<Line>& lines, size_t& idx, ComponentTree* tree,
                            std::vector<AnimationSpec>* animations);
 
+bool IsReservedDeclarationKeyword(const std::string& word) {
+    static const std::unordered_map<std::string, bool> kReserved = {
+        {"extends", true}, {"route", true}, {"import", true},
+        {"properties", true}, {"metadata", true}, {"state", true},
+        {"params", true}, {"style", true}, {"code", true},
+        {"methods", true}, {"view", true},
+    };
+    return kReserved.count(word) != 0;
+}
+
+void RejectDeclarationInsideView(const Line& line) {
+    std::istringstream headerStream(line.text);
+    std::string keyword;
+    headerStream >> keyword;
+    if (!IsReservedDeclarationKeyword(keyword)) return;
+    throw ParseError("invalid declaration '" + keyword +
+                          "' inside 'view' (declarations belong to the document top "
+                          "level, outside 'view')",
+                      line.lineNo, line.indent + 1);
+}
+
 void ParseComponentBody(IComponent* comp, const Line& header, const std::vector<Line>& lines,
                         size_t& idx, ComponentTree* tree, std::vector<AnimationSpec>* animations) {
     while (idx < lines.size()) {
@@ -374,6 +395,7 @@ void ParseComponentBody(IComponent* comp, const Line& header, const std::vector<
             SetPropertyWithAlias(comp, kv.first, InferValue(kv.second));
             ++idx;
         } else {
+            RejectDeclarationInsideView(line);
             IComponent* child = ParseComponent(lines, idx, tree, animations);
             comp->AddChild(child);
         }
@@ -465,6 +487,7 @@ std::vector<IComponent*> ParseViewBody(const std::vector<Line>& lines, size_t& i
                               "(properties belong to a component)",
                               line.lineNo, line.indent + 1);
         }
+        RejectDeclarationInsideView(line);
         created.push_back(ParseComponent(lines, idx, tree, animations));
     }
     throw ParseError("unterminated 'view' block (missing 'end')", headerLine, headerIndent + 1);
@@ -578,6 +601,8 @@ ParsedAvaui ParseImpl(const std::string& source) {
     ParsedAvaui result;
     result.tree = ComponentTree::Create();
     bool sawExtends = false;
+    bool sawView = false;
+    int viewLine = 0;
 
     size_t idx = 0;
     while (idx < lines.size()) {
@@ -621,6 +646,14 @@ ParsedAvaui ParseImpl(const std::string& source) {
             ++idx;
             result.code = ParseRawBlock(lines, idx, 0, headerLine);
         } else if (keyword == "view") {
+            if (sawView) {
+                throw ParseError("multiple 'view' blocks are not allowed (a document "
+                                  "must define exactly one 'view'; first one at line " +
+                                      std::to_string(viewLine) + ")",
+                                  line.lineNo, line.indent + 1);
+            }
+            sawView = true;
+            viewLine = headerLine;
             ++idx;
             std::vector<IComponent*> topLevel =
                 ParseViewBody(lines, idx, 0, headerLine, result.tree.get(), &result.animations);
@@ -630,15 +663,23 @@ ParsedAvaui ParseImpl(const std::string& source) {
                 root->AddChild(child);
             }
             result.tree->SetRoot(root);
+        } else if (IsComponentCall(line.text, nullptr, nullptr) ||
+                   IsIfHeader(line.text, nullptr) ||
+                   IsForHeader(line.text, nullptr, nullptr)) {
+            throw ParseError("component '" + keyword +
+                                  "' found outside 'view' (components must be declared "
+                                  "inside the 'view' block)",
+                              line.lineNo, line.indent + 1);
         } else {
             throw ParseError("unknown top-level block: " + keyword, line.lineNo,
                               line.indent + 1);
         }
     }
 
-    if (!result.tree->Root()) {
-        IComponent* root = result.tree->CreateComponent("Page");
-        result.tree->SetRoot(root);
+    if (!sawView) {
+        throw ParseError("missing 'view' block (every .avaui document must define "
+                          "exactly one 'view')",
+                          lines.empty() ? 1 : lines.back().lineNo, 1);
     }
 
     AutoBindEvents(result.tree->Root(), result.code);

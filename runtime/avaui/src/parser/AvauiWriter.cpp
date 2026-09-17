@@ -56,6 +56,36 @@ std::string ValueToDisplayString(const PropertyValue& pv) {
     }
 }
 
+std::vector<const AnimationSpec*> AnimationsFor(const std::vector<AnimationSpec>& animations,
+                                                 const IComponent* node) {
+    std::vector<const AnimationSpec*> result;
+    for (const auto& spec : animations) {
+        if (spec.target == node->Id()) result.push_back(&spec);
+    }
+    return result;
+}
+
+void WriteAnimationField(const std::string& key, const std::string& value, const std::string& pad,
+                         std::ostringstream& out) {
+    if (value.empty()) return;
+    out << pad << key << " = " << WritePropertyValue(value) << "\n";
+}
+
+void WriteAnimateBlock(const AnimationSpec& spec, int indent, std::ostringstream& out) {
+    const std::string pad(static_cast<size_t>(indent) * 4, ' ');
+    const std::string inner_pad(static_cast<size_t>(indent + 1) * 4, ' ');
+
+    out << pad << "animate\n";
+    WriteAnimationField("property", spec.property, inner_pad, out);
+    WriteAnimationField("from", spec.fromRaw, inner_pad, out);
+    WriteAnimationField("to", spec.toRaw, inner_pad, out);
+    WriteAnimationField("duration", spec.duration, inner_pad, out);
+    WriteAnimationField("easing", spec.easing, inner_pad, out);
+    WriteAnimationField("trigger", spec.trigger, inner_pad, out);
+    WriteAnimationField("mode", spec.mode, inner_pad, out);
+    out << pad << "end\n";
+}
+
 bool IsCallForm(const IComponent* node) {
     if (node->TypeName().empty()) return false;
     if (!std::isupper(static_cast<unsigned char>(node->TypeName()[0]))) return false;
@@ -69,10 +99,13 @@ bool IsCallForm(const IComponent* node) {
     return node->Children().empty();
 }
 
-void WriteNode(const IComponent* node, int indent, std::ostringstream& out) {
+void WriteNode(const IComponent* node, int indent, std::ostringstream& out,
+               const std::vector<AnimationSpec>& animations) {
     const std::string pad(static_cast<size_t>(indent) * 4, ' ');
 
-    if (IsCallForm(node)) {
+    const std::vector<const AnimationSpec*> node_animations = AnimationsFor(animations, node);
+
+    if (node_animations.empty() && IsCallForm(node)) {
         out << pad << node->TypeName() << "()\n";
         return;
     }
@@ -112,12 +145,17 @@ void WriteNode(const IComponent* node, int indent, std::ostringstream& out) {
         }
     }
 
+    for (const AnimationSpec* spec : node_animations) {
+        WriteAnimateBlock(*spec, indent + 1, out);
+        wrote_anything = true;
+    }
+
     const auto children = node->Children();
     if (!children.empty() && wrote_anything) {
         out << "\n";
     }
     for (const auto* child : children) {
-        WriteNode(child, indent + 1, out);
+        WriteNode(child, indent + 1, out, animations);
     }
     out << pad << "end\n";
 }
@@ -183,7 +221,7 @@ std::string WriteAvaui(const IComponent* root, const AvauiWriteOptions& options)
 
     out << "view\n";
     for (const auto* child : root->Children()) {
-        WriteNode(child, 1, out);
+        WriteNode(child, 1, out, options.animations);
     }
     out << "end\n";
 

@@ -41,6 +41,7 @@ namespace {
 struct ContainerTypeRegistrations {
     ContainerTypeRegistrations() {
         using namespace avalang::ui::registry;
+        RegisterComponentType({"Container", "Container", true, {}});
         RegisterComponentType({"Column", "Column", true, {}});
         RegisterComponentType({"Row", "Row", true, {}});
         RegisterComponentType({"Stack", "Stack", true, {}});

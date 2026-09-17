@@ -58,6 +58,20 @@ private:
 
 } // namespace
 
+AnimationHandle PlayAnimationSpec(const parser::AnimationSpec& spec, AnimationController* controller) {
+    if (!controller) return kInvalidAnimationHandle;
+
+    AnimatableProperty property = ParseAnimatableProperty(spec.property);
+    AnimatableValue from = ParseAnimatableValueText(spec.fromRaw, property);
+    AnimatableValue to = ParseAnimatableValueText(spec.toRaw, property);
+    float duration = spec.duration.empty() ? 0.0f : std::strtof(spec.duration.c_str(), nullptr);
+    if (duration <= 0.0f) duration = 0.3f; // default, matches Timeline's own "no keyframes" gap philosophy: never silently produce a no-op animation
+    EasingFunction easing = spec.easing.empty() ? EasingFunction::Linear : EasingFromString(spec.easing);
+    PlaybackMode mode = ParsePlaybackMode(spec.mode);
+
+    return controller->Play(spec.target, property, from, to, duration, easing, mode);
+}
+
 void WireAnimations(const std::vector<parser::AnimationSpec>& specs,
                     AnimationController* controller,
                     events::IEventDispatcher* dispatcher,
@@ -65,24 +79,12 @@ void WireAnimations(const std::vector<parser::AnimationSpec>& specs,
     if (!controller) return;
 
     for (const auto& spec : specs) {
-        AnimatableProperty property = ParseAnimatableProperty(spec.property);
-        AnimatableValue from = ParseAnimatableValueText(spec.fromRaw, property);
-        AnimatableValue to = ParseAnimatableValueText(spec.toRaw, property);
-        float duration = spec.duration.empty() ? 0.0f : std::strtof(spec.duration.c_str(), nullptr);
-        if (duration <= 0.0f) duration = 0.3f; // default, matches Timeline's own "no keyframes" gap philosophy: never silently produce a no-op animation
-        EasingFunction easing = spec.easing.empty() ? EasingFunction::Linear
-                                                     : EasingFromString(spec.easing);
-        PlaybackMode mode = ParsePlaybackMode(spec.mode);
-        ComponentId target = spec.target;
-
-        auto playFn = [controller, target, property, from, to, duration, easing, mode]() {
-            controller->Play(target, property, from, to, duration, easing, mode);
-        };
+        auto playFn = [spec, controller]() { PlayAnimationSpec(spec, controller); };
 
         if (spec.trigger == "click") {
             if (!dispatcher) continue;
             auto handler = std::make_unique<ClickTriggerHandler>(playFn);
-            dispatcher->Subscribe(target, events::EventType::Click, handler.get());
+            dispatcher->Subscribe(spec.target, events::EventType::Click, handler.get());
             std::lock_guard<std::mutex> lock(g_clickHandlersMutex);
             g_clickHandlers.push_back(std::move(handler));
         } else if (!spec.trigger.empty()) {

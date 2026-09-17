@@ -24,6 +24,7 @@
 #include "languages/member_access_resolver.h"
 #include "palette.h"
 #include "panels/designer_canvas.h"
+#include "panels/document_tree_panel.h"
 #include "panels/syntax_highlight.h"
 #include "parser/AvauiWriter.h"
 #include "shortcuts/shortcut_registry.h"
@@ -1628,7 +1629,8 @@ bool PathContains(const std::filesystem::path& parent, const std::filesystem::pa
 void CloseTabNow(EditorState& state, int index) {
     if (index < 0 || index >= static_cast<int>(state.tabs.size())) return;
 
-    InvalidateDesignerVmCache(state.tabs[index]->id);
+    ReleaseDesignerTabState(state.tabs[index]->id);
+    ReleaseDocumentTreeState(state.tabs[index]->id);
     languages::UpdateKnownInterfaceNames(state.tabs[index]->known_interface_names, {});
     languages::UpdateKnownVariableNames(state.tabs[index]->known_variable_names, {});
     languages::UpdateKnownClassNames(state.tabs[index]->known_class_names, {});
@@ -1782,6 +1784,8 @@ void SaveTab(EditorState& state, EditorTab& tab) {
             design::DesignDocument parsed_doc;
             std::string parse_error;
             if (design::LoadAvauiFile(tab.file_path, parsed_doc, parse_error)) {
+                ClearDesignerCommandHistory(tab.id);
+                InvalidateDesignerVmCache(tab.id);
                 tab.design = std::move(parsed_doc);
                 tab.avaui_load_error.clear();
             }
@@ -1831,8 +1835,10 @@ void ToggleTabViewMode(EditorState& state, EditorTab& tab) {
     std::string parse_error;
     avalang::ui::parser::ParseErrorInfo parse_error_info;
     if (design::ParseAvauiText(tab.GetText(), parsed_doc, parse_error, tab.file_path, &parse_error_info)) {
+        ClearDesignerCommandHistory(tab.id);
+        ClearDesignerSelection(tab.id);
+        InvalidateDesignerVmCache(tab.id);
         tab.design = std::move(parsed_doc);
-        tab.design.selected_node_id.clear();
         tab.avaui_load_error.clear();
         tab.view_mode = TabViewMode::Design;
     } else {

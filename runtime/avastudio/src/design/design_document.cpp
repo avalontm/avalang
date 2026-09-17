@@ -8,6 +8,7 @@
 #include <unordered_set>
 
 #include "parser/AvauiParser.h"
+#include "parser/AvauiPropertyCoercion.h"
 #include "parser/AvauiWriter.h"
 #include "components/IComponent.h"
 #include "components/PropertyValue.h"
@@ -47,6 +48,40 @@ std::string SanitizeIdentifier(const std::string& s) {
     return out.empty() ? "handler" : out;
 }
 
+void CollectAuthoredProperties(avalang::ui::IComponent* node,
+                                std::unordered_map<std::string, std::unordered_set<std::string>>& out) {
+    if (!node) return;
+    std::unordered_set<std::string> keys;
+    for (const auto& name : node->PropertyNames()) {
+        keys.insert(name);
+    }
+    out.emplace(node->NodeId(), std::move(keys));
+    for (auto* child : node->Children()) {
+        CollectAuthoredProperties(child, out);
+    }
+}
+
+}
+
+void SnapshotAuthoredProperties(DesignDocument& doc) {
+    doc.authored_properties.clear();
+    CollectAuthoredProperties(doc.Root(), doc.authored_properties);
+}
+
+bool IsPropertyAuthored(const DesignDocument& doc, const std::string& nodeId, const std::string& key) {
+    auto it = doc.authored_properties.find(nodeId);
+    if (it == doc.authored_properties.end()) return false;
+    return it->second.count(key) != 0;
+}
+
+void MarkPropertyAuthored(DesignDocument& doc, const std::string& nodeId, const std::string& key) {
+    doc.authored_properties[nodeId].insert(key);
+}
+
+void UnmarkPropertyAuthored(DesignDocument& doc, const std::string& nodeId, const std::string& key) {
+    auto it = doc.authored_properties.find(nodeId);
+    if (it == doc.authored_properties.end()) return;
+    it->second.erase(key);
 }
 
 std::string GenerateNodeUid() {
@@ -59,6 +94,7 @@ DesignDocument NewBlankAvauiDocument() {
     doc.tree = avalang::ui::ComponentTree::Create();
     auto* root = doc.tree->CreateComponent("Page");
     doc.tree->SetRoot(root);
+    SnapshotAuthoredProperties(doc);
     return doc;
 }
 
@@ -80,6 +116,20 @@ bool ParseAvauiText(const std::string& text, DesignDocument& out_doc, std::strin
         if (parsed.tree && parsed.tree->Root()) {
             out_doc.tree = std::move(parsed.tree);
         }
+
+        out_doc.animations.reserve(parsed.animations.size());
+        for (const auto& spec : parsed.animations) {
+            NodeAnimation entry;
+            entry.spec = spec;
+            if (out_doc.tree) {
+                if (avalang::ui::IComponent* target = out_doc.tree->FindById(spec.target)) {
+                    entry.node_id = target->NodeId();
+                }
+            }
+            out_doc.animations.push_back(std::move(entry));
+        }
+
+        SnapshotAuthoredProperties(out_doc);
     } catch (const avalang::ui::parser::ParseError& e) {
 
         out_error = e.what();
@@ -121,6 +171,15 @@ bool SaveAvauiFile(const DesignDocument& doc, const std::string& path) {
         for (const auto& row : doc.initial_state) {
             opts.initial_state.push_back({row.key, row.value});
         }
+
+        for (const NodeAnimation* entry : ResolvedAnimations(doc)) {
+            avalang::ui::IComponent* target = FindNodeById(doc.Root(), entry->node_id);
+            if (!target) continue;
+            avalang::ui::parser::AnimationSpec spec = entry->spec;
+            spec.target = target->Id();
+            opts.animations.push_back(std::move(spec));
+        }
+
         return avalang::ui::parser::WriteAvaui(doc.tree->Root(), opts);
     }();
 
@@ -137,6 +196,26 @@ avalang::ui::IComponent* FindNodeById(avalang::ui::IComponent* root, const std::
         if (auto* found = FindNodeById(child, nodeId)) return found;
     }
     return nullptr;
+}
+
+std::vector<const NodeAnimation*> AnimationsForNode(const DesignDocument& doc, const std::string& nodeId) {
+    std::vector<const NodeAnimation*> result;
+    if (nodeId.empty()) return result;
+    for (const NodeAnimation& entry : doc.animations) {
+        if (entry.node_id == nodeId) result.push_back(&entry);
+    }
+    return result;
+}
+
+std::vector<const NodeAnimation*> ResolvedAnimations(const DesignDocument& doc) {
+    std::vector<const NodeAnimation*> result;
+    avalang::ui::IComponent* root = doc.Root();
+    if (!root) return result;
+    for (const NodeAnimation& entry : doc.animations) {
+        if (entry.node_id.empty()) continue;
+        if (FindNodeById(root, entry.node_id)) result.push_back(&entry);
+    }
+    return result;
 }
 
 avalang::ui::IComponent* FindParentOf(avalang::ui::IComponent* root, avalang::ui::IComponent* target) {
@@ -158,10 +237,8 @@ bool NodeContains(avalang::ui::IComponent* node, avalang::ui::IComponent* target
     return false;
 }
 
-bool MoveNode(DesignDocument& doc, const std::string& movedNodeId, const std::string& targetNodeId,
+bool MoveNode(avalang::ui::IComponent* root, const std::string& movedNodeId, const std::string& targetNodeId,
               DropZone zone) {
-    if (!doc.tree) return false;
-    auto* root = doc.tree->Root();
     if (!root) return false;
     if (movedNodeId == targetNodeId) return false;
     if (root->NodeId() == movedNodeId) return false;
@@ -200,6 +277,14 @@ bool MoveNode(DesignDocument& doc, const std::string& movedNodeId, const std::st
             targetParent->AddChild(moved);
         }
     }
+
+    return true;
+}
+
+bool MoveNode(DesignDocument& doc, const std::string& movedNodeId, const std::string& targetNodeId,
+              DropZone zone) {
+    if (!doc.tree) return false;
+    if (!MoveNode(doc.tree->Root(), movedNodeId, targetNodeId, zone)) return false;
 
     doc.dirty = true;
     return true;
@@ -259,13 +344,7 @@ bool RemoveNode(DesignDocument& doc, const std::string& nodeId) {
 
     parent->RemoveChild(node);
     doc.tree->DestroyComponent(node->Id());
-
-    if (!doc.selected_node_id.empty()) {
-        auto* selected = FindNodeById(root, doc.selected_node_id);
-        if (!selected || selected == node || NodeContains(node, selected)) {
-            doc.selected_node_id.clear();
-        }
-    }
+    doc.authored_properties.erase(nodeId);
 
     doc.dirty = true;
     return true;
@@ -285,10 +364,14 @@ std::string AddComponentNode(DesignDocument& doc, const std::string& parentId, c
     }
     if (!parent) return "";
 
-    auto* node = doc.tree->CreateComponent(type);
-    if (!id.empty()) node->SetProperty("id", avalang::ui::PropertyValue(id));
+    auto* node = doc.tree->CreateComponent(avalang::ui::parser::CanonicalTypeName(type));
+    if (!id.empty()) {
+        node->SetProperty("id", avalang::ui::PropertyValue(id));
+        MarkPropertyAuthored(doc, node->NodeId(), "id");
+    }
     for (const auto& prop : properties) {
         node->SetProperty(prop.key, avalang::ui::PropertyValue(prop.value));
+        MarkPropertyAuthored(doc, node->NodeId(), prop.key);
     }
     parent->AddChild(node);
 
@@ -304,9 +387,11 @@ bool EditComponentNode(DesignDocument& doc, const std::string& nodeId, const std
 
     for (const auto& prop : properties) {
         node->SetProperty(prop.key, avalang::ui::PropertyValue(prop.value));
+        MarkPropertyAuthored(doc, nodeId, prop.key);
     }
     if (newId) {
         node->SetProperty("id", avalang::ui::PropertyValue(*newId));
+        MarkPropertyAuthored(doc, nodeId, "id");
     }
 
     doc.dirty = true;

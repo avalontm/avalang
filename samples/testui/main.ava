@@ -1,0 +1,2 @@
+app as Application = new Application()
+app.run("views/Home.avaui")

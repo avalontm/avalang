@@ -27,6 +27,7 @@ set(AVA_UI_SOURCES
     src/components/Component.cpp
     src/components/ComponentTreeImpl.cpp
     src/components/ComponentTree.cpp
+    src/components/ComponentTreeClone.cpp
     # Phase 3 -- Layout Engine
     src/layout/LayoutProperties.cpp
     src/layout/LayoutNode.cpp

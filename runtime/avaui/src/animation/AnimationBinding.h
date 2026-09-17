@@ -54,6 +54,13 @@ AVA_UI_API void WireAnimations(const std::vector<parser::AnimationSpec>& specs,
                                 events::IEventDispatcher* dispatcher,
                                 const std::unordered_map<std::string, IState*>& states);
 
+// Parses `spec` and plays it on `controller` immediately, regardless of
+// `spec.trigger` -- the manual-trigger counterpart to the auto-wiring
+// WireAnimations() does for "click" and state triggers. Returns
+// kInvalidAnimationHandle under the same conditions Play() itself does
+// (see AnimationController.h), including a null `controller`.
+AVA_UI_API AnimationHandle PlayAnimationSpec(const parser::AnimationSpec& spec, AnimationController* controller);
+
 } // namespace animation
 } // namespace ui
 } // namespace avalang

@@ -87,14 +87,61 @@ editor.unsaved.dont_save,No Guardar
 editor.error_at_line,"Línea %s: "
 canvas.drop_hint,Arrastrá un control acá
 canvas.dialogs_label,Diálogos (no visuales):
+canvas.extract_component,Extraer componente
 canvas.delete_title,¿Eliminar nodo?
 canvas.delete_confirm,"¿Eliminar ""%s"" y todo su contenido?"
 canvas.render_error,"Error de render: %s"
 canvas.render_error_hint,No se pudo reconstruir el layout real -- revisá el árbol/import.
 canvas.missing_layout_nodes,"%s nodo(s) sin layout -- no se dibujaron este frame."
+canvas.reset_view,Restablecer vista
+canvas.zoom_fit,Ajustar
+canvas.zoom_render_limitation,"El zoom cambia el modelo del canvas pero todavía no escala el render -- es una limitación conocida, no un bug."
+canvas.mode_design,Diseño
+canvas.mode_preview,Vista previa
+canvas.visual_state.default,Estado: Default
+canvas.visual_state.hover,Estado: Hover
+canvas.visual_state.focus,Estado: Focus
+canvas.visual_state.active,Estado: Active
+canvas.visual_state.disabled,Estado: Disabled
+canvas.visual_state.limitation,"Solo button/link tienen efecto visible con esto, y solo fuera del camino de live-render. El resto de los tipos no cambia -- es una limitación conocida, no un bug."
 panel.toolbox.title,Herramientas
+panel.document_tree.title,Árbol del documento
+panel.document_tree.no_document,No hay un documento de diseño abierto.
+panel.theme_tokens.title,Tokens de tema
+panel.theme_tokens.unavailable,Tema no disponible para este proyecto.
+panel.theme_tokens.colors,Colores
+panel.theme_tokens.fonts,Fuentes
+panel.accessibility.title,Accesibilidad
+panel.accessibility.no_document,No hay un documento de diseño abierto.
+panel.accessibility.missing_labels,Etiquetas faltantes
+panel.accessibility.no_missing_labels,No hay etiquetas accesibles faltantes.
+panel.accessibility.jump_to_node,Clic para seleccionar este nodo en el canvas
+panel.accessibility.tab_order,Orden de tabulación
+panel.accessibility.no_tab_order,No hay nodos enfocables en este documento.
+panel.accessibility.contrast,Contraste texto/fondo
+panel.accessibility.no_selection,Seleccioná un nodo en el canvas para revisar el contraste.
+panel.accessibility.contrast_unavailable,Este nodo no tiene textColor/backgroundColor literales para revisar (los colores de rol de tema no se resuelven acá).
+panel.accessibility.wcag_pass,Cumple WCAG AA
+panel.accessibility.wcag_large_only,Cumple WCAG AA solo para texto grande
+panel.accessibility.wcag_fail,No cumple WCAG AA
+panel.assets.title,Recursos
+panel.assets.no_project,No hay ningún proyecto abierto.
+panel.assets.refresh,Actualizar
+panel.assets.empty,No hay archivos bajo assets/ en este proyecto.
+panel.assets.no_selection,Seleccioná un nodo en el lienzo para insertar una ruta de recurso.
+panel.assets.insert,Insertar
+panel.assets.images,Imágenes
+panel.assets.fonts,Fuentes
+panel.assets.localization,Localización
+panel.assets.other,Otros
+panel.animations.title,Animaciones
+panel.animations.empty,No hay bloques animate en este documento.
+panel.animations.play,Reproducir
+panel.animations.preview_only,Cambiá el canvas a modo Preview para reproducir animaciones.
 toolbox.hint,Arrastrá un control al lienzo de Design
 toolbox.container_tag,(contenedor)
+toolbox.search_hint,Buscar componentes...
+toolbox.no_results,Ningún componente coincide con la búsqueda.
 panel.properties.title,Propiedades
 properties.column_key,Clave
 properties.column_value,Valor
@@ -300,3 +347,18 @@ new_project.template_desktop,Desktop
 new_project.template_desktop_desc,"Agrega app.ava, styles.ava y una pantalla inicial en views/, lista para correr como ventana nativa de escritorio."
 new_project.template_library,Biblioteca
 new_project.template_library_desc,"Un solo main.ava sin archivos de UI, guardado como módulo reutilizable (.dll/.so/.dylib) en vez de un ejecutable independiente."
+properties.category.identity,Identidad
+properties.category.layout,Layout
+properties.category.appearance,Apariencia
+properties.category.typography,Tipografía
+properties.category.behavior,Comportamiento
+properties.category.accessibility,Accesibilidad
+properties.category.events,Eventos
+properties.category.advanced,Avanzado
+properties.source.local,local
+properties.source.style,estilo
+properties.source.theme,tema
+properties.source.default,por defecto
+properties.source.inherited,heredado
+properties.enum_no_options_hint,Esta propiedad todavía no tiene opciones de enum declaradas; se edita como texto.
+properties.remove_override_tooltip,Quitar override local

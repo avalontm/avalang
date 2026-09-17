@@ -25,7 +25,7 @@ struct ControlStyleOverride {
     std::optional<double> margin;
     std::optional<double> spacing;
 
-    void MergeOnto(ControlStyleOverride& base) const;
+    void AVA_UI_API MergeOnto(ControlStyleOverride& base) const;
 };
 
 struct BreakpointOverride {

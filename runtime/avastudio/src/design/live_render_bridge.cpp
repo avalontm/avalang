@@ -79,7 +79,7 @@ LiveRenderResult BuildLiveRender(avalang::ui::ComponentTree* tree, int viewportW
 
     avalang::ui::theme::ProjectStyleSheet projectStyles =
         avalang::ui::theme::LoadProjectStyleOverrides(projectRoot);
-    avalang::ui::RenderTheme::Apply(tree, &projectTheme, &projectStyles);
+    avalang::ui::RenderTheme::Apply(tree, &projectTheme, &projectStyles, static_cast<double>(viewportWidth));
 
     out.layoutEngine = avalang::ui::LayoutEngine::Create();
     int effectiveW = viewportWidth;

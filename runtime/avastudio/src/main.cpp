@@ -42,13 +42,19 @@
 #include "panels/problems_panel.h"
 #include "panels/properties_panel.h"
 #include "panels/state_panel.h"
+#include "designer/document_commands.h"
 #include "panels/designer_canvas.h"
+#include "panels/document_tree_panel.h"
 #include "design/state_eval.h"
 #include "panels/project_properties_panel.h"
 #include "panels/quick_open_panel.h"
 #include "panels/build_panel.h"
 #include "panels/settings_panel.h"
 #include "panels/terminal_panel.h"
+#include "panels/accessibility_panel.h"
+#include "panels/animations_panel.h"
+#include "panels/asset_browser_panel.h"
+#include "panels/theme_tokens_panel.h"
 #include "panels/titlebar_panel.h"
 #include "panels/toolbox_panel.h"
 #include "palette.h"
@@ -412,6 +418,7 @@ int main(int argc, char** argv) {
                 std::string parse_error;
                 studio::design::DesignDocument parsed_doc;
                 if (studio::design::LoadAvauiFile("", parsed_doc, parse_error)) {
+                    studio::ClearDesignerCommandHistory(tab_ptr->id);
                     tab_ptr->design = std::move(parsed_doc);
                     tab_ptr->design.dirty = false;
                     tab_ptr->avaui_load_error.clear();
@@ -667,6 +674,54 @@ int main(int argc, char** argv) {
                 active && active->is_avaui && active->view_mode == studio::TabViewMode::Design) {
                 studio::DrawToolboxPanel(&open);
                 persist_if_closed("Toolbox###toolbox", open);
+            }
+        }
+
+        if (bool& open = panel_open.try_emplace("Document Tree###document_tree", false).first->second; open) {
+            if (studio::EditorTab* active = editor_state.Active();
+                active && active->is_avaui && active->view_mode == studio::TabViewMode::Design) {
+                studio::DrawDocumentTreePanel(active->design, active->id, &open);
+                persist_if_closed("Document Tree###document_tree", open);
+            }
+        }
+
+        if (bool& open = panel_open.try_emplace("Theme Tokens###theme_tokens", false).first->second; open) {
+            if (const studio::EditorTab* active = editor_state.Active();
+                active && active->is_avaui && active->view_mode == studio::TabViewMode::Design) {
+                studio::DrawThemeTokensPanel(editor_state.project_root, &open);
+                persist_if_closed("Theme Tokens###theme_tokens", open);
+            }
+        }
+
+        if (bool& open = panel_open.try_emplace("Accessibility###accessibility", false).first->second; open) {
+            if (studio::EditorTab* active = editor_state.Active();
+                active && active->is_avaui && active->view_mode == studio::TabViewMode::Design) {
+                studio::DrawAccessibilityInspectorPanel(active->design, active->id, &open);
+                persist_if_closed("Accessibility###accessibility", open);
+            }
+        }
+
+        if (bool& open = panel_open.try_emplace("Assets###assets", false).first->second; open) {
+            if (studio::EditorTab* active = editor_state.Active();
+                active && active->is_avaui && active->view_mode == studio::TabViewMode::Design) {
+                if (auto edit = studio::DrawAssetBrowserPanel(editor_state.project_root, active->id, &open)) {
+                    studio::designer::CommandManager* commands = studio::GetDesignerCommandManager(active->id);
+                    studio::designer::SelectionManager* selection =
+                        studio::GetDesignerSelectionManager(active->id);
+                    studio::designer::ExecuteSetProperty(commands, active->design, selection, edit->node_id,
+                                                          edit->key, edit->new_value);
+                    active->design.dirty = true;
+                    active->dirty = true;
+                }
+                persist_if_closed("Assets###assets", open);
+            }
+        }
+
+        if (bool& open = panel_open.try_emplace("Animations###animations", false).first->second; open) {
+            if (const studio::EditorTab* active = editor_state.Active();
+                active && active->is_avaui && active->view_mode == studio::TabViewMode::Design) {
+                studio::DrawAnimationsPanel(active->design, active->id, &open);
+                persist_if_closed("Animations###animations", open);
             }
         }
 
@@ -1083,28 +1138,36 @@ int main(int argc, char** argv) {
                 if (tab.id != edit->tab_id || !tab.is_avaui) continue;
                 if (avalang::ui::IComponent* node =
                         studio::design::FindNodeById(tab.design.Root(), edit->node_id)) {
+                    studio::designer::CommandManager* commands =
+                        studio::GetDesignerCommandManager(tab.id);
+                    studio::designer::SelectionManager* selection =
+                        studio::GetDesignerSelectionManager(tab.id);
                     switch (edit->kind) {
                         case studio::PropertyEditKind::kValue:
-                            node->SetProperty(edit->key, avalang::ui::PropertyValue(edit->new_value));
+                        case studio::PropertyEditKind::kEvent:
+                            studio::designer::ExecuteSetProperty(commands, tab.design, selection, edit->node_id,
+                                                                  edit->key, edit->new_value);
                             break;
                         case studio::PropertyEditKind::kId:
-                            node->SetProperty("id", avalang::ui::PropertyValue(edit->new_value));
+                            studio::designer::ExecuteSetProperty(commands, tab.design, selection, edit->node_id,
+                                                                  "id", edit->new_value);
                             break;
                         case studio::PropertyEditKind::kType:
+                            if (!edit->new_value.empty()) {
+                                studio::designer::ExecuteChangeComponentType(commands, tab.design, selection,
+                                                                              edit->node_id, edit->new_value);
+                            }
                             break;
                         case studio::PropertyEditKind::kAddProperty:
                             if (!node->HasProperty(edit->key)) {
-                                node->SetProperty(edit->key, avalang::ui::PropertyValue(edit->new_value));
+                                studio::designer::ExecuteSetProperty(commands, tab.design, selection,
+                                                                      edit->node_id, edit->key, edit->new_value);
                             }
                             break;
                         case studio::PropertyEditKind::kRemoveProperty:
-                            node->RemoveProperty(edit->key);
-                            break;
-                        case studio::PropertyEditKind::kEvent:
-                            node->SetProperty(edit->key, avalang::ui::PropertyValue(edit->new_value));
-                            break;
                         case studio::PropertyEditKind::kRemoveEvent:
-                            node->RemoveProperty(edit->key);
+                            studio::designer::ExecuteRemoveProperty(commands, tab.design, selection,
+                                                                     edit->node_id, edit->key);
                             break;
                     }
                     tab.design.dirty = true;

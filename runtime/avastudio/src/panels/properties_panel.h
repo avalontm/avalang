@@ -5,6 +5,8 @@
 #include <utility>
 #include <vector>
 
+#include "designer/property_grid.h"
+
 namespace studio {
 
 struct PropertyRow {
@@ -18,6 +20,8 @@ struct PropertiesState {
     std::vector<PropertyRow> properties;
 
     std::vector<PropertyRow> events;
+
+    std::vector<designer::PropertyGridSection> grid;
 
     bool editable = false;
 

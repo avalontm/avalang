@@ -87,14 +87,61 @@ editor.unsaved.dont_save,Don't Save
 editor.error_at_line,"Line %s: "
 canvas.drop_hint,Drag a control here
 canvas.dialogs_label,Dialogs (non-visual):
+canvas.extract_component,Extract Component
 canvas.delete_title,Delete node?
 canvas.delete_confirm,"Delete ""%s"" and everything inside it?"
 canvas.render_error,"Render error: %s"
 canvas.render_error_hint,Could not rebuild the real layout -- check the tree/import.
 canvas.missing_layout_nodes,"%s node(s) with no layout -- not drawn this frame."
+canvas.reset_view,Reset view
+canvas.zoom_fit,Fit
+canvas.zoom_render_limitation,"Zoom changes the canvas model but does not yet scale rendering -- known limitation, not a bug."
+canvas.mode_design,Design
+canvas.mode_preview,Preview
+canvas.visual_state.default,State: Default
+canvas.visual_state.hover,State: Hover
+canvas.visual_state.focus,State: Focus
+canvas.visual_state.active,State: Active
+canvas.visual_state.disabled,State: Disabled
+canvas.visual_state.limitation,"Only button/link get a visible effect from this, and only outside the live-render path. Other types show no change -- known limitation, not a bug."
 panel.toolbox.title,Toolbox
+panel.document_tree.title,Document Tree
+panel.document_tree.no_document,No design document open.
+panel.theme_tokens.title,Theme Tokens
+panel.theme_tokens.unavailable,Theme unavailable for this project.
+panel.theme_tokens.colors,Colors
+panel.theme_tokens.fonts,Fonts
+panel.accessibility.title,Accessibility
+panel.accessibility.no_document,No design document open.
+panel.accessibility.missing_labels,Missing Labels
+panel.accessibility.no_missing_labels,No missing accessible labels.
+panel.accessibility.jump_to_node,Click to select this node in the canvas
+panel.accessibility.tab_order,Tab Order
+panel.accessibility.no_tab_order,No focusable nodes in this document.
+panel.accessibility.contrast,Text/Background Contrast
+panel.accessibility.no_selection,Select a node in the canvas to check contrast.
+panel.accessibility.contrast_unavailable,This node has no literal textColor/backgroundColor to check (theme-role colors are not resolved here).
+panel.accessibility.wcag_pass,Meets WCAG AA
+panel.accessibility.wcag_large_only,Meets WCAG AA for large text only
+panel.accessibility.wcag_fail,Fails WCAG AA
+panel.assets.title,Assets
+panel.assets.no_project,No project open.
+panel.assets.refresh,Refresh
+panel.assets.empty,No files under assets/ for this project.
+panel.assets.no_selection,Select a node in the canvas to insert an asset path.
+panel.assets.insert,Insert
+panel.assets.images,Images
+panel.assets.fonts,Fonts
+panel.assets.localization,Localization
+panel.assets.other,Other
+panel.animations.title,Animations
+panel.animations.empty,No animate blocks in this document.
+panel.animations.play,Play
+panel.animations.preview_only,Switch the canvas to Preview mode to play animations.
 toolbox.hint,Drag a control onto the Design canvas
 toolbox.container_tag,(container)
+toolbox.search_hint,Search components...
+toolbox.no_results,No components match your search.
 panel.properties.title,Properties
 properties.column_key,Key
 properties.column_value,Value
@@ -300,3 +347,18 @@ new_project.template_desktop,Desktop
 new_project.template_desktop_desc,"Adds app.ava, styles.ava and a starter screen under views/, ready to run as a native desktop window."
 new_project.template_library,Library
 new_project.template_library_desc,"A single main.ava with no UI files, saved as a reusable module (.dll/.so/.dylib) instead of a standalone executable."
+properties.category.identity,Identity
+properties.category.layout,Layout
+properties.category.appearance,Appearance
+properties.category.typography,Typography
+properties.category.behavior,Behavior
+properties.category.accessibility,Accessibility
+properties.category.events,Events
+properties.category.advanced,Advanced
+properties.source.local,local
+properties.source.style,style
+properties.source.theme,theme
+properties.source.default,default
+properties.source.inherited,inherited
+properties.enum_no_options_hint,No enum options declared yet for this property; edit as text.
+properties.remove_override_tooltip,Remove local override

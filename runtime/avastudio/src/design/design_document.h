@@ -2,6 +2,8 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "panels/properties_panel.h"
@@ -11,6 +13,11 @@
 
 namespace studio::design {
 
+struct NodeAnimation {
+    std::string node_id;
+    avalang::ui::parser::AnimationSpec spec;
+};
+
 struct DesignDocument {
     std::unique_ptr<avalang::ui::ComponentTree> tree;
 
@@ -19,11 +26,23 @@ struct DesignDocument {
     std::vector<std::string> imports;
     std::string extends;
 
-    std::string selected_node_id;
+    std::vector<NodeAnimation> animations;
+
     bool dirty = false;
+
+    std::unordered_map<std::string, std::unordered_set<std::string>> authored_properties;
 
     avalang::ui::IComponent* Root() const { return tree ? tree->Root() : nullptr; }
 };
+
+std::vector<const NodeAnimation*> AnimationsForNode(const DesignDocument& doc, const std::string& nodeId);
+
+std::vector<const NodeAnimation*> ResolvedAnimations(const DesignDocument& doc);
+
+void SnapshotAuthoredProperties(DesignDocument& doc);
+bool IsPropertyAuthored(const DesignDocument& doc, const std::string& nodeId, const std::string& key);
+void MarkPropertyAuthored(DesignDocument& doc, const std::string& nodeId, const std::string& key);
+void UnmarkPropertyAuthored(DesignDocument& doc, const std::string& nodeId, const std::string& key);
 
 std::string GenerateNodeUid();
 
@@ -42,6 +61,9 @@ avalang::ui::IComponent* FindParentOf(avalang::ui::IComponent* root, avalang::ui
 bool NodeContains(avalang::ui::IComponent* node, avalang::ui::IComponent* target);
 
 enum class DropZone { kBefore, kInto, kAfter };
+
+bool MoveNode(avalang::ui::IComponent* root, const std::string& movedNodeId, const std::string& targetNodeId,
+              DropZone zone);
 
 bool MoveNode(DesignDocument& doc, const std::string& movedNodeId, const std::string& targetNodeId,
               DropZone zone);

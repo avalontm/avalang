@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="AvaLang.Sdk/1.0">
+  <PropertyGroup>
+    <ProjectName>testui</ProjectName>
+    <EntryFile>main.ava</EntryFile>
+    <Target>Desktop</Target>
+    <OutputType>Exe</OutputType>
+    <ModulesPath></ModulesPath>
+    <Icon></Icon>
+    <OutDir>bin</OutDir>
+  </PropertyGroup>
+  <PropertyGroup Label="Build">
+    <Obfuscate>false</Obfuscate>
+    <ObfuscateStrings>false</ObfuscateStrings>
+    <FlattenControlFlow>false</FlattenControlFlow>
+    <ZeroDisk>false</ZeroDisk>
+    <DebugUnencrypted>false</DebugUnencrypted>
+    <UsesUi>true</UsesUi>
+  </PropertyGroup>
+</Project>

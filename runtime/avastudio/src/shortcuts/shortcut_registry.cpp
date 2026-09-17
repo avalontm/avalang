@@ -31,6 +31,8 @@ ShortcutRegistry::ShortcutRegistry() {
     Bind(ShortcutId::ZoomReset, {ImGuiKey_0, true, false, false, ShortcutScope::EditorFocused});
     Bind(ShortcutId::FormatDocument, {ImGuiKey_F, false, true, true, ShortcutScope::EditorFocused});
     Bind(ShortcutId::QuickFix, {ImGuiKey_Period, true, false, false, ShortcutScope::EditorFocused});
+    Bind(ShortcutId::Undo, {ImGuiKey_Z, true, false, false, ShortcutScope::EditorFocused});
+    Bind(ShortcutId::Redo, {ImGuiKey_Y, true, false, false, ShortcutScope::EditorFocused});
 }
 
 void ShortcutRegistry::Bind(ShortcutId id, ShortcutSpec spec) {

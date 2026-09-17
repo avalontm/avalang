@@ -1,0 +1,8 @@
+view
+    Text
+        text = "Home"
+        fontSize = 12
+        textColor = 333333
+        fontName = "Segoe UI"
+    end
+end

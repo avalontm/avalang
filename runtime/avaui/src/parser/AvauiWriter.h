@@ -5,6 +5,7 @@
 
 #include "Export.h"
 #include "Fwd.h"
+#include "parser/AvauiParser.h"
 
 namespace avalang {
 namespace ui {
@@ -25,6 +26,7 @@ struct AvauiWriteOptions {
     std::vector<std::string> imports;
     std::string extends;
     std::vector<AvauiRouteEntry> routes;
+    std::vector<AnimationSpec> animations;
 };
 
 AVA_UI_API std::string WriteAvaui(const IComponent* root, const AvauiWriteOptions& options);

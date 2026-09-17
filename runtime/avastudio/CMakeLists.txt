@@ -127,6 +127,36 @@ set(STUDIO_SOURCES
     src/design/state_eval.cpp
     src/design/live_render_bridge.cpp
     src/design/imgui_renderer.cpp
+    src/designer/command.cpp
+    src/designer/layout_core.cpp
+    src/designer/component_registry.cpp
+    src/designer/selection_manager.cpp
+    src/designer/viewport.cpp
+    src/designer/hit_test.cpp
+    src/designer/overlay.cpp
+    src/designer/guides.cpp
+    src/designer/tools.cpp
+    src/designer/surface.cpp
+    src/designer/document_tree.cpp
+    src/designer/tree_state.cpp
+    src/designer/property_editor.cpp
+    src/designer/property_grid.cpp
+    src/designer/property_commands.cpp
+    src/designer/move_commands.cpp
+    src/designer/lifecycle_commands.cpp
+    src/designer/document_commands.cpp
+    src/designer/toolbox_model.cpp
+    src/designer/drop_target.cpp
+    src/designer/code_sync.cpp
+    src/designer/preview.cpp
+    src/designer/responsive.cpp
+    src/designer/theme_tokens.cpp
+    src/designer/visual_states.cpp
+    src/designer/animation_authoring.cpp
+    src/designer/accessibility_inspector.cpp
+    src/designer/asset_catalog.cpp
+    src/designer/component_extraction.cpp
+    src/designer/component_extraction_command.cpp
     src/engine/engine_bridge.cpp
     src/shortcuts/shortcut_registry.cpp
     src/panels/explorer_panel.cpp
@@ -147,8 +177,13 @@ set(STUDIO_SOURCES
     src/panels/new_project_panel.cpp
     src/panels/titlebar_panel.cpp
     src/panels/toolbox_panel.cpp
+    src/panels/theme_tokens_panel.cpp
+    src/panels/accessibility_panel.cpp
+    src/panels/asset_browser_panel.cpp
+    src/panels/animations_panel.cpp
     src/panels/activity_bar_panel.cpp
     src/panels/designer_canvas.cpp
+    src/panels/document_tree_panel.cpp
     src/panels/pending_edits_panel.cpp
     src/platform/win32_titlebar.cpp
     src/branding/logo_texture.cpp

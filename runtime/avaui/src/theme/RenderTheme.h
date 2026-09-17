@@ -12,11 +12,12 @@ namespace ui {
 class AVA_UI_API RenderTheme {
 public:
     static bool Apply(ComponentTree* tree, ITheme* theme,
-                       const theme::ProjectStyleSheet* styles = nullptr);
+                       const theme::ProjectStyleSheet* styles = nullptr,
+                       double viewportWidth = -1.0);
 
     static bool ApplyToComponent(IComponent* component, ITheme* theme,
                                   const theme::ProjectStyleSheet* styles = nullptr,
-                                  bool isRoot = false);
+                                  bool isRoot = false, double viewportWidth = -1.0);
 };
 
 }

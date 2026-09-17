@@ -97,6 +97,27 @@ static bool IsPureLayoutType(const std::string& type) {
            type == "hstack" || type == "vstack" || type == "flex";
 }
 
+static theme::ControlStyleOverride ResolveForViewport(const theme::ProjectStyleSheet& styles,
+                                                        const std::string& typeKey, double viewportWidth) {
+    theme::ControlStyleOverride result = styles.Resolve(typeKey, IsPureLayoutType(typeKey));
+    if (viewportWidth < 0.0) {
+        return result;
+    }
+    for (const theme::BreakpointOverride& breakpoint : styles.Breakpoints()) {
+        if (static_cast<double>(breakpoint.minWidthPx) > viewportWidth) {
+            continue;
+        }
+        if (breakpoint.hasGlobal) {
+            breakpoint.global.MergeOnto(result);
+        }
+        const auto it = breakpoint.perType.find(typeKey);
+        if (it != breakpoint.perType.end()) {
+            it->second.MergeOnto(result);
+        }
+    }
+    return result;
+}
+
 static void ApplyTypeDefaults(IComponent* comp, ITheme* theme, bool isRoot) {
     std::string type = Lowercase(comp->TypeName());
 
@@ -288,7 +309,8 @@ static void ApplyTypeDefaults(IComponent* comp, ITheme* theme, bool isRoot) {
     }
 }
 
-bool RenderTheme::Apply(ComponentTree* tree, ITheme* theme, const theme::ProjectStyleSheet* styles) {
+bool RenderTheme::Apply(ComponentTree* tree, ITheme* theme, const theme::ProjectStyleSheet* styles,
+                         double viewportWidth) {
     if (!tree || !theme) {
         return false;
     }
@@ -298,11 +320,12 @@ bool RenderTheme::Apply(ComponentTree* tree, ITheme* theme, const theme::Project
         return false;
     }
 
-    return ApplyToComponent(root, theme, styles, true);
+    return ApplyToComponent(root, theme, styles, true, viewportWidth);
 }
 
 bool RenderTheme::ApplyToComponent(IComponent* component, ITheme* theme,
-                                    const theme::ProjectStyleSheet* styles, bool isRoot) {
+                                    const theme::ProjectStyleSheet* styles, bool isRoot,
+                                    double viewportWidth) {
     if (!component || !theme) {
         return false;
     }
@@ -325,15 +348,14 @@ bool RenderTheme::ApplyToComponent(IComponent* component, ITheme* theme,
     }
 
     if (styles && styles->HasAnyStyles()) {
-        ApplyProjectStyle(component, typeKey,
-                           styles->Resolve(typeKey, IsPureLayoutType(typeKey)));
+        ApplyProjectStyle(component, typeKey, ResolveForViewport(*styles, typeKey, viewportWidth));
     }
 
     ApplyTypeDefaults(component, theme, isRoot);
 
     std::vector<IComponent*> children = component->Children();
     for (IComponent* child : children) {
-        if (child && !ApplyToComponent(child, theme, styles)) {
+        if (child && !ApplyToComponent(child, theme, styles, false, viewportWidth)) {
             return false;
         }
     }

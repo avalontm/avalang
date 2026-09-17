@@ -3,6 +3,7 @@
 #include <string>
 
 #include "components/IComponent.h"
+#include "Export.h"
 #include "LayoutTypes.h"
 
 namespace avalang {
@@ -28,13 +29,13 @@ struct EdgeInsets {
     double bottom = 0.0;
 };
 
-bool TryReadNumber(const IComponent* component, const std::string& name, double* out);
+bool AVA_UI_API TryReadNumber(const IComponent* component, const std::string& name, double* out);
 
-double ReadNumber(const IComponent* component, const std::string& name, double defaultValue);
+double AVA_UI_API ReadNumber(const IComponent* component, const std::string& name, double defaultValue);
 
-EdgeInsets ReadEdgeInsets(const IComponent* component, const std::string& baseName);
+EdgeInsets AVA_UI_API ReadEdgeInsets(const IComponent* component, const std::string& baseName);
 
-LayoutAlignment ReadAlignment(const IComponent* component, const std::string& name);
+LayoutAlignment AVA_UI_API ReadAlignment(const IComponent* component, const std::string& name);
 
 }
 }

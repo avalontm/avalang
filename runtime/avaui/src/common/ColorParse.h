@@ -1,6 +1,7 @@
 #ifndef AVA_UI_COMMON_COLOR_PARSE_H
 #define AVA_UI_COMMON_COLOR_PARSE_H
 
+#include "Export.h"
 #include "commands/RenderCommand.h"
 #include <string>
 
@@ -41,7 +42,7 @@ namespace common {
 // fallback "generico y silencioso" que ya usa LayoutEngine con
 // TypeName no reconocido (ver Fase 3), para que un color mal escrito
 // en un .avaui no tire abajo el pipeline entero.
-Color ParseColor(const std::string& hex);
+AVA_UI_API Color ParseColor(const std::string& hex);
 
 } // namespace common
 } // namespace ui
