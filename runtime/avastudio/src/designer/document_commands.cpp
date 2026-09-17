@@ -78,6 +78,7 @@ void DocumentCommand::SyncDocument() {
         return;
     }
     document_->dirty = true;
+    document_->revision++;
     if (!selection_) {
         return;
     }
@@ -215,6 +216,7 @@ std::string ExecuteChangeComponentType(CommandManager* manager, design::DesignDo
     } else {
         raw->Execute();
         document.dirty = true;
+        document.revision++;
     }
 
     const std::string changedId = raw->ChangedNodeId();
@@ -286,6 +288,7 @@ bool ExecuteSetProperty(CommandManager* manager, design::DesignDocument& documen
     if (!manager) {
         node->SetProperty(key, PropertyValue(value));
         document.dirty = true;
+        document.revision++;
         design::MarkPropertyAuthored(document, nodeId, key);
         return true;
     }
@@ -312,6 +315,7 @@ bool ExecuteRemoveProperty(CommandManager* manager, design::DesignDocument& docu
     if (!manager) {
         node->RemoveProperty(key);
         document.dirty = true;
+        document.revision++;
         design::UnmarkPropertyAuthored(document, nodeId, key);
         return true;
     }

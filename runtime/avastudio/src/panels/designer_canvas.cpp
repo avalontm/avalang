@@ -118,6 +118,7 @@ struct NodeDecoration {
 struct DesignerVmCacheEntry {
     AvaVM* vm = nullptr;
     bool last_dirty = false;
+    int last_revision = -1;
     std::unordered_map<std::string, std::string> eval_cache;
     std::string cached_project_root;
     avalang::ui::theme::ProjectStyleSheet project_styles;
@@ -338,12 +339,33 @@ void DrawSelectionRing(ImDrawList* draw_list, ImVec2 p0, ImVec2 p1, ImU32 color)
     draw_list->AddRect(p0, p1, color, kSelectionCornerRadius, 0, kSelectionBorderThickness);
 }
 
-void DrawInsetRect(ImDrawList* draw_list, ImVec2 origin, const designer::LayoutRect& rect, ImU32 fill,
-                    ImU32 border) {
-    const ImVec2 p0(origin.x + static_cast<float>(rect.x), origin.y + static_cast<float>(rect.y));
-    const ImVec2 p1(p0.x + static_cast<float>(rect.width), p0.y + static_cast<float>(rect.height));
-    draw_list->AddRectFilled(p0, p1, fill);
-    draw_list->AddRect(p0, p1, border, 0.0f, 0, 1.0f);
+void DrawInsetBand(ImDrawList* draw_list, ImVec2 origin, const designer::LayoutRect& outer,
+                    const designer::LayoutRect& inner, ImU32 fill, ImU32 border) {
+    const ImVec2 outer_p0(origin.x + static_cast<float>(outer.x), origin.y + static_cast<float>(outer.y));
+    const ImVec2 outer_p1(outer_p0.x + static_cast<float>(outer.width), outer_p0.y + static_cast<float>(outer.height));
+    const ImVec2 raw_inner_p0(origin.x + static_cast<float>(inner.x), origin.y + static_cast<float>(inner.y));
+    const ImVec2 raw_inner_p1(raw_inner_p0.x + static_cast<float>(inner.width),
+                               raw_inner_p0.y + static_cast<float>(inner.height));
+    const ImVec2 inner_p0(std::clamp(raw_inner_p0.x, outer_p0.x, outer_p1.x),
+                           std::clamp(raw_inner_p0.y, outer_p0.y, outer_p1.y));
+    const ImVec2 inner_p1(std::clamp(raw_inner_p1.x, outer_p0.x, outer_p1.x),
+                           std::clamp(raw_inner_p1.y, outer_p0.y, outer_p1.y));
+
+    // Fill only the ring between outer and inner (top/bottom/left/right bands), so the real
+    // content inside `inner` stays untouched instead of being washed out by a solid overlay.
+    if (inner_p0.y > outer_p0.y) {
+        draw_list->AddRectFilled(outer_p0, ImVec2(outer_p1.x, inner_p0.y), fill);
+    }
+    if (inner_p1.y < outer_p1.y) {
+        draw_list->AddRectFilled(ImVec2(outer_p0.x, inner_p1.y), outer_p1, fill);
+    }
+    if (inner_p0.x > outer_p0.x) {
+        draw_list->AddRectFilled(ImVec2(outer_p0.x, inner_p0.y), ImVec2(inner_p0.x, inner_p1.y), fill);
+    }
+    if (inner_p1.x < outer_p1.x) {
+        draw_list->AddRectFilled(ImVec2(inner_p1.x, inner_p0.y), ImVec2(outer_p1.x, inner_p1.y), fill);
+    }
+    draw_list->AddRect(outer_p0, outer_p1, border, 0.0f, 0, 1.0f);
 }
 
 void DrawDashedRect(ImDrawList* draw_list, ImVec2 p0, ImVec2 p1, ImU32 color) {
@@ -823,7 +845,9 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
               std::string* out_click_reroute = nullptr,
               std::unordered_map<std::string, NodeDecoration>* out_decorations = nullptr,
               bool design_mode = true,
-              float extra_offset_y = 0.0f, int depth = 0) {
+              float extra_offset_y = 0.0f, int depth = 0,
+              ImVec2 canvas_min = ImVec2(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()),
+              ImVec2 canvas_max = ImVec2(std::numeric_limits<float>::max(), std::numeric_limits<float>::max())) {
     const std::string type_name = LowerAscii(node->TypeName());
     const design::ComponentTypeInfo* info = design::FindComponentType(type_name);
     const bool is_container = info != nullptr && info->is_container;
@@ -854,9 +878,15 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
     const ImVec2 p0(raw_p0.x + margin, raw_p0.y + margin);
     const ImVec2 p1(std::max(p0.x, raw_p1.x - margin), std::max(p0.y, raw_p1.y - margin));
 
-    const bool pad_chrome = is_container;
-    const ImVec2 chrome_p0 = pad_chrome ? ImVec2(p0.x - kRealContainerPadSide, p0.y - kRealContainerPadTop) : p0;
-    const ImVec2 chrome_p1 = pad_chrome ? ImVec2(p1.x + kRealContainerPadSide, p1.y + kRealContainerPadSide) : p1;
+    const bool pad_chrome = is_container && depth > 0;
+    const ImVec2 raw_chrome_p0 =
+        pad_chrome ? ImVec2(p0.x - kRealContainerPadSide, p0.y - kRealContainerPadTop) : p0;
+    const ImVec2 raw_chrome_p1 =
+        pad_chrome ? ImVec2(p1.x + kRealContainerPadSide, p1.y + kRealContainerPadSide) : p1;
+    const ImVec2 chrome_p0(std::clamp(raw_chrome_p0.x, canvas_min.x, canvas_max.x),
+                            std::clamp(raw_chrome_p0.y, canvas_min.y, canvas_max.y));
+    const ImVec2 chrome_p1(std::clamp(raw_chrome_p1.x, canvas_min.x, canvas_max.x),
+                            std::clamp(raw_chrome_p1.y, canvas_min.y, canvas_max.y));
 
     const bool selected = design_mode && IsNodeSelected(selection, node->NodeId());
     const bool skip_leaf_wireframe = live_render_painted && !is_container;
@@ -998,10 +1028,19 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
             draw_list->AddLine(ImVec2(p0.x, header_bottom), ImVec2(p1.x, header_bottom),
                                 palette::U32FromHex(palette::kBorder), 1.0f);
         } else if (design_mode) {
-            const bool container_hovered = ImGui::IsMouseHoveringRect(p0, p1);
+            const bool container_hovered = surface_hovered_node_id != nullptr
+                                                ? (*surface_hovered_node_id == node->NodeId())
+                                                : ImGui::IsMouseHoveringRect(p0, p1);
             if (container_hovered) {
                 ImGui::SetTooltip("%s", type_name.c_str());
             }
+        }
+    } else if (design_mode) {
+        const bool leaf_hovered = surface_hovered_node_id != nullptr
+                                       ? (*surface_hovered_node_id == node->NodeId())
+                                       : ImGui::IsMouseHoveringRect(p0, p1);
+        if (leaf_hovered) {
+            ImGui::SetTooltip("%s", type_name.c_str());
         }
     }
 
@@ -1061,7 +1100,7 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
         widget_drawn = DrawRealWidget(node, evaluated_display, widget_p0, widget_p1, project_root, project_styles,
                                        visual_state);
     }
-    if (!widget_drawn) {
+    if (!widget_drawn && !is_container) {
         draw_list->AddText(ImVec2(p0.x + 4.0f, p0.y + 4.0f), palette::U32FromHex(palette::kTextPrimary),
                             label.c_str());
         if (!evaluated_display.empty()) {
@@ -1189,7 +1228,7 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
         DrawNode(child, origin, doc, out_selected, tab_id, command_manager, selection, out_generated_handler,
                  state_vm, eval_cache, project_root, live_render_painted, project_styles, visual_state, uid_to_rect,
                  out_missing_rect_uids, surface_hovered_node_id, out_imgui_hovered_node_id, out_click_reroute,
-                 out_decorations, design_mode, child_offset_y, depth + 1);
+                 out_decorations, design_mode, child_offset_y, depth + 1, canvas_min, canvas_max);
     }
 }
 
@@ -1390,8 +1429,9 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
 
     if (tab_id >= 0) {
         DesignerVmCacheEntry& entry = g_designer_vm_cache[tab_id];
-        const bool needs_rebuild =
-            entry.vm == nullptr || entry.last_dirty != doc.dirty || entry.cached_project_root != project_root;
+        const bool needs_rebuild = entry.vm == nullptr || entry.last_dirty != doc.dirty ||
+                                    entry.last_revision != doc.revision ||
+                                    entry.cached_project_root != project_root;
         tree_state_rebuilt_this_frame = needs_rebuild;
         if (needs_rebuild) {
             if (entry.vm) {
@@ -1401,6 +1441,7 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
             entry.vm = design::BuildStateVM(doc);
             design::BindCodeBehind(entry.vm, doc);
             entry.last_dirty = doc.dirty;
+            entry.last_revision = doc.revision;
             entry.eval_cache.clear();
             entry.cached_project_root = project_root;
             entry.project_styles = avalang::ui::theme::LoadProjectStyleOverrides(project_root);
@@ -1630,10 +1671,13 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
     std::vector<std::string> missing_rect_uids;
     std::string imgui_hovered_node_id;
     std::string click_reroute;
+    const ImVec2 canvas_min = origin;
+    const ImVec2 canvas_max(origin.x + canvas_rect.w, origin.y + canvas_rect.h);
     DrawNode(root_to_draw, origin, doc, selected, tab_id, command_manager, selection, out_generated_handler,
              state_vm, eval_cache, project_root, live_render_painted, project_styles, visual_state, uid_to_rect,
              &missing_rect_uids, surface_picking_active ? &surface_hovered_node_id : nullptr, &imgui_hovered_node_id,
-             &click_reroute, overlay_driven ? &cache_entry_for_live_render->decorations : nullptr, is_design_mode);
+             &click_reroute, overlay_driven ? &cache_entry_for_live_render->decorations : nullptr, is_design_mode,
+             0.0f, 0, canvas_min, canvas_max);
 
     if (cache_entry_for_live_render != nullptr && !click_reroute.empty() && log_bridge != nullptr &&
         cache_entry_for_live_render->last_logged_click_reroute != click_reroute) {
@@ -1697,12 +1741,12 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
                         const designer::InsetOverlay insets =
                             designer::ComputeInsetOverlay(primary_rect, padding, margin);
                         if (insets.hasMargin) {
-                            DrawInsetRect(overlay_draw_list, origin, insets.marginRect,
+                            DrawInsetBand(overlay_draw_list, origin, insets.marginRect, primary_rect,
                                           palette::U32FromHex(palette::kWarning, 0.16f),
                                           palette::U32FromHex(palette::kWarning, 0.6f));
                         }
                         if (insets.hasPadding) {
-                            DrawInsetRect(overlay_draw_list, origin, insets.paddingRect,
+                            DrawInsetBand(overlay_draw_list, origin, primary_rect, insets.paddingRect,
                                           palette::U32FromHex(palette::kSuccess, 0.16f),
                                           palette::U32FromHex(palette::kSuccess, 0.6f));
                         }

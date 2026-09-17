@@ -29,6 +29,7 @@ struct DesignDocument {
     std::vector<NodeAnimation> animations;
 
     bool dirty = false;
+    int revision = 0;
 
     std::unordered_map<std::string, std::unordered_set<std::string>> authored_properties;
 
