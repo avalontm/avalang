@@ -79,7 +79,9 @@ public:
         const Color& borderColor, float borderWidth, float borderRadius,
         bool disabled,
         const std::string& clickHandler = std::string(),
-        const std::string& className = std::string()
+        const std::string& className = std::string(),
+        ComponentId compId = 0,
+        const std::string& avaType = std::string()
     ) = 0;
 
     virtual void DrawLink(
@@ -89,7 +91,9 @@ public:
         const Color& color,
         const std::string& href,
         const std::string& clickHandler = std::string(),
-        const std::string& className = std::string()
+        const std::string& className = std::string(),
+        ComponentId compId = 0,
+        const std::string& avaType = std::string()
     ) = 0;
 
     virtual void DrawPath(
@@ -100,6 +104,65 @@ public:
         bool closed = false,
         const std::string& clickHandler = std::string(),
         const std::string& className = std::string()
+    ) = 0;
+
+    virtual void DrawInput(
+        float x, float y, float width, float height,
+        const std::string& text,
+        const std::string& placeholder,
+        float fontSize, const char* fontName,
+        const Color& textColor,
+        const Color& fillColor,
+        const Color& borderColor, float borderWidth, float borderRadius,
+        bool disabled, bool focused, bool hovered,
+        int caretIndex = -1, int selectionStart = -1, int selectionEnd = -1,
+        const std::string& imeComposition = std::string(), int imeCompositionCursor = 0,
+        const std::string& clickHandler = std::string(),
+        const std::string& className = std::string(),
+        ComponentId compId = 0,
+        const std::string& avaType = std::string()
+    ) = 0;
+
+    virtual void DrawCheckBox(
+        float x, float y, float width, float height,
+        const std::string& text,
+        float fontSize, const char* fontName,
+        const Color& textColor,
+        const Color& boxFillColor,
+        const Color& boxBorderColor, float borderWidth, float borderRadius,
+        bool checked, bool disabled, bool focused, bool hovered,
+        const std::string& clickHandler = std::string(),
+        const std::string& className = std::string(),
+        ComponentId compId = 0,
+        const std::string& avaType = std::string()
+    ) = 0;
+
+    virtual void DrawRadioButton(
+        float x, float y, float width, float height,
+        const std::string& text,
+        float fontSize, const char* fontName,
+        const Color& textColor,
+        const Color& boxFillColor,
+        const Color& boxBorderColor, float borderWidth,
+        bool selected, bool disabled, bool focused, bool hovered,
+        const std::string& clickHandler = std::string(),
+        const std::string& className = std::string(),
+        ComponentId compId = 0,
+        const std::string& avaType = std::string()
+    ) = 0;
+
+    virtual void DrawComboBox(
+        float x, float y, float width, float height,
+        const std::vector<render::ComboBoxItem>& items,
+        float fontSize, const char* fontName,
+        const Color& textColor,
+        const Color& fillColor,
+        const Color& borderColor, float borderWidth, float borderRadius,
+        bool disabled, bool focused, bool hovered, bool open,
+        const std::string& clickHandler = std::string(),
+        const std::string& className = std::string(),
+        ComponentId compId = 0,
+        const std::string& avaType = std::string()
     ) = 0;
 
     virtual void PushClipRect(float x, float y, float width, float height) = 0;

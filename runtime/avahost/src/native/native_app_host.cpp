@@ -12,6 +12,8 @@
 #include <vector>
 
 #include "components/ComponentTree.h"
+#include "components/PropertyValue.h"
+#include "accessibility/AccessibilityTree.h"
 #include "parser/AvauiParser.h"
 #include "theme/ITheme.h"
 #include "theme/RenderTheme.h"
@@ -23,12 +25,21 @@
 #include "scene/ISceneGraph.h"
 #include "commands/RenderCommandSink.h"
 #include "commands/SceneCommandWalker.h"
+#include "controls/ButtonController.h"
+#include "controls/CheckBoxController.h"
+#include "controls/RadioButtonController.h"
+#include "controls/ComboBoxController.h"
+#include "controls/ScrollViewController.h"
+#include "controls/TextBoxEditingController.h"
 #include "events/EventDispatcher.h"
 #include "navigation/Navigator.h"
 #include "platform/contract/IPlatform.h"
 #include "platform/windows/GdiRenderer.h"
+#include "platform/windows/WinAccessibilityBridge.h"
 #include "platform/windows/WinKeyTranslation.h"
+#include "platform/windows/WinMouse.h"
 #include "perf/StartupProfiler.h"
+#include "diagnostics/vm_debug.h"
 
 #include "runtime/runtime_host.h"
 #include "rendering/ui_vm_event_bridge.h"
@@ -119,6 +130,19 @@ void WireHrefNavigation(avalang::ui::IComponent* node,
     }
 }
 
+// `agreed` yes; `a + b`, `"true"`, `x.y` no. Only a bare state variable can be
+// written back by a control; anything else is an expression.
+bool IsPlainIdentifier(const std::string& text) {
+    if (text.empty()) return false;
+    const unsigned char first = static_cast<unsigned char>(text.front());
+    if (!(std::isalpha(first) || first == '_')) return false;
+    for (char c : text) {
+        const unsigned char u = static_cast<unsigned char>(c);
+        if (!(std::isalnum(u) || u == '_')) return false;
+    }
+    return true;
+}
+
 bool WasKeyJustPressed(avalang::ui::platform::IPlatform& platform, int vkCode, bool& wasDown) {
     const bool isDown = platform.Keyboard().IsKeyDown(vkCode);
     const bool justPressed = isDown && !wasDown;
@@ -161,6 +185,13 @@ int RunViewLoop(const std::string& avauiPath, int width, int height, std::string
 
     HWND hwnd = static_cast<HWND>(surface->NativeHandle());
     avalang::ui::GdiRenderer renderer(hwnd, width, height);
+
+    // WinMouse::Position() reporta coordenadas de pantalla completa por
+    // default; sin este SetWindow(), el HitTest/EventDispatcher (que
+    // trabajan en coordenadas de cliente) quedan desfasados exactamente
+    // por el offset de la ventana en el escritorio -- por eso "se ajusta"
+    // al mover la ventana en vez de corregirse del todo.
+    static_cast<avalang::ui::platform::windows::WinMouse&>(platform.Mouse()).SetWindow(hwnd);
 
     avalang::ui::navigation::Navigator navigator;
     navigator.Push(avalang::ui::navigation::Route(RouteFromFilePath(avauiPath, routesDir)));
@@ -234,6 +265,63 @@ int RunViewLoop(const std::string& avauiPath, int width, int height, std::string
         dispatcher.SetImeSource(&platform.Ime());
         dispatcher.SetKeyTranslator(&avalang::ui::platform::windows::TranslateVirtualKey);
 
+        avalang::ui::platform::windows::WinAccessibility_SetDispatcher(&dispatcher);
+        avalang::ui::platform::windows::WinAccessibility_SetComponentTree(parsed.tree.get());
+        avalang::ui::platform::windows::WinAccessibility_SetLayoutEngine(layoutEngine.get());
+        std::unique_ptr<avalang::ui::accessibility::AccessibilityTree> accessibilityTree;
+        unsigned long long accessibilityTreeVersion = 0;
+        double accessibilityTreeWidth = -1.0;
+        double accessibilityTreeHeight = -1.0;
+        avalang::ui::ComponentId accessibilityTreeFocus = 0;
+
+        avalang::ui::controls::TextBoxEditingController textEditing(dispatcher, platform.Clipboard());
+        textEditing.Attach(root);
+
+        avalang::ui::controls::ButtonController buttonController(dispatcher);
+        buttonController.Attach(root);
+
+        avalang::ui::controls::CheckBoxController checkBoxController(dispatcher);
+        checkBoxController.Attach(root);
+
+        // Two-way binding for `isChecked = someStateVar`. Without this the
+        // controller read the binding text as "unchecked", toggled from the
+        // wrong value (first click did nothing visible) and then overwrote
+        // the binding with a literal bool, so the state variable never
+        // changed and the checkbox stopped following it.
+        {
+            avalang::ui::controls::CheckBoxBinding checkBoxBinding;
+            checkBoxBinding.resolveChecked = [&stateBridge](avalang::ui::IComponent* checkBox) {
+                const avalang::ui::PropertyValue* prop = checkBox->GetProperty("isChecked");
+                if (!prop) return false;
+                if (prop->Type() == avalang::ui::PropertyType::Bool) return prop->AsBool();
+                if (prop->Type() == avalang::ui::PropertyType::String) {
+                    return stateBridge.EvalIdentifier(prop->AsString()) == "true";
+                }
+                return false;
+            };
+            checkBoxBinding.commitChecked = [&stateBridge](avalang::ui::IComponent* checkBox,
+                                                            bool newChecked) {
+                const avalang::ui::PropertyValue* prop = checkBox->GetProperty("isChecked");
+                if (!prop || prop->Type() != avalang::ui::PropertyType::String) return false;
+                const std::string variable = prop->AsString();
+                if (!IsPlainIdentifier(variable)) return false;
+                avalang::ui::IState* state = stateBridge.Find(variable);
+                if (!state) return false;
+                state->Set(avalang::ui::PropertyValue(newChecked));
+                return true;
+            };
+            checkBoxController.SetBinding(std::move(checkBoxBinding));
+        }
+
+        avalang::ui::controls::RadioButtonController radioButtonController(dispatcher);
+        radioButtonController.Attach(root);
+
+        avalang::ui::controls::ComboBoxController comboBoxController(dispatcher);
+        comboBoxController.Attach(root);
+
+        avalang::ui::controls::ScrollViewController scrollViewController(dispatcher, *layoutEngine);
+        scrollViewController.Attach(root);
+
         WireVmEventHandlers(root, dispatcher, host, stateBridge);
 
         Router router(routesDir, host);
@@ -289,8 +377,33 @@ int RunViewLoop(const std::string& avauiPath, int width, int height, std::string
                 continue;
             }
 
+            const unsigned long long rootVersion = root->Version();
+            const avalang::ui::ComponentId focusedComponent = dispatcher.FocusedComponent();
+            const bool accessibilityDirty = !accessibilityTree ||
+                rootVersion != accessibilityTreeVersion ||
+                viewport.width != accessibilityTreeWidth ||
+                viewport.height != accessibilityTreeHeight ||
+                focusedComponent != accessibilityTreeFocus;
+            if (accessibilityDirty) {
+                accessibilityTree = avalang::ui::accessibility::AccessibilityTree::Create(
+                    parsed.tree.get(), layoutEngine.get(), focusedComponent);
+                avalang::ui::platform::windows::WinAccessibility_SetTree(accessibilityTree.get());
+                accessibilityTreeVersion = rootVersion;
+                accessibilityTreeWidth = viewport.width;
+                accessibilityTreeHeight = viewport.height;
+                accessibilityTreeFocus = focusedComponent;
+            }
+
             std::unique_ptr<avalang::ui::render::IRenderTree> renderTree(
                 avalang::ui::render::IRenderTree::Create());
+            // Sin esto, RenderTree::Eval() cae en su fallback (devuelve el
+            // raw string tal cual) y en pantalla aparece literalmente el
+            // binding sin evaluar, p.ej. `"test - clicks: " + clicks` en
+            // vez del valor -- ver el mismo wiring en
+            // ui_pipeline_dynamic_renderer.cpp (pipeline web), que si lo hace.
+            renderTree->SetEvalText([&stateBridge](const std::string& raw) {
+                return stateBridge.EvalIdentifier(raw);
+            });
             renderTree->Build(root, layoutEngine.get());
             std::shared_ptr<avalang::ui::render::IRenderNode> renderRoot = renderTree->Root();
             if (!renderRoot) {
@@ -320,6 +433,11 @@ int RunViewLoop(const std::string& avauiPath, int width, int height, std::string
 
             Sleep(16);
         }
+
+        avalang::ui::platform::windows::WinAccessibility_SetTree(nullptr);
+        avalang::ui::platform::windows::WinAccessibility_SetDispatcher(nullptr);
+        avalang::ui::platform::windows::WinAccessibility_SetComponentTree(nullptr);
+        avalang::ui::platform::windows::WinAccessibility_SetLayoutEngine(nullptr);
 
         VmLifecycle::NotifyUnmount(host, stateBridge, root);
 
@@ -408,6 +526,7 @@ int RunNativeApp(const std::string& projectDir, const std::string& entryFile,
         outError = "failed to create a VM to run '" + entryPath.string() + "'";
         return 1;
     }
+    ava::diag::ApplyDebugMode(vm);
     ava_vm_set_current_dir(vm, projectDir.c_str());
     ava_vm_add_search_path(vm, projectDir.c_str());
 
@@ -458,11 +577,13 @@ int RunNativeApp(const std::string& projectDir, const std::string& entryFile,
     ava_value_t entryResult{};
     char* entryRunError = nullptr;
     ava_run(vm, entryModule, &entryResult, &entryRunError);
+    const std::string entryStack = ava::diag::CaptureDebugStack(vm);
     ava_module_destroy(entryModule);
     ava_vm_destroy(vm);
 
     if (entryRunError) {
         outError = entryRunError;
+        if (!entryStack.empty()) outError += "\nstack traceback:\n" + entryStack;
         ava_string_free(entryRunError);
         return 1;
     }

@@ -106,6 +106,7 @@ void StartScriptRun(TerminalState& state, EngineBridge& engine, std::string ava_
         run.launch_failed = false;
         run.exit_code = -1;
         run.stdin_writer.reset();
+        run.last_output_at = std::chrono::steady_clock::now();
     }
     run.running = true;
 
@@ -125,6 +126,7 @@ void StartScriptRun(TerminalState& state, EngineBridge& engine, std::string ava_
                 [&run](const std::string& chunk) {
                     std::lock_guard<std::mutex> lock(run.mutex);
                     run.log += chunk;
+                    run.last_output_at = std::chrono::steady_clock::now();
                 },
                 exit_code,
                 [&run](avastd::shared_ptr<ava::platform::IProcessStream::IStdinWriter> writer) {
@@ -305,6 +307,12 @@ void CopyAll(const std::vector<ConsoleLine>& console) {
     ImGui::SetClipboardText(JoinLines(console, 0, static_cast<int>(console.size()) - 1).c_str());
 }
 
+std::string FormatSeconds(double seconds) {
+    int total = static_cast<int>(seconds);
+    if (total < 60) return std::to_string(total) + "s";
+    return std::to_string(total / 60) + "m " + std::to_string(total % 60) + "s";
+}
+
 }
 
 std::optional<TerminalFileClickRequest> DrawTerminalPanel(TerminalState& state, EngineBridge& engine,
@@ -323,6 +331,36 @@ std::optional<TerminalFileClickRequest> DrawTerminalPanel(TerminalState& state, 
     const float row_right_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
     ImGui::TextDisabled("%s", util::Tr("terminal.section_label").c_str());
     ImGui::SameLine();
+
+    if (state.run.running.load()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, palette::FromHex(palette::kError));
+        if (ImGui::SmallButton(util::Tr("terminal.stop_button").c_str())) {
+            avastd::shared_ptr<ava::platform::IProcessStream::IStdinWriter> writer;
+            {
+                std::lock_guard<std::mutex> lock(state.run.mutex);
+                writer = state.run.stdin_writer;
+            }
+            if (writer) writer->Terminate();
+        }
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", util::Tr("terminal.stop_button_tooltip").c_str());
+        }
+
+        double silent_s = 0.0;
+        {
+            std::lock_guard<std::mutex> lock(state.run.mutex);
+            silent_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - state.run.last_output_at)
+                           .count();
+        }
+        constexpr double kHungWarningSeconds = 10.0;
+        if (silent_s >= kHungWarningSeconds) {
+            ImGui::SameLine();
+            ImGui::TextColored(palette::FromHex(palette::kWarning), "%s",
+                                util::TrFormat("terminal.hung_warning", {FormatSeconds(silent_s)}).c_str());
+        }
+        ImGui::SameLine();
+    }
 
     const std::string copy_console_label = util::Tr("terminal.copy_console");
     const std::string clear_label = util::Tr("common.clear");

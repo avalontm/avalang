@@ -1416,6 +1416,23 @@ void DrawQuickFixGutterIcon(EditorState& state, EditorTab& tab, const ImVec2& ed
     }
 }
 
+void DrawBreakpointGutter(EditorState& state, EditorTab& tab, const ImVec2& editor_min, const ImVec2& editor_max) {
+    if (tab.is_welcome || tab.file_path.empty()) return;
+
+    const float glyph_width = tab.editor.GetGlyphWidth();
+    const float gutter_width = EstimateGutterWidth(tab, glyph_width);
+    const ImVec2 gutter_min = editor_min;
+    const ImVec2 gutter_max(editor_min.x + gutter_width, editor_max.y);
+
+    if (!ImGui::IsMouseHoveringRect(gutter_min, gutter_max, false)) return;
+    if (!ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) return;
+
+    const TextEditor::CursorPosition pos = ScreenPosToCursor(tab, ImGui::GetMousePos(), editor_min);
+    state.breakpoint_toggle_requested = true;
+    state.breakpoint_toggle_file = tab.file_path;
+    state.breakpoint_toggle_line = pos.line + 1;
+}
+
 struct DotCompletionPending {
     bool active = false;
     TextEditor::CursorPosition pos{};
@@ -1587,6 +1604,9 @@ void InitTab(EditorState& state, EditorTab& tab) {
     tab.editor.SetChangeCallback([&tab] {
         tab.dirty = true;
         tab.editor.ClearMarkers();
+        tab.error_marker_line = 0;
+        tab.error_marker_column = 0;
+        tab.error_marker_message.clear();
         tab.index_dirty = true;
         tab.format_pending = true;
         tab.last_edit_time = ImGui::GetTime();
@@ -1851,6 +1871,10 @@ void ToggleTabViewMode(EditorState& state, EditorTab& tab) {
                                              : (TrFormat("editor.error_at_line", std::to_string(parse_error_info.line)) +
                                                 parse_error_info.message);
 
+            tab.error_marker_line = parse_error_info.line;
+            tab.error_marker_column = parse_error_info.column;
+            tab.error_marker_message = tooltip;
+
             tab.editor.AddMarker(parse_error_info.line - 1, error_color, error_color, tooltip, tooltip);
             tab.editor.SetCursor(parse_error_info.line - 1, parse_error_info.column > 0 ? parse_error_info.column - 1 : 0);
             tab.editor.ScrollToLine(parse_error_info.line - 1, TextEditor::Scroll::alignMiddle);
@@ -2039,6 +2063,10 @@ void HighlightError(EditorState& state, const std::string& file_path, int line, 
     std::string tooltip =
         column > 0 ? message : (TrFormat("editor.error_at_line", std::to_string(line)) + message);
 
+    tab.error_marker_line = line;
+    tab.error_marker_column = column;
+    tab.error_marker_message = tooltip;
+
     tab.editor.AddMarker(line - 1, error_color, error_color, tooltip, tooltip);
 
     tab.editor.SetCursor(line - 1, column > 0 ? column - 1 : 0);
@@ -2047,7 +2075,39 @@ void HighlightError(EditorState& state, const std::string& file_path, int line, 
 
 void ClearErrorHighlights(EditorState& state) {
     for (auto& tab : state.tabs) {
-        if (tab) tab->editor.ClearMarkers();
+        if (!tab) continue;
+        tab->error_marker_line = 0;
+        tab->error_marker_column = 0;
+        tab->error_marker_message.clear();
+        tab->editor.ClearMarkers();
+    }
+}
+
+void RefreshTabDebugMarkers(EditorTab& tab, const debug::DebugSession& session) {
+    tab.editor.ClearMarkers();
+
+    if (tab.error_marker_line > 0) {
+        const ImU32 error_color = palette::U32FromHex(palette::kError, 0.35f);
+        tab.editor.AddMarker(tab.error_marker_line - 1, error_color, error_color, tab.error_marker_message,
+                              tab.error_marker_message);
+    }
+
+    const auto it = session.Breakpoints().find(tab.file_path);
+    if (it != session.Breakpoints().end()) {
+        const ImU32 breakpoint_color = palette::U32FromHex(palette::kError);
+        for (int line : it->second) {
+            tab.editor.AddMarker(line - 1, breakpoint_color, breakpoint_color, "breakpoint", "breakpoint");
+        }
+    }
+
+    if (session.Phase() == debug::DebugPhase::Paused) {
+        const auto& frames = session.Frames();
+        const size_t selected = session.SelectedFrame();
+        if (selected < frames.size() && frames[selected].file == tab.file_path) {
+            const ImU32 current_color = palette::U32FromHex(palette::kWarning, 0.35f);
+            tab.editor.AddMarker(frames[selected].line - 1, current_color, current_color, "current line",
+                                  "current line");
+        }
     }
 }
 
@@ -2358,6 +2418,7 @@ void DrawEditorPanel(EditorState& state) {
                     DrawIncompleteInterfaceSquiggles(tab, editor_min, editor_max);
                     DrawDiagnosticSquiggles(tab, editor_min, editor_max);
                     DrawQuickFixGutterIcon(state, tab, editor_min, editor_max);
+                    DrawBreakpointGutter(state, tab, editor_min, editor_max);
 
                     const bool goto_def_hover = ImGui::IsMouseHoveringRect(editor_min, editor_max);
                     const bool goto_def_key =

@@ -36,12 +36,16 @@ protected:
                       const Color& borderColor, float borderWidth,
                       float borderRadius, bool disabled,
                       const std::string& clickHandler,
-                      const std::string& className) override;
+                      const std::string& className,
+                      ComponentId compId,
+                      const std::string& avaType) override;
     void OnDrawLink(float x, float y,
                     const char* text, float fontSize, const char* fontName,
                     const Color& color, const std::string& href,
                     const std::string& clickHandler,
-                    const std::string& className) override;
+                    const std::string& className,
+                    ComponentId compId,
+                    const std::string& avaType) override;
 
 private:
     ImDrawList* drawList_ = nullptr;

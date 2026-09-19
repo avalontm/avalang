@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -34,6 +35,12 @@ struct ScriptRunState {
     // lock the worker thread wrote it under, so there's no race between
     // "script just started" and "user already typed something".
     avastd::shared_ptr<ava::platform::IProcessStream::IStdinWriter> stdin_writer;
+
+    // Set (guarded by `mutex`) from the worker thread on every chunk of
+    // output and at launch -- read on the UI thread to warn if the script
+    // has gone quiet for a while (Fase 6, plan-debug-mode-avastudio.md:
+    // "proceso colgado"), same idea as BuildPanelState::last_output_at.
+    std::chrono::steady_clock::time_point last_output_at{};
 };
 
 struct TerminalState {

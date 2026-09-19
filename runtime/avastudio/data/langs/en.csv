@@ -173,6 +173,9 @@ common.select_all,Select All
 common.clear,Clear
 panel.terminal.title,Terminal
 terminal.section_label,Execution console
+terminal.stop_button,Stop
+terminal.stop_button_tooltip,"Kills the running script. Use this if it looks hung -- it will show up in the console as terminated, not as a crash."
+terminal.hung_warning,No output for %s -- the script may be hung.
 terminal.copy_console,Copy console
 terminal.empty,Press Run (F5) to compile and run the editor's script.
 terminal.input_hint,"Type something and press Enter (input() doesn't exist in the language yet)..."
@@ -189,6 +192,29 @@ find_in_project.no_results,No matches found.
 find_in_project.results_count,%s matches
 find_in_project.results_truncated,Showing the first %s matches -- narrow your search to see more.
 panel.build.title,Build
+panel.debug.title,Debug
+debug.phase.idle,Idle
+debug.phase.starting,Starting
+debug.phase.running,Running
+debug.phase.paused,Paused
+debug.phase.ended,Ended
+debug.start_button,Start Debugging
+debug.continue_button,Continue
+debug.step_over_button,Step Over
+debug.step_into_button,Step Into
+debug.step_out_button,Step Out
+debug.pause_button,Pause
+debug.stop_button,Stop
+debug.stopped_reason,Stopped: %s
+debug.section_call_stack,Call Stack
+debug.section_variables,Variables
+debug.section_breakpoints,Breakpoints
+debug.section_log,Log
+debug.no_call_stack,No call stack
+debug.no_variables,No variables
+debug.no_breakpoints,No breakpoints
+debug.clear_breakpoints_button,Clear All
+menu.run.start_debugging,Start Debugging
 build.intro,"Runs 'ava_cli build' in the background to package the current project into a standalone .exe (see runtime/avapack/README.md). This window only holds this machine's local paths -- entry file, output folder, obfuscation, etc. now live in the project's Properties."
 build.open_project_properties_button,Open Project Properties...
 build.progress_stage_starting,Starting build...
@@ -337,9 +363,14 @@ build.run_target_console,Console
 build.run_target_desktop_ui,Desktop (UI)
 build.run_target_library,Library
 build.run_target_desktop_ui_unsupported_tooltip,"avalang_ui_win doesn't exist yet for this host."
+build.debug_mode_checkbox,Debug mode (symbols + extended diagnostics)
+build.debug_mode_checkbox_tooltip,"Builds the Console/Library target in Debug config and, on Run, passes --debug-runtime: full VM stack trace on error, extra VM checks, and the temp dir with the decrypted project is kept if the run fails. Independent of the unencrypted debug build below. Not for distribution."
 build.build_and_run_button,Build & Run
 build.build_only_button,Build
 build.run_button,Run
+build.stop_button,Stop
+build.stop_button_tooltip,"Kills the running process. Use this if it looks hung -- it will show up in Logs as terminated, not as a crash."
+build.hung_warning,No output for %s -- the process may be hung.
 build.first_run_build_notice,"First build can take several minutes (compiles avalang + avalang_ui + avalang_ui_win + avanative)."
 build.error_ui_entry_missing,"could not find a .avaui screen file in the project (expected, e.g. views/Home.avaui)."
 build.error_desktop_ui_windows_only,"Desktop (UI) is only supported on Windows for now."

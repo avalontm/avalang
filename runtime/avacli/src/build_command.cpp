@@ -84,6 +84,7 @@ struct BuildOptions {
     bool keep_temp = false;
     bool clean_pack = false;
     bool debug_unencrypted = false;
+    bool debug_symbols = false;
 
     bool obfuscate = false;
     bool obfuscate_strings = false;
@@ -158,6 +159,13 @@ void PrintBuildUsage() {
         "                Debug mode (with symbols) instead of Release. Do not use\n"
         "                for distribution -- it loses the Phase 3 protection. See\n"
         "                runtime/avapack/README.md.\n"
+        "  --debug-symbols\n"
+        "                Builds in Debug mode (with symbols) without leaving the\n"
+        "                embedded content unencrypted -- independent of --debug.\n"
+        "                Meant for Ava Studio's \"Debug mode\" checkbox, not for the\n"
+        "                unencrypted-diagnosis workflow --debug covers. Forces the\n"
+        "                full CMake build (skips the prebuilt avapack_stub.exe fast\n"
+        "                path, which is a fixed Release binary).\n"
         "  --obfuscate   The --entry is compiled and serialized to .avbc bytecode\n"
         "                instead of being embedded as plain-text .ava (imports\n"
         "                remain plain-text encrypted, unchanged -- see\n"
@@ -296,6 +304,8 @@ bool ParseBuildArgs(int argc, char** argv, BuildOptions& opts, std::string& erro
             opts.clean_pack = true;
         } else if (arg == "--debug") {
             opts.debug_unencrypted = true;
+        } else if (arg == "--debug-symbols") {
+            opts.debug_symbols = true;
         } else if (arg == "--obfuscate") {
             opts.obfuscate = true;
         } else if (arg == "--obfuscate-strings") {
@@ -801,6 +811,12 @@ bool TryFastPackWithPrebuiltStub(ava::platform::IProcess& process, const BuildOp
         return false;
     }
     if (opts.output_kind == "library") return false;
+    if (opts.debug_symbols) {
+        // avapack_stub(_ui).exe es un binario prebuilt de configuracion
+        // fija (Release) -- no hay forma de darle simbolos de Debug sin
+        // recompilarlo. Cae al flujo con CMake, que si respeta build_config.
+        return false;
+    }
 
     fs::path libraries_dir_for_ui = repo_root / "libraries";
     std::vector<fs::path> ui_scan_dirs;
@@ -1542,7 +1558,7 @@ int RunBuildCommand(int argc, char** argv) {
 
     fs::path build_dir = repo_root / "build_pack";
     const std::string target_name = "avapack_build";
-    const std::string build_config = opts.debug_unencrypted ? "Debug" : "Release";
+    const std::string build_config = (opts.debug_unencrypted || opts.debug_symbols) ? "Debug" : "Release";
 
     if (opts.clean_pack && fs::exists(build_dir)) {
         std::cout << "ava_cli build: --clean -- removing " << build_dir.string() << " ...\n";

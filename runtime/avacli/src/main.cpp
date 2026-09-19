@@ -5,9 +5,15 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 #include "avalang.h"
 #include "vm/vm.h"
 #include "build_command.h"
+#include "diagnostics/crash_handler.h"
+#include "diagnostics/debug_mode.h"
+#include "diagnostics/error_report.h"
+#include "diagnostics/vm_debug.h"
+#include "dap_server.h"
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -131,10 +137,10 @@ std::string CompilerTag() {
 // arranca en el primer argumento DESPUES del path del script (no incluye
 // ni el nombre del ejecutable ni el path del .ava, que ya se resuelven
 // aparte via argv[1]).
-void SetScriptArgsGlobal(ava::VM* raw_vm, int argc, char** argv, int first_extra_index) {
+void SetScriptArgsGlobal(ava::VM* raw_vm, const std::vector<std::string>& script_args) {
     auto* list = new ava::ListObj();
-    for (int i = first_extra_index; i < argc; ++i) {
-        list->items.push_back(ava::Value::String(argv[i]));
+    for (const std::string& arg : script_args) {
+        list->items.push_back(ava::Value::String(arg));
     }
     ava::Value args_value;
     args_value.type = ava::ValueType::List;
@@ -245,6 +251,23 @@ void PrintFormattedError(AvaVM* vm, const char* script_path,
     } else {
         std::fprintf(stderr, "%s: %s\n", fallback_label, err_msg.c_str());
     }
+
+    // Fase 0 de PLAN_DEBUG_MODE_AVASTUDIO.md: ademas del texto de arriba
+    // (que no cambia), una linea machine-readable para que AvaStudio la
+    // pueda parsear sin depender del wording humano -- ver
+    // runtime/common/diagnostics/error_report.h.
+    ava::diag::ErrorInfo structured;
+    structured.kind = (std::string(fallback_label) == "runtime error")
+                           ? ava::diag::ErrorKind::kRuntime
+                           : ava::diag::ErrorKind::kCompile;
+    structured.message = err_msg;
+    structured.file = err_src ? err_src : script_path;
+    if (err_line > 0) structured.line = err_line;
+    if (err_col > 0) structured.col = err_col;
+    structured.stack = ava::diag::CaptureDebugStack(vm);
+    ava::diag::PrintStackTrace(structured.stack);
+    ava::diag::EmitStructuredError(structured);
+
     if (err_src) ava_string_free(err_src);
 }
 
@@ -253,6 +276,9 @@ void PrintUsage(const char* argv0) {
         "usage:\n"
         "  %s <script.ava>              Compile and run an AvaLang script\n"
         "  %s build [options]           Package an AvaLang project into a standalone executable\n"
+        "  %s --dap-server <port> [script.ava]\n"
+        "                               Start a Debug Adapter Protocol server on 127.0.0.1\n"
+        "                               (port 0 picks a free port)\n"
         "  %s --help, -h                Show this help message\n"
         "  %s --version, -v             Show version information\n"
         "\n"
@@ -262,12 +288,105 @@ void PrintUsage(const char* argv0) {
         "                                 the flag wins if both are set.\n"
         "\n"
         "Run '%s build --help' for packaging options.\n",
-        argv0, argv0, argv0, argv0, argv0);
+        argv0, argv0, argv0, argv0, argv0, argv0);
+}
+
+int RunScript(const std::string& script_path, const std::vector<std::string>& script_args,
+              const std::string& modules_path_override, const ava::dap::ScriptHooks& hooks) {
+    std::ifstream file(script_path);
+    if (!file) {
+        std::fprintf(stderr, "error: could not open %s\n", script_path.c_str());
+        ava::diag::EmitStructuredError(ava::diag::ErrorKind::kLaunchFailure,
+                                        "could not open " + script_path);
+        if (hooks.on_error) hooks.on_error("could not open " + script_path);
+        return 1;
+    }
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+
+    AvaVM* vm = ava_vm_create();
+    ava::diag::ApplyDebugMode(vm);
+
+    {
+        ava::VM* raw_vm = reinterpret_cast<ava::VM*>(vm);
+        raw_vm->GetModuleResolver().SetStdlibPath(
+            modules_path_override.empty() ? ModulesDirNextToExecutable() : modules_path_override);
+
+        std::string script_dir = script_path;
+        size_t sep = script_dir.find_last_of("/\\");
+        if (sep != std::string::npos) {
+            script_dir = script_dir.substr(0, sep);
+            raw_vm->GetModuleResolver().AddSearchPath(script_dir);
+        }
+
+        SetScriptArgsGlobal(raw_vm, script_args);
+        if (hooks.on_ready) hooks.on_ready(raw_vm);
+    }
+
+    int exit_code = 0;
+    char* error = nullptr;
+    AvaModule* module = ava_compile(vm, buffer.str().c_str(), script_path.c_str(), &error);
+    if (!module) {
+        std::string err_msg = error ? error : "unknown error";
+        if (err_msg.substr(0, 9) == "error at ") {
+            std::fprintf(stderr, "%s\n", err_msg.c_str());
+            ava::diag::EmitStructuredError(ava::diag::ErrorKind::kCompile, err_msg);
+        } else {
+            PrintFormattedError(vm, script_path.c_str(), err_msg, "compile error");
+        }
+        if (hooks.on_error) hooks.on_error(err_msg);
+        if (error) ava_string_free(error);
+        exit_code = 1;
+    } else {
+        ava_value_t result{};
+        ava_run(vm, module, &result, &error);
+        if (error) {
+            std::string err_msg = error;
+            PrintFormattedError(vm, script_path.c_str(), err_msg, "runtime error");
+            if (hooks.on_error) hooks.on_error(err_msg);
+            ava_string_free(error);
+            exit_code = 1;
+        } else {
+            ava::VM* raw_vm = reinterpret_cast<ava::VM*>(vm);
+            while (raw_vm->HasPendingAsyncWork()) {
+                raw_vm->PumpAsyncEvents();
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+    }
+
+    if (hooks.on_closing) hooks.on_closing();
+    ava_vm_destroy(vm);
+    if (module) ava_module_destroy(module);
+    return exit_code;
+}
+
+bool HasFlag(int argc, char** argv, const char* flag_name) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == flag_name) return true;
+    }
+    return false;
+}
+
+int RunDapServer(int port, const std::string& default_program, const std::string& modules_path_override) {
+    ava::dap::DapServer server(
+        [&modules_path_override](const ava::dap::LaunchRequest& launch, const ava::dap::ScriptHooks& hooks) {
+            return RunScript(launch.program, launch.args, modules_path_override, hooks);
+        },
+        default_program);
+    return server.Serve(port);
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
+    // Fase 1 de PLAN_DEBUG_MODE_AVASTUDIO.md: instalar el filtro de
+    // excepcion no manejada ANTES de cualquier otra cosa (crear la VM,
+    // compilar, correr el script) -- si algo nativo crashea mas abajo, deja
+    // un .dmp + una linea estructurada en vez de morir en silencio. No-op
+    // fuera de Windows por ahora (ver crash_handler.h).
+    ava::diag::InstallCrashHandler("ava_cli");
+
     // Force stdout/stderr fully unbuffered. The CRT auto-detects whether
     // a stream is attached to a real console and only line-buffers in
     // that case -- when a parent process redirects our stdout/stderr
@@ -297,6 +416,8 @@ int main(int argc, char** argv) {
     ava::platform::macos_::SetCommandLineArgs(argc, argv);
 #endif
 
+    ava::diag::InitDebugRuntime(argc, argv);
+
     if (argc < 2) {
         PrintBanner();
         std::printf("\n");
@@ -315,6 +436,18 @@ int main(int argc, char** argv) {
     // sin ninguna diferencia real de comportamiento. Unificado.
     std::string modules_path_override = ExtractFlagValue(argc, argv, "--modules");
     if (modules_path_override.empty()) modules_path_override = EnvOrDefault("AVA_MODULES_PATH");
+
+    if (HasFlag(argc, argv, "--dap-server")) {
+        std::string port_text = ExtractFlagValue(argc, argv, "--dap-server");
+        char* end = nullptr;
+        long port = std::strtol(port_text.c_str(), &end, 10);
+        if (port_text.empty() || *end != '\0' || port < 0 || port > 65535) {
+            std::fprintf(stderr, "error: --dap-server requires a port between 0 and 65535\n");
+            return 1;
+        }
+        std::string default_program = argc >= 2 ? argv[1] : "";
+        return RunDapServer(static_cast<int>(port), default_program, modules_path_override);
+    }
 
     std::string first_arg = argv[1];
 
@@ -336,72 +469,7 @@ int main(int argc, char** argv) {
         return RunBuildCommand(argc, argv);
     }
 
-    std::ifstream file(argv[1]);
-    if (!file) {
-        std::fprintf(stderr, "error: could not open %s\n", argv[1]);
-        return 1;
-    }
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-
-    AvaVM* vm = ava_vm_create();
-
-    {
-        ava::VM* raw_vm = reinterpret_cast<ava::VM*>(vm);
-        raw_vm->GetModuleResolver().SetStdlibPath(
-            modules_path_override.empty() ? ModulesDirNextToExecutable() : modules_path_override);
-
-        std::string script_dir = argv[1];
-        size_t sep = script_dir.find_last_of("/\\");
-        if (sep != std::string::npos) {
-            script_dir = script_dir.substr(0, sep);
-            raw_vm->GetModuleResolver().AddSearchPath(script_dir);
-        }
-    }
-
-    // argv[0] = ava_cli, argv[1] = script.ava -- todo lo que venga despues
-    // (argv[2..]) son los argumentos del usuario para el script.
-    SetScriptArgsGlobal(reinterpret_cast<ava::VM*>(vm), argc, argv, 2);
-
-    char* error = nullptr;
-    AvaModule* module = ava_compile(vm, buffer.str().c_str(), argv[1], &error);
-    if (!module) {
-        std::string err_msg = error ? error : "unknown error";
-        if (err_msg.substr(0, 9) == "error at ") {
-            std::fprintf(stderr, "%s\n", err_msg.c_str());
-        } else {
-            PrintFormattedError(vm, argv[1], err_msg, "compile error");
-        }
-        if (error) ava_string_free(error);
-        ava_vm_destroy(vm);
-        return 1;
-    }
-
-    ava_value_t result{};
-    ava_run(vm, module, &result, &error);
-    if (error) {
-        PrintFormattedError(vm, argv[1], error, "runtime error");
-        ava_string_free(error);
-        // Orden invertido: ver comentario en ava_barekernel_runner.cpp
-        // sobre el use-after-free de teardown.
-        ava_vm_destroy(vm);
-        ava_module_destroy(module);
-        return 1;
-    }
-
-    {
-        ava::VM* raw_vm = reinterpret_cast<ava::VM*>(vm);
-        while (raw_vm->HasPendingAsyncWork()) {
-            raw_vm->PumpAsyncEvents();
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
-    }
-
-    // El VM todavia tenia que estar vivo para el pump de arriba, asi que
-    // el modulo se destruye recien despues. Orden invertido respecto al
-    // original (vm_destroy antes que module_destroy) por la misma razon
-    // que en ava_barekernel_runner.cpp.
-    ava_vm_destroy(vm);
-    ava_module_destroy(module);
-    return 0;
+    std::vector<std::string> script_args;
+    for (int i = 2; i < argc; ++i) script_args.push_back(argv[i]);
+    return RunScript(argv[1], script_args, modules_path_override, ava::dap::ScriptHooks{});
 }

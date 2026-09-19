@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Export.h"
 #include "events/IEvent.h"
 #include <chrono>
 
@@ -7,7 +8,7 @@ namespace avalang {
 namespace ui {
 namespace events {
 
-class Event : public virtual IEvent {
+class AVA_UI_API Event : public virtual IEvent {
 public:
     explicit Event(EventType type, ComponentId target);
     virtual ~Event() = default;
@@ -32,7 +33,7 @@ private:
     uint64_t timestamp_;
 };
 
-class PointerEvent : public Event, public IPointerEvent {
+class AVA_UI_API PointerEvent : public Event, public IPointerEvent {
 public:
     PointerEvent(EventType type, ComponentId target, PointerButton button, int x, int y);
     PointerEvent(EventType type, ComponentId target, int x, int y, int dx, int dy);
@@ -51,7 +52,7 @@ private:
     int deltaX_ = 0, deltaY_ = 0;
 };
 
-class KeyboardEvent : public Event, public IKeyboardEvent {
+class AVA_UI_API KeyboardEvent : public Event, public IKeyboardEvent {
 public:
     KeyboardEvent(EventType type, ComponentId target, int keyCode, Key translatedKey = Key::Unknown,
                   bool shift = false, bool ctrl = false, bool alt = false, bool meta = false);
@@ -71,7 +72,7 @@ private:
     bool shift_, ctrl_, alt_, meta_;
 };
 
-class WheelEvent : public Event, public IWheelEvent {
+class AVA_UI_API WheelEvent : public Event, public IWheelEvent {
 public:
     WheelEvent(ComponentId target, int x, int y, float deltaX, float deltaY);
 
@@ -87,7 +88,7 @@ private:
     float deltaX_, deltaY_;
 };
 
-class TextInputEvent : public Event, public ITextInputEvent {
+class AVA_UI_API TextInputEvent : public Event, public ITextInputEvent {
 public:
     TextInputEvent(ComponentId target, std::string text);
 
@@ -99,7 +100,7 @@ private:
     std::string text_;
 };
 
-class TouchEvent : public Event, public ITouchEvent {
+class AVA_UI_API TouchEvent : public Event, public ITouchEvent {
 public:
     TouchEvent(EventType type, ComponentId target, std::vector<TouchPoint> points);
 
@@ -111,7 +112,7 @@ private:
     std::vector<TouchPoint> points_;
 };
 
-class GestureEvent : public Event, public IGestureEvent {
+class AVA_UI_API GestureEvent : public Event, public IGestureEvent {
 public:
     GestureEvent(ComponentId target, GestureType gesture, int x, int y,
                  float translationX = 0.0f, float translationY = 0.0f, float scale = 1.0f);
@@ -131,7 +132,7 @@ private:
     float translationX_, translationY_, scale_;
 };
 
-class ImeEvent : public Event, public IImeEvent {
+class AVA_UI_API ImeEvent : public Event, public IImeEvent {
 public:
     ImeEvent(ComponentId target, std::string compositionText, int cursor, bool composing);
 
@@ -147,7 +148,7 @@ private:
     bool composing_;
 };
 
-class FocusEvent : public Event, public IFocusEvent {
+class AVA_UI_API FocusEvent : public Event, public IFocusEvent {
 public:
     FocusEvent(EventType type, ComponentId target, ComponentId relatedTarget);
 

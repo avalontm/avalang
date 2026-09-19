@@ -75,6 +75,12 @@ option(AVA_PACK_BUILD_UI_FROM_SOURCE
 # (LTO, dead-code elimination, symbol stripping -- todo solo en Release).
 # ---------------------------------------------------------------------
 option(AVA_ENABLE_LTO "Habilitar LTO/IPO para builds Release (Fase 8)" ON)
+# El crash handler (runtime/common/diagnostics/crash_handler.h) necesita
+# PDBs con tabla de lineas para poder resolver archivo:linea en cada frame
+# del stack (no solo modulo+offset). Genera un .pdb por binario (no
+# infla el .exe/.dll -- la info de debug vive aparte); ver
+# cmake/OptimizationOptions.cmake.
+option(AVA_ENABLE_CRASH_SYMBOLS "Generar PDBs con informacion de linea en builds Release (MSVC), para que el crash handler resuelva archivo:linea" ON)
 include(OptimizationOptions)
 
 # ANTLR4 y libffi son opcionales en tiempo de configure: si no se

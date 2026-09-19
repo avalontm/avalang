@@ -25,7 +25,13 @@ public:
     unsigned long long Version() const override;
     void TouchVersion() override;
 
+    void Invalidate(InvalidationFlag flags) override;
+    unsigned long long LayoutVersion() const override;
+    unsigned long long PaintVersion() const override;
+    unsigned long long SceneVersion() const override;
+
     void SetProperty(const std::string& name, PropertyValue value) override;
+    void SetProperty(const std::string& name, PropertyValue value, InvalidationFlag flags) override;
     const PropertyValue* GetProperty(const std::string& name) const override;
     bool HasProperty(const std::string& name) const override;
     void RemoveProperty(const std::string& name) override;
@@ -48,6 +54,9 @@ private:
     IComponent* parent_ = nullptr;
     bool mounted_ = false;
     unsigned long long version_ = 1;
+    unsigned long long layoutVersion_ = 1;
+    unsigned long long paintVersion_ = 1;
+    unsigned long long sceneVersion_ = 1;
 
     std::unordered_map<std::string, PropertyValue> properties_;
 

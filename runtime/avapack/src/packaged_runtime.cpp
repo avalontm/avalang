@@ -15,6 +15,9 @@
 #include "avalang.h"
 #include "vm/vm.h"
 #include "embedded_crypto.h"
+#include "diagnostics/debug_mode.h"
+#include "diagnostics/error_report.h"
+#include "diagnostics/vm_debug.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -66,6 +69,24 @@ void ZeroAndRemove(const fs::path& path) {
         }
     }
     fs::remove(path, ec);
+}
+
+void ReleaseTempDir(const fs::path& temp_dir, bool failed) {
+    if (failed && ava::diag::DebugRuntimeEnabled()) {
+        std::fprintf(stderr, "debug: se conserva el directorio temporal para inspeccion: %s\n",
+                     temp_dir.string().c_str());
+        return;
+    }
+    std::error_code ec;
+    fs::remove_all(temp_dir, ec);
+}
+
+void EmitRuntimeError(const char* message, const std::string& stack) {
+    ava::diag::ErrorInfo info;
+    info.kind = ava::diag::ErrorKind::kRuntime;
+    info.message = message;
+    info.stack = stack;
+    ava::diag::EmitStructuredError(info);
 }
 
 std::string ToRelativePosix(const fs::path& temp_dir, const std::string& resolved_path) {
@@ -132,15 +153,22 @@ PreparedModule PrepareAndCompile(int argc, char** argv, const avapack::PackagedM
         return result;
     }
     std::vector<unsigned char> entry_plain = avapack::DecryptWith(*entry_it->second, key, manifest.debug_build);
+    if (manifest.entry_is_bytecode && ava::diag::DebugRuntimeEnabled()) {
+        DecryptAndWriteFile(*entry_it->second, key, manifest.debug_build,
+                             temp_dir / manifest.entry_file);
+    }
 
     AvaVM* vm = ava_vm_create();
     ava::VM* raw_vm = reinterpret_cast<ava::VM*>(vm);
+    ava::diag::ApplyDebugMode(vm);
     raw_vm->GetModuleResolver().AddSearchPath(temp_dir.string());
     SetScriptArgsGlobal(raw_vm, argc, argv);
 
-    raw_vm->SetAfterModuleReadHook([](const std::string& resolved_path) {
-        ZeroAndRemove(fs::path(resolved_path));
-    });
+    if (!ava::diag::DebugRuntimeEnabled()) {
+        raw_vm->SetAfterModuleReadHook([](const std::string& resolved_path) {
+            ZeroAndRemove(fs::path(resolved_path));
+        });
+    }
 
     char* error = nullptr;
     AvaModule* module = nullptr;
@@ -208,9 +236,12 @@ int RunPackagedProgram(int argc, char** argv, const PackagedManifest& manifest,
     PreparedModule prepared = PrepareAndCompile(argc, argv, manifest, key, temp_dir, file_map);
     if (!prepared.ok) {
         std::fprintf(stderr, "error: %s\n", prepared.error.c_str());
+        ava::diag::EmitStructuredError(
+            prepared.error.rfind("compile error", 0) == 0 ? ava::diag::ErrorKind::kCompile
+                                                            : ava::diag::ErrorKind::kLaunchFailure,
+            prepared.error);
         std::memset(key, 0, 32);
-        std::error_code ec;
-        fs::remove_all(temp_dir, ec);
+        ReleaseTempDir(temp_dir, true);
         return 1;
     }
 
@@ -228,6 +259,9 @@ int RunPackagedProgram(int argc, char** argv, const PackagedManifest& manifest,
     int exit_code = 0;
     if (error) {
         std::fprintf(stderr, "runtime error: %s\n", error);
+        const std::string stack = ava::diag::CaptureDebugStack(prepared.vm);
+        ava::diag::PrintStackTrace(stack);
+        EmitRuntimeError(error, stack);
         ava_string_free(error);
         exit_code = 1;
     } else {
@@ -240,8 +274,7 @@ int RunPackagedProgram(int argc, char** argv, const PackagedManifest& manifest,
     std::memset(key, 0, 32);
     ava_vm_destroy(prepared.vm);
     ava_module_destroy(prepared.module);
-    std::error_code ec;
-    fs::remove_all(temp_dir, ec);
+    ReleaseTempDir(temp_dir, exit_code != 0);
     return exit_code;
 }
 
@@ -262,8 +295,11 @@ PackagedInstance* LoadPackagedProgram(int argc, char** argv, const PackagedManif
     PreparedModule prepared = PrepareAndCompile(argc, argv, manifest, key, temp_dir, instance->file_map);
     if (!prepared.ok) {
         if (out_error) *out_error = prepared.error;
-        std::error_code ec;
-        fs::remove_all(temp_dir, ec);
+        ava::diag::EmitStructuredError(
+            prepared.error.rfind("compile error", 0) == 0 ? ava::diag::ErrorKind::kCompile
+                                                            : ava::diag::ErrorKind::kLaunchFailure,
+            prepared.error);
+        ReleaseTempDir(temp_dir, true);
         delete instance;
         return nullptr;
     }
@@ -285,12 +321,12 @@ PackagedInstance* LoadPackagedProgram(int argc, char** argv, const PackagedManif
     ava_run(instance->vm, instance->module, &result, &error);
     if (error) {
         if (out_error) *out_error = std::string("runtime error: ") + error;
+        EmitRuntimeError(error, ava::diag::CaptureDebugStack(instance->vm));
         ava_string_free(error);
         std::memset(instance->key, 0, 32);
         ava_vm_destroy(instance->vm);
         ava_module_destroy(instance->module);
-        std::error_code ec;
-        fs::remove_all(instance->temp_dir, ec);
+        ReleaseTempDir(instance->temp_dir, true);
         delete instance;
         return nullptr;
     }
@@ -328,30 +364,31 @@ void UnloadPackagedProgram(PackagedInstance* instance) {
 int RunPackagedNativeApp(int argc, char** argv, const PackagedManifest& manifest,
                           unsigned char key[32]) {
     if (manifest.entry_is_bytecode) {
-
+        const char* msg =
+            "avapack: --obfuscate no esta soportado todavia para apps Desktop UI "
+            "(--with-ui --target desktop sin --output-kind library) -- empaqueta "
+            "sin --obfuscate mientras tanto.";
         std::memset(key, 0, 32);
-        MessageBoxA(nullptr,
-                     "avapack: --obfuscate no esta soportado todavia para apps Desktop UI "
-                     "(--with-ui --target desktop sin --output-kind library) -- empaqueta "
-                     "sin --obfuscate mientras tanto.",
-                     "Avalang", MB_OK | MB_ICONERROR);
+        ava::diag::EmitStructuredError(ava::diag::ErrorKind::kLaunchFailure, msg);
+        MessageBoxA(nullptr, msg, "Avalang", MB_OK | MB_ICONERROR);
         return 1;
     }
 
     if (!avapack::VerifyIntegrityWith(manifest.files, manifest.file_count, manifest.integrity_mac, key)) {
+        const char* msg = "avapack: verificacion de integridad fallida -- el contenido embebido "
+                           "no coincide con el esperado (binario posiblemente modificado)";
         std::memset(key, 0, 32);
-        MessageBoxA(nullptr,
-                     "avapack: verificacion de integridad fallida -- el contenido embebido no "
-                     "coincide con el esperado (binario posiblemente modificado)",
-                     "Avalang", MB_OK | MB_ICONERROR);
+        ava::diag::EmitStructuredError(ava::diag::ErrorKind::kLaunchFailure, msg);
+        MessageBoxA(nullptr, msg, "Avalang", MB_OK | MB_ICONERROR);
         return 1;
     }
 
     fs::path temp_dir = MakeTempDir();
     if (temp_dir.empty()) {
+        const char* msg = "avapack: no se pudo crear directorio temporal";
         std::memset(key, 0, 32);
-        MessageBoxA(nullptr, "avapack: no se pudo crear directorio temporal", "Avalang",
-                     MB_OK | MB_ICONERROR);
+        ava::diag::EmitStructuredError(ava::diag::ErrorKind::kLaunchFailure, msg);
+        MessageBoxA(nullptr, msg, "Avalang", MB_OK | MB_ICONERROR);
         return 1;
     }
 
@@ -375,11 +412,11 @@ int RunPackagedNativeApp(int argc, char** argv, const PackagedManifest& manifest
                                               height, error);
     if (code != 0 && !error.empty()) {
         std::string message = "avapack: " + error;
+        ava::diag::EmitStructuredError(ava::diag::ErrorKind::kRuntime, error);
         MessageBoxA(nullptr, message.c_str(), "Avalang", MB_OK | MB_ICONERROR);
     }
 
-    std::error_code ec;
-    fs::remove_all(temp_dir, ec);
+    ReleaseTempDir(temp_dir, code != 0);
     return code;
 }
 

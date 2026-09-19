@@ -28,6 +28,7 @@
 #include "ava_unordered_map.h"
 #include "ava_function.h"
 #include "ava_mutex.h"
+#include "ava_condition_variable.h"
 #include "ava_math.h"
 #include "ava_algorithm.h"
 #include "ava_sstream.h"

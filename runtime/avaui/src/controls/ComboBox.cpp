@@ -28,8 +28,27 @@ IComponent* CreateComboBox(ComponentTree* tree) {
 
     comp->SetProperty("selectedValue", PropertyValue(std::string()));
     comp->SetProperty("isEnabled", PropertyValue(true));
+    comp->SetProperty("isOpen", PropertyValue(false));
 
     return comp;
+}
+
+bool IsComboBoxOpen(IComponent* comboBoxComponent) {
+    if (!comboBoxComponent) {
+        return false;
+    }
+    const auto* prop = comboBoxComponent->GetProperty("isOpen");
+    if (!prop || prop->Type() != PropertyType::Bool) {
+        return false;
+    }
+    return prop->AsBool();
+}
+
+void SetComboBoxOpen(IComponent* comboBoxComponent, bool open) {
+    if (!comboBoxComponent) {
+        return;
+    }
+    comboBoxComponent->SetProperty("isOpen", PropertyValue(open));
 }
 
 IComponent* AddOption(ComponentTree* tree, IComponent* comboBoxComponent,
@@ -116,6 +135,7 @@ struct ComboBoxTypeRegistration {
             {
                 {"selectedValue", PropertyValue("")},
                 {"isEnabled", PropertyValue(true)},
+                {"isOpen", PropertyValue(false)},
             },
         });
     }

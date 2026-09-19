@@ -62,6 +62,24 @@
     });
     return newScrollRoot;
   }
+  function controlValueParam(sourceEl){
+    var avaType = sourceEl.getAttribute('data-ava-type');
+    switch (avaType) {
+      case 'CheckBox':
+        return 'checked=' + (sourceEl.checked ? 'true' : 'false');
+      case 'RadioButton':
+        return 'selected=true';
+      case 'ComboBox':
+        return 'selectedValue=' + encodeURIComponent(sourceEl.value);
+      case 'TextBox':
+        return 'text=' + encodeURIComponent(sourceEl.value);
+      default:
+        if (window.console && console.warn) {
+          console.warn('ava-runtime: unsupported control type "' + avaType + '", sending raw value');
+        }
+        return 'value=' + encodeURIComponent(sourceEl.value);
+    }
+  }
   function fireHandler(handler, preventDefault, ev, sourceEl){
     if (preventDefault && ev) ev.preventDefault();
     var body = 'handler=' + encodeURIComponent(handler);
@@ -69,7 +87,7 @@
     var focusState = null;
     if (compId) {
       body += '&compId=' + encodeURIComponent(compId) +
-              '&value=' + encodeURIComponent(sourceEl.value);
+              '&' + controlValueParam(sourceEl);
       if (document.activeElement === sourceEl) {
         focusState = {
           compId: compId,

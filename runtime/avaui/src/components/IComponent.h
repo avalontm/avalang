@@ -6,6 +6,7 @@
 #include "Fwd.h"
 #include "components/PropertyValue.h"
 #include "components/ILifecycleObserver.h"
+#include "invalidation/InvalidationFlags.h"
 
 namespace avalang {
 namespace ui {
@@ -24,7 +25,13 @@ public:
     virtual unsigned long long Version() const = 0;
     virtual void TouchVersion() = 0;
 
+    virtual void Invalidate(InvalidationFlag flags) = 0;
+    virtual unsigned long long LayoutVersion() const = 0;
+    virtual unsigned long long PaintVersion() const = 0;
+    virtual unsigned long long SceneVersion() const = 0;
+
     virtual void SetProperty(const std::string& name, PropertyValue value) = 0;
+    virtual void SetProperty(const std::string& name, PropertyValue value, InvalidationFlag flags) = 0;
     virtual const PropertyValue* GetProperty(const std::string& name) const = 0;
     virtual bool HasProperty(const std::string& name) const = 0;
     virtual void RemoveProperty(const std::string& name) = 0;

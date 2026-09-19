@@ -19,8 +19,18 @@
 #include "avalang.h"
 #include "embedded_project.h"
 #include "packaged_runtime.h"
+#include "diagnostics/crash_handler.h"
+#include "diagnostics/debug_mode.h"
 
 int main(int argc, char** argv) {
+    // Fase 1 de PLAN_DEBUG_MODE_AVASTUDIO.md: este es uno de los .exe que
+    // el usuario realmente construye y corre -- antes no tenia NINGUN
+    // filtro de excepcion (solo avanative.exe, el binario de F5/Preview,
+    // lo tenia). Sin esto, un crash nativo aca moria en silencio, sin
+    // dump ni mensaje.
+    ava::diag::InstallCrashHandler("avapack");
+    ava::diag::InitDebugRuntime(argc, argv);
+
     unsigned char key[32];
     avapack::GetEmbeddedKey(key);
 

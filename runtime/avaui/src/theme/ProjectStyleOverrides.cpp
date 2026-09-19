@@ -61,7 +61,8 @@ bool ParseStyleDeclarationLine(const std::string& rawLine, std::string& outPath)
 
 bool IsRecognizedState(const std::string& stateLower) {
     return stateLower == "hover" || stateLower == "focus" ||
-           stateLower == "active" || stateLower == "disabled";
+           stateLower == "active" || stateLower == "disabled" ||
+           stateLower == "checked" || stateLower == "selected";
 }
 
 std::string StripComment(const std::string& line) {

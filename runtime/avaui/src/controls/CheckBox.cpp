@@ -69,10 +69,20 @@ bool GetCheckBoxChecked(IComponent* checkBoxComponent) {
         return false;
     }
     const auto* prop = checkBoxComponent->GetProperty("isChecked");
-    if (!prop || prop->Type() != PropertyType::Bool) {
+    if (!prop) {
         return false;
     }
-    return prop->AsBool();
+    if (prop->Type() == PropertyType::Bool) {
+        return prop->AsBool();
+    }
+    // A literal written as text (`isChecked = "true"`) is readable here. A
+    // state binding (`isChecked = agreed`) is NOT: resolving it needs the
+    // host's expression evaluator, which this layer does not have. Hosts that
+    // support bindings plug one in through CheckBoxController::SetBinding.
+    if (prop->Type() == PropertyType::String) {
+        return prop->AsString() == "true";
+    }
+    return false;
 }
 
 void BindCheckBoxChange(ComponentId checkBoxId, CheckBoxChangeCallback callback) {

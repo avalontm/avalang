@@ -9,6 +9,9 @@ namespace windows {
 void WinMouse::Position(int& x, int& y) const {
     POINT pt{};
     GetCursorPos(&pt);
+    if (hwnd_) {
+        ScreenToClient(hwnd_, &pt);
+    }
     x = pt.x;
     y = pt.y;
 }

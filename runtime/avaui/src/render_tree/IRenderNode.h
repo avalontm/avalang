@@ -4,6 +4,7 @@
 #include "components/PropertyValue.h"
 #include "layout/LayoutTypes.h"
 #include "render_tree/PathGeometry.h"
+#include "render_tree/ComboBoxData.h"
 
 #include <memory>
 #include <string>
@@ -34,6 +35,7 @@ enum class RenderNodeType : unsigned char {
     Link,
     Dialog,
     ScrollView,
+    RadioButton,
 };
 
 class IRenderNode {
@@ -70,6 +72,7 @@ public:
     virtual std::string ClickHandler() const = 0;
     virtual std::string ClassName() const = 0;
     virtual bool Disabled() const = 0;
+    virtual bool Open() const = 0;
     virtual std::string Href() const = 0;
 
     virtual bool IsOverlay() const = 0;
@@ -77,11 +80,21 @@ public:
     virtual int OverlayPriority() const = 0;
 
     virtual std::string ScrollDirection() const = 0;
+    virtual double ScrollOffsetX() const = 0;
+    virtual double ScrollOffsetY() const = 0;
     virtual std::string BindingWarning() const = 0;
     virtual bool Wrap() const = 0;
 
+    virtual int CaretIndex() const = 0;
+    virtual int SelectionStart() const = 0;
+    virtual int SelectionEnd() const = 0;
+    virtual std::string ImeComposition() const = 0;
+    virtual int ImeCompositionCursor() const = 0;
+
     virtual const PathData& PathSegments() const = 0;
     virtual bool PathClosed() const = 0;
+
+    virtual const ComboBoxItems& ComboItems() const = 0;
 };
 
 }

@@ -100,6 +100,8 @@ typedef ava_value_t (*AvaNativeFn)(
 AVA_API AvaVM* ava_vm_create(void);
 AVA_API void   ava_vm_destroy(AvaVM* vm);
 
+AVA_API void ava_vm_set_debug_mode(AvaVM* vm, int enabled);
+
 AVA_API void ava_vm_set_current_dir(AvaVM* vm, const char* dir);
 
 AVA_API void ava_vm_add_search_path(AvaVM* vm, const char* path);
@@ -204,6 +206,8 @@ AVA_API void ava_call(
     char** out_error
 );
 
+// Returns a new reference to the global's value (nil if it does not exist).
+// Release it with ava_value_release() when done.
 AVA_API ava_value_t ava_get_global(AvaVM* vm, const char* name);
 AVA_API void ava_set_global(AvaVM* vm, const char* name, ava_value_t value);
 
@@ -281,6 +285,8 @@ AVA_API int ava_last_error_line(AvaVM* vm);
 AVA_API int ava_last_error_column(AvaVM* vm);
 
 AVA_API char* ava_last_error_source(AvaVM* vm);
+
+AVA_API char* ava_last_error_stack(AvaVM* vm);
 
 #ifdef __cplusplus
 }

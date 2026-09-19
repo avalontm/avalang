@@ -36,7 +36,8 @@ std::filesystem::path ResolveDottedPath(const std::string& projectRoot, const st
 
 LiveRenderResult BuildLiveRender(avalang::ui::ComponentTree* tree, int viewportWidth, int viewportHeight,
                                   const std::string& extends,
-                                  const std::string& projectRoot) {
+                                  const std::string& projectRoot,
+                                  TextEvaluator evalText) {
     LiveRenderResult out;
 
     if (!tree || !tree->Root()) {
@@ -82,6 +83,7 @@ LiveRenderResult BuildLiveRender(avalang::ui::ComponentTree* tree, int viewportW
     avalang::ui::RenderTheme::Apply(tree, &projectTheme, &projectStyles, static_cast<double>(viewportWidth));
 
     out.layoutEngine = avalang::ui::LayoutEngine::Create();
+    if (evalText) out.layoutEngine->SetTextEvaluator(evalText);
     int effectiveW = viewportWidth;
     int effectiveH = viewportHeight;
     if (out.hasSlot) {
@@ -98,7 +100,16 @@ LiveRenderResult BuildLiveRender(avalang::ui::ComponentTree* tree, int viewportW
     }
 
     out.renderTree.reset(avalang::ui::render::IRenderTree::Create());
+    if (evalText) out.renderTree->SetEvalText(evalText);
     out.renderTree->Build(tree->Root(), out.layoutEngine.get());
+
+    // The evaluator is only needed while building (layout measure + render
+    // tree). Detach it now so the result never holds a callback that points
+    // into a VM the caller may destroy later.
+    if (evalText) {
+        out.layoutEngine->SetTextEvaluator(nullptr);
+        out.renderTree->SetEvalText(nullptr);
+    }
     if (!out.renderTree->Root()) {
         out.error = "IRenderTree::Build failed";
         return out;

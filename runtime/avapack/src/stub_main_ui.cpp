@@ -36,6 +36,9 @@
 #include "embedded_project.h" // GetKeyFromFragments
 #include "packaged_runtime.h"
 #include "payload_format.h"
+#include "diagnostics/crash_handler.h"
+#include "diagnostics/debug_mode.h"
+#include "diagnostics/error_report.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -63,13 +66,25 @@ bool ReadTail(std::ifstream& f, std::uint64_t file_size, std::size_t n,
 }
 
 void ReportError(const std::string& message) {
-    // Sin consola (WIN32_EXECUTABLE) -- ver comentario de cabecera.
+    // Fase 0 de PLAN_DEBUG_MODE_AVASTUDIO.md: estructurado PRIMERO -- sin
+    // consola (WIN32_EXECUTABLE), el MessageBoxA de abajo es la unica
+    // salida "para humanos", pero si este proceso corre detached desde
+    // AvaStudio (LaunchDetachedProcess) el modal puede quedar tapado por
+    // otra ventana. La linea en stderr no depende de eso.
+    ava::diag::EmitStructuredError(ava::diag::ErrorKind::kLaunchFailure, message);
     MessageBoxA(nullptr, message.c_str(), "Avalang", MB_OK | MB_ICONERROR);
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
+    // Fase 1 de PLAN_DEBUG_MODE_AVASTUDIO.md: variante Desktop UI del
+    // binario que 'ava_cli build' usa en el camino rapido -- antes solo
+    // avanative.exe (el binario de F5/Preview, no este) tenia un filtro
+    // de excepcion no manejada.
+    ava::diag::InstallCrashHandler("avapack_stub_ui");
+    ava::diag::InitDebugRuntime(argc, argv);
+
     fs::path self_path = GetSelfExecutablePath();
     if (self_path.empty()) {
         ReportError("avapack: no se pudo determinar la ruta del propio ejecutable");

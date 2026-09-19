@@ -134,12 +134,16 @@ void ImGuiRenderer::OnDrawLink(float x, float y,
                                const char* text, float fontSize, const char* fontName,
                                const Color& color, const std::string& href,
                                const std::string& clickHandler,
-                               const std::string& className) {
+                               const std::string& className,
+                               ComponentId compId,
+                               const std::string& avaType) {
 
     (void)href;
     (void)clickHandler;
     (void)className;
     (void)fontName;
+    (void)compId;
+    (void)avaType;
     if (!drawList_ || !text) return;
 
     const ImU32 col = ToImU32(color);
@@ -157,8 +161,12 @@ void ImGuiRenderer::OnDrawButton(float x, float y, float width, float height,
                                  const Color& borderColor, float borderWidth,
                                  float borderRadius, bool disabled,
                                  const std::string& clickHandler,
-                                 const std::string& className) {
+                                 const std::string& className,
+                                 ComponentId compId,
+                                 const std::string& avaType) {
     (void)disabled;
+    (void)compId;
+    (void)avaType;
     if (!drawList_) return;
 
     OnDrawRectangle(x, y, width, height, fillColor, borderColor, borderWidth, borderRadius,

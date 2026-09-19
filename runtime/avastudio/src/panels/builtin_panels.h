@@ -11,7 +11,7 @@ struct BuiltinPanelInfo {
     std::string_view tr_key;
 };
 
-inline constexpr std::array<BuiltinPanelInfo, 15> kBuiltinPanelNames = {{
+inline constexpr std::array<BuiltinPanelInfo, 16> kBuiltinPanelNames = {{
     {"Explorer###explorer", "", "panel.explorer.title"},
     {"Toolbox###toolbox", "", "panel.toolbox.title"},
     {"Document Tree###document_tree", "", "panel.document_tree.title"},
@@ -27,6 +27,7 @@ inline constexpr std::array<BuiltinPanelInfo, 15> kBuiltinPanelNames = {{
     {"Find in Project###find_in_project", "", "panel.find_in_project.title"},
     {"Settings###settings", "", "panel.settings.title"},
     {"Build###build", "", "panel.build.title"},
+    {"Debug###debug", "", "panel.debug.title"},
 }};
 
 }

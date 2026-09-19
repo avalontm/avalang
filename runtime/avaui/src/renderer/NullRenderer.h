@@ -60,7 +60,9 @@ protected:
         const Color& borderColor, float borderWidth, float borderRadius,
         bool disabled,
         const std::string& clickHandler,
-        const std::string& className
+        const std::string& className,
+        ComponentId compId,
+        const std::string& avaType
     ) override;
 
     void OnDrawLink(
@@ -70,7 +72,9 @@ protected:
         const Color& color,
         const std::string& href,
         const std::string& clickHandler,
-        const std::string& className
+        const std::string& className,
+        ComponentId compId,
+        const std::string& avaType
     ) override;
 };
 

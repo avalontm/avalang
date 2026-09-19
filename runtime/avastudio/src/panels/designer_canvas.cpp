@@ -110,6 +110,38 @@ void CollectPropertyRows(avalang::ui::IComponent* node, std::vector<PropertyRow>
     }
 }
 
+// Set when a click handler ran successfully (so it may have changed state).
+// DrawDesignerCanvas consumes it after drawing the nodes and marks the live
+// render dirty, so text bound to state (`"status: " + count`) is re-evaluated
+// and repainted on the next frame instead of staying frozen.
+bool g_state_changed_by_handler = false;
+
+void InvokeNodeClickHandler(AvaVM* state_vm, avalang::ui::IComponent* clicked, avalang::ui::IComponent* node,
+                             const std::vector<PropertyRow>& node_events,
+                             std::unordered_map<std::string, std::string>* eval_cache) {
+    if (!state_vm) return;
+
+    std::vector<PropertyRow> picked_events;
+    if (clicked != node) {
+        CollectPropertyRows(clicked, nullptr, &picked_events);
+    }
+    const std::vector<PropertyRow>& click_events = (clicked != node) ? picked_events : node_events;
+    for (const PropertyRow& ev : click_events) {
+        if (ev.key == "click" && !ev.value.empty()) {
+            std::string handler_error;
+            const bool ok = design::InvokeHandler(state_vm, ev.value, &handler_error);
+            if (ok) {
+                g_state_changed_by_handler = true;
+                if (eval_cache != nullptr) {
+                    eval_cache->clear();
+                }
+            }
+            (void)handler_error;
+            break;
+        }
+    }
+}
+
 struct NodeDecoration {
     designer::LayoutRect rect;
     bool compact = false;
@@ -130,13 +162,13 @@ struct DesignerVmCacheEntry {
     int live_render_w = -1;
     int live_render_h = -1;
     designer::CanvasMode live_render_mode = designer::CanvasMode::Design;
+    bool live_render_dirty = false;
 
     int device_preset_index = 0;
 
     std::string last_logged_live_render_error;
     std::string last_logged_missing_rects;
     std::string last_logged_overlay_gap;
-    std::string last_logged_hit_divergence;
     std::string last_logged_click_reroute;
     std::string surface_hovered_node_id;
     std::unordered_map<std::string, NodeDecoration> decorations;
@@ -314,11 +346,15 @@ constexpr float kSelectionPad = 4.0f;
 constexpr float kSelectionPadCompact = 2.0f;
 constexpr float kCompactNodeHeightThreshold = 24.0f;
 
-constexpr float kSelectionBorderThickness = 2.0f;
+constexpr float kSelectionBorderThickness = 1.5f;
 constexpr float kSelectionCornerRadius = 2.5f;
-const ImU32 kSelectionBorderColor = palette::U32FromHex(palette::kPrimary);
-const ImU32 kHoverBorderColor = palette::U32FromHex(palette::kPrimary, 0.7f);
+const ImU32 kSelectionBorderColor = palette::U32FromHex(palette::kPrimary, 0.85f);
+const ImU32 kHoverBorderColor = palette::U32FromHex(palette::kPrimary, 0.5f);
 constexpr float kCanvasTopReserve = kRealContainerPadTop;
+constexpr float kPageOuterPad = 24.0f;
+const ImU32 kCanvasBackdropColor = IM_COL32(0xDA, 0xDA, 0xDE, 0xFF);
+const ImU32 kPageBorderColor = IM_COL32(0xC2, 0xC2, 0xC8, 0xFF);
+const ImU32 kPageShadowColor = IM_COL32(0x00, 0x00, 0x00, 0x28);
 
 struct SelectionBox {
     ImVec2 p0;
@@ -709,7 +745,7 @@ bool DrawRealWidget(avalang::ui::IComponent* node, const std::string& evaluated_
     ImGui::SetCursorScreenPos(p0);
     ImGui::PushItemWidth(size.x);
 
-    const bool node_enabled = FindPropValue(properties, "enabled", "true") == "true";
+    const bool node_enabled = FindPropValue(properties, "disabled", "false") == "false";
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, node_enabled ? 1.0f : 0.60f);
 
 #if AVA_FASE10_PASO_B_MODE == 0
@@ -745,12 +781,12 @@ bool DrawRealWidget(avalang::ui::IComponent* node, const std::string& evaluated_
         ImGui::PopStyleColor(frame_colors + 1);
     } else if (type == "checkbox") {
         const int frame_colors = PushClassicFrameStyle();
-        bool checked = FindPropValue(properties, "checked", "false") == "true";
+        bool checked = FindPropValue(properties, design::GetCheckedPropertyKey(type), "false") == "true";
         ImGui::Checkbox(evaluated_display.c_str(), &checked);
         ImGui::PopStyleColor(frame_colors);
     } else if (type == "radiobutton") {
         const int frame_colors = PushClassicFrameStyle();
-        const bool checked = FindPropValue(properties, "checked", "false") == "true";
+        const bool checked = FindPropValue(properties, design::GetCheckedPropertyKey(type), "false") == "true";
         ImGui::RadioButton(evaluated_display.c_str(), checked);
         ImGui::PopStyleColor(frame_colors);
     } else if (type == "text") {
@@ -913,11 +949,11 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
         (*out_decorations)[node->NodeId()] = decoration;
     }
 
-    const ImU32 fill = is_container ? palette::U32FromHex(palette::kSurface, 0.6f)
-                                     : palette::U32FromHex(palette::kCard, 0.9f);
-    const ImU32 border = selected ? palette::U32FromHex(palette::kPrimary)
-                                   : (is_container ? palette::U32FromHex(palette::kBorder, 0.45f)
-                                                    : palette::U32FromHex(palette::kBorder));
+    const ImU32 fill = is_container ? IM_COL32(0xF2, 0xF2, 0xF4, 0xF0)
+                                     : IM_COL32(0xE9, 0xE9, 0xEC, 0xF5);
+    const ImU32 border = selected ? kSelectionBorderColor
+                                   : (is_container ? IM_COL32(0xC9, 0xC9, 0xCE, 0x73)
+                                                    : IM_COL32(0xC9, 0xC9, 0xCE, 0xFF));
 
     const bool skip_body_fill = live_render_painted && is_container;
     if (!skip_leaf_wireframe) {
@@ -951,7 +987,7 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
                 handles.push_back(ImVec2(sel_p0.x, mid_y));
                 handles.push_back(ImVec2(sel_p1.x, mid_y));
             }
-            const ImU32 handle_fill = palette::U32FromHex(palette::kBackground);
+            const ImU32 handle_fill = IM_COL32(0xFF, 0xFF, 0xFF, 0xFF);
             const ImU32 handle_border = palette::U32FromHex(palette::kPrimary);
             for (const ImVec2& c : handles) {
                 const ImVec2 hp0(c.x - kHandleHalf, c.y - kHandleHalf);
@@ -1111,12 +1147,14 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
 
     const ImVec2 hit_p1 = !is_container ? p1 : (header_reserves_space ? ImVec2(p1.x, header_bottom) : p1);
 
+    ImGui::SetCursorScreenPos(sel_p0);
+    ImGui::SetNextItemAllowOverlap();
+    ImGui::InvisibleButton("##node_hit_area",
+                            ImVec2(std::max(sel_p1.x - sel_p0.x, 1.0f), std::max(sel_p1.y - sel_p0.y, 1.0f)));
+    const bool imgui_hovered = ImGui::IsItemHovered();
+    const bool item_clicked = ImGui::IsItemClicked();
+
     if (design_mode) {
-        ImGui::SetCursorScreenPos(sel_p0);
-        ImGui::SetNextItemAllowOverlap();
-        ImGui::InvisibleButton("##node_hit_area",
-                                ImVec2(std::max(sel_p1.x - sel_p0.x, 1.0f), std::max(sel_p1.y - sel_p0.y, 1.0f)));
-        const bool imgui_hovered = ImGui::IsItemHovered();
         if (imgui_hovered && out_imgui_hovered_node_id != nullptr) {
             *out_imgui_hovered_node_id = node->NodeId();
         }
@@ -1130,7 +1168,7 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
                 DrawSelectionRing(draw_list, sel_p0, sel_p1, kHoverBorderColor);
             }
         }
-        if (ImGui::IsItemClicked()) {
+        if (item_clicked) {
             avalang::ui::IComponent* clicked = node;
             if (surface_hovered_node_id != nullptr && !surface_hovered_node_id->empty() &&
                 *surface_hovered_node_id != node->NodeId()) {
@@ -1145,24 +1183,8 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
             SelectNode(selection, clicked->NodeId());
             out_selected = ToPropertiesState(clicked, !synthetic, tab_id, doc, project_root);
 
-            const bool should_invoke_click = !synthetic && state_vm && ImGui::GetIO().KeyCtrl;
-            if (should_invoke_click) {
-                std::vector<PropertyRow> picked_events;
-                if (clicked != node) {
-                    CollectPropertyRows(clicked, nullptr, &picked_events);
-                }
-                const std::vector<PropertyRow>& click_events = (clicked != node) ? picked_events : events;
-                for (const PropertyRow& ev : click_events) {
-                    if (ev.key == "click" && !ev.value.empty()) {
-                        std::string handler_error;
-                        const bool ok = design::InvokeHandler(state_vm, ev.value, &handler_error);
-                        if (ok && eval_cache != nullptr) {
-                            eval_cache->clear();
-                        }
-                        (void)handler_error;
-                        break;
-                    }
-                }
+            if (!synthetic && ImGui::GetIO().KeyCtrl) {
+                InvokeNodeClickHandler(state_vm, clicked, node, events, eval_cache);
             }
         }
 
@@ -1194,7 +1216,11 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
         if (!synthetic) {
             HandleDropTarget(node, doc, command_manager, selection, is_container, p0, hit_p1);
         }
+    } else if (!synthetic && item_clicked) {
+        InvokeNodeClickHandler(state_vm, node, node, events, eval_cache);
+    }
 
+    if (design_mode) {
         if (is_container && !synthetic && header_reserves_space) {
             const SelectionBox body_sel_box = ComputeSelectionBox(ImVec2(p0.x, header_bottom), p1);
             ImGui::SetCursorScreenPos(ImVec2(p0.x, header_bottom));
@@ -1492,7 +1518,19 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
         }
     }
 
+    ImU32 page_bg = IM_COL32(0xFF, 0xFF, 0xFF, 0xFF);
+    if (const auto* bg_prop = root_to_draw != nullptr ? root_to_draw->GetProperty("backgroundColor") : nullptr) {
+        if (bg_prop->Type() == avalang::ui::PropertyType::String) {
+            if (const std::optional<ImU32> parsed =
+                    TryHexToImU32(std::optional<std::string>(bg_prop->AsString()))) {
+                page_bg = *parsed;
+            }
+        }
+    }
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, kCanvasBackdropColor);
+    ImGui::PushStyleColor(ImGuiCol_Border, kPageBorderColor);
     ImGui::BeginChild("##DesignerCanvas", canvas_size, true, ImGuiWindowFlags_HorizontalScrollbar);
+    ImGui::PopStyleColor(2);
 
     if (view_reset_requested) {
         ImGui::SetScrollX(0.0f);
@@ -1542,20 +1580,55 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
     const ImVec2 avail_before_reserve = ImGui::GetContentRegionAvail();
     ImGui::Dummy(ImVec2(std::max(avail_before_reserve.x, 1.0f), kCanvasTopReserve));
 
-    const ImVec2 origin = ImGui::GetCursorScreenPos();
-    const ImVec2 avail = ImGui::GetContentRegionAvail();
-    const Rect canvas_rect{0.0f, 0.0f, std::max(avail.x, 1.0f), std::max(avail.y, 1.0f)};
+    const bool device_preset_active =
+        cache_entry_for_live_render != nullptr && cache_entry_for_live_render->device_preset_index > 0;
+    const float page_pad = device_preset_active ? 0.0f : kPageOuterPad;
+
+    const ImVec2 raw_origin = ImGui::GetCursorScreenPos();
+    const ImVec2 raw_avail = ImGui::GetContentRegionAvail();
+    const ImVec2 origin(raw_origin.x + page_pad, raw_origin.y + page_pad);
+    const Rect canvas_rect{0.0f, 0.0f, std::max(raw_avail.x - 2.0f * page_pad, 1.0f),
+                            std::max(raw_avail.y - 2.0f * page_pad, 1.0f)};
+
+    {
+        ImDrawList* page_draw_list = ImGui::GetWindowDrawList();
+        const ImVec2 page_p0 = origin;
+        const ImVec2 page_p1(origin.x + canvas_rect.w, origin.y + canvas_rect.h);
+        page_draw_list->AddRectFilled(ImVec2(page_p0.x + 5.0f, page_p0.y + 6.0f),
+                                       ImVec2(page_p1.x + 5.0f, page_p1.y + 6.0f), kPageShadowColor, 3.0f);
+        page_draw_list->AddRectFilled(page_p0, page_p1, page_bg, 2.0f);
+        page_draw_list->AddRect(page_p0, page_p1, kPageBorderColor, 2.0f, 0, 1.0f);
+    }
 
     studio::design::LiveRenderResult* live_render = nullptr;
     avalang::ui::ImGuiRenderer* live_render_renderer = nullptr;
     {
         const int vw = static_cast<int>(canvas_rect.w);
         const int vh = static_cast<int>(canvas_rect.h);
+
+        // The live render paints text from the render tree, which used to fall
+        // back to the raw property source (`"status: " + count`) because it had
+        // no evaluator. Give it the same evaluator the property rows use, backed
+        // by the design-time state VM. Results are memoized in eval_cache (keys
+        // prefixed with \x1d so they cannot collide with the per-node keys used
+        // by DrawNode); the cache is cleared whenever a handler changes state.
+        const studio::design::TextEvaluator live_eval = [state_vm, eval_cache](const std::string& raw) {
+            if (state_vm == nullptr) return raw;
+            if (eval_cache == nullptr) return design::EvalPropertyExpr(state_vm, raw);
+            const std::string key = std::string(1, '\x1d') + raw;
+            const auto hit = eval_cache->find(key);
+            if (hit != eval_cache->end()) return hit->second;
+            std::string value = design::EvalPropertyExpr(state_vm, raw);
+            (*eval_cache)[key] = value;
+            return value;
+        };
+
         if (cache_entry_for_live_render != nullptr) {
             DesignerVmCacheEntry& entry = *cache_entry_for_live_render;
             const bool live_render_stale = !entry.live_render.ok || entry.live_render_w != vw ||
                                             entry.live_render_h != vh || tree_state_rebuilt_this_frame ||
-                                            entry.live_render_mode != entry.canvas_mode;
+                                            entry.live_render_mode != entry.canvas_mode ||
+                                            entry.live_render_dirty;
             if (live_render_stale) {
                 avalang::ui::ComponentTree* tree_for_live_render = doc.tree.get();
                 if (entry.canvas_mode == designer::CanvasMode::Preview) {
@@ -1567,7 +1640,8 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
                     entry.preview_resolved_tree.reset();
                 }
                 entry.live_render = studio::design::BuildLiveRender(tree_for_live_render, vw, vh,
-                                                                       doc.extends, project_root);
+                                                                       doc.extends, project_root, live_eval);
+                entry.live_render_dirty = false;
                 entry.live_render_w = vw;
                 entry.live_render_h = vh;
                 entry.live_render_mode = entry.canvas_mode;
@@ -1580,7 +1654,7 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
             live_render_renderer = entry.imgui_renderer.get();
         } else {
             local_live_render = studio::design::BuildLiveRender(doc.tree.get(), vw, vh,
-                                                                    doc.extends, project_root);
+                                                                    doc.extends, project_root, live_eval);
             local_imgui_renderer = std::make_unique<avalang::ui::ImGuiRenderer>(vw, vh);
             live_render = &local_live_render;
             live_render_renderer = local_imgui_renderer.get();
@@ -1607,7 +1681,35 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
     if (live_render->ok && live_render->sceneGraph && live_render_renderer) {
         live_render_renderer->SetTarget(ImGui::GetWindowDrawList(), origin);
         avalang::ui::RenderCommandSink sink;
-        avalang::ui::SceneCommandWalker::Walk(*live_render->sceneGraph, sink, *live_render_renderer);
+
+        // Preview mode only: feed real mouse state into the walker so
+        // Button/CheckBox/RadioButton/ComboBox get the same built-in
+        // hover/pressed color feedback the native (Gdi) host gets from
+        // SceneCommandWalker -- this call previously always passed
+        // interactive=nullptr, so isHovered()/isPressed() were always
+        // false here and controls never looked pressed, regardless of
+        // ApplyBuiltinStateFeedback existing at all. Design mode keeps
+        // nullptr: that surface uses its own InvisibleButton-based hit
+        // testing for selection and shouldn't also tint the control.
+        avalang::ui::InteractiveState interactive;
+        const bool use_interactive = !is_design_mode;
+        if (use_interactive) {
+            const ImVec2 mouse = ImGui::GetMousePos();
+            const bool canvas_hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+            if (canvas_hovered) {
+                interactive.pointerX = static_cast<int>(mouse.x - origin.x);
+                interactive.pointerY = static_cast<int>(mouse.y - origin.y);
+            } else {
+                // Keep the pointer off-canvas so no control's rect can
+                // match while the mouse is elsewhere in the app.
+                interactive.pointerX = -1000000;
+                interactive.pointerY = -1000000;
+            }
+            interactive.pointerDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        }
+
+        avalang::ui::SceneCommandWalker::Walk(*live_render->sceneGraph, sink, *live_render_renderer,
+                                               use_interactive ? &interactive : nullptr);
         live_render_painted = true;
     }
 
@@ -1679,6 +1781,13 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
              &click_reroute, overlay_driven ? &cache_entry_for_live_render->decorations : nullptr, is_design_mode,
              0.0f, 0, canvas_min, canvas_max);
 
+    if (g_state_changed_by_handler) {
+        g_state_changed_by_handler = false;
+        if (cache_entry_for_live_render != nullptr) {
+            cache_entry_for_live_render->live_render_dirty = true;
+        }
+    }
+
     if (cache_entry_for_live_render != nullptr && !click_reroute.empty() && log_bridge != nullptr &&
         cache_entry_for_live_render->last_logged_click_reroute != click_reroute) {
         log_bridge->Log("[designer_canvas] clic reasignado por designer::HitTest: " + click_reroute);
@@ -1686,23 +1795,6 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
     }
 
     if (cache_entry_for_live_render != nullptr) {
-        if (surface_picking_active) {
-            std::string* last_logged_hit_divergence = &cache_entry_for_live_render->last_logged_hit_divergence;
-            const bool real_divergence = !imgui_hovered_node_id.empty() &&
-                                          !surface_hovered_node_id.empty() &&
-                                          imgui_hovered_node_id != surface_hovered_node_id;
-            if (real_divergence) {
-                const std::string message = "designer::HitTest devolvio '" + surface_hovered_node_id +
-                                             "' y el hit-test nativo de ImGui devolvio '" +
-                                             imgui_hovered_node_id + "'";
-                if (log_bridge != nullptr && *last_logged_hit_divergence != message) {
-                    log_bridge->Log("[designer_canvas] " + message);
-                }
-                *last_logged_hit_divergence = message;
-            } else {
-                last_logged_hit_divergence->clear();
-            }
-        }
         if (selection != nullptr) {
             const std::unordered_map<std::string, NodeDecoration>& decorations =
                 cache_entry_for_live_render->decorations;
@@ -1742,13 +1834,13 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
                             designer::ComputeInsetOverlay(primary_rect, padding, margin);
                         if (insets.hasMargin) {
                             DrawInsetBand(overlay_draw_list, origin, insets.marginRect, primary_rect,
-                                          palette::U32FromHex(palette::kWarning, 0.16f),
-                                          palette::U32FromHex(palette::kWarning, 0.6f));
+                                          palette::U32FromHex(palette::kWarning, 0.08f),
+                                          palette::U32FromHex(palette::kWarning, 0.35f));
                         }
                         if (insets.hasPadding) {
                             DrawInsetBand(overlay_draw_list, origin, primary_rect, insets.paddingRect,
-                                          palette::U32FromHex(palette::kSuccess, 0.16f),
-                                          palette::U32FromHex(palette::kSuccess, 0.6f));
+                                          palette::U32FromHex(palette::kSuccess, 0.08f),
+                                          palette::U32FromHex(palette::kSuccess, 0.35f));
                         }
                     }
                 }
@@ -1856,7 +1948,6 @@ void InvalidateDesignerVmCache(int tab_id) {
     entry.last_logged_live_render_error.clear();
     entry.last_logged_missing_rects.clear();
     entry.last_logged_overlay_gap.clear();
-    entry.last_logged_hit_divergence.clear();
     entry.last_logged_click_reroute.clear();
     entry.decorations.clear();
     entry.surface_hovered_node_id.clear();

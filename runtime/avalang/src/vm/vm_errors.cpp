@@ -114,6 +114,53 @@ void HandleFrameError(VM& vm, size_t frame_idx, const avastd::exception& e) {
     (void)e;
 }
 
+avastd::string VM::BuildStackTrace(size_t base_frame) const {
+    avastd::string out;
+    for (size_t i = frames_.size(); i-- > base_frame; ) {
+        const CallFrame& frame = frames_[i];
+        if (!frame.proto) continue;
+
+        int line = 0;
+        int column = 0;
+        if (frame.pc > 0) {
+            size_t instr_idx = static_cast<size_t>(frame.pc - 1);
+            if (instr_idx < frame.proto->debug_lines.size()) {
+                line = static_cast<int>(frame.proto->debug_lines[instr_idx]);
+            }
+            if (instr_idx < frame.proto->debug_columns.size()) {
+                column = static_cast<int>(frame.proto->debug_columns[instr_idx]);
+            }
+        }
+
+        if (!out.empty()) out += "\n";
+        out += "  at ";
+        if (frame.proto->debug_name.empty()) {
+            out += "<top-level>";
+        } else {
+            out += frame.proto->debug_name;
+        }
+        if (!frame.proto->source_name.empty()) {
+            out += " (";
+            out += frame.proto->source_name;
+            if (line > 0) {
+                out += ":";
+                out += avastd::to_string(line);
+                if (column > 0) {
+                    out += ":";
+                    out += avastd::to_string(column);
+                }
+            }
+            out += ")";
+        }
+    }
+    return out;
+}
+
+void VM::PublishPendingErrorStack() {
+    last_error_stack = avastd::move(pending_error_stack_);
+    pending_error_stack_.clear();
+}
+
 AvaError VM::MakeCurrentError(const avastd::string& message) const {
     if (frames_.empty()) return AvaError(message);
     return MakeFrameError(frames_.back(), message);

@@ -85,6 +85,14 @@ private:
     void DispatchWithBubbling(IEvent* event, IComponent* root);
     ComponentId HitTest(IComponent* root, int x, int y);
     ComponentId HitTestRecursive(IComponent* node, const ILayoutNode* layoutNode, int x, int y);
+    IComponent* FindComponent(IComponent* node, ComponentId id) const;
+    bool IsEnabledTarget(IComponent* root, ComponentId id) const;
+
+    bool IsWithinComponentBounds(IComponent* component, int x, int y) const;
+    void HandleOverlayDismiss(IComponent* root, ComponentId clickedTarget);
+    void EnforceFocusTrap(IComponent* root);
+    void CycleFocus(IComponent* root, bool backward);
+    void CloseOverlay(IComponent* overlay);
 
     void PollWheel(IComponent* root);
     void PollTextInput();

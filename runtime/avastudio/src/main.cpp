@@ -32,6 +32,7 @@
 #include "panels/activity_bar_panel.h"
 #include "panels/builtin_panels.h"
 #include "panels/command_palette.h"
+#include "panels/debug_panel.h"
 #include "panels/editor_panel.h"
 #include "panels/explorer_panel.h"
 #include "panels/find_in_project_panel.h"
@@ -276,6 +277,7 @@ int main(int argc, char** argv) {
     studio::TerminalState terminal_state;
     studio::LogsState logs_state;
     studio::ProblemsState problems_state;
+    studio::debug::DebugSession debug_session;
     studio::FindInProjectState find_in_project_state;
 
     studio::LogBridge log_bridge;
@@ -387,6 +389,50 @@ int main(int argc, char** argv) {
         return res;
     };
 
+    std::unordered_map<std::string, bool> panel_open;
+    for (const std::string& name : settings.closed_panels) {
+        panel_open[name] = false;
+    }
+
+    auto open_panel_focused = [&](const std::string& name) {
+        auto& closed = settings.closed_panels;
+        auto it = std::find(closed.begin(), closed.end(), name);
+        if (it != closed.end()) closed.erase(it);
+        panel_open[name] = true;
+        ImGui::SetWindowFocus(name.c_str());
+        studio::SaveSettings(settings);
+    };
+
+    auto start_debugging = [&]() {
+        if (debug_session.IsActive()) return;
+        const ProjectEntryResolution resolved = resolve_project_entry();
+        if (!resolved.ok) {
+            engine.AppendConsoleLine(studio::ConsoleLine::Kind::Error, resolved.error);
+            return;
+        }
+        fs::path ava_cli = project_config.user.ava_cli_path.empty() ? studio::DetectAvaCliPath()
+                                                                     : fs::path(project_config.user.ava_cli_path);
+        std::error_code ava_cli_ec;
+        if (ava_cli.empty() || !fs::exists(ava_cli, ava_cli_ec)) {
+            engine.AppendConsoleLine(studio::ConsoleLine::Kind::Error,
+                "could not find ava_cli(.exe) -- set its path under Build > Advanced.");
+            return;
+        }
+        studio::SaveAllTabs(editor_state);
+
+        studio::debug::DebugLaunchOptions options;
+        options.ava_cli_path = ava_cli.string();
+        options.program = resolved.entry_path.string();
+        options.modules_path = editor_state.modules_path;
+
+        std::string start_error;
+        if (!debug_session.Start(options, start_error)) {
+            engine.AppendConsoleLine(studio::ConsoleLine::Kind::Error, start_error);
+        } else {
+            open_panel_focused("Debug###debug");
+        }
+    };
+
     plugin_callbacks.write_approved_edit = [&](const studio::PendingEdit& edit) {
         std::error_code ec;
         fs::path resolved = fs::weakly_canonical(fs::path(explorer_state.root_dir) / edit.path, ec);
@@ -436,11 +482,6 @@ int main(int argc, char** argv) {
     studio::PluginHost plugin_host(std::move(plugin_callbacks));
     plugin_host.LoadAll(plugins_dir, settings.disabled_plugins);
 
-    std::unordered_map<std::string, bool> panel_open;
-    for (const std::string& name : settings.closed_panels) {
-        panel_open[name] = false;
-    }
-
     auto persist_if_closed = [&](const std::string& name, bool open) {
         if (open) return;
         auto& closed = settings.closed_panels;
@@ -469,15 +510,6 @@ int main(int argc, char** argv) {
         studio::SaveSettings(settings);
     };
 
-    auto open_panel_focused = [&](const std::string& name) {
-        auto& closed = settings.closed_panels;
-        auto it = std::find(closed.begin(), closed.end(), name);
-        if (it != closed.end()) closed.erase(it);
-        panel_open[name] = true;
-        ImGui::SetWindowFocus(name.c_str());
-        studio::SaveSettings(settings);
-    };
-
     studio::CommandPaletteState command_palette_state;
     studio::QuickOpenState quick_open_state;
     studio::NewProjectState new_project_state;
@@ -491,6 +523,10 @@ int main(int argc, char** argv) {
 
         studio::PollScriptRun(terminal_state, engine, editor_state);
         studio::PollBuild(build_panel_state, log_bridge);
+        debug_session.Update();
+        if (studio::EditorTab* active = editor_state.Active(); active && !active->is_welcome) {
+            studio::RefreshTabDebugMarkers(*active, debug_session);
+        }
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -605,6 +641,7 @@ int main(int argc, char** argv) {
             ImGui::DockBuilderDockWindow("Build###build", dock_bottom);
             ImGui::DockBuilderDockWindow("Logs###logs", dock_bottom);
             ImGui::DockBuilderDockWindow("Problems###problems", dock_bottom);
+            ImGui::DockBuilderDockWindow("Debug###debug", dock_bottom);
             ImGui::DockBuilderDockWindow("Find in Project###find_in_project", dock_bottom);
 
             for (const auto& panel : plugin_host.Panels()) {
@@ -757,6 +794,11 @@ int main(int argc, char** argv) {
                                          editor_state.goto_definition_column);
         }
 
+        if (editor_state.breakpoint_toggle_requested) {
+            editor_state.breakpoint_toggle_requested = false;
+            debug_session.ToggleBreakpoint(editor_state.breakpoint_toggle_file, editor_state.breakpoint_toggle_line);
+        }
+
         studio::ShortcutRegistry& shortcuts = studio::ShortcutRegistry::Instance();
         const bool editor_has_focus = editor_state.code_editor_has_focus;
 
@@ -774,6 +816,10 @@ int main(int argc, char** argv) {
         const bool want_command_palette = shortcuts.Pressed(studio::ShortcutId::CommandPalette, editor_has_focus);
         const bool want_quick_open = shortcuts.Pressed(studio::ShortcutId::QuickOpen, editor_has_focus);
         const bool want_format_document = shortcuts.Pressed(studio::ShortcutId::FormatDocument, editor_has_focus);
+        const bool want_toggle_breakpoint = shortcuts.Pressed(studio::ShortcutId::ToggleBreakpoint, editor_has_focus);
+        const bool want_debug_step_over = shortcuts.Pressed(studio::ShortcutId::DebugStepOver, editor_has_focus);
+        const bool want_debug_step_into = shortcuts.Pressed(studio::ShortcutId::DebugStepInto, editor_has_focus);
+        const bool want_debug_step_out = shortcuts.Pressed(studio::ShortcutId::DebugStepOut, editor_has_focus);
 
         if (titlebar_result.new_requested || want_new || editor_state.new_tab_requested) {
             studio::NewUntitledTab(editor_state);
@@ -829,7 +875,23 @@ int main(int argc, char** argv) {
                 studio::FormatTab(editor_state, *active);
             }
         }
+        if (want_toggle_breakpoint) {
+            if (studio::EditorTab* active = editor_state.Active(); active && !active->is_welcome && !active->file_path.empty()) {
+                const int line = active->editor.GetCursorPosition(0).line + 1;
+                debug_session.ToggleBreakpoint(active->file_path, line);
+            }
+        }
+        if (want_debug_step_over) debug_session.StepOver();
+        if (want_debug_step_into) debug_session.StepInto();
+        if (want_debug_step_out) debug_session.StepOut();
+
         if (editor_state.run_requested || want_run) {
+
+            if (debug_session.Phase() == studio::debug::DebugPhase::Paused) {
+                debug_session.Continue();
+            } else if (!debug_session.IsActive() && !debug_session.Breakpoints().empty()) {
+                start_debugging();
+            } else if (!debug_session.IsActive()) {
 
             const bool ui_project = project_config.proj.uses_ui &&
                                      studio::util::DetectedHostPlatform() == studio::util::HostPlatform::kWindows;
@@ -868,6 +930,7 @@ int main(int argc, char** argv) {
                         studio::StartScriptRun(terminal_state, engine, ava_cli.string(), resolved.entry_path.string());
                     }
                 }
+            }
             }
         }
 
@@ -955,7 +1018,8 @@ int main(int argc, char** argv) {
 
             const studio::TriggerBuildOutcome build_outcome = studio::TriggerBuild(
                 build_panel_state, project_config.proj, project_config.user, explorer_state.root_dir, log_bridge,
-                project_config.ambiguous_avaproj, project_config.avaproj_candidates);
+                project_config.ambiguous_avaproj, project_config.avaproj_candidates, std::nullopt, false,
+                build_panel_state.debug_mode);
             open_panel_focused("Logs###logs");
 
             if (build_outcome.entry_file_missing) {
@@ -967,7 +1031,8 @@ int main(int argc, char** argv) {
                     }
                     studio::TriggerBuild(build_panel_state, project_config.proj, project_config.user,
                                           explorer_state.root_dir, log_bridge, project_config.ambiguous_avaproj,
-                                          project_config.avaproj_candidates);
+                                          project_config.avaproj_candidates, std::nullopt, false,
+                                          build_panel_state.debug_mode);
                     open_panel_focused("Logs###logs");
                 }
             }
@@ -1389,7 +1454,20 @@ int main(int argc, char** argv) {
         }
 
         if (bool& open = panel_open.try_emplace("Logs###logs", true).first->second; open) {
-            studio::DrawLogsPanel(logs_state, log_bridge, &open);
+            if (auto file_click = studio::DrawLogsPanel(logs_state, log_bridge, &open)) {
+
+                if (const studio::EditorTab* active = editor_state.Active();
+                    file_click->file_path.empty() || !active || active->file_path != file_click->file_path) {
+                    studio::ClearErrorHighlights(editor_state);
+                    if (!file_click->file_path.empty()) {
+                        studio::OpenFileInTab(editor_state, file_click->file_path);
+                    }
+                } else {
+                    studio::ClearErrorHighlights(editor_state);
+                }
+                studio::HighlightError(editor_state, file_click->file_path, file_click->line,
+                                        file_click->column, file_click->message);
+            }
             persist_if_closed("Logs###logs", open);
         }
 
@@ -1409,6 +1487,20 @@ int main(int argc, char** argv) {
                                         file_click->column, file_click->message);
             }
             persist_if_closed("Problems###problems", open);
+        }
+
+        if (bool& open = panel_open.try_emplace("Debug###debug", true).first->second; open) {
+            studio::DebugPanelResult debug_result = studio::DrawDebugPanel(debug_session, &open);
+            if (debug_result.start_requested) start_debugging();
+            if (auto file_click = debug_result.file_click) {
+                if (!file_click->file_path.empty()) studio::OpenFileInTab(editor_state, file_click->file_path);
+                if (studio::EditorTab* active = editor_state.Active();
+                    active && active->file_path == file_click->file_path && file_click->line > 0) {
+                    active->editor.SetCursor(file_click->line - 1, file_click->column > 0 ? file_click->column - 1 : 0);
+                    active->editor.ScrollToLine(file_click->line - 1, TextEditor::Scroll::alignMiddle);
+                }
+            }
+            persist_if_closed("Debug###debug", open);
         }
 
         if (bool& open = panel_open.try_emplace("Find in Project###find_in_project", true).first->second; open) {
@@ -1473,6 +1565,7 @@ int main(int argc, char** argv) {
                 [&] { editor_state.check_requested = true; });
             add(category_run, "menu.run.build", shortcut_labels.Label(studio::ShortcutId::Build),
                 [&] { editor_state.build_requested = true; });
+            add(category_run, "menu.run.start_debugging", "", [&] { start_debugging(); });
 
             add(category_preferences, "menu.file.settings", "Ctrl+,",
                 [&] { editor_state.open_settings_panel_requested = true; });

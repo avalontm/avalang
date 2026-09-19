@@ -48,6 +48,7 @@ set(AVA_UI_SOURCES
     src/events/Event.cpp
     src/events/EventDispatcher.cpp
     src/events/EventDispatcherFactory.cpp
+    src/events/HitTest.cpp
     # Phase 6 -- Render Tree
     src/render_tree/RenderNode.cpp
     src/render_tree/RenderTree.cpp
@@ -115,19 +116,32 @@ set(AVA_UI_SOURCES
     # file rationale as ProjectStyleOverrides.cpp above. See
     # theme/ProjectAnimationOverrides.h.
     src/theme/ProjectAnimationOverrides.cpp
+    src/theme/VisualState.cpp
     # Phase 17 -- Controls: Button (primer control real, valida Theme + Resources)
     src/controls/Button.cpp
+    src/controls/ButtonController.cpp
     # Phase 18 -- Controls: resto del set base
     src/controls/Text.cpp
     src/controls/Image.cpp
     src/controls/Icon.cpp
     src/controls/Container.cpp
+    src/controls/ScrollView.cpp
     src/controls/TextBox.cpp
+    src/controls/TextEditBuffer.cpp
+    src/controls/TextBoxEditingController.cpp
     src/controls/CheckBox.cpp
+    src/controls/CheckBoxController.cpp
     src/controls/RadioButton.cpp
+    src/controls/RadioButtonController.cpp
     src/controls/ComboBox.cpp
+    src/controls/ComboBoxController.cpp
+    src/controls/ScrollViewController.cpp
     src/controls/Dialog.cpp
     src/controls/Link.cpp
+    # CI-5 -- tabla unica de metadata por tipo de control (prop de estado,
+    # evento, activacion), en vez de "if (type == ...)" repetido en cada
+    # consumidor (ver AvaUI_CONTROLS_INTERACTION_IMPLEMENTATION_PLAN.md)
+    src/controls/ControlMetadata.cpp
     # Phase 19 -- Animation
     src/animation/IAnimatable.cpp
     src/animation/Easing.cpp
@@ -351,9 +365,11 @@ if(AVA_BUILD_UI_BACKEND_WIN)
             src/platform/windows/WinKeyTranslation.cpp
             src/platform/windows/WinInputState.cpp
             src/platform/windows/WinPlatformServices.cpp
+            src/platform/windows/WinAccessibilityBridge.cpp
+            src/platform/windows/WinAccessibilityProvider.cpp
             src/platform/windows/GdiRenderer.cpp
             src/platform/windows/WinRendererRegistration.cpp
-        LINK_LIBS gdi32 user32 shcore
+        LINK_LIBS gdi32 user32 shcore msimg32 uiautomationcore oleaut32
     )
     # Phase 11 -- UNICODE/_UNICODE so TEXT()-less macros (IDC_ARROW,
     # CreateWindowEx, RegisterClassEx, ...) resolve to the *W entry
@@ -517,6 +533,31 @@ if(AVA_BUILD_UI_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
     target_compile_features(ava_container_spacing_defaults_test PRIVATE cxx_std_20)
+
+    # Fase 21 -- Suite de tests de avaui (render commands, RenderTree,
+    # HitTest, eventos, snapshots). Corre contra el pipeline real
+    # (ComponentTree -> LayoutEngine -> RenderTree -> SceneGraph ->
+    # SceneCommandWalker), sin mocks de renderer; HitTest y eventos
+    # usan FakeMouse/FakeKeyboard/FakeTextInput (tests/FakeInput.h) para
+    # accionar EventDispatcher::PollInput de verdad.
+    add_executable(avaui_tests
+        tests/main.cpp
+        tests/RenderCommandTests.cpp
+        tests/RenderTreeTests.cpp
+        tests/HitTestTests.cpp
+        tests/EventTests.cpp
+        tests/SnapshotTests.cpp
+        tests/HTMLRendererTests.cpp
+        tests/ControlActivationTests.cpp
+        tests/ControlMetadataTests.cpp
+    )
+    target_link_libraries(avaui_tests PRIVATE avalang_ui)
+    target_include_directories(avaui_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        ${CMAKE_SOURCE_DIR}
+    )
+    target_compile_features(avaui_tests PRIVATE cxx_std_20)
 endif()
 
 option(AVA_BUILD_DIALOG_SIZE_PROBE "Build the standalone Dialog layout probe" OFF)

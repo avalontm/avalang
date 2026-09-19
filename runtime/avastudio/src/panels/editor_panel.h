@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "TextEditor.h"
+#include "debug/debug_session.h"
 #include "design/design_document.h"
 #include "languages/class_index.h"
 #include "languages/diagnostics_engine.h"
@@ -87,6 +88,10 @@ struct EditorTab {
     std::vector<diagnostics::Diagnostic> diagnostics;
     std::vector<diagnostics::InlayHint> inlay_hints;
 
+    int error_marker_line = 0;
+    int error_marker_column = 0;
+    std::string error_marker_message;
+
     std::string GetText() const { return editor.GetText(); }
     void SetText(const std::string& text) { editor.SetText(text); }
 
@@ -148,6 +153,10 @@ struct EditorState {
     std::string goto_definition_file;
     int goto_definition_line = 0;
     int goto_definition_column = 0;
+
+    bool breakpoint_toggle_requested = false;
+    std::string breakpoint_toggle_file;
+    int breakpoint_toggle_line = 0;
 };
 
 void InitEditorPanel(EditorState& state);
@@ -172,6 +181,8 @@ void HighlightError(EditorState& state, const std::string& file_path, int line, 
                      const std::string& message);
 
 void ClearErrorHighlights(EditorState& state);
+
+void RefreshTabDebugMarkers(EditorTab& tab, const debug::DebugSession& session);
 
 void SelectMatchInEditor(EditorState& state, const std::string& file_path, int line, int column_start,
                           int column_end);

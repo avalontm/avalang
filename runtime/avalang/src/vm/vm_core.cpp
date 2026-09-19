@@ -160,6 +160,7 @@ void VM::SetGlobal(const avastd::string& name, Value value) {
 
 Value VM::Run(const avastd::shared_ptr<Proto>& main) {
     const size_t base = frames_.size();
+    if (base == 0) pending_error_stack_.clear();
 
     avastd::string self_module_name = GetModuleBareName(main->source_name);
     bool registered_self = !self_module_name.empty() &&
@@ -187,6 +188,9 @@ Value VM::Run(const avastd::shared_ptr<Proto>& main) {
         return result;
     } AVA_CATCH(avastd::exception, e) {
         (void)e;
+        if (debug_mode_ && pending_error_stack_.empty()) {
+            pending_error_stack_ = BuildStackTrace(base);
+        }
         frames_.resize(base);
         if (registered_self) module_cache_.EndLoading(self_module_name);
         AVA_RETHROW();

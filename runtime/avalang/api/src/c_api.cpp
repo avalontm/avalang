@@ -23,6 +23,7 @@ static void ReportError(VM* raw_vm, const avastd::exception& e, bool has_pos,
                          int line, int column, const avastd::string& source,
                          char** out_error) {
     if (raw_vm) {
+        raw_vm->PublishPendingErrorStack();
         raw_vm->last_error_line = has_pos ? line : 0;
         raw_vm->last_error_column = has_pos ? column : 0;
         if (has_pos) raw_vm->last_error_source = source;
@@ -57,6 +58,10 @@ AVA_API AvaVM* ava_vm_create() {
 
 AVA_API void ava_vm_destroy(AvaVM* vm) {
     delete reinterpret_cast<VM*>(vm);
+}
+
+AVA_API void ava_vm_set_debug_mode(AvaVM* vm, int enabled) {
+    if (vm) reinterpret_cast<VM*>(vm)->SetDebugMode(enabled != 0);
 }
 
 AVA_API void ava_vm_set_current_dir(AvaVM* vm, const char* dir) {
@@ -316,7 +321,24 @@ AVA_API void ava_call(AvaVM* vm, ava_value_t callable, const ava_value_t* args, 
 }
 
 AVA_API ava_value_t ava_get_global(AvaVM* vm, const char* name) {
-    return ToC(reinterpret_cast<VM*>(vm)->GetGlobal(name));
+    // Returns a NEW reference (same contract as ava_run / ava_get_attr /
+    // ava_new_instance): the caller owns it and drops it with
+    // ava_value_release().
+    //
+    // This used to return ToC(GetGlobal(name)) directly. GetGlobal() returns a
+    // Value by value, so its temporary retained and then released the object
+    // again before the caller ever saw the handle: the handle was a BORROWED
+    // pointer. Nearly every caller in the codebase (RuntimeHost::EvalPropertyExpr,
+    // ExportStateJson, GetOrCreateDictGlobal, VmAvaView::Load, AvaStudio's
+    // state_eval, ...) releases what it gets back, so each call stole the
+    // reference that the global itself holds. The object was freed while the
+    // global still pointed at it, and the next assignment to that global
+    // released freed memory (heap corruption, later an ACCESS_VIOLATION in
+    // ava::Release -- seen as a crash inside ava_module_destroy while the
+    // native host evaluated a string binding like `"clicks: " + clicks`).
+    Value v = reinterpret_cast<VM*>(vm)->GetGlobal(name);
+    Retain(v);
+    return ToC(v);
 }
 
 AVA_API void ava_set_global(AvaVM* vm, const char* name, ava_value_t value) {
@@ -744,6 +766,11 @@ AVA_API int ava_last_error_column(AvaVM* vm) {
 AVA_API char* ava_last_error_source(AvaVM* vm) {
     if (!vm) return DupString("");
     return DupString(reinterpret_cast<VM*>(vm)->last_error_source);
+}
+
+AVA_API char* ava_last_error_stack(AvaVM* vm) {
+    if (!vm) return DupString("");
+    return DupString(reinterpret_cast<VM*>(vm)->last_error_stack);
 }
 
 }

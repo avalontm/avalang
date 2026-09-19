@@ -68,6 +68,7 @@ set(CORE_SOURCES
     src/vm/vm_slice.cpp
     src/vm/vm_exceptions.cpp
     src/vm/vm_errors.cpp
+    src/vm/vm_dap.cpp
     src/vm/vm_extern.cpp
     src/vm/vm_platform_accessor.cpp
     src/vm/vm_async.cpp

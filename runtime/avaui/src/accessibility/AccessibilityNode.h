@@ -47,6 +47,13 @@ enum class AccessibilityAction : unsigned char {
     Dismiss,
 };
 
+struct AccessibilityRect {
+    double x = 0.0;
+    double y = 0.0;
+    double width = 0.0;
+    double height = 0.0;
+};
+
 class AVA_UI_API AccessibilityNode {
 public:
     explicit AccessibilityNode(ComponentId id, AccessibilityRole role);
@@ -63,6 +70,9 @@ public:
 
     const std::string& Hint() const;
     void SetHint(const std::string& hint);
+
+    const AccessibilityRect& Bounds() const;
+    void SetBounds(const AccessibilityRect& bounds);
 
     uint32_t States() const;
     void AddState(AccessibilityState state);
@@ -84,6 +94,7 @@ private:
     std::string label_;
     std::string value_;
     std::string hint_;
+    AccessibilityRect bounds_;
     uint32_t states_ = static_cast<uint32_t>(AccessibilityState::None);
     std::vector<AccessibilityAction> actions_;
     std::vector<AccessibilityNode*> children_;

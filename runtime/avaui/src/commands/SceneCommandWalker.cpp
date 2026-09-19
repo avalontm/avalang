@@ -1,6 +1,7 @@
 #include "commands/SceneCommandWalker.h"
 
 #include "common/ColorParse.h"
+#include "theme/VisualState.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -78,32 +79,79 @@ bool AncestorIsScrolled(const std::shared_ptr<scene::ISceneNode>& node) {
     return NearestScrollAncestor(node) != nullptr;
 }
 
+bool IsComposedControlType(render::RenderNodeType type) {
+    return type == render::RenderNodeType::Checkbox || type == render::RenderNodeType::RadioButton;
+}
+
+bool AncestorIsComposedControl(const std::shared_ptr<scene::ISceneNode>& node) {
+    auto parent = node ? node->Parent() : nullptr;
+    while (parent) {
+        const render::IRenderNode* parentRender = parent->GetRenderNode();
+        if (parentRender && IsComposedControlType(parentRender->Type())) {
+            return true;
+        }
+        parent = parent->Parent();
+    }
+    return false;
+}
+
 bool RectContainsPoint(float x, float y, float w, float h, int px, int py) {
     return px >= x && px <= x + w && py >= y && py <= y + h;
 }
 
-std::string ActiveInteractiveState(const render::IRenderNode& node, const InteractiveState& interactive,
-                                    float x, float y, float w, float h) {
-    if (node.Disabled()) return "disabled";
-    const bool hit = RectContainsPoint(x, y, w, h, interactive.pointerX, interactive.pointerY);
-    if (hit && interactive.pointerDown) return "active";
-    if (interactive.focused != 0 && interactive.focused == node.Id()) return "focus";
-    if (hit) return "hover";
-    return std::string();
+theme::ControlStyleOverride ResolveControlStyle(const InteractiveState* interactive,
+                                                 const std::string& typeLower,
+                                                 const theme::ComponentVisualState& state) {
+    if (!interactive || !interactive->styles) {
+        return theme::ControlStyleOverride{};
+    }
+    return theme::ResolveVisualStyle(*interactive->styles, typeLower, state);
 }
 
-theme::ControlStyleOverride ResolveInteractiveOverride(const render::IRenderNode& node,
-                                                        const InteractiveState* interactive,
-                                                        const char* typeName,
-                                                        float x, float y, float w, float h) {
-    if (!interactive || !interactive->styles || !interactive->styles->HasAnyStateStyles()) {
-        return theme::ControlStyleOverride{};
+// Builtin hover/pressed feedback.
+//
+// theme::ResolveVisualStyle only returns a non-empty override when the
+// *project* has explicitly authored hover/active/focus rules in its own
+// style sheet (ProjectStyleSheet::HasAnyStateStyles()). DefaultTheme.cpp
+// declares buttonPrimaryHover/buttonPrimaryActive tokens, but nothing
+// ever reads them, so a project that never writes its own state styles
+// (like most quick prototypes) got a perfectly static button: no visual
+// change on hover, no visual change while the mouse is held down, even
+// though PointerEnter/PointerLeave/PointerDown/PointerUp are all
+// dispatched correctly by EventDispatcher. That's a real gap -- clicking
+// should always look like clicking, regardless of whether a `click`
+// handler is wired.
+//
+// This is the built-in fallback: when the project hasn't overridden a
+// given color for the current state, darken it a bit (more while
+// pressed than while merely hovered). It works for any base color --
+// not just the named theme tokens -- so it also covers a raw
+// backgroundColor = "0078D4" set directly in a .avaui file.
+Color ApplyInteractionTint(const Color& base, bool pressed, bool hovered) {
+    if (!pressed && !hovered) {
+        return base;
     }
-    const std::string state = ActiveInteractiveState(node, *interactive, x, y, w, h);
-    if (state.empty()) {
-        return theme::ControlStyleOverride{};
+    const float factor = pressed ? 0.72f : 0.88f;
+    auto scale = [factor](std::uint8_t channel) -> std::uint8_t {
+        return static_cast<std::uint8_t>(
+            std::clamp(static_cast<int>(static_cast<float>(channel) * factor), 0, 255));
+    };
+    return Color{scale(base.r), scale(base.g), scale(base.b), base.a};
+}
+
+void ApplyBuiltinStateFeedback(const theme::ComponentVisualState& state,
+                                const theme::ControlStyleOverride& projectOverride,
+                                bool shouldFill, bool shouldStroke,
+                                Color& fillColor, Color& borderColor) {
+    if (state.disabled || (!state.pressed && !state.hovered)) {
+        return;
     }
-    return interactive->styles->ResolveState(typeName, state);
+    if (shouldFill && !projectOverride.backgroundColor) {
+        fillColor = ApplyInteractionTint(fillColor, state.pressed, state.hovered);
+    }
+    if (shouldStroke && !projectOverride.borderColor) {
+        borderColor = ApplyInteractionTint(borderColor, state.pressed, state.hovered);
+    }
 }
 
 }
@@ -121,6 +169,18 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
     const bool hasSlotContent = !slotContent.empty();
 
     std::deque<std::string> textStorage;
+
+    auto isFocused = [&](const render::IRenderNode& renderNode) {
+        return interactive && interactive->focused != 0 && interactive->focused == renderNode.Id();
+    };
+    auto isHovered = [&](float hx, float hy, float hw, float hh) {
+        return interactive != nullptr &&
+               RectContainsPoint(hx, hy, hw, hh, interactive->pointerX, interactive->pointerY);
+    };
+    auto isPressed = [&](float hx, float hy, float hw, float hh) {
+        return interactive != nullptr && interactive->pointerDown &&
+               RectContainsPoint(hx, hy, hw, hh, interactive->pointerX, interactive->pointerY);
+    };
 
     auto drawNode = [&](const std::shared_ptr<scene::ISceneNode>& node) {
         if (!node || !node->IsVisible()) {
@@ -240,19 +300,28 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
                                      : 0.0f;
             float borderRadius = static_cast<float>(renderNode->BorderRadius());
 
+            theme::ComponentVisualState state;
+            state.disabled = renderNode->Disabled();
+            state.pressed = isPressed(x, y, w, h);
+            state.focused = isFocused(*renderNode);
+            state.hovered = isHovered(x, y, w, h);
+
             const theme::ControlStyleOverride override =
-                ResolveInteractiveOverride(*renderNode, interactive, "button", x, y, w, h);
+                ResolveControlStyle(interactive, "button", state);
             if (override.backgroundColor) fillColor = common::ParseColor(*override.backgroundColor);
             if (override.borderColor) borderColor = common::ParseColor(*override.borderColor);
             if (override.textColor) textColor = common::ParseColor(*override.textColor);
             if (override.borderWidth) borderWidth = static_cast<float>(*override.borderWidth);
             if (override.borderRadius) borderRadius = static_cast<float>(*override.borderRadius);
+            ApplyBuiltinStateFeedback(state, override, renderNode->ShouldFill(), renderNode->ShouldStroke(),
+                                       fillColor, borderColor);
 
             sink.DrawButton(x, y, w, h, text.c_str(),
                              static_cast<float>(renderNode->FontSize()), fontName.c_str(),
                              textColor, fillColor, borderColor, borderWidth,
                              borderRadius,
-                             renderNode->Disabled(), handler, cssClass);
+                             renderNode->Disabled(), handler, cssClass,
+                             renderNode->Id(), "Button");
             return;
         }
 
@@ -265,13 +334,20 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
             const std::string& fgColor = renderNode->ForegroundColor();
             Color textColor = fgColor.empty() ? Color{0, 0, 238, 255} : common::ParseColor(fgColor);
 
+            theme::ComponentVisualState state;
+            state.disabled = renderNode->Disabled();
+            state.pressed = isPressed(x, y, w, h);
+            state.focused = isFocused(*renderNode);
+            state.hovered = isHovered(x, y, w, h);
+
             const theme::ControlStyleOverride override =
-                ResolveInteractiveOverride(*renderNode, interactive, "link", x, y, w, h);
+                ResolveControlStyle(interactive, "link", state);
             if (override.textColor) textColor = common::ParseColor(*override.textColor);
 
             sink.DrawLink(x, y, text.c_str(),
                           static_cast<float>(renderNode->FontSize()), fontName.c_str(),
-                          textColor, renderNode->Href(), handler, cssClass);
+                          textColor, renderNode->Href(), handler, cssClass,
+                          renderNode->Id(), "Link");
             return;
         }
 
@@ -282,35 +358,139 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
             Color borderColor = renderNode->ShouldStroke()
                                      ? common::ParseColor(renderNode->BorderColor())
                                      : Color{200, 200, 200, 255};
-            auto toHex = [](const Color& c) {
-                char buf[8];
-                std::snprintf(buf, sizeof(buf), "#%02x%02x%02x", c.r, c.g, c.b);
-                return std::string(buf);
-            };
-            std::string html = "<input type=\"text\" class=\"ava-element ava-input\"";
-            html += " data-comp-id=\"" + std::to_string(renderNode->Id()) + "\"";
-            if (!renderNode->Text().empty()) {
-                html += " value=\"" + renderNode->Text() + "\"";
-            }
-            if (!renderNode->OptionsData().empty()) {
-                html += " placeholder=\"" + renderNode->OptionsData() + "\"";
-            }
-            html += " style=\"position:absolute; left:" + std::to_string(x) +
-                    "px; top:" + std::to_string(y) + "px; width:" + std::to_string(w) +
-                    "px; height:" + std::to_string(h) + "px; box-sizing:border-box; " +
-                    "background-color:" + toHex(fillColor) + "; " +
-                    "border:" + std::to_string(renderNode->ShouldStroke() ? renderNode->StrokeWidth() : 1) +
-                    "px solid " + toHex(borderColor) + "; " +
-                    "font-size:" + std::to_string(renderNode->FontSize()) + "px;\"";
-            if (renderNode->Disabled()) {
-                html += " disabled";
+            float borderWidth = renderNode->ShouldStroke()
+                                     ? static_cast<float>(renderNode->StrokeWidth())
+                                     : 1.0f;
+            Color textColor = common::ParseColor(renderNode->ForegroundColor());
+            float borderRadius = static_cast<float>(renderNode->BorderRadius());
+
+            const bool focused = isFocused(*renderNode);
+            const bool hovered = isHovered(x, y, w, h);
+
+            theme::ComponentVisualState state;
+            state.disabled = renderNode->Disabled();
+            state.pressed = isPressed(x, y, w, h);
+            state.focused = focused;
+            state.hovered = hovered;
+
+            const theme::ControlStyleOverride override =
+                ResolveControlStyle(interactive, "input", state);
+            if (override.backgroundColor) fillColor = common::ParseColor(*override.backgroundColor);
+            if (override.borderColor) borderColor = common::ParseColor(*override.borderColor);
+            if (override.textColor) textColor = common::ParseColor(*override.textColor);
+            if (override.borderWidth) borderWidth = static_cast<float>(*override.borderWidth);
+            if (override.borderRadius) borderRadius = static_cast<float>(*override.borderRadius);
+            // Text inputs only get built-in feedback on their border (a
+            // hover/focus ring); darkening the fill would make typed text
+            // harder to read.
+            if (!state.disabled && (state.pressed || state.hovered) &&
+                renderNode->ShouldStroke() && !override.borderColor) {
+                borderColor = ApplyInteractionTint(borderColor, state.pressed, state.hovered);
             }
 
-            if (!handler.empty()) {
-                html += " data-event=\"oninput\" data-handler=\"" + EscapeHtmlText(handler) + "\"";
+            textStorage.push_back(renderNode->FontName());
+            const std::string& fontName = textStorage.back();
+
+            const int caretIndex = focused ? renderNode->CaretIndex() : -1;
+            const int selectionStart = focused ? renderNode->SelectionStart() : -1;
+            const int selectionEnd = focused ? renderNode->SelectionEnd() : -1;
+
+            sink.DrawInput(x, y, w, h, renderNode->Text(), renderNode->OptionsData(),
+                           static_cast<float>(renderNode->FontSize()), fontName.c_str(),
+                           textColor, fillColor, borderColor, borderWidth,
+                           borderRadius,
+                           renderNode->Disabled(), focused, hovered,
+                           caretIndex, selectionStart, selectionEnd,
+                           renderNode->ImeComposition(), renderNode->ImeCompositionCursor(),
+                           handler, cssClass,
+                           renderNode->Id(), "TextBox");
+
+            if (!renderNode->BindingWarning().empty()) {
+                sink.DrawHtmlFragment(BindingWarningHtml(x, y, w, h, renderNode->BindingWarning()));
             }
-            html += " />";
-            sink.DrawHtmlFragment(html);
+            return;
+        }
+
+        if (IsComposedControlType(renderNode->Type())) {
+            const bool isRadio = renderNode->Type() == render::RenderNodeType::RadioButton;
+
+            bool active = false;
+            Color boxFillColor{0, 0, 0, 0};
+            Color boxBorderColor = common::ParseColor("#666666");
+            float borderWidth = 1.0f;
+            std::string label;
+
+            for (const auto& child : node->Children()) {
+                const render::IRenderNode* childRender = child ? child->GetRenderNode() : nullptr;
+                if (!childRender) continue;
+                if (childRender->Type() == render::RenderNodeType::Rectangle ||
+                    childRender->Type() == render::RenderNodeType::Ellipse) {
+                    active = childRender->ShouldFill();
+                    boxBorderColor = common::ParseColor(childRender->BorderColor());
+                    borderWidth = static_cast<float>(childRender->BorderWidth());
+                    if (active) {
+                        boxFillColor = common::ParseColor(childRender->BackgroundColor());
+                    }
+                } else if (childRender->Type() == render::RenderNodeType::Text) {
+                    label = childRender->Text();
+                }
+            }
+
+            Color textColor = common::ParseColor(
+                renderNode->ForegroundColor().empty() ? "#000000" : renderNode->ForegroundColor());
+            float borderRadius = static_cast<float>(renderNode->BorderRadius());
+
+            textStorage.push_back(renderNode->FontName());
+            const std::string& fontName = textStorage.back();
+
+            const bool focused = isFocused(*renderNode);
+            const bool hovered = isHovered(x, y, w, h);
+
+            theme::ComponentVisualState state;
+            state.disabled = renderNode->Disabled();
+            state.pressed = isPressed(x, y, w, h);
+            state.focused = focused;
+            state.hovered = hovered;
+            if (isRadio) {
+                state.selected = active;
+            } else {
+                state.checked = active;
+            }
+
+            const theme::ControlStyleOverride override =
+                ResolveControlStyle(interactive, isRadio ? "radiobutton" : "checkbox", state);
+            if (override.backgroundColor) boxFillColor = common::ParseColor(*override.backgroundColor);
+            if (override.borderColor) boxBorderColor = common::ParseColor(*override.borderColor);
+            if (override.textColor) textColor = common::ParseColor(*override.textColor);
+            if (override.borderWidth) borderWidth = static_cast<float>(*override.borderWidth);
+            if (override.borderRadius) borderRadius = static_cast<float>(*override.borderRadius);
+            // Border always gets feedback; the fill only if the box is
+            // already painted (checked/selected) -- an unchecked box has
+            // no fill to darken.
+            if (!state.disabled && (state.pressed || state.hovered)) {
+                if (active && !override.backgroundColor) {
+                    boxFillColor = ApplyInteractionTint(boxFillColor, state.pressed, state.hovered);
+                }
+                if (!override.borderColor) {
+                    boxBorderColor = ApplyInteractionTint(boxBorderColor, state.pressed, state.hovered);
+                }
+            }
+
+            if (isRadio) {
+                sink.DrawRadioButton(x, y, w, h, label,
+                                     static_cast<float>(renderNode->FontSize()), fontName.c_str(),
+                                     textColor, boxFillColor, boxBorderColor, borderWidth,
+                                     active, renderNode->Disabled(), focused, hovered, handler, cssClass,
+                                     renderNode->Id(), "RadioButton");
+            } else {
+                sink.DrawCheckBox(x, y, w, h, label,
+                                  static_cast<float>(renderNode->FontSize()), fontName.c_str(),
+                                  textColor, boxFillColor, boxBorderColor, borderWidth,
+                                  borderRadius,
+                                  active, renderNode->Disabled(), focused, hovered, handler, cssClass,
+                                  renderNode->Id(), "CheckBox");
+            }
+
             if (!renderNode->BindingWarning().empty()) {
                 sink.DrawHtmlFragment(BindingWarningHtml(x, y, w, h, renderNode->BindingWarning()));
             }
@@ -372,35 +552,48 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
         }
 
         if (renderNode->Type() == render::RenderNodeType::ComboBox) {
-            std::string html = "<select class=\"ava-element ava-select\" style=\"position:absolute; left:" +
-                                std::to_string(x) + "px; top:" + std::to_string(y) +
-                                "px; width:" + std::to_string(w) + "px; height:" + std::to_string(h) + "px;\"";
-            html += " data-comp-id=\"" + std::to_string(renderNode->Id()) + "\"";
-            if (!handler.empty()) {
+            Color fillColor = renderNode->ShouldFill()
+                                   ? common::ParseColor(renderNode->BackgroundColor())
+                                   : Color{255, 255, 255, 255};
+            Color borderColor = renderNode->ShouldStroke()
+                                     ? common::ParseColor(renderNode->BorderColor())
+                                     : Color{200, 200, 200, 255};
+            float borderWidth = renderNode->ShouldStroke()
+                                     ? static_cast<float>(renderNode->StrokeWidth())
+                                     : 1.0f;
+            Color textColor = common::ParseColor(
+                renderNode->ForegroundColor().empty() ? "#000000" : renderNode->ForegroundColor());
+            float borderRadius = static_cast<float>(renderNode->BorderRadius());
 
-                html += " data-event=\"onchange\" data-handler=\"" + EscapeHtmlText(handler) + "\"";
-            }
-            html += ">";
+            textStorage.push_back(renderNode->FontName());
+            const std::string& fontName = textStorage.back();
 
-            const std::string data = renderNode->OptionsData();
-            size_t pos = 0;
-            while (pos < data.size()) {
-                size_t sep = data.find(";;", pos);
-                std::string entry = (sep == std::string::npos) ? data.substr(pos) : data.substr(pos, sep - pos);
-                size_t bar1 = entry.find('|');
-                size_t bar2 = (bar1 == std::string::npos) ? std::string::npos : entry.find('|', bar1 + 1);
-                if (bar1 != std::string::npos && bar2 != std::string::npos) {
-                    std::string value = entry.substr(0, bar1);
-                    std::string label = entry.substr(bar1 + 1, bar2 - bar1 - 1);
-                    bool selected = entry.substr(bar2 + 1) == "1";
-                    html += "<option value=\"" + value + "\"" + (selected ? " selected" : "") + ">" + label + "</option>";
-                }
-                if (sep == std::string::npos) break;
-                pos = sep + 2;
-            }
+            const bool focused = isFocused(*renderNode);
+            const bool hovered = isHovered(x, y, w, h);
 
-            html += "</select>";
-            sink.DrawHtmlFragment(html);
+            theme::ComponentVisualState state;
+            state.disabled = renderNode->Disabled();
+            state.pressed = isPressed(x, y, w, h);
+            state.focused = focused;
+            state.hovered = hovered;
+
+            const theme::ControlStyleOverride override =
+                ResolveControlStyle(interactive, "combobox", state);
+            if (override.backgroundColor) fillColor = common::ParseColor(*override.backgroundColor);
+            if (override.borderColor) borderColor = common::ParseColor(*override.borderColor);
+            if (override.textColor) textColor = common::ParseColor(*override.textColor);
+            if (override.borderWidth) borderWidth = static_cast<float>(*override.borderWidth);
+            if (override.borderRadius) borderRadius = static_cast<float>(*override.borderRadius);
+            ApplyBuiltinStateFeedback(state, override, renderNode->ShouldFill(), renderNode->ShouldStroke(),
+                                       fillColor, borderColor);
+
+            sink.DrawComboBox(x, y, w, h, renderNode->ComboItems(),
+                              static_cast<float>(renderNode->FontSize()), fontName.c_str(),
+                              textColor, fillColor, borderColor, borderWidth,
+                              borderRadius,
+                              renderNode->Disabled(), focused, hovered,
+                              renderNode->Open(), handler, cssClass,
+                              renderNode->Id(), "ComboBox");
         }
 
         if (!renderNode->BindingWarning().empty()) {
@@ -415,9 +608,34 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
                 return;
             }
             drawNode(node);
-            for (const auto& child : node->Children()) {
-                drawSubtree(child, false);
+
+            const bool isClippedScrollView = selfRender &&
+                selfRender->Type() == render::RenderNodeType::ScrollView &&
+                !renderer.SupportsScrollRegions();
+
+            if (isClippedScrollView) {
+                const auto scrollRect = selfRender->Rect();
+                sink.PushClipRect(
+                    static_cast<float>(scrollRect.x), static_cast<float>(scrollRect.y),
+                    static_cast<float>(scrollRect.width), static_cast<float>(scrollRect.height));
+                sink.Translate(
+                    static_cast<float>(-selfRender->ScrollOffsetX()),
+                    static_cast<float>(-selfRender->ScrollOffsetY()));
             }
+
+            if (!selfRender || !IsComposedControlType(selfRender->Type())) {
+                for (const auto& child : node->Children()) {
+                    drawSubtree(child, false);
+                }
+            }
+
+            if (isClippedScrollView) {
+                sink.Translate(
+                    static_cast<float>(selfRender->ScrollOffsetX()),
+                    static_cast<float>(selfRender->ScrollOffsetY()));
+                sink.PopClipRect();
+            }
+
             const render::IRenderNode* rn = node ? node->GetRenderNode() : nullptr;
             if (rn && renderer.SupportsScrollRegions() &&
                 (rn->Type() == render::RenderNodeType::ScrollView ||
@@ -440,6 +658,9 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
         if (AncestorIsOverlay(node)) {
             return;
         }
+        if (AncestorIsComposedControl(node)) {
+            return;
+        }
         if (AncestorIsScrolled(node)) {
             return;
         }
@@ -457,17 +678,26 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
 
     for (const auto& root : overlayRoots) {
         const render::IRenderNode* renderNode = root->GetRenderNode();
-        sink.DrawHtmlFragment(
-            "<div class=\"ava-overlay-fragment\" data-dialog-id=\"" +
-            std::to_string(renderNode ? renderNode->Id() : 0) +
-            "\" style=\"position:relative; z-index:2147483647;\">");
-        if (renderNode && renderNode->HasBackdrop()) {
+        if (renderer.SupportsScrollRegions()) {
             sink.DrawHtmlFragment(
-                "<div class=\"ava-overlay-backdrop\" style=\"position:fixed; inset:0; "
-                "background:rgba(0,0,0,0.65);\"></div>");
+                "<div class=\"ava-overlay-fragment\" data-dialog-id=\"" +
+                std::to_string(renderNode ? renderNode->Id() : 0) +
+                "\" style=\"position:relative; z-index:2147483647;\">");
+            if (renderNode && renderNode->HasBackdrop()) {
+                sink.DrawHtmlFragment(
+                    "<div class=\"ava-overlay-backdrop\" style=\"position:fixed; inset:0; "
+                    "background:rgba(0,0,0,0.65);\"></div>");
+            }
+        } else if (renderNode && renderNode->HasBackdrop()) {
+            sink.DrawRectangle(0.0f, 0.0f,
+                                static_cast<float>(renderer.GetWidth()),
+                                static_cast<float>(renderer.GetHeight()),
+                                Color{0, 0, 0, 166}, Color{0, 0, 0, 0}, 0.0f);
         }
         drawSubtree(root, true);
-        sink.DrawHtmlFragment("</div>");
+        if (renderer.SupportsScrollRegions()) {
+            sink.DrawHtmlFragment("</div>");
+        }
     }
 
     renderer.ProcessCommands(sink.GetCommands());

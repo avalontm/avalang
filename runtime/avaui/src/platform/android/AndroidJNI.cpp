@@ -345,6 +345,124 @@ void Bridge_CanvasDrawLink(float x, float y, const std::string& text,
     DetachIfNeeded(detach);
 }
 
+void Bridge_CanvasDrawCheckBox(float x, float y, float width, float height, const std::string& text,
+                                 float fontSize, const std::string& fontName,
+                                 uint32_t textColor, uint32_t boxFillColor, uint32_t boxBorderColor,
+                                 float borderWidth, float borderRadius,
+                                 bool checked, bool disabled, bool focused, bool hovered) {
+    bool detach;
+    JNIEnv* env = AttachEnv(detach);
+    if (!env) return;
+    jmethodID m = FindMethod(env, g_bridge, "canvasDrawCheckBox",
+                              "(FFFFLjava/lang/String;FLjava/lang/String;IIIFFZZZZ)V");
+    if (m) {
+        jstring jtext = ToJString(env, text);
+        jstring jfont = ToJString(env, fontName);
+        env->CallVoidMethod(g_bridge, m, x, y, width, height, jtext, fontSize, jfont,
+                             static_cast<jint>(textColor), static_cast<jint>(boxFillColor),
+                             static_cast<jint>(boxBorderColor), borderWidth, borderRadius,
+                             static_cast<jboolean>(checked), static_cast<jboolean>(disabled),
+                             static_cast<jboolean>(focused), static_cast<jboolean>(hovered));
+        env->DeleteLocalRef(jtext);
+        env->DeleteLocalRef(jfont);
+    }
+    DetachIfNeeded(detach);
+}
+
+void Bridge_CanvasDrawRadioButton(float x, float y, float width, float height, const std::string& text,
+                                    float fontSize, const std::string& fontName,
+                                    uint32_t textColor, uint32_t boxFillColor, uint32_t boxBorderColor,
+                                    float borderWidth,
+                                    bool selected, bool disabled, bool focused, bool hovered) {
+    bool detach;
+    JNIEnv* env = AttachEnv(detach);
+    if (!env) return;
+    jmethodID m = FindMethod(env, g_bridge, "canvasDrawRadioButton",
+                              "(FFFFLjava/lang/String;FLjava/lang/String;IIIFZZZZ)V");
+    if (m) {
+        jstring jtext = ToJString(env, text);
+        jstring jfont = ToJString(env, fontName);
+        env->CallVoidMethod(g_bridge, m, x, y, width, height, jtext, fontSize, jfont,
+                             static_cast<jint>(textColor), static_cast<jint>(boxFillColor),
+                             static_cast<jint>(boxBorderColor), borderWidth,
+                             static_cast<jboolean>(selected), static_cast<jboolean>(disabled),
+                             static_cast<jboolean>(focused), static_cast<jboolean>(hovered));
+        env->DeleteLocalRef(jtext);
+        env->DeleteLocalRef(jfont);
+    }
+    DetachIfNeeded(detach);
+}
+
+void Bridge_CanvasDrawInput(float x, float y, float width, float height,
+                             const std::string& text, const std::string& placeholder,
+                             float fontSize, const std::string& fontName,
+                             uint32_t textColor, uint32_t fillColor, uint32_t borderColor,
+                             float borderWidth, float borderRadius,
+                             bool disabled, bool focused, bool hovered, int caretIndex) {
+    bool detach;
+    JNIEnv* env = AttachEnv(detach);
+    if (!env) return;
+    jmethodID m = FindMethod(env, g_bridge, "canvasDrawInput",
+                              "(FFFFLjava/lang/String;Ljava/lang/String;FLjava/lang/String;"
+                              "IIIFFZZZI)V");
+    if (m) {
+        jstring jtext = ToJString(env, text);
+        jstring jplaceholder = ToJString(env, placeholder);
+        jstring jfont = ToJString(env, fontName);
+        env->CallVoidMethod(g_bridge, m, x, y, width, height, jtext, jplaceholder, fontSize, jfont,
+                             static_cast<jint>(textColor), static_cast<jint>(fillColor),
+                             static_cast<jint>(borderColor), borderWidth, borderRadius,
+                             static_cast<jboolean>(disabled), static_cast<jboolean>(focused),
+                             static_cast<jboolean>(hovered), static_cast<jint>(caretIndex));
+        env->DeleteLocalRef(jtext);
+        env->DeleteLocalRef(jplaceholder);
+        env->DeleteLocalRef(jfont);
+    }
+    DetachIfNeeded(detach);
+}
+
+void Bridge_CanvasDrawComboBox(float x, float y, float width, float height,
+                                const std::vector<std::string>& values,
+                                const std::vector<std::string>& labels, int selectedIndex,
+                                float fontSize, const std::string& fontName,
+                                uint32_t textColor, uint32_t fillColor, uint32_t borderColor,
+                                float borderWidth, float borderRadius,
+                                bool disabled, bool focused, bool hovered, bool open) {
+    bool detach;
+    JNIEnv* env = AttachEnv(detach);
+    if (!env) return;
+    jmethodID m = FindMethod(env, g_bridge, "canvasDrawComboBox",
+                              "(FFFF[Ljava/lang/String;[Ljava/lang/String;IFLjava/lang/String;"
+                              "IIIFFZZZZ)V");
+    if (m) {
+        jclass stringClass = env->FindClass("java/lang/String");
+        jobjectArray jvalues = env->NewObjectArray(static_cast<jsize>(values.size()), stringClass, nullptr);
+        jobjectArray jlabels = env->NewObjectArray(static_cast<jsize>(labels.size()), stringClass, nullptr);
+        for (jsize i = 0; i < static_cast<jsize>(values.size()); ++i) {
+            jstring item = ToJString(env, values[static_cast<size_t>(i)]);
+            env->SetObjectArrayElement(jvalues, i, item);
+            env->DeleteLocalRef(item);
+        }
+        for (jsize i = 0; i < static_cast<jsize>(labels.size()); ++i) {
+            jstring item = ToJString(env, labels[static_cast<size_t>(i)]);
+            env->SetObjectArrayElement(jlabels, i, item);
+            env->DeleteLocalRef(item);
+        }
+        jstring jfont = ToJString(env, fontName);
+        env->CallVoidMethod(g_bridge, m, x, y, width, height, jvalues, jlabels,
+                             static_cast<jint>(selectedIndex), fontSize, jfont,
+                             static_cast<jint>(textColor), static_cast<jint>(fillColor),
+                             static_cast<jint>(borderColor), borderWidth, borderRadius,
+                             static_cast<jboolean>(disabled), static_cast<jboolean>(focused),
+                             static_cast<jboolean>(hovered), static_cast<jboolean>(open));
+        env->DeleteLocalRef(jfont);
+        env->DeleteLocalRef(jvalues);
+        env->DeleteLocalRef(jlabels);
+        env->DeleteLocalRef(stringClass);
+    }
+    DetachIfNeeded(detach);
+}
+
 void Bridge_CanvasPushClip(float x, float y, float width, float height) {
     bool detach;
     JNIEnv* env = AttachEnv(detach);

@@ -1,5 +1,6 @@
 #include "events/EventDispatcher.h"
 #include "events/Event.h"
+#include "events/HitTest.h"
 #include "components/IComponent.h"
 #include "layout/ILayoutNode.h"
 #include "layout/LayoutEngine.h"
@@ -81,6 +82,8 @@ void EventDispatcher::Dispatch(IEvent* event) {
 void EventDispatcher::PollInput(IComponent* root) {
     if (!root || !platformMouse_ || !platformKeyboard_) return;
 
+    EnforceFocusTrap(root);
+
     prevPointerX_ = pointerX_;
     prevPointerY_ = pointerY_;
     std::memcpy(prevPointerButtonState_, pointerButtonState_, sizeof(pointerButtonState_));
@@ -129,14 +132,17 @@ void EventDispatcher::PollInput(IComponent* root) {
         Dispatch(event.get());
 
         if (leftDown) {
-            SetFocusedComponent(target);
+            if (IsEnabledTarget(root, target)) {
+                SetFocusedComponent(target);
+            }
             pointerDownTarget_ = target;
             BeginGestureTracking(target, kMousePointerTouchId, pointerX_, pointerY_, NowMs());
         } else {
-            if (target != 0 && target == pointerDownTarget_) {
+            if (target != 0 && target == pointerDownTarget_ && IsEnabledTarget(root, target)) {
                 auto click = std::make_unique<PointerEvent>(EventType::Click, target,
                                                             PointerButton::Left, pointerX_, pointerY_);
                 Dispatch(click.get());
+                HandleOverlayDismiss(root, target);
             }
             pointerDownTarget_ = 0;
             EndGestureTracking(kMousePointerTouchId, pointerX_, pointerY_, NowMs(), false);
@@ -164,7 +170,7 @@ void EventDispatcher::PollInput(IComponent* root) {
         }
     }
 
-    if (focusedComponent_ != 0) {
+    {
         bool shift = keyboardState_.count(16) > 0;
         bool ctrl = keyboardState_.count(17) > 0;
         bool alt = keyboardState_.count(18) > 0;
@@ -172,17 +178,35 @@ void EventDispatcher::PollInput(IComponent* root) {
         for (const auto& [keyCode, isDown] : keyboardState_) {
             if (prevKeyboardState_.find(keyCode) == prevKeyboardState_.end()) {
                 Key translated = keyTranslator_ ? keyTranslator_(keyCode) : Key::Unknown;
-                auto event = std::make_unique<KeyboardEvent>(EventType::KeyDown, focusedComponent_, keyCode,
-                                                              translated, shift, ctrl, alt, false);
-                Dispatch(event.get());
+
+                if (focusedComponent_ != 0) {
+                    auto event = std::make_unique<KeyboardEvent>(EventType::KeyDown, focusedComponent_, keyCode,
+                                                                  translated, shift, ctrl, alt, false);
+                    Dispatch(event.get());
+                }
+
+                if (translated == Key::Tab) {
+                    // Tab must be able to move focus onto the first focusable
+                    // component even when nothing is focused yet, so keyboard-only
+                    // users are never stranded without a way to reach a control.
+                    CycleFocus(root, shift);
+                } else if (translated == Key::Escape && focusedComponent_ != 0) {
+                    if (IComponent* overlay = events::FindTopmostBlockingOverlay(root)) {
+                        if (events::IsDismissibleOverlay(overlay)) {
+                            CloseOverlay(overlay);
+                        }
+                    }
+                }
             }
         }
-        for (const auto& [keyCode, isDown] : prevKeyboardState_) {
-            if (keyboardState_.find(keyCode) == keyboardState_.end()) {
-                Key translated = keyTranslator_ ? keyTranslator_(keyCode) : Key::Unknown;
-                auto event = std::make_unique<KeyboardEvent>(EventType::KeyUp, focusedComponent_, keyCode,
-                                                              translated, shift, ctrl, alt, false);
-                Dispatch(event.get());
+        if (focusedComponent_ != 0) {
+            for (const auto& [keyCode, isDown] : prevKeyboardState_) {
+                if (keyboardState_.find(keyCode) == keyboardState_.end()) {
+                    Key translated = keyTranslator_ ? keyTranslator_(keyCode) : Key::Unknown;
+                    auto event = std::make_unique<KeyboardEvent>(EventType::KeyUp, focusedComponent_, keyCode,
+                                                                  translated, shift, ctrl, alt, false);
+                    Dispatch(event.get());
+                }
             }
         }
     }
@@ -363,7 +387,26 @@ ComponentId EventDispatcher::HitTest(IComponent* root, int x, int y) {
     auto layoutRoot = layoutEngine_->Root();
     if (!layoutRoot) return 0;
 
+    if (IComponent* overlay = events::FindTopmostBlockingOverlay(root)) {
+        const ILayoutNode* overlayLayout = layoutEngine_->FindNode(overlay->Id());
+        if (overlayLayout) {
+            ComponentId hit = HitTestRecursive(overlay, overlayLayout, x, y);
+            if (hit != 0) {
+                return hit;
+            }
+        }
+        return overlay->Id();
+    }
+
     return HitTestRecursive(root, layoutRoot, x, y);
+}
+
+bool EventDispatcher::IsWithinComponentBounds(IComponent* component, int x, int y) const {
+    if (!component || !layoutEngine_) return false;
+    const ILayoutNode* layoutNode = layoutEngine_->FindNode(component->Id());
+    if (!layoutNode) return false;
+    const auto rect = layoutNode->Rect();
+    return x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
 }
 
 ComponentId EventDispatcher::HitTestRecursive(IComponent* node, const ILayoutNode* layoutNode,
@@ -375,6 +418,10 @@ ComponentId EventDispatcher::HitTestRecursive(IComponent* node, const ILayoutNod
         return 0;
     }
 
+    if (events::OwnsInteractionSubtree(node)) {
+        return node->Id();
+    }
+
     for (const auto& child : node->Children()) {
         auto childLayout = layoutEngine_->FindNode(child->Id());
         if (auto hit = HitTestRecursive(child, childLayout, x, y)) {
@@ -383,6 +430,93 @@ ComponentId EventDispatcher::HitTestRecursive(IComponent* node, const ILayoutNod
     }
 
     return node->Id();
+}
+
+void EventDispatcher::CloseOverlay(IComponent* overlay) {
+    if (!overlay) return;
+    if (overlay->HasProperty("isOpen")) {
+        overlay->SetProperty("isOpen", PropertyValue(false));
+    } else {
+        overlay->SetProperty("overlay", PropertyValue(false));
+    }
+}
+
+void EventDispatcher::HandleOverlayDismiss(IComponent* root, ComponentId clickedTarget) {
+    IComponent* clicked = FindComponent(root, clickedTarget);
+    if (!clicked || !events::IsBlockingOverlay(clicked) || !events::IsDismissibleOverlay(clicked)) {
+        return;
+    }
+    if (IsWithinComponentBounds(clicked, pointerX_, pointerY_)) {
+        return;
+    }
+    CloseOverlay(clicked);
+}
+
+void EventDispatcher::EnforceFocusTrap(IComponent* root) {
+    IComponent* overlay = events::FindTopmostBlockingOverlay(root);
+    if (!overlay) return;
+
+    IComponent* current = FindComponent(root, focusedComponent_);
+    if (current && events::IsDescendantOf(current, overlay)) {
+        return;
+    }
+
+    std::vector<IComponent*> focusable;
+    events::CollectFocusableDescendants(overlay, focusable);
+    SetFocusedComponent(focusable.empty() ? overlay->Id() : focusable.front()->Id());
+}
+
+void EventDispatcher::CycleFocus(IComponent* root, bool backward) {
+    IComponent* scopeRoot = root;
+    if (IComponent* overlay = events::FindTopmostBlockingOverlay(root)) {
+        scopeRoot = overlay;
+    }
+
+    std::vector<IComponent*> focusable;
+    events::CollectFocusableDescendants(scopeRoot, focusable);
+    if (focusable.empty()) return;
+
+    int index = -1;
+    for (size_t i = 0; i < focusable.size(); ++i) {
+        if (focusable[i]->Id() == focusedComponent_) {
+            index = static_cast<int>(i);
+            break;
+        }
+    }
+
+    int count = static_cast<int>(focusable.size());
+    int next = backward ? index - 1 : index + 1;
+    if (index < 0) {
+        next = backward ? count - 1 : 0;
+    } else if (next < 0) {
+        next = count - 1;
+    } else if (next >= count) {
+        next = 0;
+    }
+
+    SetFocusedComponent(focusable[next]->Id());
+}
+
+IComponent* EventDispatcher::FindComponent(IComponent* node, ComponentId id) const {
+    if (!node) return nullptr;
+    if (node->Id() == id) return node;
+
+    for (auto* child : node->Children()) {
+        if (auto* found = FindComponent(child, id)) {
+            return found;
+        }
+    }
+
+    return nullptr;
+}
+
+bool EventDispatcher::IsEnabledTarget(IComponent* root, ComponentId id) const {
+    if (id == 0) return true;
+
+    IComponent* component = FindComponent(root, id);
+    if (!component) return true;
+
+    return events::ResolveInteractiveNode(component).enabled;
 }
 
 }

@@ -218,7 +218,8 @@ void JoinReadersWithGrace(ReaderSync& sync, std::thread& stdout_thread, std::thr
 // (stdout_read/stderr_read are a completely separate pipe/handle pair).
 class WinStdinWriter : public ava::platform::IProcessStream::IStdinWriter {
 public:
-    explicit WinStdinWriter(HANDLE write_handle) : handle_(write_handle) {}
+    WinStdinWriter(HANDLE write_handle, HANDLE process_handle)
+        : handle_(write_handle), process_handle_(process_handle) {}
 
     bool WriteLine(const avastd::string& line) override {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -228,6 +229,19 @@ public:
         DWORD written = 0;
         BOOL ok = WriteFile(handle_, buf.data(), static_cast<DWORD>(buf.size()), &written, nullptr);
         return ok != FALSE;
+    }
+
+    // TerminateProcess on our own duplicated handle (see ExecuteStreaming
+    // below) -- separate from `pi.hProcess`, which ExecuteStreaming's own
+    // thread still owns and waits on, so this can't race that handle's
+    // lifetime. A stale/already-exited process_handle_ makes
+    // TerminateProcess fail harmlessly, which is exactly the "no-op if
+    // already exited" IProcessStream.h promises.
+    void Terminate() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (process_handle_ != nullptr) {
+            TerminateProcess(process_handle_, 1);
+        }
     }
 
     // Called once, from ExecuteStreaming's own thread, right after the
@@ -241,11 +255,16 @@ public:
             CloseHandle(handle_);
             handle_ = nullptr;
         }
+        if (process_handle_ != nullptr) {
+            CloseHandle(process_handle_);
+            process_handle_ = nullptr;
+        }
     }
 
 private:
     std::mutex mutex_;
     HANDLE handle_;
+    HANDLE process_handle_;
 };
 
 }  // namespace
@@ -388,7 +407,16 @@ bool WinProcess::ExecuteStreaming(const std::string& command, const std::vector<
     // the UI thread, echoing what the user types into the console's input box) --
     // must happen before WaitForSingleObject below, since that's the whole point:
     // the child may block reading stdin (input()) long before it exits.
-    auto stdin_writer = avastd::make_shared<WinStdinWriter>(stdin_write);
+    //
+    // The writer also gets its own duplicate of pi.hProcess (rather than pi.hProcess
+    // itself) so a caller on another thread can Terminate() it -- e.g. Ava Studio's
+    // "Stop" button on a hung run -- without racing this thread's own
+    // WaitForSingleObject/CloseHandle(pi.hProcess) below. DuplicateHandle failing
+    // (extremely unlikely) just means Terminate() becomes a no-op for this run.
+    HANDLE process_handle_for_writer = nullptr;
+    DuplicateHandle(GetCurrentProcess(), pi.hProcess, GetCurrentProcess(), &process_handle_for_writer, 0, FALSE,
+                     DUPLICATE_SAME_ACCESS);
+    auto stdin_writer = avastd::make_shared<WinStdinWriter>(stdin_write, process_handle_for_writer);
     if (on_started) on_started(stdin_writer);
 
     // One reader thread per pipe (stdout/stderr each block independently on ReadFile, so

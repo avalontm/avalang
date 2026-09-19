@@ -85,7 +85,9 @@ protected:
         const Color& borderColor, float borderWidth, float borderRadius,
         bool disabled,
         const std::string& clickHandler,
-        const std::string& className
+        const std::string& className,
+        ComponentId compId,
+        const std::string& avaType
     ) override;
 
     void OnDrawLink(
@@ -95,7 +97,9 @@ protected:
         const Color& color,
         const std::string& href,
         const std::string& clickHandler,
-        const std::string& className
+        const std::string& className,
+        ComponentId compId,
+        const std::string& avaType
     ) override;
 
     void OnDrawPath(
@@ -106,6 +110,65 @@ protected:
         bool closed,
         const std::string& clickHandler,
         const std::string& className
+    ) override;
+
+    void OnDrawInput(
+        float x, float y, float width, float height,
+        const std::string& text,
+        const std::string& placeholder,
+        float fontSize, const char* fontName,
+        const Color& textColor,
+        const Color& fillColor,
+        const Color& borderColor, float borderWidth, float borderRadius,
+        bool disabled, bool focused, bool hovered,
+        int caretIndex, int selectionStart, int selectionEnd,
+        const std::string& imeComposition, int imeCompositionCursor,
+        const std::string& clickHandler,
+        const std::string& className,
+        ComponentId compId,
+        const std::string& avaType
+    ) override;
+
+    void OnDrawCheckBox(
+        float x, float y, float width, float height,
+        const std::string& text,
+        float fontSize, const char* fontName,
+        const Color& textColor,
+        const Color& boxFillColor,
+        const Color& boxBorderColor, float borderWidth, float borderRadius,
+        bool checked, bool disabled, bool focused, bool hovered,
+        const std::string& clickHandler,
+        const std::string& className,
+        ComponentId compId,
+        const std::string& avaType
+    ) override;
+
+    void OnDrawRadioButton(
+        float x, float y, float width, float height,
+        const std::string& text,
+        float fontSize, const char* fontName,
+        const Color& textColor,
+        const Color& boxFillColor,
+        const Color& boxBorderColor, float borderWidth,
+        bool selected, bool disabled, bool focused, bool hovered,
+        const std::string& clickHandler,
+        const std::string& className,
+        ComponentId compId,
+        const std::string& avaType
+    ) override;
+
+    void OnDrawComboBox(
+        float x, float y, float width, float height,
+        const std::vector<render::ComboBoxItem>& items,
+        float fontSize, const char* fontName,
+        const Color& textColor,
+        const Color& fillColor,
+        const Color& borderColor, float borderWidth, float borderRadius,
+        bool disabled, bool focused, bool hovered, bool open,
+        const std::string& clickHandler,
+        const std::string& className,
+        ComponentId compId,
+        const std::string& avaType
     ) override;
 
     void OnBeginFrame() override;
@@ -136,6 +199,7 @@ private:
     std::string BuildSvgPathData(const std::vector<render::PathSegment>& segments, bool closed) const;
     std::string GetTransformCSS() const;
     std::string GetClipCSS() const;
+    void AppendPositionStyle(float x, float y, float width, float height);
 
     const theme::ProjectStyleSheet* projectStyles_ = nullptr;
     const theme::ProjectAnimationSheet* projectAnimations_ = nullptr;

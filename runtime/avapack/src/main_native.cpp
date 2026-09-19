@@ -21,8 +21,19 @@
 #include "avalang.h"
 #include "embedded_project.h"
 #include "packaged_runtime.h"
+#include "diagnostics/crash_handler.h"
+#include "diagnostics/debug_mode.h"
 
 int main(int argc, char** argv) {
+    // Fase 1 de PLAN_DEBUG_MODE_AVASTUDIO.md: este es el .exe Desktop UI
+    // que el usuario realmente construye y corre -- corre bajo subsystem
+    // WINDOWS (sin consola), asi que sin este filtro un crash nativo era
+    // literalmente indistinguible de "la ventana se cerro" para el
+    // usuario. Antes solo avanative.exe (el binario de F5/Preview dentro
+    // de AvaStudio, no el .exe final) tenia este handler.
+    ava::diag::InstallCrashHandler("avapack (desktop ui)");
+    ava::diag::InitDebugRuntime(argc, argv);
+
     unsigned char key[32];
     avapack::GetEmbeddedKey(key);
 

@@ -33,7 +33,9 @@ void CopyAll(const std::vector<LogLine>& lines) {
 
 }
 
-void DrawLogsPanel(LogsState& state, LogBridge& log_bridge, bool* p_open) {
+std::optional<ProblemsFileClickRequest> DrawLogsPanel(LogsState& state, LogBridge& log_bridge, bool* p_open) {
+    std::optional<ProblemsFileClickRequest> click_request;
+
     const std::string title = util::Tr("panel.logs.title") + "###logs";
     ImGui::Begin(title.c_str(), p_open);
 
@@ -86,7 +88,8 @@ void DrawLogsPanel(LogsState& state, LogBridge& log_bridge, bool* p_open) {
             const int last = std::max(state.selection_anchor, state.selection_cursor);
             const bool is_selected = state.selection_anchor >= 0 && i >= first && i <= last;
 
-            ImGui::PushStyleColor(ImGuiCol_Text, studio::palette::FromHex(palette::kTextMuted));
+            ImGui::PushStyleColor(ImGuiCol_Text, line.is_error ? studio::palette::FromHex(palette::kError)
+                                                                : studio::palette::FromHex(palette::kTextMuted));
             ImGui::Selectable(line.text.c_str(), is_selected);
             ImGui::PopStyleColor();
 
@@ -95,6 +98,9 @@ void DrawLogsPanel(LogsState& state, LogBridge& log_bridge, bool* p_open) {
                     state.selection_cursor = i;
                 } else {
                     state.selection_anchor = state.selection_cursor = i;
+                }
+                if (line.is_error && line.line != 0) {
+                    click_request = ProblemsFileClickRequest{line.file, line.line, line.col, line.text};
                 }
             }
             if (ImGui::IsItemHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left) &&
@@ -142,6 +148,8 @@ void DrawLogsPanel(LogsState& state, LogBridge& log_bridge, bool* p_open) {
 
     ImGui::EndChild();
     ImGui::End();
+
+    return click_request;
 }
 
 }

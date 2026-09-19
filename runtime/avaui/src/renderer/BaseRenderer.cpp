@@ -37,13 +37,21 @@ bool SameRectStyle(const RenderCommand& a, const RenderCommand& b) {
            ra.borderWidth == rb.borderWidth && ra.borderRadius == rb.borderRadius;
 }
 
-RectGeometry ToRectGeometry(const RenderCommand& cmd) {
-    return RectGeometry{
-        cmd.drawRect.x, cmd.drawRect.y, cmd.drawRect.width, cmd.drawRect.height,
-        cmd.drawRect.clickHandler, cmd.drawRect.className
-    };
 }
 
+void BaseRenderer::ApplyTransform(float& x, float& y) const {
+    x += currentTransform_.tx;
+    y += currentTransform_.ty;
+}
+
+RectGeometry BaseRenderer::ToRectGeometry(const RenderCommand& cmd) const {
+    float x = cmd.drawRect.x;
+    float y = cmd.drawRect.y;
+    ApplyTransform(x, y);
+    return RectGeometry{
+        x, y, cmd.drawRect.width, cmd.drawRect.height,
+        cmd.drawRect.clickHandler, cmd.drawRect.className
+    };
 }
 
 void BaseRenderer::ProcessCommands(const std::vector<RenderCommand>& commands) {
@@ -64,9 +72,9 @@ void BaseRenderer::ProcessCommands(const std::vector<RenderCommand>& commands) {
                 OnDrawRectangleBatch(batch, style.fillColor, style.borderColor,
                                       style.borderWidth, style.borderRadius);
             } else {
-                OnDrawRectangle(style.x, style.y, style.width, style.height, style.fillColor,
-                                 style.borderColor, style.borderWidth, style.borderRadius,
-                                 style.clickHandler, style.className);
+                DrawRectangle(style.x, style.y, style.width, style.height, style.fillColor,
+                               style.borderColor, style.borderWidth, style.borderRadius,
+                               style.clickHandler, style.className);
             }
             i = j;
             continue;
@@ -92,7 +100,7 @@ void BaseRenderer::ProcessCommandsIncremental(
 void BaseRenderer::DispatchCommand(const RenderCommand& cmd) {
     switch (cmd.type) {
         case RenderCommandType::DrawRectangle:
-            OnDrawRectangle(
+            DrawRectangle(
                 cmd.drawRect.x, cmd.drawRect.y,
                 cmd.drawRect.width, cmd.drawRect.height,
                 cmd.drawRect.fillColor,
@@ -104,7 +112,7 @@ void BaseRenderer::DispatchCommand(const RenderCommand& cmd) {
             break;
 
         case RenderCommandType::DrawEllipse:
-            OnDrawEllipse(
+            DrawEllipse(
                 cmd.drawEllipse.cx, cmd.drawEllipse.cy,
                 cmd.drawEllipse.rx, cmd.drawEllipse.ry,
                 cmd.drawEllipse.fillColor,
@@ -115,7 +123,7 @@ void BaseRenderer::DispatchCommand(const RenderCommand& cmd) {
             break;
 
         case RenderCommandType::DrawText:
-            OnDrawText(
+            DrawText(
                 cmd.drawText.x, cmd.drawText.y,
                 cmd.drawText.text,
                 cmd.drawText.fontSize, cmd.drawText.fontName,
@@ -131,7 +139,7 @@ void BaseRenderer::DispatchCommand(const RenderCommand& cmd) {
             std::string resolvedPath = cmd.drawImage.imagePath
                 ? ResourceManager::Instance().ResolveImagePath(cmd.drawImage.imagePath)
                 : std::string();
-            OnDrawImage(
+            DrawImage(
                 cmd.drawImage.x, cmd.drawImage.y,
                 cmd.drawImage.width, cmd.drawImage.height,
                 resolvedPath.c_str()
@@ -144,7 +152,7 @@ void BaseRenderer::DispatchCommand(const RenderCommand& cmd) {
             break;
 
         case RenderCommandType::DrawButton:
-            OnDrawButton(
+            DrawButton(
                 cmd.drawButton.x, cmd.drawButton.y,
                 cmd.drawButton.width, cmd.drawButton.height,
                 cmd.drawButton.text,
@@ -154,24 +162,28 @@ void BaseRenderer::DispatchCommand(const RenderCommand& cmd) {
                 cmd.drawButton.borderColor, cmd.drawButton.borderWidth, cmd.drawButton.borderRadius,
                 cmd.drawButton.disabled,
                 cmd.drawButton.clickHandler,
-                cmd.drawButton.className
+                cmd.drawButton.className,
+                cmd.drawButton.compId,
+                cmd.drawButton.avaType
             );
             break;
 
         case RenderCommandType::DrawLink:
-            OnDrawLink(
+            DrawLink(
                 cmd.drawLink.x, cmd.drawLink.y,
                 cmd.drawLink.text,
                 cmd.drawLink.fontSize, cmd.drawLink.fontName,
                 cmd.drawLink.color,
                 cmd.drawLink.href,
                 cmd.drawLink.clickHandler,
-                cmd.drawLink.className
+                cmd.drawLink.className,
+                cmd.drawLink.compId,
+                cmd.drawLink.avaType
             );
             break;
 
         case RenderCommandType::DrawPath:
-            OnDrawPath(
+            DrawPath(
                 cmd.drawPath.x, cmd.drawPath.y,
                 cmd.drawPath.segments,
                 cmd.drawPath.fillColor,
@@ -179,6 +191,78 @@ void BaseRenderer::DispatchCommand(const RenderCommand& cmd) {
                 cmd.drawPath.closed,
                 cmd.drawPath.clickHandler,
                 cmd.drawPath.className
+            );
+            break;
+
+        case RenderCommandType::DrawInput:
+            DrawInput(
+                cmd.drawInput.x, cmd.drawInput.y,
+                cmd.drawInput.width, cmd.drawInput.height,
+                cmd.drawInput.text,
+                cmd.drawInput.placeholder,
+                cmd.drawInput.fontSize, cmd.drawInput.fontName,
+                cmd.drawInput.textColor,
+                cmd.drawInput.fillColor,
+                cmd.drawInput.borderColor, cmd.drawInput.borderWidth, cmd.drawInput.borderRadius,
+                cmd.drawInput.disabled, cmd.drawInput.focused, cmd.drawInput.hovered,
+                cmd.drawInput.caretIndex, cmd.drawInput.selectionStart, cmd.drawInput.selectionEnd,
+                cmd.drawInput.imeComposition, cmd.drawInput.imeCompositionCursor,
+                cmd.drawInput.clickHandler,
+                cmd.drawInput.className,
+                cmd.drawInput.compId,
+                cmd.drawInput.avaType
+            );
+            break;
+
+        case RenderCommandType::DrawCheckBox:
+            DrawCheckBox(
+                cmd.drawCheckBox.x, cmd.drawCheckBox.y,
+                cmd.drawCheckBox.width, cmd.drawCheckBox.height,
+                cmd.drawCheckBox.text,
+                cmd.drawCheckBox.fontSize, cmd.drawCheckBox.fontName,
+                cmd.drawCheckBox.textColor,
+                cmd.drawCheckBox.boxFillColor,
+                cmd.drawCheckBox.boxBorderColor, cmd.drawCheckBox.borderWidth, cmd.drawCheckBox.borderRadius,
+                cmd.drawCheckBox.checked, cmd.drawCheckBox.disabled, cmd.drawCheckBox.focused, cmd.drawCheckBox.hovered,
+                cmd.drawCheckBox.clickHandler,
+                cmd.drawCheckBox.className,
+                cmd.drawCheckBox.compId,
+                cmd.drawCheckBox.avaType
+            );
+            break;
+
+        case RenderCommandType::DrawRadioButton:
+            DrawRadioButton(
+                cmd.drawRadioButton.x, cmd.drawRadioButton.y,
+                cmd.drawRadioButton.width, cmd.drawRadioButton.height,
+                cmd.drawRadioButton.text,
+                cmd.drawRadioButton.fontSize, cmd.drawRadioButton.fontName,
+                cmd.drawRadioButton.textColor,
+                cmd.drawRadioButton.boxFillColor,
+                cmd.drawRadioButton.boxBorderColor, cmd.drawRadioButton.borderWidth,
+                cmd.drawRadioButton.selected, cmd.drawRadioButton.disabled,
+                cmd.drawRadioButton.focused, cmd.drawRadioButton.hovered,
+                cmd.drawRadioButton.clickHandler,
+                cmd.drawRadioButton.className,
+                cmd.drawRadioButton.compId,
+                cmd.drawRadioButton.avaType
+            );
+            break;
+
+        case RenderCommandType::DrawComboBox:
+            DrawComboBox(
+                cmd.drawComboBox.x, cmd.drawComboBox.y,
+                cmd.drawComboBox.width, cmd.drawComboBox.height,
+                cmd.drawComboBox.items,
+                cmd.drawComboBox.fontSize, cmd.drawComboBox.fontName,
+                cmd.drawComboBox.textColor,
+                cmd.drawComboBox.fillColor,
+                cmd.drawComboBox.borderColor, cmd.drawComboBox.borderWidth, cmd.drawComboBox.borderRadius,
+                cmd.drawComboBox.disabled, cmd.drawComboBox.focused, cmd.drawComboBox.hovered, cmd.drawComboBox.open,
+                cmd.drawComboBox.clickHandler,
+                cmd.drawComboBox.className,
+                cmd.drawComboBox.compId,
+                cmd.drawComboBox.avaType
             );
             break;
 
@@ -195,6 +279,7 @@ void BaseRenderer::DispatchCommand(const RenderCommand& cmd) {
             break;
 
         case RenderCommandType::PushClip:
+            PushClipRect(cmd.pushClip.x, cmd.pushClip.y, cmd.pushClip.width, cmd.pushClip.height);
             break;
 
         case RenderCommandType::PopClip:
@@ -211,6 +296,7 @@ void BaseRenderer::DrawRectangle(
     const std::string& clickHandler,
     const std::string& className
 ) {
+    ApplyTransform(x, y);
     OnDrawRectangle(x, y, width, height, fillColor, borderColor, borderWidth, borderRadius, clickHandler, className);
 }
 
@@ -221,6 +307,7 @@ void BaseRenderer::DrawEllipse(
     const std::string& clickHandler,
     const std::string& className
 ) {
+    ApplyTransform(cx, cy);
     OnDrawEllipse(cx, cy, rx, ry, fillColor, borderColor, borderWidth, clickHandler, className);
 }
 
@@ -234,6 +321,7 @@ void BaseRenderer::DrawText(
     float maxWidth,
     bool wrap
 ) {
+    ApplyTransform(x, y);
     OnDrawText(x, y, text, fontSize, fontName, color, clickHandler, className, maxWidth, wrap);
 }
 
@@ -241,6 +329,7 @@ void BaseRenderer::DrawImage(
     float x, float y, float width, float height,
     const char* imagePath
 ) {
+    ApplyTransform(x, y);
     OnDrawImage(x, y, width, height, imagePath);
 }
 
@@ -257,11 +346,14 @@ void BaseRenderer::DrawButton(
     const Color& borderColor, float borderWidth, float borderRadius,
     bool disabled,
     const std::string& clickHandler,
-    const std::string& className
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
 ) {
+    ApplyTransform(x, y);
     OnDrawButton(x, y, width, height, text, fontSize, fontName, textColor,
                  fillColor, borderColor, borderWidth, borderRadius, disabled,
-                 clickHandler, className);
+                 clickHandler, className, compId, avaType);
 }
 
 void BaseRenderer::DrawLink(
@@ -271,9 +363,12 @@ void BaseRenderer::DrawLink(
     const Color& color,
     const std::string& href,
     const std::string& clickHandler,
-    const std::string& className
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
 ) {
-    OnDrawLink(x, y, text, fontSize, fontName, color, href, clickHandler, className);
+    ApplyTransform(x, y);
+    OnDrawLink(x, y, text, fontSize, fontName, color, href, clickHandler, className, compId, avaType);
 }
 
 void BaseRenderer::DrawPath(
@@ -285,14 +380,100 @@ void BaseRenderer::DrawPath(
     const std::string& clickHandler,
     const std::string& className
 ) {
+    ApplyTransform(x, y);
     OnDrawPath(x, y, segments, fillColor, borderColor, borderWidth, closed, clickHandler, className);
 }
 
+void BaseRenderer::DrawInput(
+    float x, float y, float width, float height,
+    const std::string& text,
+    const std::string& placeholder,
+    float fontSize, const char* fontName,
+    const Color& textColor,
+    const Color& fillColor,
+    const Color& borderColor, float borderWidth, float borderRadius,
+    bool disabled, bool focused, bool hovered,
+    int caretIndex, int selectionStart, int selectionEnd,
+    const std::string& imeComposition, int imeCompositionCursor,
+    const std::string& clickHandler,
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
+) {
+    ApplyTransform(x, y);
+    OnDrawInput(x, y, width, height, text, placeholder, fontSize, fontName, textColor,
+                fillColor, borderColor, borderWidth, borderRadius,
+                disabled, focused, hovered,
+                caretIndex, selectionStart, selectionEnd,
+                imeComposition, imeCompositionCursor,
+                clickHandler, className, compId, avaType);
+}
+
+void BaseRenderer::DrawCheckBox(
+    float x, float y, float width, float height,
+    const std::string& text,
+    float fontSize, const char* fontName,
+    const Color& textColor,
+    const Color& boxFillColor,
+    const Color& boxBorderColor, float borderWidth, float borderRadius,
+    bool checked, bool disabled, bool focused, bool hovered,
+    const std::string& clickHandler,
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
+) {
+    ApplyTransform(x, y);
+    OnDrawCheckBox(x, y, width, height, text, fontSize, fontName, textColor,
+                   boxFillColor, boxBorderColor, borderWidth, borderRadius,
+                   checked, disabled, focused, hovered, clickHandler, className, compId, avaType);
+}
+
+void BaseRenderer::DrawRadioButton(
+    float x, float y, float width, float height,
+    const std::string& text,
+    float fontSize, const char* fontName,
+    const Color& textColor,
+    const Color& boxFillColor,
+    const Color& boxBorderColor, float borderWidth,
+    bool selected, bool disabled, bool focused, bool hovered,
+    const std::string& clickHandler,
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
+) {
+    ApplyTransform(x, y);
+    OnDrawRadioButton(x, y, width, height, text, fontSize, fontName, textColor,
+                       boxFillColor, boxBorderColor, borderWidth,
+                       selected, disabled, focused, hovered, clickHandler, className, compId, avaType);
+}
+
+void BaseRenderer::DrawComboBox(
+    float x, float y, float width, float height,
+    const std::vector<render::ComboBoxItem>& items,
+    float fontSize, const char* fontName,
+    const Color& textColor,
+    const Color& fillColor,
+    const Color& borderColor, float borderWidth, float borderRadius,
+    bool disabled, bool focused, bool hovered, bool open,
+    const std::string& clickHandler,
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
+) {
+    ApplyTransform(x, y);
+    OnDrawComboBox(x, y, width, height, items, fontSize, fontName, textColor,
+                   fillColor, borderColor, borderWidth, borderRadius,
+                   disabled, focused, hovered, open, clickHandler, className, compId, avaType);
+}
+
 void BaseRenderer::PushClipRect(float x, float y, float width, float height) {
+    ApplyTransform(x, y);
     clipStack_.push({x, y, width, height});
+    OnPushClipRect(x, y, width, height);
 }
 
 void BaseRenderer::PopClipRect() {
+    OnPopClipRect();
     if (!clipStack_.empty()) {
         clipStack_.pop();
     }

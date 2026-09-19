@@ -149,6 +149,11 @@ std::string HTMLRenderer::ColorToHex(const Color& c) const {
     return ss.str();
 }
 
+void HTMLRenderer::AppendPositionStyle(float x, float y, float width, float height) {
+    bodyHtml_ << "left: " << x << "px; top: " << y << "px; "
+              << "width: " << width << "px; height: " << height << "px; ";
+}
+
 std::string HTMLRenderer::GetTransformCSS() const {
     std::stringstream ss;
     ss << "transform: ";
@@ -429,12 +434,9 @@ void HTMLRenderer::OnDrawRectangle(
     const std::string& className
 ) {
     const bool hasClass = !className.empty();
-    if (hasClass) {
-        bodyHtml_ << "<div class=\"" << className << "\" style=\"";
-    } else {
-        bodyHtml_ << "<div class=\"ava-element\" style=\"";
-        bodyHtml_ << "left: " << x << "px; top: " << y << "px; "
-              << "width: " << width << "px; height: " << height << "px; ";
+    bodyHtml_ << "<div class=\"" << (hasClass ? className : "ava-element") << "\" style=\"";
+    AppendPositionStyle(x, y, width, height);
+    if (!hasClass) {
         bodyHtml_ << "background-color: " << ColorToHex(fillColor) << "; "
               << "border: " << borderWidth << "px solid " << ColorToHex(borderColor) << "; ";
         if (borderRadius > 0.0f) {
@@ -463,12 +465,9 @@ void HTMLRenderer::OnDrawEllipse(
     const float top = cy - ry;
     const float width = rx * 2.0f;
     const float height = ry * 2.0f;
-    if (hasClass) {
-        bodyHtml_ << "<div class=\"" << className << "\" style=\"";
-    } else {
-        bodyHtml_ << "<div class=\"ava-element\" style=\"";
-        bodyHtml_ << "left: " << left << "px; top: " << top << "px; "
-              << "width: " << width << "px; height: " << height << "px; ";
+    bodyHtml_ << "<div class=\"" << (hasClass ? className : "ava-element") << "\" style=\"";
+    AppendPositionStyle(left, top, width, height);
+    if (!hasClass) {
         bodyHtml_ << "background-color: " << ColorToHex(fillColor) << "; "
               << "border: " << borderWidth << "px solid " << ColorToHex(borderColor) << "; "
               << "border-radius: 50%; ";
@@ -549,18 +548,16 @@ void HTMLRenderer::OnDrawText(
     bool wrap
 ) {
     const bool hasClass = !className.empty();
-    if (hasClass) {
-        bodyHtml_ << "<div class=\"" << className << "\" style=\"";
-    } else {
-        bodyHtml_ << "<div class=\"ava-element ava-text\" style=\"";
-        bodyHtml_ << "left: " << x << "px; top: " << y << "px; ";
-        if (wrap && maxWidth > 0.0f) {
-            bodyHtml_ << "width: " << maxWidth << "px; white-space: normal; overflow-wrap: break-word; ";
-        } else if (maxWidth > 0.0f) {
-            bodyHtml_ << "width: " << maxWidth << "px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; ";
-        } else {
-            bodyHtml_ << "white-space: nowrap; ";
-        }
+    bodyHtml_ << "<div class=\"" << (hasClass ? className : "ava-element ava-text") << "\" style=\"";
+    bodyHtml_ << "left: " << x << "px; top: " << y << "px; ";
+    if (wrap && maxWidth > 0.0f) {
+        bodyHtml_ << "width: " << maxWidth << "px; white-space: normal; overflow-wrap: break-word; ";
+    } else if (maxWidth > 0.0f) {
+        bodyHtml_ << "width: " << maxWidth << "px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; ";
+    } else if (!hasClass) {
+        bodyHtml_ << "white-space: nowrap; ";
+    }
+    if (!hasClass) {
         bodyHtml_ << "font-size: " << fontSize << "px; "
               << "font-family: '" << ResolveCssFontFamily(fontName) << "', sans-serif; "
               << "color: " << ColorToHex(color) << "; ";
@@ -603,17 +600,16 @@ void HTMLRenderer::OnDrawButton(
     const Color& borderColor, float borderWidth, float borderRadius,
     bool disabled,
     const std::string& clickHandler,
-    const std::string& className
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
 ) {
     const bool hasClass = !className.empty();
     bodyHtml_ << "<button type=\"button\"";
-    if (hasClass) {
-        bodyHtml_ << " class=\"" << className << "\" style=\"";
-    } else {
-        bodyHtml_ << " class=\"ava-element ava-button\" style=\"";
-        bodyHtml_ << "left: " << x << "px; top: " << y << "px; "
-              << "width: " << width << "px; height: " << height << "px; "
-              << "background-color: " << ColorToHex(fillColor) << "; "
+    bodyHtml_ << " class=\"" << (hasClass ? className : "ava-element ava-button") << "\" style=\"";
+    AppendPositionStyle(x, y, width, height);
+    if (!hasClass) {
+        bodyHtml_ << "background-color: " << ColorToHex(fillColor) << "; "
               << "border: " << borderWidth << "px solid " << ColorToHex(borderColor) << "; ";
         if (borderRadius > 0.0f) {
             bodyHtml_ << "border-radius: " << borderRadius << "px; ";
@@ -629,6 +625,7 @@ void HTMLRenderer::OnDrawButton(
     if (disabled) {
         bodyHtml_ << " disabled";
     }
+    bodyHtml_ << " data-comp-id=\"" << compId << "\" data-ava-type=\"" << EscapeHtmlAttr(avaType) << "\"";
     if (!clickHandler.empty()) {
         bodyHtml_ << " data-event=\"click\" data-handler=\"" << EscapeHtmlAttr(clickHandler) << "\"";
     }
@@ -642,7 +639,9 @@ void HTMLRenderer::OnDrawLink(
     const Color& color,
     const std::string& href,
     const std::string& clickHandler,
-    const std::string& className
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
 ) {
     std::string safeHref;
     safeHref.reserve(href.size());
@@ -656,12 +655,10 @@ void HTMLRenderer::OnDrawLink(
 
     const bool hasClass = !className.empty();
     bodyHtml_ << "<a href=\"" << safeHref << "\"";
-    if (hasClass) {
-        bodyHtml_ << " class=\"" << className << "\" style=\"";
-    } else {
-        bodyHtml_ << " class=\"ava-element ava-link\" style=\"";
-        bodyHtml_ << "left: " << x << "px; top: " << y << "px; "
-              << "white-space: nowrap; text-decoration: none; "
+    bodyHtml_ << " class=\"" << (hasClass ? className : "ava-element ava-link") << "\" style=\"";
+    bodyHtml_ << "left: " << x << "px; top: " << y << "px; ";
+    if (!hasClass) {
+        bodyHtml_ << "white-space: nowrap; text-decoration: none; "
               << "font-size: " << fontSize << "px; "
               << "font-family: '" << ResolveCssFontFamily(fontName) << "', sans-serif; "
               << "color: " << ColorToHex(color) << "; ";
@@ -670,10 +667,197 @@ void HTMLRenderer::OnDrawLink(
           << GetTransformCSS() << " "
           << GetClipCSS()
           << "\"";
+    bodyHtml_ << " data-comp-id=\"" << compId << "\" data-ava-type=\"" << EscapeHtmlAttr(avaType) << "\"";
     if (!clickHandler.empty()) {
         bodyHtml_ << " data-event=\"click\" data-handler=\"" << EscapeHtmlAttr(clickHandler) << "\"";
     }
     bodyHtml_ << ">" << (text ? text : "") << "</a>\n";
+}
+
+void HTMLRenderer::OnDrawInput(
+    float x, float y, float width, float height,
+    const std::string& text,
+    const std::string& placeholder,
+    float fontSize, const char* fontName,
+    const Color& textColor,
+    const Color& fillColor,
+    const Color& borderColor, float borderWidth, float borderRadius,
+    bool disabled, bool focused, bool /*hovered*/,
+    int /*caretIndex*/, int /*selectionStart*/, int /*selectionEnd*/,
+    const std::string& /*imeComposition*/, int /*imeCompositionCursor*/,
+    const std::string& clickHandler,
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
+) {
+    const bool hasClass = !className.empty();
+    bodyHtml_ << "<input type=\"text\" value=\"" << EscapeHtmlAttr(text) << "\""
+          << " placeholder=\"" << EscapeHtmlAttr(placeholder) << "\"";
+    bodyHtml_ << " class=\"" << (hasClass ? className : "ava-element ava-input")
+          << (focused ? " ava-focused" : "") << "\" style=\"";
+    AppendPositionStyle(x, y, width, height);
+    if (!hasClass) {
+        bodyHtml_ << "background-color: " << ColorToHex(fillColor) << "; "
+              << "border: " << borderWidth << "px solid " << ColorToHex(borderColor) << "; ";
+        if (borderRadius > 0.0f) {
+            bodyHtml_ << "border-radius: " << borderRadius << "px; ";
+        }
+        bodyHtml_ << "font-size: " << fontSize << "px; "
+              << "font-family: '" << ResolveCssFontFamily(fontName) << "', sans-serif; "
+              << "color: " << ColorToHex(textColor) << "; ";
+    }
+    bodyHtml_ << "opacity: " << currentOpacity_ << "; "
+          << GetTransformCSS() << " "
+          << GetClipCSS()
+          << "\"";
+    if (disabled) {
+        bodyHtml_ << " disabled";
+    }
+    bodyHtml_ << " data-comp-id=\"" << compId << "\" data-ava-type=\"" << EscapeHtmlAttr(avaType) << "\"";
+    if (!clickHandler.empty()) {
+        bodyHtml_ << " data-event=\"input\" data-handler=\"" << EscapeHtmlAttr(clickHandler) << "\"";
+    }
+    bodyHtml_ << " />\n";
+}
+
+void HTMLRenderer::OnDrawCheckBox(
+    float x, float y, float width, float height,
+    const std::string& text,
+    float fontSize, const char* fontName,
+    const Color& textColor,
+    const Color& boxFillColor,
+    const Color& boxBorderColor, float borderWidth, float borderRadius,
+    bool checked, bool disabled, bool focused, bool /*hovered*/,
+    const std::string& clickHandler,
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
+) {
+    const bool hasClass = !className.empty();
+    bodyHtml_ << "<label";
+    bodyHtml_ << " class=\"" << (hasClass ? className : "ava-element ava-checkbox")
+          << (focused ? " ava-focused" : "") << "\" style=\"";
+    AppendPositionStyle(x, y, width, height);
+    if (!hasClass) {
+        bodyHtml_ << "font-size: " << fontSize << "px; "
+              << "font-family: '" << ResolveCssFontFamily(fontName) << "', sans-serif; "
+              << "color: " << ColorToHex(textColor) << "; ";
+    }
+    bodyHtml_ << "opacity: " << currentOpacity_ << "; "
+          << GetTransformCSS() << " "
+          << GetClipCSS()
+          << "\">";
+    bodyHtml_ << "<input type=\"checkbox\""
+          << " style=\"accent-color: " << ColorToHex(boxFillColor) << "; "
+          << "outline-color: " << ColorToHex(boxBorderColor) << "; "
+          << "outline-width: " << borderWidth << "px;"
+          << (borderRadius > 0.0f ? (" border-radius: " + std::to_string(borderRadius) + "px;") : std::string())
+          << "\"";
+    if (checked) {
+        bodyHtml_ << " checked";
+    }
+    if (disabled) {
+        bodyHtml_ << " disabled";
+    }
+    bodyHtml_ << " data-comp-id=\"" << compId << "\" data-ava-type=\"" << EscapeHtmlAttr(avaType) << "\"";
+    if (!clickHandler.empty()) {
+        bodyHtml_ << " data-event=\"change\" data-handler=\"" << EscapeHtmlAttr(clickHandler) << "\"";
+    }
+    bodyHtml_ << " />" << EscapeHtmlAttr(text) << "</label>\n";
+}
+
+void HTMLRenderer::OnDrawRadioButton(
+    float x, float y, float width, float height,
+    const std::string& text,
+    float fontSize, const char* fontName,
+    const Color& textColor,
+    const Color& boxFillColor,
+    const Color& boxBorderColor, float borderWidth,
+    bool selected, bool disabled, bool focused, bool /*hovered*/,
+    const std::string& clickHandler,
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
+) {
+    const bool hasClass = !className.empty();
+    bodyHtml_ << "<label";
+    bodyHtml_ << " class=\"" << (hasClass ? className : "ava-element ava-radiobutton")
+          << (focused ? " ava-focused" : "") << "\" style=\"";
+    AppendPositionStyle(x, y, width, height);
+    if (!hasClass) {
+        bodyHtml_ << "font-size: " << fontSize << "px; "
+              << "font-family: '" << ResolveCssFontFamily(fontName) << "', sans-serif; "
+              << "color: " << ColorToHex(textColor) << "; ";
+    }
+    bodyHtml_ << "opacity: " << currentOpacity_ << "; "
+          << GetTransformCSS() << " "
+          << GetClipCSS()
+          << "\">";
+    bodyHtml_ << "<input type=\"radio\""
+          << " style=\"accent-color: " << ColorToHex(boxFillColor) << "; "
+          << "outline-color: " << ColorToHex(boxBorderColor) << "; "
+          << "outline-width: " << borderWidth << "px;\"";
+    if (selected) {
+        bodyHtml_ << " checked";
+    }
+    if (disabled) {
+        bodyHtml_ << " disabled";
+    }
+    bodyHtml_ << " data-comp-id=\"" << compId << "\" data-ava-type=\"" << EscapeHtmlAttr(avaType) << "\"";
+    if (!clickHandler.empty()) {
+        bodyHtml_ << " data-event=\"change\" data-handler=\"" << EscapeHtmlAttr(clickHandler) << "\"";
+    }
+    bodyHtml_ << " />" << EscapeHtmlAttr(text) << "</label>\n";
+}
+
+void HTMLRenderer::OnDrawComboBox(
+    float x, float y, float width, float height,
+    const std::vector<render::ComboBoxItem>& items,
+    float fontSize, const char* fontName,
+    const Color& textColor,
+    const Color& fillColor,
+    const Color& borderColor, float borderWidth, float borderRadius,
+    bool disabled, bool focused, bool /*hovered*/, bool open,
+    const std::string& clickHandler,
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
+) {
+    const bool hasClass = !className.empty();
+    bodyHtml_ << "<select";
+    bodyHtml_ << " class=\"" << (hasClass ? className : "ava-element ava-combobox")
+          << (focused ? " ava-focused" : "") << (open ? " ava-open" : "") << "\" style=\"";
+    AppendPositionStyle(x, y, width, height);
+    if (!hasClass) {
+        bodyHtml_ << "background-color: " << ColorToHex(fillColor) << "; "
+              << "border: " << borderWidth << "px solid " << ColorToHex(borderColor) << "; ";
+        if (borderRadius > 0.0f) {
+            bodyHtml_ << "border-radius: " << borderRadius << "px; ";
+        }
+        bodyHtml_ << "font-size: " << fontSize << "px; "
+              << "font-family: '" << ResolveCssFontFamily(fontName) << "', sans-serif; "
+              << "color: " << ColorToHex(textColor) << "; ";
+    }
+    bodyHtml_ << "opacity: " << currentOpacity_ << "; "
+          << GetTransformCSS() << " "
+          << GetClipCSS()
+          << "\"";
+    if (disabled) {
+        bodyHtml_ << " disabled";
+    }
+    bodyHtml_ << " data-comp-id=\"" << compId << "\" data-ava-type=\"" << EscapeHtmlAttr(avaType) << "\"";
+    if (!clickHandler.empty()) {
+        bodyHtml_ << " data-event=\"change\" data-handler=\"" << EscapeHtmlAttr(clickHandler) << "\"";
+    }
+    bodyHtml_ << ">\n";
+    for (const render::ComboBoxItem& item : items) {
+        bodyHtml_ << "<option value=\"" << EscapeHtmlAttr(item.value) << "\"";
+        if (item.selected) {
+            bodyHtml_ << " selected";
+        }
+        bodyHtml_ << ">" << EscapeHtmlAttr(item.label) << "</option>\n";
+    }
+    bodyHtml_ << "</select>\n";
 }
 
 }

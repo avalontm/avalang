@@ -1,7 +1,10 @@
 #include "WinWindow.h"
 #include "WinInputState.h"
+#include "WinAccessibilityBridge.h"
+#include "WinAccessibilityProvider.h"
 #include <shellscalingapi.h>
 #include <imm.h>
+#include <uiautomation.h>
 #include <string>
 #include <vector>
 
@@ -107,8 +110,23 @@ LRESULT CALLBACK WinWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         case WM_CLOSE:
         case WM_DESTROY:
             if (self) self->closed_ = true;
-            if (msg == WM_DESTROY) PostQuitMessage(0);
+            if (msg == WM_DESTROY) {
+                UiaReturnRawElementProvider(hwnd, 0, 0, nullptr);
+                PostQuitMessage(0);
+            }
             break;
+        case WM_GETOBJECT: {
+            if (static_cast<long>(lParam) == static_cast<long>(UiaRootObjectId)) {
+                accessibility::AccessibilityNode* root = WinAccessibility_Root();
+                if (root) {
+                    IRawElementProviderSimple* provider = new WinUiaProvider(root, hwnd);
+                    LRESULT result = UiaReturnRawElementProvider(hwnd, wParam, lParam, provider);
+                    provider->Release();
+                    return result;
+                }
+            }
+            break;
+        }
         case WM_MOUSEWHEEL: {
             float delta = static_cast<float>(static_cast<short>(HIWORD(wParam))) / WHEEL_DELTA;
             WinInput_PushWheelDelta(0.0f, delta);

@@ -4,6 +4,9 @@
 #include <cctype>
 #include <string>
 
+#include "layout/ILayoutNode.h"
+#include "layout/LayoutEngine.h"
+
 namespace avalang {
 namespace ui {
 namespace accessibility {
@@ -71,9 +74,11 @@ void ApplyDefaultActions(AccessibilityRole role, AccessibilityNode* node) {
 
 }
 
-std::unique_ptr<AccessibilityTree> AccessibilityTree::Create(ComponentTree* componentTree) {
+std::unique_ptr<AccessibilityTree> AccessibilityTree::Create(ComponentTree* componentTree,
+                                                               LayoutEngine* layoutEngine,
+                                                               ComponentId focusedId) {
     std::unique_ptr<AccessibilityTree> tree(new AccessibilityTree());
-    tree->Build(componentTree);
+    tree->Build(componentTree, layoutEngine, focusedId);
     return tree;
 }
 
@@ -92,14 +97,15 @@ AccessibilityNode* AccessibilityTree::FindById(ComponentId id) const {
     return nullptr;
 }
 
-void AccessibilityTree::Build(ComponentTree* componentTree) {
+void AccessibilityTree::Build(ComponentTree* componentTree, LayoutEngine* layoutEngine, ComponentId focusedId) {
     if (!componentTree) return;
     IComponent* rootComponent = componentTree->Root();
     if (!rootComponent) return;
-    root_ = BuildNode(rootComponent, nullptr);
+    root_ = BuildNode(rootComponent, nullptr, layoutEngine, focusedId);
 }
 
-AccessibilityNode* AccessibilityTree::BuildNode(IComponent* component, AccessibilityNode* parent) {
+AccessibilityNode* AccessibilityTree::BuildNode(IComponent* component, AccessibilityNode* parent,
+                                                  LayoutEngine* layoutEngine, ComponentId focusedId) {
     if (!component) return nullptr;
 
     const std::string typeLower = Lowercase(component->TypeName());
@@ -124,6 +130,9 @@ AccessibilityNode* AccessibilityTree::BuildNode(IComponent* component, Accessibi
         node->AddState(AccessibilityState::Disabled);
         node->RemoveState(AccessibilityState::Focusable);
     }
+    if (component->Id() == focusedId) {
+        node->AddState(AccessibilityState::Focused);
+    }
     if (AsBool(component, "visible")) {
         node->AddState(AccessibilityState::Visible);
     } else {
@@ -140,6 +149,13 @@ AccessibilityNode* AccessibilityTree::BuildNode(IComponent* component, Accessibi
 
     ApplyDefaultActions(role, node.get());
 
+    if (layoutEngine) {
+        if (ILayoutNode* layoutNode = layoutEngine->FindNode(component->Id())) {
+            const LayoutRect& rect = layoutNode->Rect();
+            node->SetBounds(AccessibilityRect{rect.x, rect.y, rect.width, rect.height});
+        }
+    }
+
     AccessibilityNode* raw = node.get();
     raw->SetParent(parent);
     nodes_.push_back(std::move(node));
@@ -149,7 +165,7 @@ AccessibilityNode* AccessibilityTree::BuildNode(IComponent* component, Accessibi
     }
 
     for (IComponent* child : component->Children()) {
-        BuildNode(child, raw);
+        BuildNode(child, raw, layoutEngine, focusedId);
     }
 
     return raw;

@@ -13,6 +13,8 @@ std::string EvalPropertyExpr(AvaVM* vm, const std::string& raw_value);
 
 std::string GetDisplayPropertyKey(const std::string& node_type);
 
+std::string GetCheckedPropertyKey(const std::string& node_type);
+
 void BindCodeBehind(AvaVM* vm, const DesignDocument& doc);
 
 bool InvokeHandler(AvaVM* vm, const std::string& handler_name, std::string* out_error = nullptr);

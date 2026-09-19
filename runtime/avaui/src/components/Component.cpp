@@ -1,6 +1,7 @@
 #include "components/Component.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace avalang {
 namespace ui {
@@ -72,15 +73,44 @@ unsigned long long Component::Version() const {
 }
 
 void Component::TouchVersion() {
+    Invalidate(kInvalidationAll);
+}
+
+void Component::Invalidate(InvalidationFlag flags) {
     ++version_;
+    if (HasInvalidationFlag(flags, InvalidationFlag::Layout)) {
+        ++layoutVersion_;
+    }
+    if (HasInvalidationFlag(flags, InvalidationFlag::Paint)) {
+        ++paintVersion_;
+    }
+    if (HasInvalidationFlag(flags, InvalidationFlag::Scene)) {
+        ++sceneVersion_;
+    }
     if (parent_) {
-        parent_->TouchVersion();
+        parent_->Invalidate(flags);
     }
 }
 
+unsigned long long Component::LayoutVersion() const {
+    return layoutVersion_;
+}
+
+unsigned long long Component::PaintVersion() const {
+    return paintVersion_;
+}
+
+unsigned long long Component::SceneVersion() const {
+    return sceneVersion_;
+}
+
 void Component::SetProperty(const std::string& name, PropertyValue value) {
+    SetProperty(name, std::move(value), kInvalidationAll);
+}
+
+void Component::SetProperty(const std::string& name, PropertyValue value, InvalidationFlag flags) {
     properties_[name] = std::move(value);
-    TouchVersion();
+    Invalidate(flags);
 }
 
 const PropertyValue* Component::GetProperty(const std::string& name) const {

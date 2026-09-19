@@ -36,6 +36,9 @@
 #include "embedded_project.h" // GetKeyFromFragments
 #include "packaged_runtime.h"
 #include "payload_format.h"
+#include "diagnostics/crash_handler.h"
+#include "diagnostics/debug_mode.h"
+#include "diagnostics/error_report.h"
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -82,9 +85,18 @@ bool ReadTail(std::ifstream& f, std::uint64_t file_size, std::size_t n,
 } // namespace
 
 int main(int argc, char** argv) {
+    // Fase 1 de PLAN_DEBUG_MODE_AVASTUDIO.md: este es el binario que
+    // 'ava_cli build' usa en el camino rapido (prebuilt + payload
+    // apendeado) para la gran mayoria de los proyectos consola -- antes
+    // no tenia ningun filtro de excepcion.
+    ava::diag::InstallCrashHandler("avapack_stub");
+    ava::diag::InitDebugRuntime(argc, argv);
+
     fs::path self_path = GetSelfExecutablePath();
     if (self_path.empty()) {
         std::fprintf(stderr, "error: no se pudo determinar la ruta del propio ejecutable\n");
+        ava::diag::EmitStructuredError(ava::diag::ErrorKind::kLaunchFailure,
+                                        "no se pudo determinar la ruta del propio ejecutable");
         return 1;
     }
 
@@ -92,33 +104,41 @@ int main(int argc, char** argv) {
     std::uint64_t file_size = static_cast<std::uint64_t>(fs::file_size(self_path, ec));
     if (ec) {
         std::fprintf(stderr, "error: no se pudo leer el tamaño de %s\n", self_path.string().c_str());
+        ava::diag::EmitStructuredError(ava::diag::ErrorKind::kLaunchFailure,
+                                        "no se pudo leer el tamaño de " + self_path.string());
         return 1;
     }
 
     std::ifstream f(self_path, std::ios::binary);
     if (!f) {
         std::fprintf(stderr, "error: no se pudo abrir %s\n", self_path.string().c_str());
+        ava::diag::EmitStructuredError(ava::diag::ErrorKind::kLaunchFailure,
+                                        "no se pudo abrir " + self_path.string());
         return 1;
     }
 
     std::vector<unsigned char> footer_bytes;
     if (!ReadTail(f, file_size, avapack::kFooterSize, footer_bytes)) {
-        std::fprintf(stderr,
-                      "error: este ejecutable no tiene un payload valido apendeado (¿se "
-                      "corrio avapack_stub.exe directo en vez de un binario armado por "
-                      "'ava_cli build'?)\n");
+        const char* msg =
+            "este ejecutable no tiene un payload valido apendeado (¿se corrio "
+            "avapack_stub.exe directo en vez de un binario armado por 'ava_cli build'?)";
+        std::fprintf(stderr, "error: %s\n", msg);
+        ava::diag::EmitStructuredError(ava::diag::ErrorKind::kLaunchFailure, msg);
         return 1;
     }
 
     avapack::PayloadFooter footer;
     if (!avapack::DecodeFooter(footer_bytes.data(), footer_bytes.size(), footer)) {
-        std::fprintf(stderr, "error: footer invalido -- binario corrupto o de una version "
-                              "incompatible de avapack_stub\n");
+        const char* msg = "footer invalido -- binario corrupto o de una version "
+                           "incompatible de avapack_stub";
+        std::fprintf(stderr, "error: %s\n", msg);
+        ava::diag::EmitStructuredError(ava::diag::ErrorKind::kLaunchFailure, msg);
         return 1;
     }
     if (footer.blob_offset + footer.blob_size + avapack::kFooterSize > file_size) {
-        std::fprintf(stderr, "error: footer inconsistente (offset/size fuera de rango) -- "
-                              "binario corrupto\n");
+        const char* msg = "footer inconsistente (offset/size fuera de rango) -- binario corrupto";
+        std::fprintf(stderr, "error: %s\n", msg);
+        ava::diag::EmitStructuredError(ava::diag::ErrorKind::kLaunchFailure, msg);
         return 1;
     }
 
@@ -129,6 +149,8 @@ int main(int argc, char** argv) {
     if (static_cast<std::uint64_t>(f.gcount()) != footer.blob_size) {
         std::fprintf(stderr, "error: no se pudo leer el payload completo (%llu bytes)\n",
                      static_cast<unsigned long long>(footer.blob_size));
+        ava::diag::EmitStructuredError(ava::diag::ErrorKind::kLaunchFailure,
+                                        "no se pudo leer el payload completo");
         return 1;
     }
     f.close();
@@ -136,6 +158,8 @@ int main(int argc, char** argv) {
     avapack::PayloadBlob blob;
     if (!avapack::DecodePayloadBlob(blob_bytes.data(), blob_bytes.size(), blob)) {
         std::fprintf(stderr, "error: payload invalido/truncado -- binario corrupto\n");
+        ava::diag::EmitStructuredError(ava::diag::ErrorKind::kLaunchFailure,
+                                        "payload invalido/truncado -- binario corrupto");
         return 1;
     }
 

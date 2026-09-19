@@ -70,7 +70,7 @@ std::string EvalPropertyExpr(AvaVM* vm, const std::string& raw_value) {
         return raw_value;
     }
 
-    ava_value_t out_result;
+    ava_value_t out_result{};
     char* run_error = nullptr;
     ava_run(vm, module, &out_result, &run_error);
     ava_module_destroy(module);
@@ -103,12 +103,25 @@ std::string EvalPropertyExpr(AvaVM* vm, const std::string& raw_value) {
 }
 
 std::string GetDisplayPropertyKey(const std::string& node_type) {
+    static const std::unordered_map<std::string, std::string> kDisplayPropertyByType{
+        {"text", "text"},
+        {"textbox", "text"},
+        {"button", "text"},
+        {"link", "text"},
+        {"checkbox", "label"},
+        {"radiobutton", "label"},
+    };
+    const auto it = kDisplayPropertyByType.find(node_type);
+    return it != kDisplayPropertyByType.end() ? it->second : std::string();
+}
 
-    if (node_type == "text" || node_type == "textbox" || node_type == "button" || node_type == "link" ||
-        node_type == "checkbox" || node_type == "radiobutton") {
-        return "value";
-    }
-    return "";
+std::string GetCheckedPropertyKey(const std::string& node_type) {
+    static const std::unordered_map<std::string, std::string> kCheckedPropertyByType{
+        {"checkbox", "isChecked"},
+        {"radiobutton", "isSelected"},
+    };
+    const auto it = kCheckedPropertyByType.find(node_type);
+    return it != kCheckedPropertyByType.end() ? it->second : std::string();
 }
 
 void BindCodeBehind(AvaVM* vm, const DesignDocument& doc) {

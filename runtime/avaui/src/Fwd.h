@@ -11,6 +11,8 @@ class ILayoutNode;
 class LayoutEngine;
 struct LayoutRect;
 
+enum class InvalidationFlag : unsigned char;
+
 class IState;
 class StateBinding;
 

@@ -2,7 +2,11 @@
 
 #include <cfloat>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <string>
 #include <vector>
 
 #include "imgui.h"
@@ -18,10 +22,10 @@
 #include "util/process_log.h"
 #include "util/project_utils.h"
 
+#include "diagnostics/crash_handler.h"
+
 #if defined(_WIN32)
     #define AVASTUDIO_EXE_SUFFIX ".exe"
-    #define WIN32_LEAN_AND_MEAN
-    #include <windows.h>
 #else
     #define AVASTUDIO_EXE_SUFFIX ""
     #include <unistd.h>
@@ -47,6 +51,197 @@ struct BuildStageInfo {
     std::string label_key;
     float fraction;
 };
+
+std::string ExtractHexField(const std::string& text, const std::string& label) {
+    auto pos = text.find(label);
+    if (pos == std::string::npos) return {};
+    pos += label.size();
+    auto end = text.find_first_of("\r\n", pos);
+    if (end == std::string::npos) end = text.size();
+    return text.substr(pos, end - pos);
+}
+
+std::string FindNewestCrashDumpSince(std::chrono::system_clock::time_point since) {
+    std::error_code ec;
+    fs::path dir(ava::diag::CrashDumpDirectory());
+    if (!fs::exists(dir, ec)) return {};
+
+    std::string newest_path;
+    fs::file_time_type newest_time{};
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        if (ec) break;
+        if (entry.path().extension() != ".dmp") continue;
+        auto ftime = fs::last_write_time(entry, ec);
+        if (ec) continue;
+        auto sys_time = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+            ftime - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
+        if (sys_time < since) continue;
+        if (newest_path.empty() || ftime > newest_time) {
+            newest_time = ftime;
+            newest_path = entry.path().string();
+        }
+    }
+    return newest_path;
+}
+
+// Nombre simbolico de un codigo de salida NTSTATUS (lo que Windows devuelve
+// como exit code cuando un proceso muere por una excepcion). nullptr si no
+// es uno conocido.
+const char* NtStatusName(unsigned int code) {
+    switch (code) {
+        case 0xC0000005u: return "ACCESS_VIOLATION";
+        case 0xC00000FDu: return "STACK_OVERFLOW";
+        case 0xC0000094u: return "INT_DIVIDE_BY_ZERO";
+        case 0xC000001Du: return "ILLEGAL_INSTRUCTION";
+        case 0xC0000374u: return "HEAP_CORRUPTION";
+        case 0xC0000409u: return "STACK_BUFFER_OVERRUN / fail-fast";
+        case 0xC0000135u: return "DLL_NOT_FOUND (falta una DLL)";
+        case 0xC0000142u: return "DLL_INIT_FAILED (fallo la inicializacion de una DLL)";
+        case 0xC0000139u: return "ENTRYPOINT_NOT_FOUND (DLL de version distinta)";
+        case 0xC000007Bu: return "INVALID_IMAGE_FORMAT";
+        case 0xC06D007Eu: return "DELAYLOAD: modulo no encontrado";
+        case 0xC06D007Fu: return "DELAYLOAD: funcion no encontrada";
+        case 0xC000013Au: return "CONTROL_C_EXIT";
+        case 0x80000003u: return "BREAKPOINT";
+        default: return nullptr;
+    }
+}
+
+// Un exit code "de excepcion" (NTSTATUS de error) -- a diferencia de un
+// exit(1) normal de la app, que no significa que el proceso haya crasheado.
+bool LooksLikeNativeCrash(int exit_code) {
+    const unsigned int code = static_cast<unsigned int>(exit_code);
+    return (code & 0xF0000000u) == 0xC0000000u || code == 0x80000003u;
+}
+
+std::string FormatExitCode(int exit_code) {
+    const unsigned int code = static_cast<unsigned int>(exit_code);
+    char hex[16];
+    std::snprintf(hex, sizeof(hex), "0x%08X", code);
+    std::string out = hex;
+    if (const char* name = NtStatusName(code)) {
+        out += " = ";
+        out += name;
+    }
+    return out;
+}
+
+std::string DescribeFileAge(const fs::path& path) {
+    std::error_code ec;
+    const auto mtime = fs::last_write_time(path, ec);
+    if (ec) return "fecha desconocida";
+    const long long minutes = std::chrono::duration_cast<std::chrono::minutes>(
+                                   fs::file_time_type::clock::now() - mtime)
+                                   .count();
+    if (minutes < 1) return "hace menos de 1 minuto";
+    if (minutes < 120) return "hace " + std::to_string(minutes) + " min";
+    if (minutes < 60 * 48) return "hace " + std::to_string(minutes / 60) + " h";
+    return "hace " + std::to_string(minutes / (60 * 24)) + " dias";
+}
+
+// Texto para el panel de Logs cuando el .exe murio con un codigo de crash y
+// NO llego ninguna linea @@AVA_ERROR@@ (es decir, el handler de crash del
+// .exe no llego a ejecutarse). Cada linea termina en '\n' para que
+// FlushLogToOutput la publique por separado.
+std::string DescribeUnexpectedExit(const std::string& exe_path, int exit_code) {
+    std::error_code ec;
+    std::string out = "error: el proceso '" + exe_path + "' termino inesperadamente (codigo " +
+                       FormatExitCode(exit_code) + ")\n";
+    if (!LooksLikeNativeCrash(exit_code)) return out;
+
+    const fs::path crash_dir(ava::diag::CrashDumpDirectory());
+    const bool crash_dir_exists = fs::exists(crash_dir, ec);
+    out += "  No llego ninguna linea @@AVA_ERROR@@ ni se genero un .dmp/.txt nuevo: el handler de crash del "
+           ".exe no llego a ejecutarse.\n";
+    out += "  Carpeta de crashes: " + crash_dir.string() +
+           (crash_dir_exists ? " (existe, sin archivos nuevos)"
+                              : " (no existe: ningun .exe de Avalang ha escrito nunca un informe aqui)") +
+           "\n";
+    out += "  Binario: " + exe_path + " (modificado " + DescribeFileAge(exe_path) + ")\n";
+    out += "  Causas probables: (1) el .exe es de una version anterior sin handler, o desincronizado con sus "
+           "DLL (avalang.dll / avalang_ui.dll / avalang_ui_win.dll en su misma carpeta); (2) el crash ocurrio "
+           "antes de main(), durante la inicializacion de una DLL.\n";
+    out += "  Que probar: borrar la carpeta build_avastudio_run\\dist y volver a ejecutar (fuerza la "
+           "recompilacion), o ejecutar el .exe desde una consola o bajo el depurador de Visual Studio.\n";
+    return out;
+}
+
+bool IsRuntimeSourceFile(const fs::path& path) {
+    const std::string ext = path.extension().string();
+    return ext == ".cpp" || ext == ".cc" || ext == ".c" || ext == ".h" || ext == ".hpp" || ext == ".g4" ||
+           ext == ".cmake" || path.filename() == "CMakeLists.txt";
+}
+
+// Fecha del fuente mas reciente de los que se compila avanative (runtime
+// nativo + UI + host + comun + CMake). `out_newest_file` recibe cual es.
+fs::file_time_type NewestRuntimeSourceTime(const fs::path& repo_root, fs::path& out_newest_file) {
+    fs::file_time_type newest = (fs::file_time_type::min)();
+    std::error_code ec;
+
+    auto consider = [&](const fs::path& file, const fs::file_time_type& when) {
+        if (when > newest) {
+            newest = when;
+            out_newest_file = file;
+        }
+    };
+
+    const fs::path root_cmake = repo_root / "CMakeLists.txt";
+    const auto root_time = fs::last_write_time(root_cmake, ec);
+    if (!ec) consider(root_cmake, root_time);
+    ec.clear();
+
+    static const char* const kSourceDirs[] = {"runtime/avalang", "runtime/avaui", "runtime/avahost",
+                                               "runtime/common", "cmake"};
+    for (const char* rel : kSourceDirs) {
+        const fs::path dir = repo_root / rel;
+        if (!fs::is_directory(dir, ec)) {
+            ec.clear();
+            continue;
+        }
+        fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
+        fs::recursive_directory_iterator end;
+        for (; !ec && it != end; it.increment(ec)) {
+            const fs::directory_entry& entry = *it;
+            std::error_code entry_ec;
+            if (!entry.is_regular_file(entry_ec) || entry_ec) continue;
+            if (!IsRuntimeSourceFile(entry.path())) continue;
+            const auto when = entry.last_write_time(entry_ec);
+            if (entry_ec) continue;
+            consider(entry.path(), when);
+        }
+        ec.clear();
+    }
+    return newest;
+}
+
+// El binario de Run (avanative) esta desactualizado si no hay sello de "se
+// compilo bien" o si algun fuente del runtime es mas nuevo que ese sello.
+bool RunBuildIsStale(const fs::path& stamp_path, const fs::path& repo_root, std::string& out_reason) {
+    std::error_code ec;
+    if (!fs::exists(stamp_path, ec)) {
+        out_reason = "no hay constancia de que se compilara desde los fuentes actuales";
+        return true;
+    }
+    const auto stamp_time = fs::last_write_time(stamp_path, ec);
+    if (ec) {
+        out_reason = "no se pudo leer la fecha del ultimo build";
+        return true;
+    }
+    fs::path newest_file;
+    const auto newest = NewestRuntimeSourceTime(repo_root, newest_file);
+    if (newest > stamp_time) {
+        out_reason = newest_file.generic_string() + " es mas nuevo que el ultimo build";
+        return true;
+    }
+    return false;
+}
+
+void WriteRunStamp(const std::string& path) {
+    std::error_code ec;
+    fs::create_directories(fs::path(path).parent_path(), ec);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (out) out << "avanative run build ok\n";
+}
 
 BuildStageInfo DeriveBuildStage(const std::string& log) {
     struct Marker {
@@ -155,9 +350,16 @@ void StartMultiStepBuild(BuildPanelState& state, std::vector<BuildStep> steps, s
         state.log.clear();
         state.log_forwarded_upto = 0;
         state.has_result = false;
+        state.crash_dump_path.clear();
+        state.crash_code.clear();
+        state.crash_address.clear();
+        state.failure_summary.clear();
+        state.running_process.reset();
+        state.last_output_at = std::chrono::steady_clock::now();
     }
     state.logged_to_output = false;
     state.show_result_dialog = false;
+    state.pending_run_stamp.clear();
     state.building = true;
     state.build_started_at = std::chrono::steady_clock::now();
 
@@ -177,19 +379,41 @@ void StartMultiStepBuild(BuildPanelState& state, std::vector<BuildStep> steps, s
 
             bool launched = false;
             int exit_code = -1;
+            bool saw_structured_error = false;
+            bool saw_native_crash = false;
+            auto step_started_at = std::chrono::system_clock::now();
+
+            auto note_chunk = [&saw_structured_error, &saw_native_crash](const std::string& chunk) {
+                if (chunk.find("@@AVA_ERROR@@") != std::string::npos) saw_structured_error = true;
+                if (chunk.find("\"kind\":\"native_crash\"") != std::string::npos) saw_native_crash = true;
+            };
 
             if (streaming) {
+                const bool is_run_step = step.step_label.empty();
                 launched = streaming->ExecuteStreaming(
                     step.exe_path, step.args,
-                    [&state](const std::string& chunk) {
+                    [&state, &note_chunk](const std::string& chunk) {
+                        note_chunk(chunk);
                         std::lock_guard<std::mutex> lock(state.mutex);
                         state.log += chunk;
+                        state.last_output_at = std::chrono::steady_clock::now();
                     },
-                    exit_code);
+                    exit_code,
+                    [&state, is_run_step](avastd::shared_ptr<ava::platform::IProcessStream::IStdinWriter> writer) {
+                        if (!is_run_step) return;
+                        std::lock_guard<std::mutex> lock(state.mutex);
+                        state.running_process = std::move(writer);
+                    });
+                if (is_run_step) {
+                    std::lock_guard<std::mutex> lock(state.mutex);
+                    state.running_process.reset();
+                }
             } else {
                 ava::platform::ProcessResult result;
                 launched = process.Execute(step.exe_path, step.args, result);
                 if (launched) {
+                    note_chunk(result.stdout_output);
+                    note_chunk(result.stderr_output);
                     std::lock_guard<std::mutex> lock(state.mutex);
                     state.log += result.stdout_output;
                     if (!result.stderr_output.empty()) {
@@ -203,11 +427,29 @@ void StartMultiStepBuild(BuildPanelState& state, std::vector<BuildStep> steps, s
             if (!launched) {
                 std::lock_guard<std::mutex> lock(state.mutex);
                 state.log += "error: could not run '" + step.exe_path + "'\n";
+                state.failure_summary = "no se pudo lanzar '" + step.exe_path + "'";
                 all_succeeded = false;
                 break;
             }
             if (exit_code != 0) {
                 all_succeeded = false;
+                {
+                    std::lock_guard<std::mutex> lock(state.mutex);
+                    state.failure_summary = "codigo de salida " + FormatExitCode(exit_code);
+                }
+                if (step.step_label.empty() && !saw_structured_error) {
+                    std::lock_guard<std::mutex> lock(state.mutex);
+                    state.log += DescribeUnexpectedExit(step.exe_path, exit_code);
+                }
+                if (saw_native_crash || step.step_label.empty()) {
+                    std::string dump_path = FindNewestCrashDumpSince(step_started_at);
+                    if (!dump_path.empty()) {
+                        std::lock_guard<std::mutex> lock(state.mutex);
+                        state.crash_dump_path = dump_path;
+                        state.crash_code = ExtractHexField(state.log, "Codigo: ");
+                        state.crash_address = ExtractHexField(state.log, "Direccion: ");
+                    }
+                }
                 break;
             }
         }
@@ -228,30 +470,9 @@ void StartBuild(BuildPanelState& state, std::vector<std::string> args, std::stri
                         std::move(expected_result_path));
 }
 
-void TriggerConsoleRun(BuildPanelState& state, const std::string& exe_path) {
-    StartMultiStepBuild(state, {BuildStep{exe_path, {}, ""}}, exe_path);
-}
-
-void LaunchDetachedProcess(const std::string& exe_path, const std::vector<std::string>& extra_args = {}) {
-#if defined(_WIN32)
-    STARTUPINFOA startup_info{};
-    startup_info.cb = sizeof(startup_info);
-    PROCESS_INFORMATION process_info{};
-    std::string command_line = "\"" + exe_path + "\"";
-    for (const std::string& arg : extra_args) {
-        command_line += " \"" + arg + "\"";
-    }
-    const fs::path working_dir = fs::path(exe_path).parent_path();
-    const std::string working_dir_str = working_dir.string();
-    if (CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, FALSE, 0, nullptr,
-                        working_dir_str.empty() ? nullptr : working_dir_str.c_str(), &startup_info, &process_info)) {
-        CloseHandle(process_info.hProcess);
-        CloseHandle(process_info.hThread);
-    }
-#else
-    (void)exe_path;
-    (void)extra_args;
-#endif
+void TriggerRun(BuildPanelState& state, const std::string& exe_path,
+                 const std::vector<std::string>& extra_args = {}) {
+    StartMultiStepBuild(state, {BuildStep{exe_path, extra_args, ""}}, exe_path);
 }
 
 }  // namespace
@@ -367,26 +588,56 @@ std::string NormalizeEntryFilePath(const std::string& project_dir, const std::st
                                                                                          : picked_path;
 }
 
-void PollBuild(BuildPanelState& state, LogBridge& log_bridge) {
-    std::lock_guard<std::mutex> lock(state.mutex);
-    FlushLogToOutput(state.log, state.log_forwarded_upto, state.has_result, "[build]   ", log_bridge);
-    if (state.has_result && !state.logged_to_output) {
-        log_bridge.Log(state.last_success ? "[build] succeeded -> " + state.result_path : "[build] failed:");
-        state.logged_to_output = true;
-        state.dialog_success = state.last_success;
-        state.dialog_result_path = state.result_path;
-        state.show_result_dialog = true;
-
-        const bool should_launch = state.launch_on_success;
-        state.launch_on_success = false;
-        if (should_launch && state.last_success) LaunchDetachedProcess(state.result_path, state.launch_extra_args);
+void TerminateRunningProcess(BuildPanelState& state) {
+    avastd::shared_ptr<ava::platform::IProcessStream::IStdinWriter> writer;
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        writer = state.running_process;
     }
+    if (writer) writer->Terminate();
+}
+
+void PollBuild(BuildPanelState& state, LogBridge& log_bridge) {
+    bool should_launch = false;
+    std::string launch_result_path;
+    std::vector<std::string> launch_extra_args;
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        FlushLogToOutput(state.log, state.log_forwarded_upto, state.has_result, "[build]   ", log_bridge);
+        if (state.has_result && !state.logged_to_output) {
+            std::string failed_line = "[build] failed";
+            failed_line += state.failure_summary.empty() ? " -- ver el detalle en las lineas anteriores"
+                                                         : " -- " + state.failure_summary;
+            log_bridge.Log(state.last_success ? "[build] succeeded -> " + state.result_path : failed_line);
+            state.logged_to_output = true;
+
+            // Sello de "el binario de Run se compilo bien con los fuentes de este momento".
+            if (state.last_success && !state.pending_run_stamp.empty()) WriteRunStamp(state.pending_run_stamp);
+            state.pending_run_stamp.clear();
+            // Failures (build errors and crashes of the launched app) are not
+            // shown as a modal: the Logs panel already has the full detail
+            // (file:line, stack, dump path), so a dialog would be redundant.
+            // Only a successful build still offers the "Open Folder" dialog.
+            state.dialog_success = state.last_success;
+            state.dialog_result_path = state.result_path;
+            state.show_result_dialog = state.last_success;
+
+            if (state.launch_on_success && state.last_success) {
+                should_launch = true;
+                launch_result_path = state.result_path;
+                launch_extra_args = state.launch_extra_args;
+            }
+            state.launch_on_success = false;
+        }
+    }
+    if (should_launch) TriggerRun(state, launch_result_path, launch_extra_args);
 }
 
 TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const AvaProjFile& proj, const AvaProjUserFile& user,
                                   const std::string& explorer_root_dir, LogBridge& log_bridge,
                                   bool project_ambiguous, const std::vector<std::string>& avaproj_candidates,
-                                  std::optional<AvaProjOutputType> force_output_type, bool force_no_ui) {
+                                  std::optional<AvaProjOutputType> force_output_type, bool force_no_ui,
+                                  bool force_debug_symbols) {
     TriggerBuildOutcome outcome;
     outcome.project_dir = explorer_root_dir;
     if (state.building.load()) return outcome;
@@ -518,6 +769,7 @@ TriggerBuildOutcome TriggerBuild(BuildPanelState& state, const AvaProjFile& proj
             }
             if (proj.zero_disk && !is_library) args.push_back("--zero-disk");
             if (proj.debug_unencrypted) args.push_back("--debug");
+            if (force_debug_symbols) args.push_back("--debug-symbols");
             if (proj.uses_ui && !force_no_ui) args.push_back("--with-ui");
         }
 
@@ -631,22 +883,49 @@ TriggerBuildOutcome TriggerDesktopUiRunBuild(BuildPanelState& state, const AvaPr
     const bool avanative_dlls_present = fs::exists(dist_dir / "avalang.dll", dist_ec) &&
                                          fs::exists(dist_dir / "avalang_ui.dll", dist_ec) &&
                                          fs::exists(dist_dir / "avalang_ui_win.dll", dist_ec);
-    if (fs::exists(expected_result_path, dist_ec) && avanative_dlls_present) {
+    const bool cached_binary_present = fs::exists(expected_result_path, dist_ec) && avanative_dlls_present;
+
+    // Antes se reutilizaba SIEMPRE el avanative.exe cacheado: si los fuentes
+    // del runtime cambiaban (o el binario venia de una version anterior), Run
+    // ejecutaba un .exe viejo -- con DLL desincronizadas y sin el handler de
+    // crash actual -- y podia morir con un access violation sin dejar rastro. Ahora
+    // solo se reutiliza si esta al dia respecto de los fuentes; set
+    // AVA_STUDIO_SKIP_STALE_CHECK=1 para volver al comportamiento anterior.
+    const fs::path run_stamp_path = build_dir / ".studio_run_stamp";
+    std::string stale_reason;
+    const bool skip_stale_check = std::getenv("AVA_STUDIO_SKIP_STALE_CHECK") != nullptr;
+    if (cached_binary_present && (skip_stale_check || !RunBuildIsStale(run_stamp_path, repo_root, stale_reason))) {
         StartMultiStepBuild(state, {}, expected_result_path.string());
         return outcome;
     }
 
-    log_bridge.Log("[build] " + util::Tr("build.first_run_build_notice"));
+    if (cached_binary_present) {
+        log_bridge.Log("[build] avanative.exe desactualizado (" + stale_reason + ") -- recompilando el runtime de Run en " +
+                       build_dir.string() + " (incremental; puede tardar si cambio el runtime).");
+    } else {
+        log_bridge.Log("[build] " + util::Tr("build.first_run_build_notice"));
+    }
 
     BuildStep configure_step{"cmake",
                               {"-S", repo_root.string(), "-B", build_dir.string(), "-DAVA_BUILD_SHARED=ON",
                                "-DAVA_BUILD_UI=ON", "-DAVA_BUILD_UI_BACKEND_WIN=ON", "-DAVA_BUILD_AVAHOST=ON",
                                "-DAVA_PACKAGE_DIST=ON"},
                               "cmake configure"};
-    BuildStep build_step{"cmake", {"--build", build_dir.string(), "--target", "avanative", "--config", "Release"},
+    BuildStep build_step{"cmake",
+                         {"--build", build_dir.string(), "--target", "avanative", "--config", "Release", "--parallel"},
                          "cmake build"};
 
-    StartMultiStepBuild(state, {configure_step, build_step}, expected_result_path.string());
+    // Si el arbol de build ya esta configurado y solo se trata de ponerlo al
+    // dia, alcanza con el build incremental (cmake --build reconfigura solo
+    // si hace falta).
+    std::error_code cache_ec;
+    const bool skip_configure = cached_binary_present && fs::exists(build_dir / "CMakeCache.txt", cache_ec);
+    std::vector<BuildStep> steps;
+    if (!skip_configure) steps.push_back(configure_step);
+    steps.push_back(build_step);
+
+    StartMultiStepBuild(state, std::move(steps), expected_result_path.string());
+    state.pending_run_stamp = run_stamp_path.string();
 
     return outcome;
 }
@@ -694,13 +973,13 @@ TriggerBuildOutcome DispatchBuildAndRun(BuildPanelState& state, RunTarget target
     switch (target) {
         case RunTarget::kConsole:
             return TriggerBuild(state, proj, user, explorer_root_dir, log_bridge, project_ambiguous,
-                                 avaproj_candidates, AvaProjOutputType::kExe, true);
+                                 avaproj_candidates, AvaProjOutputType::kExe, true, state.debug_mode);
         case RunTarget::kDesktopUi:
             return TriggerDesktopUiRunBuild(state, proj, user, explorer_root_dir, log_bridge, project_ambiguous,
                                              avaproj_candidates);
         case RunTarget::kLibrary:
             return TriggerBuild(state, proj, user, explorer_root_dir, log_bridge, project_ambiguous,
-                                 avaproj_candidates, AvaProjOutputType::kLibrary, false);
+                                 avaproj_candidates, AvaProjOutputType::kLibrary, false, state.debug_mode);
     }
     return {};
 }
@@ -767,6 +1046,12 @@ BuildPanelResult DrawBuildPanel(BuildPanelState& state, AvaProjFile& proj, AvaPr
     }
     ImGui::Dummy(ImVec2(0.0f, 6.0f));
 
+    ImGui::Checkbox(util::Tr("build.debug_mode_checkbox").c_str(), &state.debug_mode);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", util::Tr("build.debug_mode_checkbox_tooltip").c_str());
+    }
+    ImGui::Dummy(ImVec2(0.0f, 6.0f));
+
     const bool is_library_target = state.selected_run_target == RunTarget::kLibrary;
     const std::string dispatch_label =
         util::Tr(is_library_target ? "build.build_only_button" : "build.build_and_run_button");
@@ -784,9 +1069,11 @@ BuildPanelResult DrawBuildPanel(BuildPanelState& state, AvaProjFile& proj, AvaPr
         ImGui::BeginDisabled(state.building.load());
         if (ImGui::Button(util::Tr("build.run_button").c_str())) {
             if (state.selected_run_target == RunTarget::kDesktopUi) {
-                LaunchDetachedProcess(state.result_path, state.launch_extra_args);
+                TriggerRun(state, state.result_path, state.launch_extra_args);
             } else {
-                TriggerConsoleRun(state, state.result_path);
+                std::vector<std::string> run_args;
+                if (state.debug_mode) run_args.push_back("--debug-runtime");
+                TriggerRun(state, state.result_path, run_args);
             }
         }
         ImGui::EndDisabled();
@@ -796,15 +1083,19 @@ BuildPanelResult DrawBuildPanel(BuildPanelState& state, AvaProjFile& proj, AvaPr
 
     if (state.building.load()) {
         std::string log_snapshot;
+        std::chrono::steady_clock::time_point last_output_at;
         {
             std::lock_guard<std::mutex> lock(state.mutex);
             log_snapshot = state.log;
+            last_output_at = state.last_output_at;
         }
         const BuildStageInfo stage = DeriveBuildStage(log_snapshot);
         const std::string last_line = LastNonEmptyLine(log_snapshot);
         const double elapsed_s = std::chrono::duration<double>(
                                       std::chrono::steady_clock::now() - state.build_started_at)
                                       .count();
+        const double silent_s =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - last_output_at).count();
 
         ImGui::Separator();
 
@@ -827,6 +1118,29 @@ BuildPanelResult DrawBuildPanel(BuildPanelState& state, AvaProjFile& proj, AvaPr
 
         if (!last_line.empty()) {
             ImGui::TextColored(palette::FromHex(palette::kTextMuted), "%s", last_line.c_str());
+        }
+
+        bool has_running_process = false;
+        {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            has_running_process = state.running_process != nullptr;
+        }
+        if (has_running_process) {
+            constexpr double kHungWarningSeconds = 10.0;
+            if (silent_s >= kHungWarningSeconds) {
+                ImGui::Dummy(ImVec2(0.0f, 4.0f));
+                ImGui::TextColored(palette::FromHex(palette::kWarning), "%s",
+                                    util::TrFormat("build.hung_warning", {FormatSeconds(silent_s)}).c_str());
+            }
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            ImGui::PushStyleColor(ImGuiCol_Button, palette::FromHex(palette::kError));
+            if (ImGui::Button(util::Tr("build.stop_button").c_str())) {
+                TerminateRunningProcess(state);
+            }
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", util::Tr("build.stop_button_tooltip").c_str());
+            }
         }
 
         ImGui::Separator();

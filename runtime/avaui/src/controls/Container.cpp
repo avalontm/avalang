@@ -46,8 +46,6 @@ struct ContainerTypeRegistrations {
         RegisterComponentType({"Row", "Row", true, {}});
         RegisterComponentType({"Stack", "Stack", true, {}});
         RegisterComponentType({"Page", "Page", true, {}});
-        RegisterComponentType({"ScrollView", "Scroll View", true, {}});
-        RegisterComponentType({"ListView", "List View", true, {}});
         RegisterComponentType({
             "Grid", "Grid", true,
             {

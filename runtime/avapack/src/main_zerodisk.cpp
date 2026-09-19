@@ -62,6 +62,10 @@
 
 #include "embedded_project.h"
 #include "embedded_crypto.h"
+#include "diagnostics/crash_handler.h"
+#include "diagnostics/debug_mode.h"
+#include "diagnostics/error_report.h"
+#include "diagnostics/vm_debug.h"
 
 namespace {
 
@@ -90,15 +94,21 @@ void SetScriptArgsGlobal(ava::VM* raw_vm, int argc, char** argv) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // Fase 1 de PLAN_DEBUG_MODE_AVASTUDIO.md: variante zero-disk del .exe
+    // empacado -- misma falta de filtro de excepcion que main.cpp tenia.
+    ava::diag::InstallCrashHandler("avapack (zero-disk)");
+    ava::diag::InitDebugRuntime(argc, argv);
+
     unsigned char key[32];
     avapack::GetEmbeddedKey(key);
 
     // Fase 5 (igual que main.cpp): verificacion de integridad antes de
     // descifrar o compilar cualquier cosa.
     if (!avapack::VerifyIntegrity(key)) {
-        std::fprintf(stderr,
-                      "error: verificacion de integridad fallida -- el contenido embebido "
-                      "no coincide con el esperado (binario posiblemente modificado)\n");
+        const char* msg = "verificacion de integridad fallida -- el contenido embebido "
+                           "no coincide con el esperado (binario posiblemente modificado)";
+        std::fprintf(stderr, "error: %s\n", msg);
+        ava::diag::EmitStructuredError(ava::diag::ErrorKind::kLaunchFailure, msg);
         std::memset(key, 0, sizeof(key));
         return 1;
     }
@@ -109,6 +119,10 @@ int main(int argc, char** argv) {
     if (entry_it == file_map.end()) {
         std::fprintf(stderr, "error: entry file no encontrado entre los archivos embebidos: %s\n",
                      avapack::kEntryFile);
+        ava::diag::EmitStructuredError(
+            ava::diag::ErrorKind::kLaunchFailure,
+            std::string("entry file no encontrado entre los archivos embebidos: ") +
+                avapack::kEntryFile);
         std::memset(key, 0, sizeof(key));
         return 1;
     }
@@ -156,6 +170,7 @@ int main(int argc, char** argv) {
 
     AvaVM* vm = ava_vm_create();
     ava::VM* raw_vm = reinterpret_cast<ava::VM*>(vm);
+    ava::diag::ApplyDebugMode(vm);
     // "Search path" virtual -- ModuleResolver arma rutas
     // JoinPath(kVirtualRoot, ...) que MemoryFileSystem sabe resolver
     // contra su mapa (ver MemoryFileSystem::NormalizeKey). No es una ruta
@@ -177,6 +192,9 @@ int main(int argc, char** argv) {
         }
         if (!module) {
             std::fprintf(stderr, "error: entry .avbc invalido: %s\n", error ? error : "unknown error");
+            ava::diag::EmitStructuredError(
+                ava::diag::ErrorKind::kLaunchFailure,
+                std::string("entry .avbc invalido: ") + (error ? error : "unknown error"));
             if (error) ava_string_free(error);
             std::memset(key, 0, sizeof(key));
             ava_vm_destroy(vm);
@@ -190,6 +208,11 @@ int main(int argc, char** argv) {
         entry_source.assign(entry_source.size(), '\0');
         if (!module) {
             std::fprintf(stderr, "compile error: %s\n", error ? error : "unknown error");
+            ava::diag::ErrorInfo structured;
+            structured.kind = ava::diag::ErrorKind::kCompile;
+            structured.message = error ? error : "unknown error";
+            structured.file = avapack::kEntryFile;
+            ava::diag::EmitStructuredError(structured);
             if (error) ava_string_free(error);
             std::memset(key, 0, sizeof(key));
             ava_vm_destroy(vm);
@@ -202,6 +225,12 @@ int main(int argc, char** argv) {
     ava_run(vm, module, &result, &error);
     if (error) {
         std::fprintf(stderr, "runtime error: %s\n", error);
+        ava::diag::ErrorInfo structured;
+        structured.kind = ava::diag::ErrorKind::kRuntime;
+        structured.message = error;
+        structured.stack = ava::diag::CaptureDebugStack(vm);
+        ava::diag::PrintStackTrace(structured.stack);
+        ava::diag::EmitStructuredError(structured);
         ava_string_free(error);
         std::memset(key, 0, sizeof(key));
         // Orden invertido: ver comentario en ava_barekernel_runner.cpp

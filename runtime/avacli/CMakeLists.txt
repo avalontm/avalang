@@ -17,9 +17,19 @@
 # el include dir de runtime/avalang (no solo src/) está agregado abajo.
 # ---------------------------------------------------------------------
 
-add_executable(ava_cli src/main.cpp src/build_command.cpp)
+add_executable(ava_cli
+    src/main.cpp
+    src/build_command.cpp
+    src/dap_server.cpp
+    src/dap_transport.cpp
+)
 
-target_link_libraries(ava_cli PRIVATE avalang)
+find_package(Threads REQUIRED)
+
+target_link_libraries(ava_cli PRIVATE avalang Threads::Threads)
+if(WIN32)
+    target_link_libraries(ava_cli PRIVATE ws2_32)
+endif()
 
 target_include_directories(ava_cli PRIVATE
     ${CMAKE_SOURCE_DIR}/runtime/avalang/src
@@ -32,6 +42,9 @@ target_include_directories(ava_cli PRIVATE
     # header (formato de datos puro, sin depender de avalang ni de nada mas
     # de avapack), no arrastra ningun otro symbol/target de avapack.
     ${CMAKE_SOURCE_DIR}/runtime/avapack/src
+    # Fase 0/1 de PLAN_DEBUG_MODE_AVASTUDIO.md: error_report.h/crash_handler.h
+    # compartidos, header-only (ver runtime/common/diagnostics/).
+    ${CMAKE_SOURCE_DIR}/runtime/common
 )
 
 # En Windows no hay RPATH: ava_cli.exe necesita avalang.dll en su misma

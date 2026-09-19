@@ -33,6 +33,10 @@ ShortcutRegistry::ShortcutRegistry() {
     Bind(ShortcutId::QuickFix, {ImGuiKey_Period, true, false, false, ShortcutScope::EditorFocused});
     Bind(ShortcutId::Undo, {ImGuiKey_Z, true, false, false, ShortcutScope::EditorFocused});
     Bind(ShortcutId::Redo, {ImGuiKey_Y, true, false, false, ShortcutScope::EditorFocused});
+    Bind(ShortcutId::ToggleBreakpoint, {ImGuiKey_F9, false, false, false, ShortcutScope::EditorFocused});
+    Bind(ShortcutId::DebugStepOver, {ImGuiKey_F10, false, false, false, ShortcutScope::Global});
+    Bind(ShortcutId::DebugStepInto, {ImGuiKey_F11, false, false, false, ShortcutScope::Global});
+    Bind(ShortcutId::DebugStepOut, {ImGuiKey_F11, false, true, false, ShortcutScope::Global});
 }
 
 void ShortcutRegistry::Bind(ShortcutId id, ShortcutSpec spec) {

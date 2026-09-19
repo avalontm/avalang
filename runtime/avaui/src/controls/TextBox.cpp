@@ -30,6 +30,10 @@ IComponent* CreateTextBox(ComponentTree* tree, const std::string& placeholder) {
     comp->SetProperty("placeholder", PropertyValue(placeholder));
     comp->SetProperty("isFocused", PropertyValue(false));
     comp->SetProperty("isEnabled", PropertyValue(true));
+    comp->SetProperty("caretIndex", PropertyValue(0.0));
+    comp->SetProperty("selectionAnchor", PropertyValue(0.0));
+    comp->SetProperty("imeComposition", PropertyValue(std::string()));
+    comp->SetProperty("imeCompositionCursor", PropertyValue(0.0));
 
     return comp;
 }
@@ -85,6 +89,10 @@ struct TextBoxTypeRegistration {
                 {"placeholder", PropertyValue("")},
                 {"isFocused", PropertyValue(false)},
                 {"isEnabled", PropertyValue(true)},
+                {"caretIndex", PropertyValue(0.0)},
+                {"selectionAnchor", PropertyValue(0.0)},
+                {"imeComposition", PropertyValue("")},
+                {"imeCompositionCursor", PropertyValue(0.0)},
             },
         });
     }

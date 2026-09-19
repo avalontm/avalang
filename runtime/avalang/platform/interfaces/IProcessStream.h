@@ -55,6 +55,15 @@ public:
         // end) -- callers should treat that as "nobody is listening"
         // rather than surface it as an error.
         virtual bool WriteLine(const avastd::string& line) = 0;
+
+        // Forcibly kills the child this writer belongs to -- e.g. Ava
+        // Studio's "Stop" button on a process that looks hung (Fase 6,
+        // plan-debug-mode-avastudio.md: "proceso colgado"). Like
+        // WriteLine, meant to be called from a different thread than the
+        // one blocked inside ExecuteStreaming; implementations must make
+        // that safe on their own. A no-op if the child has already
+        // exited -- callers don't need to check IsRunning first.
+        virtual void Terminate() = 0;
     };
 
     // `on_started`, if non-null, is invoked once (synchronously, from

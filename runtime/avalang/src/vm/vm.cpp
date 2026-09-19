@@ -43,6 +43,11 @@ void VM::RelocateUpvalues(CallFrame& from, CallFrame& to) {
 }
 
 Value VM::ExecuteFrame(size_t frame_idx) {
+    if (debug_mode_ && frames_.size() > kDebugMaxCallDepth) {
+        AVA_THROW(MakeFrameError(frames_[frame_idx],
+            "call stack exceeded debug limit (" + avastd::to_string(static_cast<long long>(kDebugMaxCallDepth)) +
+            " frames) -- possible infinite recursion"));
+    }
     auto& code = frames_[frame_idx].proto->instructions;
     auto& K = frames_[frame_idx].proto->constants;
 
@@ -89,6 +94,7 @@ Value VM::ExecuteFrame(size_t frame_idx) {
         AVA_THROW(AvaRaiseException());
     }
     while (frames_[frame_idx].pc < code.size()) {
+        DapOnBeforeInstruction(frame_idx);
         const Instr& in = code[frames_[frame_idx].pc++];
         switch (in.op) {
             case OpCode::LOADK:    

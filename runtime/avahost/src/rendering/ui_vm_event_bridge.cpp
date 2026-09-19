@@ -225,6 +225,7 @@ std::mutex g_eventHandlersMutex;
 const std::unordered_map<std::string, avalang::ui::events::EventType>& EventPropertyMap() {
     static const std::unordered_map<std::string, avalang::ui::events::EventType> map = {
         {"click", avalang::ui::events::EventType::Click},
+        {"change", avalang::ui::events::EventType::Change},
         {"pointerEnter", avalang::ui::events::EventType::PointerEnter},
         {"pointerLeave", avalang::ui::events::EventType::PointerLeave},
         {"focus", avalang::ui::events::EventType::Focus},

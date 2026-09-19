@@ -23,6 +23,9 @@ AVA_UI_API std::string GetSelectedValue(IComponent* comboBoxComponent);
 
 AVA_UI_API std::string GetSelectedLabel(IComponent* comboBoxComponent);
 
+AVA_UI_API bool IsComboBoxOpen(IComponent* comboBoxComponent);
+AVA_UI_API void SetComboBoxOpen(IComponent* comboBoxComponent, bool open);
+
 AVA_UI_API void BindComboBoxChange(ComponentId comboBoxId, ComboBoxChangeCallback callback);
 AVA_UI_API void UnbindComboBoxChange(ComponentId comboBoxId);
 

@@ -43,6 +43,14 @@ void AccessibilityNode::SetHint(const std::string& hint) {
     hint_ = hint;
 }
 
+const AccessibilityRect& AccessibilityNode::Bounds() const {
+    return bounds_;
+}
+
+void AccessibilityNode::SetBounds(const AccessibilityRect& bounds) {
+    bounds_ = bounds;
+}
+
 uint32_t AccessibilityNode::States() const {
     return states_;
 }

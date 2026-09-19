@@ -1,11 +1,13 @@
 #include <cstdlib>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 #include <windows.h>
 
 #include "native/native_app_host.h"
 #include "platform/windows/WinBackendEntry.h"
+#include "diagnostics/crash_handler.h"
 
 namespace {
 
@@ -32,6 +34,13 @@ std::string EnvOrDefault(const char* varName) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Fase 1 de PLAN_DEBUG_MODE_AVASTUDIO.md: handler compartido (antes
+    // implementado a mano solo aca, como WriteCrashDumpAndNotify) -- ver
+    // runtime/common/diagnostics/crash_handler.h. Mismo comportamiento
+    // (SEH + .dmp + MessageBox), ahora reusado tambien por avapack_stub,
+    // avapack_stub_ui y el resto de los .exe que Ava Studio construye.
+    ava::diag::InstallCrashHandler("avanative");
+
     avalang::ui::platform::windows::LinkBackend();
 
     std::string entryFile = ExtractFlagValue(argc, argv, "--entry");
@@ -52,8 +61,18 @@ int main(int argc, char** argv) {
         // ver CMakeLists.txt), asi que std::cerr no lo ve nadie -- un
         // MessageBox es la unica forma de que un error temprano (p.ej.
         // entry file no encontrado) no sea un cierre silencioso.
-        std::string message = "avanative: " + error;
-        MessageBoxA(nullptr, message.c_str(), "Avalang", MB_OK | MB_ICONERROR);
+        //
+        // Fase 0 del plan: ademas del MessageBox, la linea estructurada
+        // por stderr -- si Ava Studio lanzo este proceso, la captura
+        // aunque el modal quede tapado por otra ventana.
+        ava::diag::EmitStructuredError(ava::diag::ErrorKind::kLaunchFailure, error);
+        // Same rule as the crash handler: when a parent captures stderr
+        // (AvaStudio) the structured line above already reaches its log, so
+        // the modal would only duplicate it.
+        if (!ava::diag::StderrIsCapturedByParent()) {
+            std::string message = "avanative: " + error;
+            MessageBoxA(nullptr, message.c_str(), "Avalang", MB_OK | MB_ICONERROR);
+        }
     }
     return code;
 }

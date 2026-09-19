@@ -9,8 +9,10 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/logger.h"
 #include "components/ComponentTree.h"
 #include "composition/ComposePageWithLayout.h"
+#include "controls/ControlMetadata.h"
 #include "events/AutoBind.h"
 #include "parser/AvauiParser.h"
 #include "parser/AvauiPropertyCoercion.h"
@@ -211,6 +213,42 @@ bool RenderTreeFragment(avalang::ui::ComponentTree* tree,
     return nullptr;
 }
 
+void CollectRadioButtonsInGroup(avalang::ui::IComponent* node, const std::string& group,
+                                 avalang::ui::ComponentId excludeId,
+                                 std::vector<avalang::ui::IComponent*>& out) {
+    if (!node) return;
+
+    if (node->TypeName() == "RadioButton" && node->Id() != excludeId) {
+        const auto* groupProp = node->GetProperty("group");
+        if (groupProp && groupProp->Type() == avalang::ui::PropertyType::String &&
+            groupProp->AsString() == group) {
+            out.push_back(node);
+        }
+    }
+
+    for (avalang::ui::IComponent* child : node->Children()) {
+        CollectRadioButtonsInGroup(child, group, excludeId, out);
+    }
+}
+
+void DeselectRadioButtonGroupSiblings(VmStateBridge& stateBridge, avalang::ui::IComponent* root,
+                                       avalang::ui::IComponent* selected) {
+    const auto* groupProp = selected->GetProperty("group");
+    if (!groupProp || groupProp->Type() != avalang::ui::PropertyType::String) return;
+
+    std::vector<avalang::ui::IComponent*> siblings;
+    CollectRadioButtonsInGroup(root, groupProp->AsString(), selected->Id(), siblings);
+
+    for (avalang::ui::IComponent* sibling : siblings) {
+        const auto* prop = sibling->GetProperty("isSelected");
+        if (!prop || prop->Type() != avalang::ui::PropertyType::String) continue;
+
+        if (avalang::ui::IState* state = stateBridge.Find(prop->AsString())) {
+            state->Set(avalang::ui::PropertyValue(false));
+        }
+    }
+}
+
 void ApplyPendingControlValue(VmStateBridge& stateBridge, avalang::ui::IComponent* root,
                                const std::string& pendingCompId, const std::string& pendingValue) {
     if (pendingCompId.empty()) return;
@@ -225,20 +263,33 @@ void ApplyPendingControlValue(VmStateBridge& stateBridge, avalang::ui::IComponen
     avalang::ui::IComponent* comp = FindComponentById(root, id);
     if (!comp) return;
 
-    const char* propName = nullptr;
-    if (comp->TypeName() == "TextBox") {
-        propName = "text";
-    } else if (comp->TypeName() == "ComboBox") {
-        propName = "selectedValue";
-    } else {
+    const std::string& typeName = comp->TypeName();
+
+    const auto* metadata = avalang::ui::controls::FindControlMetadata(typeName);
+    if (!metadata || metadata->valueKind == avalang::ui::controls::ControlValueKind::None) {
+        GlobalLogger().Warn(
+            "ApplyPendingControlValue: unsupported control type '" + typeName +
+            "' (compId=" + pendingCompId + "), value change ignored");
         return;
     }
 
-    const auto* prop = comp->GetProperty(propName);
+    avalang::ui::PropertyValue value =
+        (metadata->valueKind == avalang::ui::controls::ControlValueKind::Bool)
+            ? avalang::ui::PropertyValue(pendingValue == "true")
+            : avalang::ui::PropertyValue(pendingValue);
+
+    const auto* prop = comp->GetProperty(metadata->stateProperty);
     if (!prop || prop->Type() != avalang::ui::PropertyType::String) return;
 
+    bool isRadioSelect =
+        (metadata->activation == avalang::ui::controls::ControlActivation::Select) && value.AsBool();
+
     if (avalang::ui::IState* state = stateBridge.Find(prop->AsString())) {
-        state->Set(avalang::ui::PropertyValue(pendingValue));
+        state->Set(std::move(value));
+    }
+
+    if (isRadioSelect) {
+        DeselectRadioButtonGroupSiblings(stateBridge, root, comp);
     }
 }
 

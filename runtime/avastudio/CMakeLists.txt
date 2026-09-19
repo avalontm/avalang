@@ -114,6 +114,7 @@ set(STUDIO_SOURCES
     src/util/settings.cpp
     src/util/ava_cli_locator.cpp
     src/util/process_log.cpp
+    src/util/ava_error_line.cpp
     src/util/project_utils.cpp
     src/util/scaffold_templates.cpp
     src/util/host_platform.cpp
@@ -181,6 +182,9 @@ set(STUDIO_SOURCES
     src/panels/accessibility_panel.cpp
     src/panels/asset_browser_panel.cpp
     src/panels/animations_panel.cpp
+    src/debug/dap_client.cpp
+    src/debug/debug_session.cpp
+    src/panels/debug_panel.cpp
     src/panels/activity_bar_panel.cpp
     src/panels/designer_canvas.cpp
     src/panels/document_tree_panel.cpp
@@ -210,6 +214,7 @@ target_include_directories(ava_studio PRIVATE
     ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
     ${CMAKE_SOURCE_DIR}/runtime/avaui/src
     ${CMAKE_SOURCE_DIR}/runtime/avalang
+    ${CMAKE_SOURCE_DIR}/runtime/common
 )
 
 target_link_libraries(ava_studio PRIVATE avalang imgui_docking text_editor avalang_ui pugixml)
@@ -251,7 +256,7 @@ endif()
 
 if(WIN32)
 
-    target_link_libraries(ava_studio PRIVATE opengl32 dwmapi)
+    target_link_libraries(ava_studio PRIVATE opengl32 dwmapi ws2_32)
 elseif(APPLE)
     target_link_libraries(ava_studio PRIVATE "-framework OpenGL")
 else()

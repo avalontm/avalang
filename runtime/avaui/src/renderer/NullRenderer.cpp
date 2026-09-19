@@ -68,12 +68,14 @@ void NullRenderer::OnDrawButton(
     const Color& borderColor, float borderWidth, float borderRadius,
     bool disabled,
     const std::string& clickHandler,
-    const std::string& className
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
 ) {
     (void)x; (void)y; (void)width; (void)height; (void)text;
     (void)fontSize; (void)fontName; (void)textColor; (void)fillColor;
     (void)borderColor; (void)borderWidth; (void)borderRadius; (void)disabled;
-    (void)clickHandler; (void)className;
+    (void)clickHandler; (void)className; (void)compId; (void)avaType;
 }
 
 void NullRenderer::OnDrawLink(
@@ -83,10 +85,13 @@ void NullRenderer::OnDrawLink(
     const Color& color,
     const std::string& href,
     const std::string& clickHandler,
-    const std::string& className
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
 ) {
     (void)x; (void)y; (void)text; (void)fontSize; (void)fontName;
     (void)color; (void)href; (void)clickHandler; (void)className;
+    (void)compId; (void)avaType;
 }
 
 }

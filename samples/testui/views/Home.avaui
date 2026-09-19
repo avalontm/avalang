@@ -1,16 +1,71 @@
+state
+    clicks = 0
+    agreed = true
+    planBasic = true
+    planPro = false
+end
+
 view
     Column
-        spacing = 16
         padding = 20
-        width = 492
+        spacing = 16
         gap = 16
-        height = 270
 
         Text
-            text = "test"
-            textColor = 333333
+            text = "test - clicks: " + clicks
             fontSize = 18
+            textColor = 333333
             fontName = "Segoe UI"
         end
+        TextBox
+            backgroundColor = "FFFFFF"
+            borderColor = "A4A4A4"
+            fontSize = 12
+            borderWidth = 1
+        end
+        CheckBox
+            label = "Acepto los términos"
+            borderColor = "CCCCCC"
+            isChecked = agreed
+            borderWidth = 1
+        end
+        Text
+            text = "agreed: " + agreed
+            fontSize = 12
+            textColor = 666666
+            fontName = "Segoe UI"
+        end
+        RadioButton
+            label = "Plan Basico"
+            group = "plan"
+            isSelected = planBasic
+        end
+        RadioButton
+            label = "Plan Pro"
+            group = "plan"
+            isSelected = planPro
+        end
+        Text
+            text = "plan: " + (planBasic ? "basico" : (planPro ? "pro" : "ninguno"))
+            fontSize = 12
+            textColor = 666666
+            fontName = "Segoe UI"
+        end
+        Button
+            text = "Enviar"
+            click = OnSubmitClick()
+            backgroundColor = "0078D4"
+            borderWidth = 1
+            textColor = "FFFFFF"
+            fontSize = 12
+            fontName = "Segoe UI"
+            borderRadius = 4
+        end
+    end
+end
+
+code
+    func OnSubmitClick()
+        clicks++
     end
 end

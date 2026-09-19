@@ -12,6 +12,7 @@
 #include "task.h"
 #include "gc_sweep.h"
 #include "vm_helpers.h"
+#include "vm_dap.h"
 #include "../../api/include/avalang.h"
 
 #ifdef _WIN32
@@ -69,6 +70,27 @@ public:
     // frame that issued the CALL/BASECALL, with pc already past it (same
     // indexing MakeFrameError relies on).
     AvaError MakeCurrentError(const avastd::string& message) const;
+
+    void SetDebugMode(bool enabled) { debug_mode_ = enabled; }
+    bool IsDebugMode() const { return debug_mode_; }
+    avastd::string BuildStackTrace(size_t base_frame) const;
+    void PublishPendingErrorStack();
+
+    static constexpr size_t kDebugMaxCallDepth = 2000;
+
+    void SetDapHooksEnabled(bool enabled) { dap_hook_enabled_ = enabled; }
+    bool DapHooksEnabled() const { return dap_hook_enabled_; }
+    void DapSetBreakpoints(const avastd::string& file, const avastd::vector<int>& lines);
+    void DapContinue();
+    void DapStepOver();
+    void DapStepInto();
+    void DapStepOut();
+    void DapRequestPause();
+    avastd::vector<DapFrameInfo> DapCaptureFrames() const;
+    avastd::vector<DapVariable> DapCaptureLocals(size_t frame_index) const;
+
+    using DapStoppedSink = avastd::function<void(const DapStopEvent&)>;
+    void SetDapStoppedSink(DapStoppedSink sink) { dap_stopped_sink_ = avastd::move(sink); }
 
     Value Run(const avastd::shared_ptr<Proto>& main);
     Value RunFile(const avastd::string& file_path);
@@ -239,6 +261,7 @@ public:
     // number in whichever file happens to be showing. Read via
     // ava_last_error_source.
     avastd::string last_error_source;
+    avastd::string last_error_stack;
 
     // ExceptionHandler is defined in coroutine.h (needs to be usable from
     // Coroutine::exception_handlers before this class exists).
@@ -294,6 +317,9 @@ public:
 
 private:
     Value ExecuteFrame(size_t frame_idx);
+    void DapOnBeforeInstruction(size_t frame_idx);
+    bool DapHasBreakpointAt(const avastd::string& source, int line) const;
+    static avastd::string DapNormalizeFileKey(const avastd::string& path);
     // Plan de anotaciones (AvaLang_Plan_Anotaciones.md), Fase 3: llamada
     // desde Run() después de ejecutar el chunk top-level, solo si
     // `main->entry_func_name` no está vacío (si está vacío, Run() nunca
@@ -394,6 +420,8 @@ private:
     avastd::string current_dir_;
     avastd::unordered_map<avastd::string, Value> globals_;
     avastd::vector<CallFrame> frames_;
+    bool debug_mode_ = false;
+    avastd::string pending_error_stack_;
     ModuleResolver module_resolver_;
     ModuleCache module_cache_;
     avastd::string current_module_;
@@ -434,6 +462,21 @@ private:
     avastd::mutex async_mutex_;
     avastd::vector<avastd::function<void()>> async_ready_queue_;
     avastd::atomic<int> async_pending_timers_{0};
+
+    bool dap_hook_enabled_ = false;
+    avastd::unordered_map<avastd::string, avastd::vector<int>> dap_breakpoints_;
+    DapStoppedSink dap_stopped_sink_;
+    avastd::mutex dap_mutex_;
+    avastd::condition_variable dap_cv_;
+
+    enum class DapStepKind { None, Over, Into, Out };
+    DapStepKind dap_step_kind_ = DapStepKind::None;
+    size_t dap_step_start_depth_ = 0;
+    int dap_step_start_line_ = -1;
+    bool dap_pause_requested_ = false;
+    bool dap_paused_ = false;
+    int dap_stopped_line_ = -1;
+    size_t dap_stopped_depth_ = 0;
 };
 
 } // namespace ava

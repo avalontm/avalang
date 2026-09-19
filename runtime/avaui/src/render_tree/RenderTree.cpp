@@ -329,6 +329,18 @@ void RenderTree::DecomposeTextBox(IComponent* comp, std::shared_ptr<RenderNode> 
         parent->SetDisabled(!EvalBool(comp, "isEnabled", !parent->Disabled()));
     }
 
+    const int caret = static_cast<int>(EvalNumber(comp, "caretIndex", -1.0));
+    const int anchor = static_cast<int>(EvalNumber(comp, "selectionAnchor", static_cast<double>(caret)));
+    parent->SetCaretIndex(caret);
+    parent->SetSelectionRange(std::min(caret, anchor), std::max(caret, anchor));
+
+    if (const auto* composition = comp->GetProperty("imeComposition")) {
+        if (composition->Type() == PropertyType::String) {
+            parent->SetImeComposition(Eval(composition->AsString()));
+        }
+    }
+    parent->SetImeCompositionCursor(static_cast<int>(EvalNumber(comp, "imeCompositionCursor", 0.0)));
+
     CheckBindingWarning(comp, parent, "text");
 }
 
@@ -379,7 +391,7 @@ void RenderTree::DecomposeCheckBox(IComponent* comp, std::shared_ptr<RenderNode>
 
 void RenderTree::DecomposeRadioButton(IComponent* comp, std::shared_ptr<RenderNode> parent,
                                       LayoutEngine* layout) {
-    parent->SetType(RenderNodeType::Custom);
+    parent->SetType(RenderNodeType::RadioButton);
 
     bool isSelected = EvalBool(comp, "isSelected", false);
 
@@ -426,6 +438,12 @@ void RenderTree::DecomposeComboBox(IComponent* comp, std::shared_ptr<RenderNode>
                                    LayoutEngine* layout) {
     parent->SetType(RenderNodeType::ComboBox);
 
+    if (const auto* isOpen = comp->GetProperty("isOpen")) {
+        if (isOpen->Type() == PropertyType::Bool) {
+            parent->SetOpen(isOpen->AsBool());
+        }
+    }
+
     std::string selectedValue;
     if (const auto* value = comp->GetProperty("selectedValue")) {
         if (value->Type() == PropertyType::String) {
@@ -433,17 +451,16 @@ void RenderTree::DecomposeComboBox(IComponent* comp, std::shared_ptr<RenderNode>
         }
     }
 
-    std::string optionsData;
+    ComboBoxItems items;
     for (IComponent* child : comp->Children()) {
         const auto* valueProp = child->GetProperty("value");
         const auto* labelProp = child->GetProperty("label");
         std::string v = (valueProp && valueProp->Type() == PropertyType::String) ? valueProp->AsString() : "";
         std::string l = (labelProp && labelProp->Type() == PropertyType::String) ? labelProp->AsString() : "";
 
-        if (!optionsData.empty()) optionsData += ";;";
-        optionsData += v + "|" + l + "|" + (v == selectedValue ? "1" : "0");
+        items.push_back(ComboBoxItem{v, l, v == selectedValue});
     }
-    parent->SetOptionsData(optionsData);
+    parent->SetComboItems(std::move(items));
 
     CheckBindingWarning(comp, parent, "selectedValue");
 }
@@ -503,6 +520,22 @@ void RenderTree::DecomposeScrollView(IComponent* comp, std::shared_ptr<RenderNod
             parent->SetScrollDirection(Eval(direction->AsString()));
         }
     }
+
+    double scrollOffsetX = 0.0;
+    if (const auto* offsetX = comp->GetProperty("scrollOffsetX")) {
+        if (offsetX->Type() == PropertyType::Number) {
+            scrollOffsetX = offsetX->AsNumber();
+        }
+    }
+
+    double scrollOffsetY = 0.0;
+    if (const auto* offsetY = comp->GetProperty("scrollOffsetY")) {
+        if (offsetY->Type() == PropertyType::Number) {
+            scrollOffsetY = offsetY->AsNumber();
+        }
+    }
+
+    parent->SetScrollOffset(scrollOffsetX, scrollOffsetY);
 
     for (const auto& child : comp->Children()) {
         auto childRender = BuildComponent(child, layout);

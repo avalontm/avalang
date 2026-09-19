@@ -32,6 +32,7 @@ enum class EventType : uint8_t {
     Ime,
     Focus,
     Blur,
+    Change,
     Custom,
 };
 

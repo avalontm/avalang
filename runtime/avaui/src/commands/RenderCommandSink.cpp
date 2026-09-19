@@ -23,6 +23,10 @@ void RenderCommandSink::EndFrame() {
 void RenderCommandSink::PushClipRect(float x, float y, float width, float height) {
     RenderCommand cmd;
     cmd.type = RenderCommandType::PushClip;
+    cmd.pushClip.x = x;
+    cmd.pushClip.y = y;
+    cmd.pushClip.width = width;
+    cmd.pushClip.height = height;
     clipStack_.push(ClipRect{x, y, width, height, true});
     Emit(cmd);
 }
@@ -158,7 +162,9 @@ void RenderCommandSink::DrawButton(
     const Color& borderColor, float borderWidth, float borderRadius,
     bool disabled,
     const std::string& clickHandler,
-    const std::string& className
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
 ) {
     RenderCommand cmd;
     cmd.type = RenderCommandType::DrawButton;
@@ -177,6 +183,8 @@ void RenderCommandSink::DrawButton(
     cmd.drawButton.disabled = disabled;
     cmd.drawButton.clickHandler = clickHandler;
     cmd.drawButton.className = className;
+    cmd.drawButton.compId = compId;
+    cmd.drawButton.avaType = avaType;
     Emit(cmd);
 }
 
@@ -187,7 +195,9 @@ void RenderCommandSink::DrawLink(
     const Color& color,
     const std::string& href,
     const std::string& clickHandler,
-    const std::string& className
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
 ) {
     RenderCommand cmd;
     cmd.type = RenderCommandType::DrawLink;
@@ -200,6 +210,8 @@ void RenderCommandSink::DrawLink(
     cmd.drawLink.href = href;
     cmd.drawLink.clickHandler = clickHandler;
     cmd.drawLink.className = className;
+    cmd.drawLink.compId = compId;
+    cmd.drawLink.avaType = avaType;
     Emit(cmd);
 }
 
@@ -223,6 +235,165 @@ void RenderCommandSink::DrawPath(
     cmd.drawPath.closed = closed;
     cmd.drawPath.clickHandler = clickHandler;
     cmd.drawPath.className = className;
+    Emit(cmd);
+}
+
+void RenderCommandSink::DrawInput(
+    float x, float y, float width, float height,
+    const std::string& text,
+    const std::string& placeholder,
+    float fontSize, const char* fontName,
+    const Color& textColor,
+    const Color& fillColor,
+    const Color& borderColor, float borderWidth, float borderRadius,
+    bool disabled, bool focused, bool hovered,
+    int caretIndex, int selectionStart, int selectionEnd,
+    const std::string& imeComposition, int imeCompositionCursor,
+    const std::string& clickHandler,
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
+) {
+    RenderCommand cmd;
+    cmd.type = RenderCommandType::DrawInput;
+    cmd.drawInput.x = x;
+    cmd.drawInput.y = y;
+    cmd.drawInput.width = width;
+    cmd.drawInput.height = height;
+    cmd.drawInput.text = text;
+    cmd.drawInput.placeholder = placeholder;
+    cmd.drawInput.fontSize = fontSize;
+    cmd.drawInput.fontName = fontName;
+    cmd.drawInput.textColor = textColor;
+    cmd.drawInput.fillColor = fillColor;
+    cmd.drawInput.borderColor = borderColor;
+    cmd.drawInput.borderWidth = borderWidth;
+    cmd.drawInput.borderRadius = borderRadius;
+    cmd.drawInput.disabled = disabled;
+    cmd.drawInput.focused = focused;
+    cmd.drawInput.hovered = hovered;
+    cmd.drawInput.caretIndex = caretIndex;
+    cmd.drawInput.selectionStart = selectionStart;
+    cmd.drawInput.selectionEnd = selectionEnd;
+    cmd.drawInput.imeComposition = imeComposition;
+    cmd.drawInput.imeCompositionCursor = imeCompositionCursor;
+    cmd.drawInput.clickHandler = clickHandler;
+    cmd.drawInput.className = className;
+    cmd.drawInput.compId = compId;
+    cmd.drawInput.avaType = avaType;
+    Emit(cmd);
+}
+
+void RenderCommandSink::DrawCheckBox(
+    float x, float y, float width, float height,
+    const std::string& text,
+    float fontSize, const char* fontName,
+    const Color& textColor,
+    const Color& boxFillColor,
+    const Color& boxBorderColor, float borderWidth, float borderRadius,
+    bool checked, bool disabled, bool focused, bool hovered,
+    const std::string& clickHandler,
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
+) {
+    RenderCommand cmd;
+    cmd.type = RenderCommandType::DrawCheckBox;
+    cmd.drawCheckBox.x = x;
+    cmd.drawCheckBox.y = y;
+    cmd.drawCheckBox.width = width;
+    cmd.drawCheckBox.height = height;
+    cmd.drawCheckBox.text = text;
+    cmd.drawCheckBox.fontSize = fontSize;
+    cmd.drawCheckBox.fontName = fontName;
+    cmd.drawCheckBox.textColor = textColor;
+    cmd.drawCheckBox.boxFillColor = boxFillColor;
+    cmd.drawCheckBox.boxBorderColor = boxBorderColor;
+    cmd.drawCheckBox.borderWidth = borderWidth;
+    cmd.drawCheckBox.borderRadius = borderRadius;
+    cmd.drawCheckBox.checked = checked;
+    cmd.drawCheckBox.disabled = disabled;
+    cmd.drawCheckBox.focused = focused;
+    cmd.drawCheckBox.hovered = hovered;
+    cmd.drawCheckBox.clickHandler = clickHandler;
+    cmd.drawCheckBox.className = className;
+    cmd.drawCheckBox.compId = compId;
+    cmd.drawCheckBox.avaType = avaType;
+    Emit(cmd);
+}
+
+void RenderCommandSink::DrawRadioButton(
+    float x, float y, float width, float height,
+    const std::string& text,
+    float fontSize, const char* fontName,
+    const Color& textColor,
+    const Color& boxFillColor,
+    const Color& boxBorderColor, float borderWidth,
+    bool selected, bool disabled, bool focused, bool hovered,
+    const std::string& clickHandler,
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
+) {
+    RenderCommand cmd;
+    cmd.type = RenderCommandType::DrawRadioButton;
+    cmd.drawRadioButton.x = x;
+    cmd.drawRadioButton.y = y;
+    cmd.drawRadioButton.width = width;
+    cmd.drawRadioButton.height = height;
+    cmd.drawRadioButton.text = text;
+    cmd.drawRadioButton.fontSize = fontSize;
+    cmd.drawRadioButton.fontName = fontName;
+    cmd.drawRadioButton.textColor = textColor;
+    cmd.drawRadioButton.boxFillColor = boxFillColor;
+    cmd.drawRadioButton.boxBorderColor = boxBorderColor;
+    cmd.drawRadioButton.borderWidth = borderWidth;
+    cmd.drawRadioButton.selected = selected;
+    cmd.drawRadioButton.disabled = disabled;
+    cmd.drawRadioButton.focused = focused;
+    cmd.drawRadioButton.hovered = hovered;
+    cmd.drawRadioButton.clickHandler = clickHandler;
+    cmd.drawRadioButton.className = className;
+    cmd.drawRadioButton.compId = compId;
+    cmd.drawRadioButton.avaType = avaType;
+    Emit(cmd);
+}
+
+void RenderCommandSink::DrawComboBox(
+    float x, float y, float width, float height,
+    const std::vector<render::ComboBoxItem>& items,
+    float fontSize, const char* fontName,
+    const Color& textColor,
+    const Color& fillColor,
+    const Color& borderColor, float borderWidth, float borderRadius,
+    bool disabled, bool focused, bool hovered, bool open,
+    const std::string& clickHandler,
+    const std::string& className,
+    ComponentId compId,
+    const std::string& avaType
+) {
+    RenderCommand cmd;
+    cmd.type = RenderCommandType::DrawComboBox;
+    cmd.drawComboBox.x = x;
+    cmd.drawComboBox.y = y;
+    cmd.drawComboBox.width = width;
+    cmd.drawComboBox.height = height;
+    cmd.drawComboBox.items = items;
+    cmd.drawComboBox.fontSize = fontSize;
+    cmd.drawComboBox.fontName = fontName;
+    cmd.drawComboBox.textColor = textColor;
+    cmd.drawComboBox.fillColor = fillColor;
+    cmd.drawComboBox.borderColor = borderColor;
+    cmd.drawComboBox.borderWidth = borderWidth;
+    cmd.drawComboBox.borderRadius = borderRadius;
+    cmd.drawComboBox.disabled = disabled;
+    cmd.drawComboBox.focused = focused;
+    cmd.drawComboBox.hovered = hovered;
+    cmd.drawComboBox.open = open;
+    cmd.drawComboBox.clickHandler = clickHandler;
+    cmd.drawComboBox.className = className;
+    cmd.drawComboBox.compId = compId;
+    cmd.drawComboBox.avaType = avaType;
     Emit(cmd);
 }
 

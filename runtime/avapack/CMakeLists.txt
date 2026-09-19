@@ -133,6 +133,8 @@ target_include_directories(avapack_stub PRIVATE
     ${CMAKE_SOURCE_DIR}/runtime/avalang/src
     ${CMAKE_SOURCE_DIR}/runtime/avalang/api/src
     ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
+    # Fase 0/1 de PLAN_DEBUG_MODE_AVASTUDIO.md (ver runtime/common/diagnostics/).
+    ${CMAKE_SOURCE_DIR}/runtime/common
 )
 target_compile_definitions(avapack_stub PRIVATE ${AVAPACK_TINY_AES_DEFS})
 set_target_properties(avapack_stub PROPERTIES
@@ -180,6 +182,8 @@ if(WIN32 AND TARGET avahost_native)
         ${CMAKE_SOURCE_DIR}/runtime/avalang/src
         ${CMAKE_SOURCE_DIR}/runtime/avalang/api/src
         ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
+        # Fase 0/1 de PLAN_DEBUG_MODE_AVASTUDIO.md (ver runtime/common/diagnostics/).
+        ${CMAKE_SOURCE_DIR}/runtime/common
     )
     target_compile_definitions(avapack_stub_ui PRIVATE ${AVAPACK_TINY_AES_DEFS} AVAPACK_HAS_DESKTOP_UI_HOST)
     # Sin consola: como avanative.exe (ver runtime/avahost/CMakeLists.txt),
@@ -333,6 +337,8 @@ target_include_directories(${AVAPACK_OUT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/runtime/avalang/src
     ${CMAKE_SOURCE_DIR}/runtime/avalang/api/src
     ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
+    # Fase 0/1 de PLAN_DEBUG_MODE_AVASTUDIO.md (ver runtime/common/diagnostics/).
+    ${CMAKE_SOURCE_DIR}/runtime/common
 )
 target_compile_definitions(${AVAPACK_OUT_NAME} PRIVATE ${AVAPACK_TINY_AES_DEFS})
 if(AVAPACK_DESKTOP_UI)

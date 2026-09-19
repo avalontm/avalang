@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace avalang {
 namespace ui {
@@ -42,6 +43,29 @@ void Bridge_CanvasDrawButton(float x, float y, float width, float height, const 
                               float borderWidth, float borderRadius, bool disabled);
 void Bridge_CanvasDrawLink(float x, float y, const std::string& text,
                             float fontSize, const std::string& fontName, uint32_t color);
+void Bridge_CanvasDrawCheckBox(float x, float y, float width, float height, const std::string& text,
+                                 float fontSize, const std::string& fontName,
+                                 uint32_t textColor, uint32_t boxFillColor, uint32_t boxBorderColor,
+                                 float borderWidth, float borderRadius,
+                                 bool checked, bool disabled, bool focused, bool hovered);
+void Bridge_CanvasDrawRadioButton(float x, float y, float width, float height, const std::string& text,
+                                    float fontSize, const std::string& fontName,
+                                    uint32_t textColor, uint32_t boxFillColor, uint32_t boxBorderColor,
+                                    float borderWidth,
+                                    bool selected, bool disabled, bool focused, bool hovered);
+void Bridge_CanvasDrawInput(float x, float y, float width, float height,
+                             const std::string& text, const std::string& placeholder,
+                             float fontSize, const std::string& fontName,
+                             uint32_t textColor, uint32_t fillColor, uint32_t borderColor,
+                             float borderWidth, float borderRadius,
+                             bool disabled, bool focused, bool hovered, int caretIndex);
+void Bridge_CanvasDrawComboBox(float x, float y, float width, float height,
+                                const std::vector<std::string>& values,
+                                const std::vector<std::string>& labels, int selectedIndex,
+                                float fontSize, const std::string& fontName,
+                                uint32_t textColor, uint32_t fillColor, uint32_t borderColor,
+                                float borderWidth, float borderRadius,
+                                bool disabled, bool focused, bool hovered, bool open);
 void Bridge_CanvasPushClip(float x, float y, float width, float height);
 void Bridge_CanvasPopClip();
 

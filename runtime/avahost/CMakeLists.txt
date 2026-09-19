@@ -84,6 +84,7 @@ if(WIN32 AND TARGET avalang_ui_win)
         # mas abajo -- IPlatform.h necesita la raiz del repo en el include
         # path.
         ${CMAKE_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/runtime/common
         ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
         ${CMAKE_SOURCE_DIR}/runtime/avalang/src
         ${CMAKE_SOURCE_DIR}/runtime/avalang
@@ -122,6 +123,8 @@ if(WIN32 AND TARGET avalang_ui_win)
     target_include_directories(avanative PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}
+        # Fase 0/1 de PLAN_DEBUG_MODE_AVASTUDIO.md (ver runtime/common/diagnostics/).
+        ${CMAKE_SOURCE_DIR}/runtime/common
     )
     target_link_libraries(avanative PRIVATE avahost_native)
 
