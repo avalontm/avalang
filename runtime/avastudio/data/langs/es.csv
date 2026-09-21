@@ -156,6 +156,8 @@ properties.column_property,Propiedad
 properties.section_events,Eventos
 properties.column_event,Evento
 properties.column_handler,Manejador
+properties.add_custom_entry,Agregar personalizada: %s
+properties.add_no_results,Sin coincidencias
 panel.state.title,Estado
 state.empty_selection,Abre una pestaña de diseño .avaui para ver y editar su estado inicial.
 state.section_variables,Variables de estado

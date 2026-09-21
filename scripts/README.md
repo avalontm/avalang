@@ -21,6 +21,10 @@ se indica lo contrario abajo.
 | `build_barekernel_app.bat`| (sin equivalente -- idem) |
 | `sign_release.bat`        | **sin equivalente automatico todavia.** Firma de codigo Authenticode via `signtool` es especifico de Windows; no es un "port" 1:1. Si mas adelante hace falta distribuir en macOS, el equivalente es notarizacion/`codesign` -- una tarea aparte, no cubierta por este plan (ver Fase 4 de `PLAN_LIBRERIAS_NATIVAS_MULTIPLATAFORMA.md`). |
 
+`test_studio_dragdrop.sh` (sin `.bat`) compila y ejecuta con `g++`, sin CMake ni
+ImGui/OpenGL, las pruebas de drag & drop del Design de AvaStudio
+(`tests/unit/avastudio/`); ver `DRAGDROP_CONTAINERS_PLAN.md`.
+
 Todos los `.sh` deben correrse dentro de WSL o de un shell Linux/macOS
 nativo:
 

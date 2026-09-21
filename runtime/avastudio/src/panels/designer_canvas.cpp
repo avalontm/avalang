@@ -32,6 +32,7 @@
 #include "designer/preview.h"
 #include "designer/responsive.h"
 #include "designer/property_editor.h"
+#include "designer/property_catalog.h"
 #include "designer/property_grid.h"
 #include "designer/selection_manager.h"
 #include "designer/tools.h"
@@ -504,27 +505,25 @@ std::vector<designer::PropertyGridSection> BuildDesignerPropertyGrid(const desig
         }
     }
 
-    designer::PropertyGridSection advanced{designer::PropertyCategory::Advanced, {}};
     for (const auto& name : node->PropertyNames()) {
         if (known_names.count(name)) continue;
         const auto* value = node->GetProperty(name);
         if (!value) continue;
 
-        designer::PropertyMetadata metadata;
-        metadata.name = name;
-        metadata.type = designer::PropertyTypeName(value->Type());
-        metadata.category = designer::PropertyCategory::Advanced;
-        metadata.designerEditor = avalang::ui::IsEventPropertyName(name) ? designer::PropertyEditorKind::Event
-                                                                          : designer::PropertyEditorKind::String;
-
         designer::PropertyGridRow row;
-        row.metadata = metadata;
+        if (const designer::PropertyMetadata* declared = designer::FindCatalogProperty(name)) {
+            row.metadata = *declared;
+        } else {
+            row.metadata.name = name;
+            row.metadata.type = designer::PropertyTypeName(value->Type());
+            row.metadata.category = designer::PropertyCategory::Advanced;
+            row.metadata.designerEditor = avalang::ui::IsEventPropertyName(name)
+                                              ? designer::PropertyEditorKind::Event
+                                              : designer::PropertyEditorKind::String;
+        }
         row.value = designer::FormatPropertyValue(*value);
         row.source = ResolvePropertySource(doc, node, name, true, project_root);
-        advanced.rows.push_back(row);
-    }
-    if (!advanced.rows.empty()) {
-        sections.push_back(std::move(advanced));
+        designer::InsertGridRow(sections, std::move(row));
     }
 
     return sections;
@@ -546,6 +545,7 @@ PropertiesState ToPropertiesState(avalang::ui::IComponent* node, bool editable, 
     PropertiesState state = ToPropertiesState(node, editable, tab_id);
     if (editable) {
         state.grid = BuildDesignerPropertyGrid(doc, node, project_root);
+        state.addable = designer::ListAddableProperties(node, state.grid);
     }
     return state;
 }
@@ -567,11 +567,36 @@ float FindPropValueF(const std::vector<PropertyRow>& props, const std::string& k
     return (end != raw.c_str()) ? parsed : fallback;
 }
 
-design::DropZone ComputeDropZone(float mouse_y, ImVec2 p0, ImVec2 p1, bool is_container) {
+design::DropZone ComputeDropZone(float mouse_y, ImVec2 p0, ImVec2 p1, bool is_container, bool allow_sibling) {
     const designer::LayoutRect rect{p0.x, p0.y, p1.x - p0.x, std::max(p1.y - p0.y, 1.0f)};
     const designer::LayoutPoint point{p0.x, mouse_y};
-    return designer::ComputeDropZone(rect, point, is_container);
+    return designer::ComputeDropZone(rect, point, is_container, allow_sibling);
 }
+
+bool CanDropAsSibling(const design::DesignDocument& doc, const avalang::ui::IComponent* node) {
+    const avalang::ui::IComponent* root = doc.Root();
+    return root != nullptr && node->NodeId() != root->NodeId();
+}
+
+bool IsDialogNode(avalang::ui::IComponent* node) { return LowerAscii(node->TypeName()) == "dialog"; }
+
+struct DropChildContext {
+    ImVec2 origin;
+    float child_offset_y = 0.0f;
+    const std::unordered_map<std::string, avalang::ui::LayoutRect>* rects = nullptr;
+};
+
+struct DropChild {
+    std::string id;
+    designer::LayoutRect rect;
+};
+
+struct DropResolution {
+    design::DropZone zone = design::DropZone::kInto;
+    std::string anchor_id;
+    bool has_marker = false;
+    designer::LayoutRect marker;
+};
 
 void DrawDropIndicator(ImVec2 p0, ImVec2 p1, design::DropZone zone, bool is_container) {
     const designer::LayoutRect target{p0.x, p0.y, p1.x - p0.x, p1.y - p0.y};
@@ -588,50 +613,113 @@ void DrawDropIndicator(ImVec2 p0, ImVec2 p1, design::DropZone zone, bool is_cont
     }
 }
 
+void DrawInsertMarker(const designer::LayoutRect& marker) {
+    const ImVec2 m0(static_cast<float>(marker.x), static_cast<float>(marker.y));
+    const ImVec2 m1(m0.x + static_cast<float>(marker.width), m0.y + static_cast<float>(marker.height));
+    ImGui::GetWindowDrawList()->AddRectFilled(m0, m1, palette::U32FromHex(palette::kPrimary), 1.5f);
+}
+
+designer::FlowLayout FlowLayoutOfNode(const avalang::ui::IComponent* node) {
+    bool horizontal = false;
+    if (const avalang::ui::PropertyValue* direction = node->GetProperty("direction")) {
+        horizontal = direction->Type() == avalang::ui::PropertyType::String && direction->AsString() == "horizontal";
+    }
+    const int columns = static_cast<int>(avalang::ui::layout::ReadNumber(node, "columns", 1.0));
+    return designer::FlowLayoutOf(node->TypeName(), horizontal, columns);
+}
+
+std::vector<DropChild> CollectDropChildren(const avalang::ui::IComponent* node, const DropChildContext& context) {
+    std::vector<DropChild> children;
+    if (context.rects == nullptr) return children;
+    for (avalang::ui::IComponent* child : node->Children()) {
+        if (IsDialogNode(child)) continue;
+        const auto it = context.rects->find(child->NodeId());
+        if (it == context.rects->end()) continue;
+        const avalang::ui::LayoutRect& layout = it->second;
+        children.push_back({child->NodeId(),
+                            designer::LayoutRect{context.origin.x + layout.x,
+                                                  context.origin.y + layout.y + context.child_offset_y, layout.width,
+                                                  layout.height}});
+    }
+    return children;
+}
+
+DropResolution ResolveDrop(const avalang::ui::IComponent* node, bool is_container, bool allow_sibling, ImVec2 p0,
+                            ImVec2 p1, const DropChildContext& context, const std::string& moved_id) {
+    const ImVec2 mouse = ImGui::GetMousePos();
+    DropResolution resolution;
+    resolution.zone = ComputeDropZone(mouse.y, p0, p1, is_container, allow_sibling);
+    if (resolution.zone != design::DropZone::kInto) return resolution;
+
+    const std::vector<DropChild> children = CollectDropChildren(node, context);
+    if (children.empty()) return resolution;
+
+    std::vector<designer::LayoutRect> rects;
+    std::vector<std::string> ids;
+    rects.reserve(children.size());
+    ids.reserve(children.size());
+    for (const DropChild& child : children) {
+        rects.push_back(child.rect);
+        ids.push_back(child.id);
+    }
+
+    const designer::FlowLayout flow = FlowLayoutOfNode(node);
+    const size_t index = designer::ComputeInsertIndex(
+        flow, rects, designer::LayoutPoint{static_cast<double>(mouse.x), static_cast<double>(mouse.y)});
+    const size_t position = designer::ResolveInsertPosition(ids, index, moved_id);
+
+    if (position < children.size()) resolution.anchor_id = children[position].id;
+    resolution.has_marker = designer::ComputeInsertMarker(flow, rects, position, resolution.marker);
+    return resolution;
+}
+
 void HandleDropTarget(avalang::ui::IComponent* node, design::DesignDocument& doc,
                        designer::CommandManager* command_manager, designer::SelectionManager* selection,
-                       bool is_container, ImVec2 p0, ImVec2 p1) {
-    if (ImGui::BeginDragDropTarget()) {
-        if (ImGui::AcceptDragDropPayload(kNodeMoveDragDropId, ImGuiDragDropFlags_AcceptPeekOnly)) {
-            const design::DropZone zone = ComputeDropZone(ImGui::GetMousePos().y, p0, p1, is_container);
-            DrawDropIndicator(p0, p1, zone, is_container);
-        }
+                       bool is_container, ImVec2 p0, ImVec2 p1, const DropChildContext& context) {
+    if (!ImGui::BeginDragDropTarget()) return;
 
-        if (is_container) {
-            if (ImGui::AcceptDragDropPayload(kToolboxDragDropId, ImGuiDragDropFlags_AcceptPeekOnly)) {
-                DrawDropIndicator(p0, p1, design::DropZone::kInto, true);
-            }
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kToolboxDragDropId)) {
-                const std::string dropped_type(static_cast<const char*>(payload->Data));
-                if (avalang::ui::IComponent* real = design::FindNodeById(doc.Root(), node->NodeId())) {
-                    designer::InsertTool::InsertInto(command_manager, doc, selection, real->NodeId(), dropped_type);
-                }
-            }
-        } else {
-            if (ImGui::AcceptDragDropPayload(kToolboxDragDropId, ImGuiDragDropFlags_AcceptPeekOnly)) {
-                const design::DropZone zone = ComputeDropZone(ImGui::GetMousePos().y, p0, p1, is_container);
-                DrawDropIndicator(p0, p1, zone, false);
-            }
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kToolboxDragDropId)) {
-                const std::string dropped_type(static_cast<const char*>(payload->Data));
-                avalang::ui::IComponent* target = design::FindNodeById(doc.Root(), node->NodeId());
-                avalang::ui::IComponent* parent = target ? design::FindParentOf(doc.Root(), target) : nullptr;
-                if (parent) {
-                    const design::DropZone zone = ComputeDropZone(ImGui::GetMousePos().y, p0, p1, is_container);
-                    designer::InsertTool::InsertRelative(command_manager, doc, selection, parent->NodeId(),
-                                                          node->NodeId(), zone, dropped_type);
-                }
-            }
-        }
+    const bool allow_sibling = CanDropAsSibling(doc, node);
 
-        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kNodeMoveDragDropId)) {
-            const std::string moved_id(static_cast<const char*>(payload->Data));
-            const design::DropZone zone = ComputeDropZone(ImGui::GetMousePos().y, p0, p1, is_container);
-            designer::MoveTool::Execute(command_manager, doc, selection, moved_id, node->NodeId(), zone);
-        }
-
-        ImGui::EndDragDropTarget();
+    const ImGuiPayload* moving_payload =
+        ImGui::AcceptDragDropPayload(kNodeMoveDragDropId, ImGuiDragDropFlags_AcceptPeekOnly);
+    const ImGuiPayload* inserting_payload =
+        ImGui::AcceptDragDropPayload(kToolboxDragDropId, ImGuiDragDropFlags_AcceptPeekOnly);
+    if (moving_payload != nullptr || inserting_payload != nullptr) {
+        const std::string moved_id =
+            moving_payload != nullptr ? std::string(static_cast<const char*>(moving_payload->Data)) : std::string();
+        const DropResolution drop = ResolveDrop(node, is_container, allow_sibling, p0, p1, context, moved_id);
+        DrawDropIndicator(p0, p1, drop.zone, is_container);
+        if (drop.has_marker) DrawInsertMarker(drop.marker);
     }
+
+    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kToolboxDragDropId)) {
+        const std::string dropped_type(static_cast<const char*>(payload->Data));
+        const DropResolution drop = ResolveDrop(node, is_container, allow_sibling, p0, p1, context, std::string());
+        if (avalang::ui::IComponent* target = design::FindNodeById(doc.Root(), node->NodeId())) {
+            if (drop.zone == design::DropZone::kInto && !drop.anchor_id.empty()) {
+                designer::InsertTool::InsertRelative(command_manager, doc, selection, target->NodeId(), drop.anchor_id,
+                                                      design::DropZone::kBefore, dropped_type);
+            } else if (drop.zone == design::DropZone::kInto) {
+                designer::InsertTool::InsertInto(command_manager, doc, selection, target->NodeId(), dropped_type);
+            } else if (avalang::ui::IComponent* parent = design::FindParentOf(doc.Root(), target)) {
+                designer::InsertTool::InsertRelative(command_manager, doc, selection, parent->NodeId(),
+                                                      target->NodeId(), drop.zone, dropped_type);
+            }
+        }
+    }
+
+    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kNodeMoveDragDropId)) {
+        const std::string moved_id(static_cast<const char*>(payload->Data));
+        const DropResolution drop = ResolveDrop(node, is_container, allow_sibling, p0, p1, context, moved_id);
+        if (drop.zone == design::DropZone::kInto && !drop.anchor_id.empty()) {
+            designer::MoveTool::Execute(command_manager, doc, selection, moved_id, drop.anchor_id,
+                                         design::DropZone::kBefore);
+        } else {
+            designer::MoveTool::Execute(command_manager, doc, selection, moved_id, node->NodeId(), drop.zone);
+        }
+    }
+
+    ImGui::EndDragDropTarget();
 }
 
 #define AVA_FASE10_PASO_B_MODE 2
@@ -806,6 +894,37 @@ bool DrawRealWidget(avalang::ui::IComponent* node, const std::string& evaluated_
         ImGui::GetWindowDrawList()->AddLine(ImVec2(p0.x, p0.y + text_size.y),
                                              ImVec2(p0.x + text_size.x, p0.y + text_size.y),
                                              link_color, 1.0f);
+    } else if (type == "combobox") {
+        const int frame_colors = PushClassicFrameStyle();
+        PushClassicTextStyle();
+        std::string buf = evaluated_display;
+        buf.resize(std::max<size_t>(buf.size() + 1, 256), '\0');
+        ImGui::InputText("##combobox_preview", buf.data(), buf.size(), ImGuiInputTextFlags_ReadOnly);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const float arrow_half = 4.0f;
+        const ImVec2 arrow_center(p1.x - 12.0f, p0.y + size.y * 0.5f);
+        dl->AddTriangleFilled(ImVec2(arrow_center.x - arrow_half, arrow_center.y - arrow_half * 0.5f),
+                               ImVec2(arrow_center.x + arrow_half, arrow_center.y - arrow_half * 0.5f),
+                               ImVec2(arrow_center.x, arrow_center.y + arrow_half * 0.5f),
+                               IM_COL32(0x40, 0x40, 0x40, 0xFF));
+        ImGui::PopStyleColor(frame_colors + 1);
+    } else if (type == "icon") {
+        const std::string src = FindPropValue(properties, "source", "");
+        const std::string resolved_path = ResolveImageSrcPath(src, project_root);
+        const ImagePreviewEntry* preview = GetOrLoadImagePreview(resolved_path);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        if (preview != nullptr) {
+            dl->AddImage(static_cast<ImTextureID>(preview->texture_id), p0, p1);
+        } else {
+            const ImU32 icon_color = palette::U32FromHex(palette::kTextSecondary, 0.8f);
+            const ImVec2 center((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
+            const float radius = std::min(size.x, size.y) * 0.32f;
+            dl->AddCircle(center, radius, icon_color, 0, 1.5f);
+            dl->AddLine(ImVec2(center.x - radius * 0.5f, center.y), ImVec2(center.x + radius * 0.5f, center.y),
+                        icon_color, 1.5f);
+            dl->AddLine(ImVec2(center.x, center.y - radius * 0.5f), ImVec2(center.x, center.y + radius * 0.5f),
+                        icon_color, 1.5f);
+        }
     } else if (type == "divider") {
         ImGui::GetWindowDrawList()->AddLine(ImVec2(p0.x, p0.y + size.y * 0.5f), ImVec2(p1.x, p0.y + size.y * 0.5f),
                                              palette::U32FromHex(palette::kBorder), 1.0f);
@@ -838,8 +957,6 @@ bool DrawRealWidget(avalang::ui::IComponent* node, const std::string& evaluated_
     ImGui::PopItemWidth();
     return handled;
 }
-
-bool IsDialogNode(avalang::ui::IComponent* node) { return LowerAscii(node->TypeName()) == "dialog"; }
 
 bool IsNodeDrawnInCanvas(avalang::ui::IComponent* root, const std::string& node_id) {
     if (root == nullptr) return false;
@@ -1057,6 +1174,8 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
 
     const bool header_reserves_space = is_container && !live_render_painted;
     const float header_bottom = header_reserves_space ? std::min(p1.y, p0.y + kHeaderHeight) : p0.y;
+    const float child_offset_y = extra_offset_y + (header_reserves_space ? kHeaderHeight : 0.0f);
+    const DropChildContext drop_context{origin, child_offset_y, uid_to_rect};
     if (is_container) {
         if (header_reserves_space) {
             draw_list->AddRectFilled(p0, ImVec2(p1.x, header_bottom), palette::U32FromHex(palette::kBorder, 0.55f),
@@ -1145,8 +1264,6 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
         }
     }
 
-    const ImVec2 hit_p1 = !is_container ? p1 : (header_reserves_space ? ImVec2(p1.x, header_bottom) : p1);
-
     ImGui::SetCursorScreenPos(sel_p0);
     ImGui::SetNextItemAllowOverlap();
     ImGui::InvisibleButton("##node_hit_area",
@@ -1214,7 +1331,7 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
         }
 
         if (!synthetic) {
-            HandleDropTarget(node, doc, command_manager, selection, is_container, p0, hit_p1);
+            HandleDropTarget(node, doc, command_manager, selection, is_container, p0, p1, drop_context);
         }
     } else if (!synthetic && item_clicked) {
         InvokeNodeClickHandler(state_vm, node, node, events, eval_cache);
@@ -1242,13 +1359,12 @@ void DrawNode(avalang::ui::IComponent* node, ImVec2 origin,
                 SelectNode(selection, node->NodeId());
                 out_selected = ToPropertiesState(node, true, tab_id, doc, project_root);
             }
-            HandleDropTarget(node, doc, command_manager, selection, is_container, ImVec2(p0.x, header_bottom), p1);
+            HandleDropTarget(node, doc, command_manager, selection, is_container, p0, p1, drop_context);
         }
     }
 
     ImGui::PopID();
 
-    const float child_offset_y = extra_offset_y + (header_reserves_space ? kHeaderHeight : 0.0f);
     for (avalang::ui::IComponent* child : node_children) {
         if (IsDialogNode(child)) continue;
         DrawNode(child, origin, doc, out_selected, tab_id, command_manager, selection, out_generated_handler,
@@ -1639,8 +1755,9 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
                 } else {
                     entry.preview_resolved_tree.reset();
                 }
-                entry.live_render = studio::design::BuildLiveRender(tree_for_live_render, vw, vh,
-                                                                       doc.extends, project_root, live_eval);
+                entry.live_render = studio::design::BuildLiveRender(
+                    tree_for_live_render, vw, vh, doc.extends, project_root, live_eval,
+                    entry.canvas_mode == designer::CanvasMode::Design);
                 entry.live_render_dirty = false;
                 entry.live_render_w = vw;
                 entry.live_render_h = vh;
@@ -1653,8 +1770,8 @@ std::optional<PropertiesState> DrawDesignerCanvas(design::DesignDocument& doc, I
             live_render = &entry.live_render;
             live_render_renderer = entry.imgui_renderer.get();
         } else {
-            local_live_render = studio::design::BuildLiveRender(doc.tree.get(), vw, vh,
-                                                                    doc.extends, project_root, live_eval);
+            local_live_render = studio::design::BuildLiveRender(doc.tree.get(), vw, vh, doc.extends, project_root,
+                                                                 live_eval, is_design_mode);
             local_imgui_renderer = std::make_unique<avalang::ui::ImGuiRenderer>(vw, vh);
             live_render = &local_live_render;
             live_render_renderer = local_imgui_renderer.get();

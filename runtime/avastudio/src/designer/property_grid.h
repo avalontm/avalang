@@ -21,4 +21,6 @@ struct PropertyGridSection {
 
 std::vector<PropertyGridSection> BuildPropertyGrid(UiNode* node);
 
+void InsertGridRow(std::vector<PropertyGridSection>& sections, PropertyGridRow row);
+
 }

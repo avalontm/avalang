@@ -32,12 +32,15 @@ std::filesystem::path ResolveDottedPath(const std::string& projectRoot, const st
     return avalang::ui::ResolveDottedAvauiPath(projectRoot, dotted);
 }
 
+constexpr double kEmptyContainerMinWidth = 120.0;
+constexpr double kEmptyContainerMinHeight = 56.0;
+
 }
 
 LiveRenderResult BuildLiveRender(avalang::ui::ComponentTree* tree, int viewportWidth, int viewportHeight,
                                   const std::string& extends,
                                   const std::string& projectRoot,
-                                  TextEvaluator evalText) {
+                                  TextEvaluator evalText, bool reserveEmptyContainerSpace) {
     LiveRenderResult out;
 
     if (!tree || !tree->Root()) {
@@ -84,6 +87,9 @@ LiveRenderResult BuildLiveRender(avalang::ui::ComponentTree* tree, int viewportW
 
     out.layoutEngine = avalang::ui::LayoutEngine::Create();
     if (evalText) out.layoutEngine->SetTextEvaluator(evalText);
+    if (reserveEmptyContainerSpace) {
+        out.layoutEngine->SetEmptyContainerMinSize(kEmptyContainerMinWidth, kEmptyContainerMinHeight);
+    }
     int effectiveW = viewportWidth;
     int effectiveH = viewportHeight;
     if (out.hasSlot) {

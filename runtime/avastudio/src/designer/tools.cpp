@@ -98,9 +98,15 @@ std::string InsertTool::InsertInto(CommandManager* manager, design::DesignDocume
 std::string InsertTool::InsertRelative(CommandManager* manager, design::DesignDocument& document,
                                         SelectionManager* selection, const NodeId& siblingParentId,
                                         const NodeId& siblingId, design::DropZone zone, const std::string& type) {
+    const bool ownsTransaction = manager != nullptr && !manager->InTransaction();
+    if (ownsTransaction) manager->BeginTransaction("Insert " + type);
+
     const std::string newId = ExecuteAddComponent(manager, document, selection, siblingParentId, type, "", {});
-    if (newId.empty()) return newId;
-    ExecuteMoveComponent(manager, document, selection, newId, siblingId, zone);
+    if (!newId.empty()) {
+        ExecuteMoveComponent(manager, document, selection, newId, siblingId, zone);
+    }
+
+    if (ownsTransaction) manager->EndTransaction();
     return newId;
 }
 

@@ -84,7 +84,7 @@ const std::vector<ComponentTypeInfo>& GetComponentCatalog() {
             info.display_name = descriptor.display_name;
             info.is_container = descriptor.is_container;
             for (const auto& prop : descriptor.default_properties) {
-                info.default_properties.push_back({prop.name, ToDisplayString(prop.value)});
+                info.default_properties.push_back({prop.name, ToDisplayString(prop.defaultValue)});
             }
             auto it = metadata.find(info.type);
             if (it != metadata.end()) {

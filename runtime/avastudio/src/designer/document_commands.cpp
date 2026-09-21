@@ -7,6 +7,7 @@
 #include "designer/component_extraction_command.h"
 #include "designer/lifecycle_commands.h"
 #include "designer/move_commands.h"
+#include "designer/property_catalog.h"
 #include "designer/property_commands.h"
 #include "resolver/DottedPath.h"
 
@@ -285,8 +286,10 @@ bool ExecuteSetProperty(CommandManager* manager, design::DesignDocument& documen
         return false;
     }
 
+    const PropertyValue typedValue = ResolveTypedPropertyValue(node, key, value);
+
     if (!manager) {
-        node->SetProperty(key, PropertyValue(value));
+        node->SetProperty(key, typedValue);
         document.dirty = true;
         document.revision++;
         design::MarkPropertyAuthored(document, nodeId, key);
@@ -294,8 +297,7 @@ bool ExecuteSetProperty(CommandManager* manager, design::DesignDocument& documen
     }
 
     manager->Execute(std::make_unique<DocumentCommand>(
-        &document, std::make_unique<SetPropertyCommand>(tree, nodeId, key, PropertyValue(value)),
-        selection));
+        &document, std::make_unique<SetPropertyCommand>(tree, nodeId, key, typedValue), selection));
     design::MarkPropertyAuthored(document, nodeId, key);
     return true;
 }

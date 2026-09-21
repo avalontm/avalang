@@ -57,6 +57,11 @@ LayoutAlignment ReadGridChildAlignment(const IComponent* component, const std::s
     return LayoutAlignment::Stretch;
 }
 
+bool IsPlaceholderContainer(const std::string& typeName) {
+    return typeName == "Page" || typeName == "Container" || typeName == "Column" || typeName == "Row" || typeName == "Stack" ||
+           typeName == "Grid" || typeName == "Flex" || typeName == "ScrollView" || typeName == "ListView";
+}
+
 bool ReadWrapFlag(const IComponent* component) {
     const PropertyValue* value = component->GetProperty("wrap");
     return value && value->Type() == PropertyType::Bool && value->AsBool();
@@ -299,6 +304,12 @@ IntrinsicSize LayoutEngineImpl::ComputeIntrinsicSize(IComponent* component) {
         }
         size.width = maxWidth + padding.left + padding.right;
         size.height = maxHeight + padding.top + padding.bottom;
+    }
+
+    if (children.empty() && (emptyContainerMinWidth_ > 0.0 || emptyContainerMinHeight_ > 0.0) &&
+        IsPlaceholderContainer(typeName)) {
+        size.width = std::max(size.width, emptyContainerMinWidth_);
+        size.height = std::max(size.height, emptyContainerMinHeight_);
     }
 
     double explicitValue;

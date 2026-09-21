@@ -84,16 +84,65 @@ struct TextBoxTypeRegistration {
         using namespace avalang::ui::registry;
         RegisterComponentType({
             "TextBox", "Text Box", false,
-            {
-                {"text", PropertyValue("")},
-                {"placeholder", PropertyValue("")},
-                {"isFocused", PropertyValue(false)},
-                {"isEnabled", PropertyValue(true)},
-                {"caretIndex", PropertyValue(0.0)},
-                {"selectionAnchor", PropertyValue(0.0)},
-                {"imeComposition", PropertyValue("")},
-                {"imeCompositionCursor", PropertyValue(0.0)},
-            },
+            WithCommonProperties(CommonInteractiveProperties(), {
+                PropertyDescriptor{
+                    .name = "text",
+                    .defaultValue = PropertyValue(""),
+                    .kind = PropertyKind::Text,
+                    .group = PropertyGroup::Typography,
+                    .description = "Contenido actual del campo de texto",
+                },
+                PropertyDescriptor{
+                    .name = "placeholder",
+                    .defaultValue = PropertyValue(""),
+                    .kind = PropertyKind::Text,
+                    .group = PropertyGroup::Typography,
+                    .description = "Texto atenuado que se muestra cuando el campo está vacío",
+                },
+                PropertyDescriptor{
+                    .name = "isFocused",
+                    .defaultValue = PropertyValue(false),
+                    .kind = PropertyKind::Boolean,
+                    .group = PropertyGroup::Behavior,
+                    .description = "Estado inicial de foco de teclado del campo",
+                },
+                PropertyDescriptor{
+                    .name = "caretIndex",
+                    .defaultValue = PropertyValue(0.0),
+                    .kind = PropertyKind::Number,
+                    .group = PropertyGroup::Advanced,
+                    .description = "Posición del cursor de edición, gestionada en tiempo de "
+                                   "ejecución por TextBoxEditingController",
+                    .readOnly = true,
+                },
+                PropertyDescriptor{
+                    .name = "selectionAnchor",
+                    .defaultValue = PropertyValue(0.0),
+                    .kind = PropertyKind::Number,
+                    .group = PropertyGroup::Advanced,
+                    .description = "Ancla de la selección de texto, gestionada en tiempo de "
+                                   "ejecución por TextBoxEditingController",
+                    .readOnly = true,
+                },
+                PropertyDescriptor{
+                    .name = "imeComposition",
+                    .defaultValue = PropertyValue(""),
+                    .kind = PropertyKind::Text,
+                    .group = PropertyGroup::Advanced,
+                    .description = "Texto de composición IME en curso (entrada de métodos de "
+                                   "entrada asiáticos), gestionado en tiempo de ejecución",
+                    .readOnly = true,
+                },
+                PropertyDescriptor{
+                    .name = "imeCompositionCursor",
+                    .defaultValue = PropertyValue(0.0),
+                    .kind = PropertyKind::Number,
+                    .group = PropertyGroup::Advanced,
+                    .description = "Posición del cursor dentro de la composición IME en curso, "
+                                   "gestionada en tiempo de ejecución",
+                    .readOnly = true,
+                },
+            }),
         });
     }
 };

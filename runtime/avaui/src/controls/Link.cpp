@@ -43,8 +43,20 @@ struct LinkTypeRegistration {
         RegisterComponentType({
             "Link", "Link", false,
             {
-                {"text", PropertyValue("Link")},
-                {"href", PropertyValue("")},
+                PropertyDescriptor{
+                    .name = "text",
+                    .defaultValue = PropertyValue("Link"),
+                    .kind = PropertyKind::Text,
+                    .group = PropertyGroup::Typography,
+                    .description = "Texto visible del enlace",
+                },
+                PropertyDescriptor{
+                    .name = "href",
+                    .defaultValue = PropertyValue(""),
+                    .kind = PropertyKind::Text,
+                    .group = PropertyGroup::Behavior,
+                    .description = "URL o ruta de destino que se abre al activar el enlace",
+                },
             },
         });
     }

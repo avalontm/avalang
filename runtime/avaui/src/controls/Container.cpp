@@ -49,8 +49,27 @@ struct ContainerTypeRegistrations {
         RegisterComponentType({
             "Grid", "Grid", true,
             {
-                {"columns", PropertyValue(2.0)},
-                {"rows", PropertyValue(2.0)},
+                PropertyDescriptor{
+                    .name = "columns",
+                    .defaultValue = PropertyValue(2.0),
+                    .kind = PropertyKind::Number,
+                    .group = PropertyGroup::Layout,
+                    .description = "Cantidad de columnas de la grilla (mínimo 1)",
+                    .hasRange = true,
+                    .minValue = 1.0,
+                    .maxValue = 24.0,
+                },
+                PropertyDescriptor{
+                    .name = "rows",
+                    .defaultValue = PropertyValue(2.0),
+                    .kind = PropertyKind::Number,
+                    .group = PropertyGroup::Layout,
+                    .description = "Cantidad de filas explícitas. 0 = automático, calculado a "
+                                   "partir de la cantidad de hijos y de columns",
+                    .hasRange = true,
+                    .minValue = 0.0,
+                    .maxValue = 24.0,
+                },
             },
         });
         RegisterComponentType({"Flex", "Flex", true, {}});

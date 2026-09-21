@@ -54,7 +54,7 @@ bool IsContainerType(const std::string& type) {
 design::DropZone RowDropZone(ImVec2 p0, ImVec2 p1, bool is_container) {
     const designer::LayoutRect rect{p0.x, p0.y, p1.x - p0.x, std::max(p1.y - p0.y, 1.0f)};
     const designer::LayoutPoint point{p0.x, ImGui::GetMousePos().y};
-    return designer::ComputeDropZone(rect, point, is_container);
+    return designer::ComputeDropZone(rect, point, is_container, false);
 }
 
 void DrawDropIndicator(design::DropZone zone, ImVec2 p0, ImVec2 p1) {

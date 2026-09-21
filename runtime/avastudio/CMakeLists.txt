@@ -141,6 +141,7 @@ set(STUDIO_SOURCES
     src/designer/document_tree.cpp
     src/designer/tree_state.cpp
     src/designer/property_editor.cpp
+    src/designer/property_catalog.cpp
     src/designer/property_grid.cpp
     src/designer/property_commands.cpp
     src/designer/move_commands.cpp
@@ -307,4 +308,56 @@ if(AVA_BUILD_STUDIO_TESTS)
     )
     target_link_libraries(ava_studio_catalog_registry_cross_test PRIVATE avalang_ui)
     target_compile_features(ava_studio_catalog_registry_cross_test PRIVATE cxx_std_20)
+
+    add_executable(ava_studio_move_node_order_test
+        ${CMAKE_SOURCE_DIR}/tests/unit/avastudio/MoveNodeOrderTest.cpp
+        src/design/design_document.cpp
+        src/designer/move_commands.cpp
+    )
+    target_include_directories(ava_studio_move_node_order_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
+        ${CMAKE_SOURCE_DIR}/runtime/avaui/src
+    )
+    target_link_libraries(ava_studio_move_node_order_test PRIVATE avalang avalang_ui)
+    target_compile_features(ava_studio_move_node_order_test PRIVATE cxx_std_20)
+
+    add_executable(ava_studio_drop_zone_test
+        ${CMAKE_SOURCE_DIR}/tests/unit/avastudio/DropZoneTest.cpp
+        src/designer/drop_target.cpp
+    )
+    target_include_directories(ava_studio_drop_zone_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/runtime/avaui/src
+    )
+    target_link_libraries(ava_studio_drop_zone_test PRIVATE avalang_ui)
+    target_compile_features(ava_studio_drop_zone_test PRIVATE cxx_std_20)
+
+    add_executable(ava_studio_insert_relative_undo_test
+        ${CMAKE_SOURCE_DIR}/tests/unit/avastudio/InsertRelativeUndoTest.cpp
+        src/design/design_document.cpp
+        src/design/component_catalog.cpp
+        src/util/csv.cpp
+        src/util/data_dir.cpp
+        src/designer/tools.cpp
+        src/designer/command.cpp
+        src/designer/document_commands.cpp
+        src/designer/move_commands.cpp
+        src/designer/lifecycle_commands.cpp
+        src/designer/selection_manager.cpp
+        src/designer/component_registry.cpp
+        src/designer/viewport.cpp
+        src/designer/component_extraction.cpp
+        src/designer/component_extraction_command.cpp
+        src/designer/property_commands.cpp
+        src/designer/property_editor.cpp
+        src/designer/property_catalog.cpp
+    )
+    target_include_directories(ava_studio_insert_relative_undo_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
+        ${CMAKE_SOURCE_DIR}/runtime/avaui/src
+    )
+    target_link_libraries(ava_studio_insert_relative_undo_test PRIVATE avalang avalang_ui)
+    target_compile_features(ava_studio_insert_relative_undo_test PRIVATE cxx_std_20)
 endif()

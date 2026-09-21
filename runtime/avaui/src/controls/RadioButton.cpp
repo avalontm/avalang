@@ -126,12 +126,30 @@ struct RadioButtonTypeRegistration {
         using namespace avalang::ui::registry;
         RegisterComponentType({
             "RadioButton", "Radio Button", false,
-            {
-                {"label", PropertyValue("RadioButton")},
-                {"group", PropertyValue("")},
-                {"isSelected", PropertyValue(false)},
-                {"isEnabled", PropertyValue(true)},
-            },
+            WithCommonProperties(CommonInteractiveProperties(), {
+                PropertyDescriptor{
+                    .name = "label",
+                    .defaultValue = PropertyValue("RadioButton"),
+                    .kind = PropertyKind::Text,
+                    .group = PropertyGroup::Typography,
+                    .description = "Texto que se muestra junto a la opción",
+                },
+                PropertyDescriptor{
+                    .name = "group",
+                    .defaultValue = PropertyValue(""),
+                    .kind = PropertyKind::Text,
+                    .group = PropertyGroup::Behavior,
+                    .description = "Nombre del grupo: solo una opción puede estar seleccionada "
+                                   "entre los radiobutton que comparten el mismo group",
+                },
+                PropertyDescriptor{
+                    .name = "isSelected",
+                    .defaultValue = PropertyValue(false),
+                    .kind = PropertyKind::Boolean,
+                    .group = PropertyGroup::Behavior,
+                    .description = "Estado inicial de selección dentro de su grupo",
+                },
+            }),
         });
     }
 };

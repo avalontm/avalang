@@ -59,11 +59,24 @@ struct ButtonTypeRegistration {
         using namespace avalang::ui::registry;
         RegisterComponentType({
             "Button", "Button", false,
-            {
-                {"text", PropertyValue("Button")},
-                {"isEnabled", PropertyValue(true)},
-                {"style", PropertyValue("primary")},
-            },
+            WithCommonProperties(CommonInteractiveProperties(), {
+                PropertyDescriptor{
+                    .name = "text",
+                    .defaultValue = PropertyValue("Button"),
+                    .kind = PropertyKind::Text,
+                    .group = PropertyGroup::Typography,
+                    .description = "Texto visible dentro del botón",
+                },
+                PropertyDescriptor{
+                    .name = "style",
+                    .defaultValue = PropertyValue("primary"),
+                    .kind = PropertyKind::Text,
+                    .group = PropertyGroup::Appearance,
+                    .description = "Nombre de estilo o clase resuelto contra el theme/stylesheet "
+                                   "del proyecto (ej. \"primary\", \"secondary\", o una clase "
+                                   "personalizada definida en el stylesheet)",
+                },
+            }),
         });
     }
 };

@@ -110,6 +110,7 @@ std::string GetDisplayPropertyKey(const std::string& node_type) {
         {"link", "text"},
         {"checkbox", "label"},
         {"radiobutton", "label"},
+        {"combobox", "selectedValue"},
     };
     const auto it = kDisplayPropertyByType.find(node_type);
     return it != kDisplayPropertyByType.end() ? it->second : std::string();

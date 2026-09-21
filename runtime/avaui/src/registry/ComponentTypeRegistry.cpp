@@ -15,6 +15,25 @@ std::vector<ComponentTypeDescriptor>& MutableRegistry() {
 
 }
 
+std::vector<PropertyDescriptor> CommonInteractiveProperties() {
+    return {
+        PropertyDescriptor{
+            .name = "isEnabled",
+            .defaultValue = PropertyValue(true),
+            .kind = PropertyKind::Boolean,
+            .group = PropertyGroup::Behavior,
+            .description = "Si está desactivado, el control no responde a interacción del usuario",
+        },
+    };
+}
+
+std::vector<PropertyDescriptor> WithCommonProperties(std::vector<PropertyDescriptor> common,
+                                                      std::vector<PropertyDescriptor> specific) {
+    common.insert(common.end(), std::make_move_iterator(specific.begin()),
+                  std::make_move_iterator(specific.end()));
+    return common;
+}
+
 void RegisterComponentType(ComponentTypeDescriptor desc) {
     std::vector<ComponentTypeDescriptor>& registry = MutableRegistry();
     auto it = std::find_if(registry.begin(), registry.end(),

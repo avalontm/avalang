@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "designer/property_catalog.h"
 #include "designer/property_grid.h"
 
 namespace studio {
@@ -22,6 +23,7 @@ struct PropertiesState {
     std::vector<PropertyRow> events;
 
     std::vector<designer::PropertyGridSection> grid;
+    std::vector<designer::AddablePropertyOption> addable;
 
     bool editable = false;
 

@@ -36,8 +36,20 @@ struct ImageTypeRegistration {
         RegisterComponentType({
             "Image", "Image", false,
             {
-                {"source", PropertyValue("")},
-                {"alt", PropertyValue("")},
+                PropertyDescriptor{
+                    .name = "source",
+                    .defaultValue = PropertyValue(""),
+                    .kind = PropertyKind::Resource,
+                    .group = PropertyGroup::Appearance,
+                    .description = "Ruta o URL del archivo de imagen a mostrar",
+                },
+                PropertyDescriptor{
+                    .name = "alt",
+                    .defaultValue = PropertyValue(""),
+                    .kind = PropertyKind::Text,
+                    .group = PropertyGroup::Accessibility,
+                    .description = "Texto alternativo para lectores de pantalla",
+                },
             },
         });
     }

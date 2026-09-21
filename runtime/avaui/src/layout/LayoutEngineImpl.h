@@ -26,10 +26,17 @@ public:
     void SetTextEvaluator(std::function<std::string(const std::string&)> eval) override {
         textEvaluator_ = std::move(eval);
     }
+    void SetEmptyContainerMinSize(double width, double height) override {
+        emptyContainerMinWidth_ = width;
+        emptyContainerMinHeight_ = height;
+    }
     ILayoutNode* FindNode(ComponentId id) const override;
     ILayoutNode* Root() const override;
 
 private:
+    double emptyContainerMinWidth_ = 0.0;
+    double emptyContainerMinHeight_ = 0.0;
+
     std::string EvalText(const std::string& raw) const {
         return textEvaluator_ ? textEvaluator_(raw) : raw;
     }

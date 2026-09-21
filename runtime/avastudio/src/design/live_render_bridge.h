@@ -42,6 +42,7 @@ using TextEvaluator = std::function<std::string(const std::string&)>;
 LiveRenderResult BuildLiveRender(avalang::ui::ComponentTree* tree, int viewportWidth, int viewportHeight,
                                   const std::string& extends = "",
                                   const std::string& projectRoot = "",
-                                  TextEvaluator evalText = nullptr);
+                                  TextEvaluator evalText = nullptr,
+                                  bool reserveEmptyContainerSpace = false);
 
 }

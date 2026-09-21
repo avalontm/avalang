@@ -1,5 +1,7 @@
 #include "panels/properties_panel.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cfloat>
 #include <regex>
 #include <sstream>
@@ -109,8 +111,17 @@ std::optional<PropertyEdit> DrawNumberRow(designer::PropertyGridRow& row, int ta
     }
 
     ImGui::SetNextItemWidth(-FLT_MIN);
-    ImGui::InputDouble("##value", &number, 0.0, 0.0, "%.6g");
+    if (row.metadata.hasRange) {
+        const std::string format = row.metadata.unit.empty() ? "%.2f" : ("%.2f " + row.metadata.unit);
+        ImGui::SliderScalar("##value", ImGuiDataType_Double, &number, &row.metadata.minValue,
+                             &row.metadata.maxValue, format.c_str());
+    } else {
+        ImGui::InputDouble("##value", &number, 0.0, 0.0, "%.6g");
+    }
     if (ImGui::IsItemDeactivatedAfterEdit()) {
+        if (row.metadata.hasRange) {
+            number = std::max(row.metadata.minValue, std::min(row.metadata.maxValue, number));
+        }
         std::ostringstream out;
         out << number;
         row.value = out.str();
@@ -121,7 +132,17 @@ std::optional<PropertyEdit> DrawNumberRow(designer::PropertyGridRow& row, int ta
 
 std::optional<PropertyEdit> DrawEnumRow(designer::PropertyGridRow& row, int tab_id, const std::string& node_uid) {
     std::optional<PropertyEdit> committed;
-    const std::vector<std::string> options = ExtractRegexAlternatives(row.metadata.validation);
+
+    // Camino declarativo (Fase 1): el control ya listó sus opciones explícitas.
+    // Fallback: extraer alternativas de un regex en `validation`, para
+    // controles que aún no se migraron a metadata explícita.
+    std::vector<std::pair<std::string, std::string>> options = row.metadata.enumOptions;
+    if (options.empty()) {
+        for (const std::string& value : ExtractRegexAlternatives(row.metadata.validation)) {
+            options.emplace_back(value, value);
+        }
+    }
+
     if (options.empty()) {
         ImGui::SetNextItemWidth(-FLT_MIN);
         ImGui::InputText("##value", &row.value);
@@ -134,14 +155,23 @@ std::optional<PropertyEdit> DrawEnumRow(designer::PropertyGridRow& row, int tab_
         return committed;
     }
 
+    std::string currentLabel = row.value;
+    for (const auto& option : options) {
+        if (option.first == row.value) {
+            currentLabel = option.second;
+            break;
+        }
+    }
+
     ImGui::SetNextItemWidth(-FLT_MIN);
-    if (ImGui::BeginCombo("##value", row.value.c_str())) {
-        for (const std::string& option : options) {
-            const bool is_selected = (option == row.value);
-            if (ImGui::Selectable(option.c_str(), is_selected)) {
-                if (option != row.value) {
-                    row.value = option;
-                    committed = PropertyEdit{tab_id, node_uid, PropertyEditKind::kValue, row.metadata.name, option};
+    if (ImGui::BeginCombo("##value", currentLabel.c_str())) {
+        for (const auto& option : options) {
+            const bool is_selected = (option.first == row.value);
+            if (ImGui::Selectable(option.second.c_str(), is_selected)) {
+                if (option.first != row.value) {
+                    row.value = option.first;
+                    committed = PropertyEdit{tab_id, node_uid, PropertyEditKind::kValue, row.metadata.name,
+                                              option.first};
                 }
             }
             if (is_selected) ImGui::SetItemDefaultFocus();
@@ -241,39 +271,265 @@ std::optional<PropertyEdit> DrawPropertyGridSection(designer::PropertyGridSectio
     return committed;
 }
 
-std::optional<PropertyEdit> DrawAddCustomPropertyRow(int tab_id, const std::string& node_uid,
-                                                      std::string& add_key_buffer,
-                                                      const std::vector<designer::PropertyGridSection>& grid) {
-    std::optional<PropertyEdit> committed;
-
-    bool key_taken = false;
-    for (const designer::PropertyGridSection& section : grid) {
-        for (const designer::PropertyGridRow& row : section.rows) {
-            if (row.metadata.name == add_key_buffer && row.source != designer::PropertySource::Default) {
-                key_taken = true;
-            }
-        }
-    }
-
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.7f);
-    ImGui::InputTextWithHint("##add_custom_key", util::Tr("properties.new_key_hint").c_str(), &add_key_buffer);
-    ImGui::SameLine();
-    const bool can_add = !add_key_buffer.empty() && !key_taken;
-    ImGui::BeginDisabled(!can_add);
-    if (ImGui::SmallButton("+")) {
-        committed = PropertyEdit{tab_id, node_uid, PropertyEditKind::kAddProperty, add_key_buffer, ""};
-        add_key_buffer.clear();
-    }
-    ImGui::EndDisabled();
-
-    return committed;
-}
-
 std::string TrFormat(const std::string& key, const std::string& arg) {
     std::string result = util::Tr(key);
     const size_t pos = result.find("%s");
     if (pos == std::string::npos) return result;
     return result.substr(0, pos) + arg + result.substr(pos + 2);
+}
+
+struct AddPropertyState {
+    std::string buffer;
+    std::string node_uid;
+    int highlighted = 0;
+};
+
+struct AddSuggestion {
+    const designer::AddablePropertyOption* option = nullptr;
+    std::string key;
+};
+
+struct SuggestionNavigation {
+    int highlighted = 0;
+    int count = 0;
+};
+
+constexpr int kMaxVisibleSuggestions = 8;
+
+int NavigateSuggestions(ImGuiInputTextCallbackData* data) {
+    SuggestionNavigation* navigation = static_cast<SuggestionNavigation*>(data->UserData);
+    if (navigation->count <= 0) return 0;
+    if (data->EventKey == ImGuiKey_UpArrow) {
+        navigation->highlighted = (navigation->highlighted + navigation->count - 1) % navigation->count;
+    } else if (data->EventKey == ImGuiKey_DownArrow) {
+        navigation->highlighted = (navigation->highlighted + 1) % navigation->count;
+    }
+    return 0;
+}
+
+std::string LowerAscii(const std::string& text) {
+    std::string lowered = text;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return lowered;
+}
+
+std::string Trim(const std::string& text) {
+    const auto is_space = [](unsigned char c) { return std::isspace(c) != 0; };
+    const auto first = std::find_if_not(text.begin(), text.end(), is_space);
+    const auto last = std::find_if_not(text.rbegin(), text.rend(), is_space).base();
+    return first < last ? std::string(first, last) : std::string();
+}
+
+bool IsValidCustomKey(const std::string& key) {
+    return !key.empty() &&
+           std::none_of(key.begin(), key.end(), [](unsigned char c) { return std::isspace(c) != 0; });
+}
+
+bool IsKeyInGrid(const std::vector<designer::PropertyGridSection>& grid, const std::string& key) {
+    for (const designer::PropertyGridSection& section : grid) {
+        for (const designer::PropertyGridRow& row : section.rows) {
+            if (row.metadata.name == key) return true;
+        }
+    }
+    return false;
+}
+
+const designer::AddablePropertyOption* FindOption(const std::vector<designer::AddablePropertyOption>& addable,
+                                                   const std::string& key) {
+    for (const designer::AddablePropertyOption& option : addable) {
+        if (option.metadata.name == key) return &option;
+    }
+    return nullptr;
+}
+
+std::vector<AddSuggestion> BuildSuggestions(const std::vector<designer::AddablePropertyOption>& addable,
+                                             const std::string& key, bool custom_allowed) {
+    const std::string needle = LowerAscii(key);
+    std::vector<AddSuggestion> prefix_matches;
+    std::vector<AddSuggestion> partial_matches;
+    for (const designer::AddablePropertyOption& option : addable) {
+        const std::string name = LowerAscii(option.metadata.name);
+        if (needle.empty() || name.rfind(needle, 0) == 0) {
+            prefix_matches.push_back(AddSuggestion{&option, option.metadata.name});
+        } else if (name.find(needle) != std::string::npos) {
+            partial_matches.push_back(AddSuggestion{&option, option.metadata.name});
+        }
+    }
+
+    std::vector<AddSuggestion> suggestions = std::move(prefix_matches);
+    suggestions.insert(suggestions.end(), partial_matches.begin(), partial_matches.end());
+    if (custom_allowed && FindOption(addable, key) == nullptr) {
+        suggestions.push_back(AddSuggestion{nullptr, key});
+    }
+    return suggestions;
+}
+
+PropertyEdit MakeAddEdit(int tab_id, const std::string& node_uid, const AddSuggestion& suggestion) {
+    if (suggestion.option) {
+        const PropertyEditKind kind =
+            suggestion.option->declared ? PropertyEditKind::kValue : PropertyEditKind::kAddProperty;
+        return PropertyEdit{tab_id, node_uid, kind, suggestion.option->metadata.name,
+                            suggestion.option->initialValue};
+    }
+    return PropertyEdit{tab_id, node_uid, PropertyEditKind::kAddProperty, suggestion.key, ""};
+}
+
+ImVec2 SuggestionPopupPlacement(const ImVec2& input_min, const ImVec2& input_max, float popup_height,
+                                ImVec2* pivot) {
+    const ImGuiViewport* viewport = ImGui::GetWindowViewport();
+    const float space_below = viewport->WorkPos.y + viewport->WorkSize.y - input_max.y;
+    const float space_above = input_min.y - viewport->WorkPos.y;
+    if (space_below < popup_height && space_above > space_below) {
+        *pivot = ImVec2(0.0f, 1.0f);
+        return ImVec2(input_min.x, input_min.y);
+    }
+    *pivot = ImVec2(0.0f, 0.0f);
+    return ImVec2(input_min.x, input_max.y);
+}
+
+std::optional<PropertyEdit> DrawSuggestionPopup(const char* popup_id, int tab_id, const std::string& node_uid,
+                                                 AddPropertyState& state,
+                                                 const std::vector<AddSuggestion>& suggestions,
+                                                 const ImVec2& input_min, const ImVec2& input_max,
+                                                 bool navigation_moved, bool close_requested) {
+    std::optional<PropertyEdit> committed;
+
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float line_height = ImGui::GetTextLineHeightWithSpacing();
+    const float max_height = line_height * kMaxVisibleSuggestions + style.WindowPadding.y * 2.0f;
+    const float rows = static_cast<float>(std::max<size_t>(suggestions.size(), 1));
+    const float estimated_height = std::min(max_height, line_height * rows + style.WindowPadding.y * 2.0f);
+    const float width = std::max(input_max.x - input_min.x, 160.0f);
+
+    ImVec2 pivot;
+    const ImVec2 position = SuggestionPopupPlacement(input_min, input_max, estimated_height, &pivot);
+    ImGui::SetNextWindowPos(position, ImGuiCond_Always, pivot);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, max_height));
+
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar |
+                                       ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
+    if (!ImGui::BeginPopup(popup_id, flags)) {
+        return committed;
+    }
+
+    if (close_requested || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return committed;
+    }
+
+    if (suggestions.empty()) {
+        ImGui::TextDisabled("%s", util::Tr("properties.add_no_results").c_str());
+    }
+
+    const ImGuiIO& io = ImGui::GetIO();
+    for (int i = 0; i < static_cast<int>(suggestions.size()); ++i) {
+        const AddSuggestion& suggestion = suggestions[i];
+        const bool is_highlighted = (i == state.highlighted);
+        const std::string label =
+            suggestion.option ? suggestion.option->metadata.name
+                              : TrFormat("properties.add_custom_entry", suggestion.key);
+
+        ImGui::PushID(i);
+        const float row_start = ImGui::GetCursorPosX();
+        const float row_width = ImGui::GetContentRegionAvail().x;
+        if (ImGui::Selectable(label.c_str(), is_highlighted)) {
+            committed = MakeAddEdit(tab_id, node_uid, suggestion);
+        }
+        if (ImGui::IsItemHovered()) {
+            if (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f) state.highlighted = i;
+            if (suggestion.option && !suggestion.option->metadata.description.empty()) {
+                ImGui::SetTooltip("%s", suggestion.option->metadata.description.c_str());
+            }
+        }
+        if (is_highlighted && navigation_moved) {
+            ImGui::SetScrollHereY();
+        }
+        if (suggestion.option) {
+            const std::string tag = util::Tr(CategoryTrKey(suggestion.option->metadata.category));
+            const float tag_width = ImGui::CalcTextSize(tag.c_str()).x;
+            ImGui::SameLine(row_start + row_width - tag_width, 0.0f);
+            ImGui::TextDisabled("%s", tag.c_str());
+        }
+        ImGui::PopID();
+
+        if (committed) {
+            ImGui::CloseCurrentPopup();
+            break;
+        }
+    }
+
+    ImGui::EndPopup();
+    return committed;
+}
+
+std::optional<PropertyEdit> DrawAddPropertyRow(int tab_id, const std::string& node_uid, AddPropertyState& state,
+                                                const std::vector<designer::PropertyGridSection>& grid,
+                                                const std::vector<designer::AddablePropertyOption>& addable) {
+    constexpr const char* kPopupId = "##add_property_suggestions";
+    std::optional<PropertyEdit> committed;
+
+    if (state.node_uid != node_uid) {
+        state.node_uid = node_uid;
+        state.buffer.clear();
+        state.highlighted = 0;
+    }
+
+    const std::string key = Trim(state.buffer);
+    const bool custom_allowed = IsValidCustomKey(key) && !IsKeyInGrid(grid, key);
+    const std::vector<AddSuggestion> suggestions = BuildSuggestions(addable, key, custom_allowed);
+    const int count = static_cast<int>(suggestions.size());
+    state.highlighted = count == 0 ? 0 : std::clamp(state.highlighted, 0, count - 1);
+
+    SuggestionNavigation navigation{state.highlighted, count};
+    const std::string buffer_before = state.buffer;
+
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.7f);
+    const bool submitted = ImGui::InputTextWithHint(
+        "##add_property_key", util::Tr("properties.new_key_hint").c_str(), &state.buffer,
+        ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackHistory, NavigateSuggestions,
+        &navigation);
+    const ImVec2 input_min = ImGui::GetItemRectMin();
+    const ImVec2 input_max = ImGui::GetItemRectMax();
+    const bool edited = state.buffer != buffer_before;
+
+    const bool wants_popup = ImGui::IsItemActivated() || ImGui::IsItemClicked() || edited;
+    if (wants_popup && !ImGui::IsPopupOpen(kPopupId)) {
+        ImGui::OpenPopup(kPopupId);
+    }
+
+    const bool navigation_moved = navigation.highlighted != state.highlighted;
+    state.highlighted = edited ? 0 : navigation.highlighted;
+
+    ImGui::SameLine();
+    const bool can_add = custom_allowed || FindOption(addable, key) != nullptr;
+    ImGui::BeginDisabled(!can_add);
+    const bool add_clicked = ImGui::SmallButton("+");
+    ImGui::EndDisabled();
+
+    if (submitted && count > 0) {
+        committed = MakeAddEdit(tab_id, node_uid, suggestions[state.highlighted]);
+    } else if (add_clicked && can_add) {
+        if (const designer::AddablePropertyOption* option = FindOption(addable, key)) {
+            committed = MakeAddEdit(tab_id, node_uid, AddSuggestion{option, key});
+        } else {
+            committed = MakeAddEdit(tab_id, node_uid, AddSuggestion{nullptr, key});
+        }
+    }
+
+    if (auto popup_edit = DrawSuggestionPopup(kPopupId, tab_id, node_uid, state, suggestions, input_min,
+                                              input_max, navigation_moved, committed.has_value())) {
+        committed = popup_edit;
+    }
+
+    if (committed) {
+        state.buffer.clear();
+        state.highlighted = 0;
+    }
+
+    return committed;
 }
 
 std::optional<PropertyEdit> DrawEditableRowTable(const char* table_id, std::vector<PropertyRow>& rows,
@@ -354,6 +610,7 @@ std::optional<PropertyEdit> DrawPropertiesPanel(PropertiesState& state, bool* p_
 
     static std::string add_property_key;
     static std::string add_event_key;
+    static AddPropertyState add_property_state;
 
     const std::string title = util::Tr("panel.properties.title") + "###properties";
     ImGui::Begin(title.c_str(), p_open);
@@ -365,23 +622,6 @@ std::optional<PropertyEdit> DrawPropertiesPanel(PropertiesState& state, bool* p_
     }
 
     if (state.editable) {
-
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::TextUnformatted(util::Tr("properties.type_label").c_str());
-        if (ImGui::BeginCombo("##type_combo", state.selected_component_type.c_str())) {
-            for (const design::ComponentTypeInfo& info : design::GetComponentCatalog()) {
-                const bool is_selected = (info.type == state.selected_component_type);
-                if (ImGui::Selectable(info.display_name.c_str(), is_selected)) {
-                    if (info.type != state.selected_component_type) {
-                        committed = PropertyEdit{state.source_tab_id, state.selected_node_id,
-                                                  PropertyEditKind::kType, "", info.type};
-                        state.selected_component_type = info.type;
-                    }
-                }
-                if (is_selected) ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
-        }
 
         ImGui::TextUnformatted(util::Tr("properties.id_label").c_str());
         ImGui::SetNextItemWidth(-FLT_MIN);
@@ -409,8 +649,8 @@ std::optional<PropertyEdit> DrawPropertiesPanel(PropertiesState& state, bool* p_
             }
         }
         ImGui::Spacing();
-        if (auto edit = DrawAddCustomPropertyRow(state.source_tab_id, state.selected_node_id, add_property_key,
-                                                  state.grid)) {
+        if (auto edit = DrawAddPropertyRow(state.source_tab_id, state.selected_node_id, add_property_state,
+                                            state.grid, state.addable)) {
             committed = edit;
         }
     } else if (state.editable) {

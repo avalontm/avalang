@@ -48,6 +48,31 @@ std::string SanitizeIdentifier(const std::string& s) {
     return out.empty() ? "handler" : out;
 }
 
+std::string SlotOf(avalang::ui::IComponent* parent, avalang::ui::IComponent* child) {
+    for (const std::string& slot : parent->SlotNames()) {
+        const auto& children = parent->SlotChildren(slot);
+        if (std::find(children.begin(), children.end(), child) != children.end()) return slot;
+    }
+    return "default";
+}
+
+void InsertChildAt(avalang::ui::IComponent* parent, const std::string& slot, avalang::ui::IComponent* child,
+                   size_t index) {
+    std::vector<avalang::ui::IComponent*> ordered = parent->SlotChildren(slot);
+    for (auto* existing : ordered) parent->RemoveChild(existing);
+    ordered.insert(ordered.begin() + static_cast<std::ptrdiff_t>(std::min(index, ordered.size())), child);
+    for (auto* sibling : ordered) parent->AddChild(sibling, slot);
+}
+
+size_t SiblingInsertIndex(avalang::ui::IComponent* parent, const std::string& slot, avalang::ui::IComponent* target,
+                          DropZone zone) {
+    const auto& siblings = parent->SlotChildren(slot);
+    auto it = std::find(siblings.begin(), siblings.end(), target);
+    if (it == siblings.end()) return siblings.size();
+    const size_t targetIndex = static_cast<size_t>(std::distance(siblings.begin(), it));
+    return zone == DropZone::kAfter ? targetIndex + 1 : targetIndex;
+}
+
 void CollectAuthoredProperties(avalang::ui::IComponent* node,
                                 std::unordered_map<std::string, std::unordered_set<std::string>>& out) {
     if (!node) return;
@@ -249,35 +274,21 @@ bool MoveNode(avalang::ui::IComponent* root, const std::string& movedNodeId, con
     if (!target) return false;
     if (NodeContains(moved, target)) return false;
 
-    auto* oldParent = FindParentOf(root, moved);
-    if (oldParent) oldParent->RemoveChild(moved);
+    avalang::ui::IComponent* targetParent = nullptr;
+    if (zone != DropZone::kInto) {
+        targetParent = FindParentOf(root, target);
+        if (!targetParent) return false;
+    }
+
+    if (auto* oldParent = FindParentOf(root, moved)) oldParent->RemoveChild(moved);
 
     if (zone == DropZone::kInto) {
         target->AddChild(moved);
-    } else {
-        auto* targetParent = FindParentOf(root, target);
-        if (!targetParent) {
-            if (oldParent) oldParent->AddChild(moved);
-            return false;
-        }
-        auto siblings = targetParent->Children();
-        auto it = std::find(siblings.begin(), siblings.end(), target);
-        if (it == siblings.end()) {
-            targetParent->AddChild(moved);
-            return true;
-        }
-        size_t idx = std::distance(siblings.begin(), it);
-        if (zone == DropZone::kBefore) {
-            targetParent->RemoveChild(target);
-            targetParent->AddChild(moved);
-            targetParent->AddChild(target);
-        } else {
-            targetParent->RemoveChild(target);
-            targetParent->AddChild(target);
-            targetParent->AddChild(moved);
-        }
+        return true;
     }
 
+    const std::string slot = SlotOf(targetParent, target);
+    InsertChildAt(targetParent, slot, moved, SiblingInsertIndex(targetParent, slot, target, zone));
     return true;
 }
 

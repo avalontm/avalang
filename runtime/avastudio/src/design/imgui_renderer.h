@@ -46,6 +46,42 @@ protected:
                     const std::string& className,
                     ComponentId compId,
                     const std::string& avaType) override;
+    void OnDrawInput(float x, float y, float width, float height,
+                     const std::string& text,
+                     const std::string& placeholder,
+                     float fontSize, const char* fontName,
+                     const Color& textColor,
+                     const Color& fillColor,
+                     const Color& borderColor, float borderWidth, float borderRadius,
+                     bool disabled, bool focused, bool hovered,
+                     int caretIndex, int selectionStart, int selectionEnd,
+                     const std::string& imeComposition, int imeCompositionCursor,
+                     const std::string& clickHandler,
+                     const std::string& className,
+                     ComponentId compId,
+                     const std::string& avaType) override;
+    void OnDrawCheckBox(float x, float y, float width, float height,
+                        const std::string& text,
+                        float fontSize, const char* fontName,
+                        const Color& textColor,
+                        const Color& boxFillColor,
+                        const Color& boxBorderColor, float borderWidth, float borderRadius,
+                        bool checked, bool disabled, bool focused, bool hovered,
+                        const std::string& clickHandler,
+                        const std::string& className,
+                        ComponentId compId,
+                        const std::string& avaType) override;
+    void OnDrawRadioButton(float x, float y, float width, float height,
+                           const std::string& text,
+                           float fontSize, const char* fontName,
+                           const Color& textColor,
+                           const Color& boxFillColor,
+                           const Color& boxBorderColor, float borderWidth,
+                           bool selected, bool disabled, bool focused, bool hovered,
+                           const std::string& clickHandler,
+                           const std::string& className,
+                           ComponentId compId,
+                           const std::string& avaType) override;
 
 private:
     ImDrawList* drawList_ = nullptr;

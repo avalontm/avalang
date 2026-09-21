@@ -156,6 +156,8 @@ properties.column_property,Property
 properties.section_events,Events
 properties.column_event,Event
 properties.column_handler,Handler
+properties.add_custom_entry,Add custom: %s
+properties.add_no_results,No matching properties
 panel.state.title,State
 state.empty_selection,Open a .avaui design tab to view and edit its initial state.
 state.section_variables,State variables

@@ -351,12 +351,24 @@ los dos archivos se tocó.
 * `drop_target.h`/`.cpp` — formaliza exactamente el pipeline de la
   sección 20 (`DesignerSurface → HitTest → DropTargetResolver →
   DropOperation → Command`), independiente de ImGui:
-  - `ComputeDropZone(rect, point, isContainer)` es la misma regla que
-    `designer_canvas.cpp::ComputeDropZone` (contenedor → `kInto`;
-    si no, mitad superior/inferior del rect → `kBefore`/`kAfter`),
-    pero sobre `LayoutRect`/`LayoutPoint` (Fase 1) en vez de `ImVec2`,
-    para que cualquier superficie (no solo el canvas ImGui) pueda
-    resolver una zona de drop.
+  - `ComputeDropZone(rect, point, isContainer, allowSibling)` es la misma
+    regla que `designer_canvas.cpp::ComputeDropZone`: un no-contenedor
+    resuelve mitad superior/inferior → `kBefore`/`kAfter`; un contenedor
+    con `allowSibling` resuelve banda superior → `kBefore`, banda
+    inferior → `kAfter` y el centro → `kInto` (banda = 20% de la altura,
+    entre 6 y 16 px y nunca más del 30%); un contenedor sin
+    `allowSibling` (la raíz) siempre resuelve `kInto`. Trabaja sobre
+    `LayoutRect`/`LayoutPoint` (Fase 1) en vez de `ImVec2`, para que
+    cualquier superficie (no solo el canvas ImGui) pueda resolver una
+    zona de drop.
+  - `FlowLayoutOf`, `ComputeInsertIndex`, `ResolveInsertPosition` y
+    `ComputeInsertMarker` resuelven, para un `kInto` sobre un contenedor
+    con hijos, en qué posición cae el punto de suelta. El eje sale del
+    tipo (Row/Column/For/If, ScrollView/ListView/Flex según `direction`,
+    Grid por `columns`; Page/Container/Stack se apilan y siempre agregan
+    al final). La posición se traduce a "antes de este hijo"
+    (`kBefore`) para reutilizar `MoveNode`/`InsertRelative` sin nuevos
+    comandos.
   - `ResolveDropTarget(targetId, rect, point, isContainer, sourceKind)`
     añade la capa que no existía: `DropOperation` (`InsertChild`,
     `InsertBefore`, `InsertAfter`, `Reparent`, `Replace` — los 5 que
@@ -801,3 +813,17 @@ accesibilidad, ni lista de animaciones, ni selector de estado de
 diseño, ni browser de assets, ni ítem de menú de extracción) — son los
 contratos formales, listos para cuando esos paneles se construyan
 sobre `DesignerSurface`, igual que el resto de `designer/`.
+
+## Contenedores vacíos en Design
+
+En el runtime un contenedor sin hijos (`Container`, `Column`, `Row`, `Stack`,
+`Grid`, `Flex`, `ScrollView`, `ListView`, `Page`) mide 0 de alto, así que al
+arrastrarlo al canvas no se veía ni se podía usar como destino de otro
+arrastre. `LayoutEngine::SetEmptyContainerMinSize` reserva un tamaño mínimo
+solo para contenedores vacíos; `BuildLiveRender` lo activa
+(`reserveEmptyContainerSpace`, 120x56) únicamente en modo Design del canvas.
+Preview, exportación y el runtime no lo activan, por lo que su layout no
+cambia. Un `width`/`height` explícito siempre prevalece sobre el mínimo.
+
+`Dialog` no se dibuja en el canvas: se lista en la bandeja de diálogos
+(`DrawDialogTray`).

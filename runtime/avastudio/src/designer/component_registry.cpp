@@ -75,6 +75,37 @@ PropertyCategory CategoryFor(const std::string& name) {
     return PropertyCategory::Advanced;
 }
 
+PropertyCategory ToDesignerCategory(avalang::ui::registry::PropertyGroup group) {
+    using avalang::ui::registry::PropertyGroup;
+    switch (group) {
+        case PropertyGroup::Identity: return PropertyCategory::Identity;
+        case PropertyGroup::Layout: return PropertyCategory::Layout;
+        case PropertyGroup::Appearance: return PropertyCategory::Appearance;
+        case PropertyGroup::Typography: return PropertyCategory::Typography;
+        case PropertyGroup::Behavior: return PropertyCategory::Behavior;
+        case PropertyGroup::Accessibility: return PropertyCategory::Accessibility;
+        case PropertyGroup::Events: return PropertyCategory::Events;
+        case PropertyGroup::Advanced: return PropertyCategory::Advanced;
+    }
+    return PropertyCategory::Advanced;
+}
+
+PropertyEditorKind ToEditorKind(avalang::ui::registry::PropertyKind kind) {
+    using avalang::ui::registry::PropertyKind;
+    switch (kind) {
+        case PropertyKind::Text: return PropertyEditorKind::String;
+        case PropertyKind::MultilineText: return PropertyEditorKind::String;
+        case PropertyKind::Number: return PropertyEditorKind::Number;
+        case PropertyKind::Boolean: return PropertyEditorKind::Boolean;
+        case PropertyKind::Color: return PropertyEditorKind::Color;
+        case PropertyKind::Enum: return PropertyEditorKind::Enum;
+        case PropertyKind::Resource: return PropertyEditorKind::Resource;
+        case PropertyKind::Binding: return PropertyEditorKind::Binding;
+        case PropertyKind::Event: return PropertyEditorKind::Event;
+        case PropertyKind::Auto: default: return PropertyEditorKind::String;
+    }
+}
+
 const std::vector<EventMetadata>& EventsFor(const std::string& type) {
     static const std::unordered_map<std::string, std::vector<EventMetadata>> table = {
         {"button", {{"click", "Se dispara cuando el usuario presiona el botón"}}},
@@ -91,18 +122,56 @@ const std::vector<EventMetadata>& EventsFor(const std::string& type) {
     return it != table.end() ? it->second : empty;
 }
 
+PropertyMetadata BuildProperty(const avalang::ui::registry::PropertyDescriptor& prop) {
+    using avalang::ui::registry::PropertyKind;
+
+    PropertyMetadata property;
+    property.name = prop.name;
+    property.type = PropertyTypeName(prop.defaultValue.Type());
+    property.defaultValue = FormatPropertyValue(prop.defaultValue);
+
+    if (prop.kind == PropertyKind::Auto) {
+        // Fallback: ningún control migrado todavía declaró metadata explícita
+        // para esta propiedad -> se mantiene la heurística histórica por
+        // nombre, sin regresiones para lo no migrado.
+        property.category = CategoryFor(prop.name);
+        property.designerEditor = EditorKindFor(prop.name, prop.defaultValue.Type());
+        return property;
+    }
+
+    // Camino declarativo (Fase 2 del plan): el control dice explícitamente
+    // qué es su propiedad, el registry solo traduce, no adivina.
+    property.category = ToDesignerCategory(prop.group);
+    property.designerEditor = ToEditorKind(prop.kind);
+    property.description = prop.description;
+    property.readOnly = prop.readOnly;
+    property.styleable = prop.styleable;
+    property.animatable = prop.animatable;
+
+    if (prop.kind == PropertyKind::Enum) {
+        for (const auto& option : prop.options) {
+            property.enumOptions.emplace_back(option.value, option.label);
+        }
+    }
+
+    if (prop.kind == PropertyKind::Number && prop.hasRange) {
+        property.hasRange = true;
+        property.minValue = prop.minValue;
+        property.maxValue = prop.maxValue;
+        property.unit = prop.unit;
+        property.designerEditor = PropertyEditorKind::Dimension;
+    }
+
+    return property;
+}
+
 ComponentMetadata BuildMetadata(const avalang::ui::registry::ComponentTypeDescriptor& descriptor) {
     ComponentMetadata metadata;
     metadata.type = ToLower(descriptor.type);
     metadata.displayName = descriptor.display_name;
 
     for (const auto& prop : descriptor.default_properties) {
-        PropertyMetadata property;
-        property.name = prop.name;
-        property.type = PropertyTypeName(prop.value.Type());
-        property.defaultValue = FormatPropertyValue(prop.value);
-        property.category = CategoryFor(prop.name);
-        property.designerEditor = EditorKindFor(prop.name, prop.value.Type());
+        PropertyMetadata property = BuildProperty(prop);
         metadata.defaultProperties.push_back(property);
         metadata.supportedProperties.push_back(property);
     }

@@ -1,6 +1,7 @@
 #include "designer/property_grid.h"
 
 #include <array>
+#include <utility>
 
 #include "designer/component_registry.h"
 #include "designer/property_editor.h"
@@ -81,6 +82,24 @@ std::vector<PropertyGridSection> BuildPropertyGrid(UiNode* node) {
     }
 
     return sections;
+}
+
+void InsertGridRow(std::vector<PropertyGridSection>& sections, PropertyGridRow row) {
+    const PropertyCategory category = row.metadata.category;
+    auto position = sections.begin();
+    for (; position != sections.end(); ++position) {
+        if (position->category == category) {
+            position->rows.push_back(std::move(row));
+            return;
+        }
+        if (static_cast<int>(position->category) > static_cast<int>(category)) {
+            break;
+        }
+    }
+    PropertyGridSection section;
+    section.category = category;
+    section.rows.push_back(std::move(row));
+    sections.insert(position, std::move(section));
 }
 
 }

@@ -27,6 +27,8 @@ public:
 
     virtual void SetTextEvaluator(std::function<std::string(const std::string&)> eval) = 0;
 
+    virtual void SetEmptyContainerMinSize(double width, double height) = 0;
+
     virtual ILayoutNode* FindNode(ComponentId id) const = 0;
 
     virtual ILayoutNode* Root() const = 0;

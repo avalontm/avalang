@@ -35,7 +35,13 @@ struct TextTypeRegistration {
         RegisterComponentType({
             "Text", "Text", false,
             {
-                {"text", PropertyValue("Text")},
+                PropertyDescriptor{
+                    .name = "text",
+                    .defaultValue = PropertyValue("Text"),
+                    .kind = PropertyKind::MultilineText,
+                    .group = PropertyGroup::Typography,
+                    .description = "Contenido de texto que muestra la etiqueta",
+                },
             },
         });
     }

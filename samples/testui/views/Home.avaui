@@ -12,7 +12,7 @@ view
         gap = 16
 
         Text
-            text = "test - clicks: " + clicks
+            text = "\\\"test - clicks: \\\" + clicks"
             fontSize = 18
             textColor = 333333
             fontName = "Segoe UI"
@@ -26,11 +26,11 @@ view
         CheckBox
             label = "Acepto los términos"
             borderColor = "CCCCCC"
-            isChecked = agreed
+            isChecked = "agreed"
             borderWidth = 1
         end
         Text
-            text = "agreed: " + agreed
+            text = "\\\"agreed: \\\" + agreed"
             fontSize = 12
             textColor = 666666
             fontName = "Segoe UI"
@@ -38,28 +38,53 @@ view
         RadioButton
             label = "Plan Basico"
             group = "plan"
-            isSelected = planBasic
+            isSelected = "planBasic"
+            borderColor = "CCCCCC"
+            borderWidth = 1
         end
         RadioButton
             label = "Plan Pro"
             group = "plan"
-            isSelected = planPro
+            isSelected = "planPro"
+            borderColor = "CCCCCC"
+            borderWidth = 1
+        end
+        Button
+            text = "Enviar"
+            backgroundColor = "0078D4"
+            borderWidth = 5
+            textColor = "FFFFFF"
+            fontSize = 12
+            fontName = "Segoe UI"
+            borderRadius = 10
+            borderColor = "#CCCCCC"
+            click = OnSubmitClick()
         end
         Text
-            text = "plan: " + (planBasic ? "basico" : (planPro ? "pro" : "ninguno"))
+            text = "\\\"plan: \\\" + (planBasic ? \\\"basico\\\" : (planPro ? \\\"pro\\\" : \\\"ninguno\\\"))"
             fontSize = 12
             textColor = 666666
             fontName = "Segoe UI"
         end
-        Button
-            text = "Enviar"
-            click = OnSubmitClick()
-            backgroundColor = "0078D4"
+        Image
+            borderRadius = 4
+        end
+        ComboBox
+            backgroundColor = "FFFFFF"
+            borderColor = "A4A4A4"
+            isOpen = false
+            fontSize = 12
             borderWidth = 1
-            textColor = "FFFFFF"
+        end
+        Text
+            textColor = 333333
             fontSize = 12
             fontName = "Segoe UI"
-            borderRadius = 4
+        end
+        Text
+            textColor = 333333
+            fontSize = 12
+            fontName = "Segoe UI"
         end
     end
 end

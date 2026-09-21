@@ -101,11 +101,22 @@ struct CheckBoxTypeRegistration {
         using namespace avalang::ui::registry;
         RegisterComponentType({
             "CheckBox", "CheckBox", false,
-            {
-                {"label", PropertyValue("CheckBox")},
-                {"isChecked", PropertyValue(false)},
-                {"isEnabled", PropertyValue(true)},
-            },
+            WithCommonProperties(CommonInteractiveProperties(), {
+                PropertyDescriptor{
+                    .name = "label",
+                    .defaultValue = PropertyValue("CheckBox"),
+                    .kind = PropertyKind::Text,
+                    .group = PropertyGroup::Typography,
+                    .description = "Texto que se muestra junto a la casilla",
+                },
+                PropertyDescriptor{
+                    .name = "isChecked",
+                    .defaultValue = PropertyValue(false),
+                    .kind = PropertyKind::Boolean,
+                    .group = PropertyGroup::Behavior,
+                    .description = "Estado inicial marcado/desmarcado de la casilla",
+                },
+            }),
         });
     }
 };
