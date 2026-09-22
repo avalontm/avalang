@@ -16,6 +16,7 @@ enum class PropertyType {
     Number,
     String,
     List,
+    Expression,
 };
 
 class PropertyValue;
@@ -32,6 +33,8 @@ public:
     explicit PropertyValue(const char* value);
     explicit PropertyValue(PropertyList value);
 
+    static PropertyValue MakeExpression(std::string source, bool isInterpolation);
+
     PropertyType Type() const;
 
     bool AsBool() const;
@@ -39,12 +42,16 @@ public:
     const std::string& AsString() const;
     const PropertyList& AsList() const;
 
+    const std::string& AsExpressionSource() const;
+    bool IsInterpolation() const;
+
 private:
     PropertyType type_;
     bool bool_ = false;
     double number_ = 0.0;
     std::string string_;
     std::shared_ptr<PropertyList> list_;
+    bool isInterpolation_ = false;
 };
 
 }

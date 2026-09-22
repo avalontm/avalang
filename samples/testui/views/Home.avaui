@@ -1,96 +1,92 @@
-state
-    clicks = 0
-    agreed = true
-    planBasic = true
-    planPro = false
+clicks = 0
+agreed = true
+planBasic = true
+planPro = false
+
+func OnSubmitClick()
+    clicks++
 end
 
 view
     Column
         padding = 20
-        spacing = 16
         gap = 16
 
         Text
-            text = "\\\"test - clicks: \\\" + clicks"
+            text = $"clicks: {clicks}"
+            textColor = "#333333"
             fontSize = 18
-            textColor = 333333
             fontName = "Segoe UI"
         end
         TextBox
-            backgroundColor = "FFFFFF"
-            borderColor = "A4A4A4"
-            fontSize = 12
+            backgroundColor = "#FFFFFF"
+            borderColor = "#A4A4A4"
             borderWidth = 1
+            fontSize = 12
+            placeholder = "TEXTO AQUI"
         end
         CheckBox
             label = "Acepto los términos"
-            borderColor = "CCCCCC"
-            isChecked = "agreed"
+            checked = {agreed}
+            borderColor = "#CCCCCC"
             borderWidth = 1
         end
         Text
-            text = "\\\"agreed: \\\" + agreed"
+            text = $"agreed: {agreed}"
+            textColor = "#666666"
             fontSize = 12
-            textColor = 666666
             fontName = "Segoe UI"
         end
         RadioButton
             label = "Plan Basico"
+            selected = {planBasic}
             group = "plan"
-            isSelected = "planBasic"
-            borderColor = "CCCCCC"
+            borderColor = "#CCCCCC"
             borderWidth = 1
         end
         RadioButton
             label = "Plan Pro"
+            selected = {planPro}
             group = "plan"
-            isSelected = "planPro"
-            borderColor = "CCCCCC"
+            borderColor = "#CCCCCC"
             borderWidth = 1
         end
         Button
+            borderColor = "#CCCCCC"
             text = "Enviar"
-            backgroundColor = "0078D4"
+            backgroundColor = "#0078D4"
+            fontSize = 14
+            textColor = "#FFFFFF"
             borderWidth = 5
-            textColor = "FFFFFF"
-            fontSize = 12
             fontName = "Segoe UI"
             borderRadius = 10
-            borderColor = "#CCCCCC"
-            click = OnSubmitClick()
+            onClick = {OnSubmitClick}
         end
         Text
-            text = "\\\"plan: \\\" + (planBasic ? \\\"basico\\\" : (planPro ? \\\"pro\\\" : \\\"ninguno\\\"))"
+            text = $"plan: {planBasic ? "basico" : (planPro ? "pro" : "ninguno")}"
+            textColor = "#666666"
             fontSize = 12
-            textColor = 666666
             fontName = "Segoe UI"
         end
         Image
             borderRadius = 4
         end
         ComboBox
-            backgroundColor = "FFFFFF"
-            borderColor = "A4A4A4"
-            isOpen = false
-            fontSize = 12
+            backgroundColor = "#FFFFFF"
+            borderColor = "#A4A4A4"
             borderWidth = 1
+            fontSize = 12
+            isOpen = false
         end
         Text
-            textColor = 333333
             fontSize = 12
+            textColor = "#333333"
             fontName = "Segoe UI"
         end
         Text
-            textColor = 333333
             fontSize = 12
+            textColor = "#333333"
             fontName = "Segoe UI"
         end
-    end
-end
-
-code
-    func OnSubmitClick()
-        clicks++
     end
 end

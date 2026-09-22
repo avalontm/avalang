@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "design/design_document.h"
@@ -12,10 +13,17 @@
 
 namespace studio::designer {
 
+struct AuthoredChange {
+    NodeId nodeId;
+    std::string key;
+    bool before = false;
+    bool after = false;
+};
+
 class DocumentCommand : public ICommand {
 public:
     DocumentCommand(design::DesignDocument* document, std::unique_ptr<ICommand> inner,
-                     SelectionManager* selection);
+                     SelectionManager* selection, std::vector<AuthoredChange> authored = {});
 
     void Execute() override;
     void Undo() override;
@@ -23,11 +31,14 @@ public:
     std::string Description() const override;
 
 private:
+    void ApplyAuthored(bool useAfter);
     void SyncDocument();
+    std::string RemapId(const std::string& id, const std::pair<std::string, std::string>& swap) const;
 
     design::DesignDocument* document_;
     std::unique_ptr<ICommand> inner_;
     SelectionManager* selection_;
+    std::vector<AuthoredChange> authored_;
 };
 
 std::string ExecuteAddComponent(CommandManager* manager, design::DesignDocument& document,
@@ -41,6 +52,9 @@ bool ExecuteMoveComponent(CommandManager* manager, design::DesignDocument& docum
 
 bool ExecuteRemoveComponent(CommandManager* manager, design::DesignDocument& document,
                              SelectionManager* selection, const std::string& nodeId);
+
+std::string ExecuteDuplicateComponent(CommandManager* manager, design::DesignDocument& document,
+                                       SelectionManager* selection, const std::string& nodeId);
 
 std::string ExecuteChangeComponentType(CommandManager* manager, design::DesignDocument& document,
                                         SelectionManager* selection, const std::string& nodeId,

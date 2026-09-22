@@ -19,6 +19,11 @@ inline bool PropertyValueEquals(const PropertyValue& a, const PropertyValue& b) 
             return a.AsNumber() == b.AsNumber();
         case PropertyType::String:
             return a.AsString() == b.AsString();
+        case PropertyType::Expression:
+            return a.AsExpressionSource() == b.AsExpressionSource() &&
+                   a.IsInterpolation() == b.IsInterpolation();
+        case PropertyType::List:
+            break;
     }
     return false;
 }

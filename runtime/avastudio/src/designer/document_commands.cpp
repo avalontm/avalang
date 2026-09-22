@@ -1,5 +1,6 @@
 #include "designer/document_commands.h"
 
+#include <algorithm>
 #include <cctype>
 #include <utility>
 
@@ -43,16 +44,34 @@ std::vector<std::pair<std::string, PropertyValue>> ToPropertyValues(
     return values;
 }
 
+void CopyAuthoredProperties(design::DesignDocument& document, UiNode* source, UiNode* copy) {
+    if (!source || !copy) {
+        return;
+    }
+    for (const std::string& name : source->PropertyNames()) {
+        if (design::IsPropertyAuthored(document, source->NodeId(), name)) {
+            design::MarkPropertyAuthored(document, copy->NodeId(), name);
+        }
+    }
+    const std::vector<UiNode*> sourceChildren = source->Children();
+    const std::vector<UiNode*> copyChildren = copy->Children();
+    const size_t count = std::min(sourceChildren.size(), copyChildren.size());
+    for (size_t i = 0; i < count; ++i) {
+        CopyAuthoredProperties(document, sourceChildren[i], copyChildren[i]);
+    }
+}
+
 }
 
 DocumentCommand::DocumentCommand(design::DesignDocument* document, std::unique_ptr<ICommand> inner,
-                                  SelectionManager* selection)
-    : document_(document), inner_(std::move(inner)), selection_(selection) {}
+                                  SelectionManager* selection, std::vector<AuthoredChange> authored)
+    : document_(document), inner_(std::move(inner)), selection_(selection), authored_(std::move(authored)) {}
 
 void DocumentCommand::Execute() {
     if (inner_) {
         inner_->Execute();
     }
+    ApplyAuthored(true);
     SyncDocument();
 }
 
@@ -60,6 +79,7 @@ void DocumentCommand::Undo() {
     if (inner_) {
         inner_->Undo();
     }
+    ApplyAuthored(false);
     SyncDocument();
 }
 
@@ -67,11 +87,38 @@ void DocumentCommand::Redo() {
     if (inner_) {
         inner_->Redo();
     }
+    ApplyAuthored(true);
     SyncDocument();
+}
+
+void DocumentCommand::ApplyAuthored(bool useAfter) {
+    if (!document_) {
+        return;
+    }
+    for (const AuthoredChange& change : authored_) {
+        if (useAfter ? change.after : change.before) {
+            design::MarkPropertyAuthored(*document_, change.nodeId, change.key);
+        } else {
+            design::UnmarkPropertyAuthored(*document_, change.nodeId, change.key);
+        }
+    }
 }
 
 std::string DocumentCommand::Description() const {
     return inner_ ? inner_->Description() : std::string();
+}
+
+std::string DocumentCommand::RemapId(const std::string& id, const std::pair<std::string, std::string>& swap) const {
+    if (id.empty() || design::FindNodeById(document_->Root(), id)) {
+        return id;
+    }
+    if (!swap.first.empty() && id == swap.first && design::FindNodeById(document_->Root(), swap.second)) {
+        return swap.second;
+    }
+    if (!swap.second.empty() && id == swap.second && design::FindNodeById(document_->Root(), swap.first)) {
+        return swap.first;
+    }
+    return {};
 }
 
 void DocumentCommand::SyncDocument() {
@@ -83,16 +130,37 @@ void DocumentCommand::SyncDocument() {
     if (!selection_) {
         return;
     }
-    for (const NodeId& id : std::vector<NodeId>(selection_->Selected())) {
-        if (!design::FindNodeById(document_->Root(), id)) {
-            selection_->Deselect(id);
+
+    const std::pair<std::string, std::string> swap = inner_ ? inner_->IdentitySwap() : std::pair<std::string, std::string>{};
+
+    std::vector<NodeId> remappedSelection;
+    for (const NodeId& id : selection_->Selected()) {
+        const std::string remapped = RemapId(id, swap);
+        if (!remapped.empty()) {
+            remappedSelection.push_back(remapped);
         }
     }
-    if (!selection_->Hovered().empty() && !design::FindNodeById(document_->Root(), selection_->Hovered())) {
+    selection_->SelectMany(remappedSelection);
+
+    const std::string remappedHovered = RemapId(selection_->Hovered(), swap);
+    if (remappedHovered.empty()) {
         selection_->ClearHovered();
+    } else if (remappedHovered != selection_->Hovered()) {
+        selection_->SetHovered(remappedHovered);
     }
-    if (!selection_->Focused().empty() && !design::FindNodeById(document_->Root(), selection_->Focused())) {
+
+    const std::string remappedFocused = RemapId(selection_->Focused(), swap);
+    if (remappedFocused.empty()) {
         selection_->ClearFocused();
+    } else if (remappedFocused != selection_->Focused()) {
+        selection_->SetFocused(remappedFocused);
+    }
+
+    if (selection_->IsEmpty() && inner_) {
+        const std::string affected = inner_->AffectedNodeId();
+        if (!affected.empty() && design::FindNodeById(document_->Root(), affected)) {
+            selection_->Select(affected);
+        }
     }
 }
 
@@ -186,6 +254,35 @@ bool ExecuteRemoveComponent(CommandManager* manager, design::DesignDocument& doc
     return true;
 }
 
+std::string ExecuteDuplicateComponent(CommandManager* manager, design::DesignDocument& document,
+                                       SelectionManager* selection, const std::string& nodeId) {
+    UiComponentTree* tree = TreeOf(document);
+    if (!tree) {
+        return {};
+    }
+
+    UiNode* node = design::FindNodeById(document.Root(), nodeId);
+    if (!node || node == document.Root() || !node->Parent()) {
+        return {};
+    }
+
+    auto command = std::make_unique<DuplicateComponentCommand>(tree, nodeId);
+    DuplicateComponentCommand* raw = command.get();
+    if (manager) {
+        manager->Execute(std::make_unique<DocumentCommand>(&document, std::move(command), selection));
+    } else {
+        raw->Execute();
+        document.dirty = true;
+        document.revision++;
+    }
+
+    const std::string duplicatedId = raw->PastedNodeId();
+    if (!duplicatedId.empty()) {
+        CopyAuthoredProperties(document, node, design::FindNodeById(document.Root(), duplicatedId));
+    }
+    return duplicatedId;
+}
+
 std::string ExecuteChangeComponentType(CommandManager* manager, design::DesignDocument& document,
                                         SelectionManager* selection, const std::string& nodeId,
                                         const std::string& newType) {
@@ -224,10 +321,6 @@ std::string ExecuteChangeComponentType(CommandManager* manager, design::DesignDo
     if (!changedId.empty()) {
         for (const std::string& key : authoredKeys) {
             design::MarkPropertyAuthored(document, changedId, key);
-        }
-        if (selection) {
-            selection->Deselect(nodeId);
-            selection->Select(changedId, false);
         }
     }
     return changedId;
@@ -296,9 +389,10 @@ bool ExecuteSetProperty(CommandManager* manager, design::DesignDocument& documen
         return true;
     }
 
+    const bool wasAuthored = design::IsPropertyAuthored(document, nodeId, key);
     manager->Execute(std::make_unique<DocumentCommand>(
-        &document, std::make_unique<SetPropertyCommand>(tree, nodeId, key, typedValue), selection));
-    design::MarkPropertyAuthored(document, nodeId, key);
+        &document, std::make_unique<SetPropertyCommand>(tree, nodeId, key, typedValue), selection,
+        std::vector<AuthoredChange>{{nodeId, key, wasAuthored, true}}));
     return true;
 }
 
@@ -322,9 +416,10 @@ bool ExecuteRemoveProperty(CommandManager* manager, design::DesignDocument& docu
         return true;
     }
 
+    const bool wasAuthored = design::IsPropertyAuthored(document, nodeId, key);
     manager->Execute(std::make_unique<DocumentCommand>(
-        &document, std::make_unique<RemovePropertyCommand>(tree, nodeId, key), selection));
-    design::UnmarkPropertyAuthored(document, nodeId, key);
+        &document, std::make_unique<RemovePropertyCommand>(tree, nodeId, key), selection,
+        std::vector<AuthoredChange>{{nodeId, key, wasAuthored, false}}));
     return true;
 }
 

@@ -5,14 +5,16 @@
 #include "controls/RadioButton.h"
 #include "events/Event.h"
 
+#include <utility>
+
 namespace avalang {
 namespace ui {
 namespace controls {
 
 class RadioButtonController::Handler final : public events::IEventHandler {
 public:
-    Handler(IComponent* target, events::IEventDispatcher& dispatcher)
-        : target_(target), dispatcher_(dispatcher) {}
+    Handler(IComponent* target, events::IEventDispatcher& dispatcher, const RadioButtonBinding& binding)
+        : target_(target), dispatcher_(dispatcher), binding_(binding) {}
 
     void OnEvent(events::IEvent* event) override {
         if (!event || !target_) return;
@@ -38,9 +40,17 @@ private:
     }
 
     void Activate() {
-        if (GetRadioButtonSelected(target_)) return;
+        // Read from what is on screen, not from the raw property: for a
+        // bound RadioButton the raw property is the text "planBasic", not a
+        // bool (same reasoning as CheckBoxController).
+        const bool alreadySelected = binding_.resolveSelected ? binding_.resolveSelected(target_)
+                                                                : GetRadioButtonSelected(target_);
+        if (alreadySelected) return;
 
-        SelectRadioButton(target_);
+        const bool committed = binding_.commitSelected && binding_.commitSelected(target_);
+        if (!committed) {
+            SelectRadioButton(target_);
+        }
 
         events::Event changeEvent(events::EventType::Change, target_->Id());
         dispatcher_.Dispatch(&changeEvent);
@@ -48,6 +58,7 @@ private:
 
     IComponent* target_;
     events::IEventDispatcher& dispatcher_;
+    const RadioButtonBinding& binding_;
 };
 
 RadioButtonController::RadioButtonController(events::IEventDispatcher& dispatcher)
@@ -59,11 +70,15 @@ void RadioButtonController::Attach(IComponent* root) {
     AttachRecursive(root);
 }
 
+void RadioButtonController::SetBinding(RadioButtonBinding binding) {
+    binding_ = std::move(binding);
+}
+
 void RadioButtonController::AttachRecursive(IComponent* node) {
     if (!node) return;
 
     if (node->TypeName() == "RadioButton") {
-        auto handler = std::make_unique<Handler>(node, dispatcher_);
+        auto handler = std::make_unique<Handler>(node, dispatcher_, binding_);
         dispatcher_.Subscribe(node->Id(), events::EventType::Click, handler.get());
         dispatcher_.Subscribe(node->Id(), events::EventType::KeyDown, handler.get());
         handlers_.push_back(std::move(handler));

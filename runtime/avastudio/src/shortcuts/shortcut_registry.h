@@ -43,6 +43,8 @@ enum class ShortcutId {
     QuickFix,
     Undo,
     Redo,
+    RedoAlternate,
+    Duplicate,
     ToggleBreakpoint,
     DebugStepOver,
     DebugStepInto,

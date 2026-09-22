@@ -130,6 +130,28 @@ void WireHrefNavigation(avalang::ui::IComponent* node,
     }
 }
 
+// Collects every other RadioButton under `node` that shares `group`
+// (`excludeId` is skipped). Mirrors CollectRadioButtonsInGroup from the web
+// pipeline (ui_pipeline_dynamic_renderer.cpp) so both hosts deselect group
+// siblings the same way.
+void CollectRadioButtonsInGroup(avalang::ui::IComponent* node, const std::string& group,
+                                 avalang::ui::ComponentId excludeId,
+                                 std::vector<avalang::ui::IComponent*>& out) {
+    if (!node) return;
+
+    if (node->TypeName() == "RadioButton" && node->Id() != excludeId) {
+        const avalang::ui::PropertyValue* groupProp = node->GetProperty("group");
+        if (groupProp && groupProp->Type() == avalang::ui::PropertyType::String &&
+            groupProp->AsString() == group) {
+            out.push_back(node);
+        }
+    }
+
+    for (avalang::ui::IComponent* child : node->Children()) {
+        CollectRadioButtonsInGroup(child, group, excludeId, out);
+    }
+}
+
 // `agreed` yes; `a + b`, `"true"`, `x.y` no. Only a bare state variable can be
 // written back by a control; anything else is an expression.
 bool IsPlainIdentifier(const std::string& text) {
@@ -294,7 +316,11 @@ int RunViewLoop(const std::string& avauiPath, int width, int height, std::string
                 const avalang::ui::PropertyValue* prop = checkBox->GetProperty("isChecked");
                 if (!prop) return false;
                 if (prop->Type() == avalang::ui::PropertyType::Bool) return prop->AsBool();
-                if (prop->Type() == avalang::ui::PropertyType::String) {
+                // `isChecked = {agreed}` parses as Expression, not String (same
+                // as any other `{binding}`); AsString() still returns the raw
+                // "agreed" source for both, so both must be evaluated here.
+                if (prop->Type() == avalang::ui::PropertyType::String ||
+                    prop->Type() == avalang::ui::PropertyType::Expression) {
                     return stateBridge.EvalIdentifier(prop->AsString()) == "true";
                 }
                 return false;
@@ -302,7 +328,8 @@ int RunViewLoop(const std::string& avauiPath, int width, int height, std::string
             checkBoxBinding.commitChecked = [&stateBridge](avalang::ui::IComponent* checkBox,
                                                             bool newChecked) {
                 const avalang::ui::PropertyValue* prop = checkBox->GetProperty("isChecked");
-                if (!prop || prop->Type() != avalang::ui::PropertyType::String) return false;
+                if (!prop || (prop->Type() != avalang::ui::PropertyType::String &&
+                              prop->Type() != avalang::ui::PropertyType::Expression)) return false;
                 const std::string variable = prop->AsString();
                 if (!IsPlainIdentifier(variable)) return false;
                 avalang::ui::IState* state = stateBridge.Find(variable);
@@ -315,6 +342,61 @@ int RunViewLoop(const std::string& avauiPath, int width, int height, std::string
 
         avalang::ui::controls::RadioButtonController radioButtonController(dispatcher);
         radioButtonController.Attach(root);
+
+        // Two-way binding for `selected = someStateVar`, mirroring the
+        // CheckBox fix above. Without it RadioButtonController only ever
+        // toggled the plain `isSelected` property via its internal
+        // g_groups bookkeeping (RadioButton.cpp): the bound variable
+        // (`planBasic` / `planPro`) never changed, and sibling RadioButtons
+        // bound to their own variables never got deselected -- only their
+        // plain property did, which nothing else reads once a binding is
+        // in play.
+        {
+            avalang::ui::controls::RadioButtonBinding radioButtonBinding;
+            radioButtonBinding.resolveSelected = [&stateBridge](avalang::ui::IComponent* radioButton) {
+                const avalang::ui::PropertyValue* prop = radioButton->GetProperty("isSelected");
+                if (!prop) return false;
+                if (prop->Type() == avalang::ui::PropertyType::Bool) return prop->AsBool();
+                if (prop->Type() == avalang::ui::PropertyType::String ||
+                    prop->Type() == avalang::ui::PropertyType::Expression) {
+                    return stateBridge.EvalIdentifier(prop->AsString()) == "true";
+                }
+                return false;
+            };
+            radioButtonBinding.commitSelected = [&stateBridge, &root](avalang::ui::IComponent* radioButton) {
+                const avalang::ui::PropertyValue* prop = radioButton->GetProperty("isSelected");
+                if (!prop || (prop->Type() != avalang::ui::PropertyType::String &&
+                              prop->Type() != avalang::ui::PropertyType::Expression)) {
+                    return false;
+                }
+                const std::string variable = prop->AsString();
+                if (!IsPlainIdentifier(variable)) return false;
+                avalang::ui::IState* state = stateBridge.Find(variable);
+                if (!state) return false;
+
+                const avalang::ui::PropertyValue* groupProp = radioButton->GetProperty("group");
+                if (groupProp && groupProp->Type() == avalang::ui::PropertyType::String) {
+                    std::vector<avalang::ui::IComponent*> siblings;
+                    CollectRadioButtonsInGroup(root, groupProp->AsString(), radioButton->Id(), siblings);
+                    for (avalang::ui::IComponent* sibling : siblings) {
+                        const avalang::ui::PropertyValue* siblingProp = sibling->GetProperty("isSelected");
+                        if (!siblingProp || (siblingProp->Type() != avalang::ui::PropertyType::String &&
+                                              siblingProp->Type() != avalang::ui::PropertyType::Expression)) {
+                            continue;
+                        }
+                        const std::string siblingVar = siblingProp->AsString();
+                        if (!IsPlainIdentifier(siblingVar)) continue;
+                        if (avalang::ui::IState* siblingState = stateBridge.Find(siblingVar)) {
+                            siblingState->Set(avalang::ui::PropertyValue(false));
+                        }
+                    }
+                }
+
+                state->Set(avalang::ui::PropertyValue(true));
+                return true;
+            };
+            radioButtonController.SetBinding(std::move(radioButtonBinding));
+        }
 
         avalang::ui::controls::ComboBoxController comboBoxController(dispatcher);
         comboBoxController.Attach(root);

@@ -83,7 +83,11 @@ LiveRenderResult BuildLiveRender(avalang::ui::ComponentTree* tree, int viewportW
 
     avalang::ui::theme::ProjectStyleSheet projectStyles =
         avalang::ui::theme::LoadProjectStyleOverrides(projectRoot);
+    const PropertySnapshot propertiesBeforeTheme = SnapshotProperties(tree);
     avalang::ui::RenderTheme::Apply(tree, &projectTheme, &projectStyles, static_cast<double>(viewportWidth));
+    out.injected = DiffInjectedProperties(propertiesBeforeTheme, tree);
+    out.viewportWidth = viewportWidth;
+    out.styles = std::make_shared<const avalang::ui::theme::ProjectStyleSheet>(std::move(projectStyles));
 
     out.layoutEngine = avalang::ui::LayoutEngine::Create();
     if (evalText) out.layoutEngine->SetTextEvaluator(evalText);

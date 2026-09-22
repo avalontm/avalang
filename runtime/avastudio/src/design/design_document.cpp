@@ -135,6 +135,7 @@ bool ParseAvauiText(const std::string& text, DesignDocument& out_doc, std::strin
         for (const auto& [k, v] : parsed.state) {
             out_doc.initial_state.push_back(PropertyRow{k, v});
         }
+        out_doc.const_state_names = parsed.constNames;
         out_doc.imports = parsed.imports;
         out_doc.extends = parsed.extends;
 
@@ -185,28 +186,32 @@ bool LoadAvauiFile(const std::string& path, DesignDocument& out_doc, std::string
     return ParseAvauiText(buf.str(), out_doc, out_error, path, out_info);
 }
 
+avalang::ui::parser::AvauiWriteOptions BuildWriteOptions(const DesignDocument& doc) {
+    avalang::ui::parser::AvauiWriteOptions opts;
+    opts.code_behind = doc.code_behind;
+    opts.imports = doc.imports;
+    opts.extends = doc.extends;
+    opts.initial_state.reserve(doc.initial_state.size());
+    for (const auto& row : doc.initial_state) {
+        opts.initial_state.push_back(
+            {row.key, row.value, doc.const_state_names.count(row.key) != 0});
+    }
+
+    for (const NodeAnimation* entry : ResolvedAnimations(doc)) {
+        avalang::ui::IComponent* target = FindNodeById(doc.Root(), entry->node_id);
+        if (!target) continue;
+        avalang::ui::parser::AnimationSpec spec = entry->spec;
+        spec.target = target->Id();
+        opts.animations.push_back(std::move(spec));
+    }
+
+    return opts;
+}
+
 bool SaveAvauiFile(const DesignDocument& doc, const std::string& path) {
     if (!doc.tree || !doc.tree->Root()) return false;
 
-    std::string text = [&] {
-        avalang::ui::parser::AvauiWriteOptions opts;
-        opts.code_behind = doc.code_behind;
-        opts.imports = doc.imports;
-        opts.initial_state.reserve(doc.initial_state.size());
-        for (const auto& row : doc.initial_state) {
-            opts.initial_state.push_back({row.key, row.value});
-        }
-
-        for (const NodeAnimation* entry : ResolvedAnimations(doc)) {
-            avalang::ui::IComponent* target = FindNodeById(doc.Root(), entry->node_id);
-            if (!target) continue;
-            avalang::ui::parser::AnimationSpec spec = entry->spec;
-            spec.target = target->Id();
-            opts.animations.push_back(std::move(spec));
-        }
-
-        return avalang::ui::parser::WriteAvaui(doc.tree->Root(), opts);
-    }();
+    std::string text = avalang::ui::parser::WriteAvaui(doc.tree->Root(), BuildWriteOptions(doc));
 
     std::ofstream out(path, std::ios::binary);
     if (!out) return false;

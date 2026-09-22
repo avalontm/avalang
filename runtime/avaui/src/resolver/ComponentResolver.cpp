@@ -153,6 +153,8 @@ std::string FormatArgLiteral(const PropertyValue& value) {
             return FormatNumberLiteral(value.AsNumber());
         case PropertyType::Bool:
             return value.AsBool() ? "true" : "false";
+        case PropertyType::Expression:
+            return value.AsExpressionSource();
         default:
             return "nil";
     }
@@ -219,6 +221,7 @@ void SubstituteForItemInSubtree(IComponent* node, const std::string& loopVar,
                 node->SetProperty(propName, decoded);
             }
         }
+        SubstitutePropertiesInPlace(node, itemValueMap);
         return;
     }
 
@@ -285,9 +288,17 @@ void SubstitutePropertiesInPlace(IComponent* node,
 
     for (const auto& propName : node->PropertyNames()) {
         const PropertyValue* prop = node->GetProperty(propName);
-        if (!prop || prop->Type() != PropertyType::String) continue;
+        if (!prop) continue;
+        // Fase 8: además de props String (sistema viejo, p. ej. "text =
+        // name" sin llaves), reescribir también props Expression (Opción
+        // A, p. ej. "text = {name}" o "text = \"...{name}...\"") -- si
+        // no, un 'param' referenciado con '{ }' nunca se sustituía en el
+        // sitio de la llamada.
+        bool isExpr = prop->Type() == PropertyType::Expression;
+        if (!isExpr && prop->Type() != PropertyType::String) continue;
+        bool wasInterpolation = isExpr && prop->IsInterpolation();
 
-        const std::string original = prop->AsString();
+        const std::string original = isExpr ? prop->AsExpressionSource() : prop->AsString();
         std::string rewritten;
         rewritten.reserve(original.size());
         bool changed = false;
@@ -326,7 +337,8 @@ void SubstitutePropertiesInPlace(IComponent* node,
         }
 
         if (changed) {
-            node->SetProperty(propName, PropertyValue(rewritten));
+            node->SetProperty(propName, isExpr ? PropertyValue::MakeExpression(rewritten, wasInterpolation)
+                                                : PropertyValue(rewritten));
         }
     }
 }

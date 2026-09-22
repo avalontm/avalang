@@ -41,7 +41,6 @@ public:
 
     bool ShouldFill() const override { return shouldFill_; }
     bool ShouldStroke() const override { return shouldStroke_; }
-    int StrokeWidth() const override { return strokeWidth_; }
 
     std::string ClickHandler() const override { return clickHandler_; }
     std::string ClassName() const override { return className_; }
@@ -82,7 +81,6 @@ public:
     void SetFontSize(int s) { fontSize_ = s; }
     void SetShouldFill(bool f) { shouldFill_ = f; }
     void SetShouldStroke(bool s) { shouldStroke_ = s; }
-    void SetStrokeWidth(int w) { strokeWidth_ = w; }
     void SetClickHandler(std::string h) { clickHandler_ = std::move(h); }
     void SetClassName(std::string c) { className_ = std::move(c); }
     void SetDisabled(bool d) { disabled_ = d; }
@@ -118,7 +116,6 @@ private:
     int fontSize_ = 12;
     bool shouldFill_ = false;
     bool shouldStroke_ = false;
-    int strokeWidth_ = 1;
     std::string clickHandler_;
     std::string className_;
     bool disabled_ = false;

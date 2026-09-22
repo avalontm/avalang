@@ -615,13 +615,25 @@ std::optional<PropertyEdit> DrawPropertiesPanel(PropertiesState& state, bool* p_
     const std::string title = util::Tr("panel.properties.title") + "###properties";
     ImGui::Begin(title.c_str(), p_open);
 
-    if (state.selected_component_type.empty()) {
+    const bool multi_selection = state.selected_node_ids.size() > 1;
+
+    if (state.selected_component_type.empty() && !multi_selection) {
         ImGui::TextDisabled("%s", util::Tr("properties.empty_selection").c_str());
         ImGui::End();
         return committed;
     }
 
-    if (state.editable) {
+    if (multi_selection) {
+        ImGui::Text("%s", TrFormat("properties.multi_selection_count",
+                                    std::to_string(state.selected_node_ids.size())).c_str());
+        if (state.mixed_types) {
+            ImGui::TextDisabled("%s", util::Tr("properties.multi_selection_mixed_types").c_str());
+            ImGui::End();
+            return committed;
+        }
+        ImGui::TextDisabled(
+            "%s", TrFormat("properties.multi_selection_type", state.selected_component_type).c_str());
+    } else if (state.editable) {
 
         ImGui::TextUnformatted(util::Tr("properties.id_label").c_str());
         ImGui::SetNextItemWidth(-FLT_MIN);
@@ -695,6 +707,52 @@ std::optional<PropertyEdit> DrawPropertiesPanel(PropertiesState& state, bool* p_
                 ImGui::TextUnformatted(row.value.c_str());
             }
             ImGui::EndTable();
+        }
+    }
+
+    if (!state.responsive_rows.empty()) {
+        ImGui::Spacing();
+        const std::string header =
+            TrFormat("properties.section_responsive", std::to_string(state.responsive_viewport_width)) +
+            "###responsive_section";
+        if (ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::BeginTable("responsive_style", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+                ImGui::TableSetupColumn(util::Tr("properties.column_property").c_str());
+                ImGui::TableSetupColumn(util::Tr("properties.column_value").c_str());
+                ImGui::TableSetupColumn(util::Tr("properties.column_breakpoint").c_str());
+                ImGui::TableHeadersRow();
+                for (const designer::ResponsiveStyleRow& row : state.responsive_rows) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextUnformatted(row.key.c_str());
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextUnformatted(row.value.c_str());
+                    ImGui::TableSetColumnIndex(2);
+                    if (row.breakpointMinWidth) {
+                        ImGui::Text(">= %upx", static_cast<unsigned>(*row.breakpointMinWidth));
+                    } else {
+                        ImGui::TextDisabled("%s", util::Tr("properties.responsive_base").c_str());
+                    }
+                }
+                ImGui::EndTable();
+            }
+        }
+    }
+
+    if (committed && multi_selection) {
+        switch (committed->kind) {
+            case PropertyEditKind::kValue:
+            case PropertyEditKind::kEvent:
+            case PropertyEditKind::kRemoveProperty:
+            case PropertyEditKind::kRemoveEvent:
+                for (const std::string& node_id : state.selected_node_ids) {
+                    if (node_id != committed->node_id) {
+                        committed->extra_node_ids.push_back(node_id);
+                    }
+                }
+                break;
+            default:
+                break;
         }
     }
 

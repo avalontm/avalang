@@ -14,6 +14,7 @@ namespace parser {
 struct AvauiStateEntry {
     std::string key;
     std::string value;
+    bool isConst = false;
 };
 
 struct AvauiRouteEntry {
@@ -27,6 +28,7 @@ struct AvauiWriteOptions {
     std::string extends;
     std::vector<AvauiRouteEntry> routes;
     std::vector<AnimationSpec> animations;
+    std::vector<ParamDeclaration> params;
 };
 
 AVA_UI_API std::string WriteAvaui(const IComponent* root, const AvauiWriteOptions& options);

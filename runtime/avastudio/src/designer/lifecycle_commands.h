@@ -22,6 +22,7 @@ public:
     std::string Description() const override;
 
     NodeId CreatedNodeId() const;
+    std::string AffectedNodeId() const override { return CreatedNodeId(); }
 
 private:
     void Attach();
@@ -46,6 +47,7 @@ public:
     std::string Description() const override;
 
     NodeId CreatedNodeId() const;
+    std::string AffectedNodeId() const override { return CreatedNodeId(); }
 
 private:
     void Attach();
@@ -67,6 +69,7 @@ public:
     void Undo() override;
     void Redo() override;
     std::string Description() const override;
+    std::pair<std::string, std::string> IdentitySwap() const override;
 
     NodeId ChangedNodeId() const;
 
@@ -90,12 +93,17 @@ public:
     void Undo() override;
     void Redo() override;
     std::string Description() const override;
+    std::string AffectedNodeId() const override { return nodeId_; }
 
 private:
+    void CaptureLocation();
+
     UiComponentTree* tree_;
     NodeId nodeId_;
     UiNode* node_ = nullptr;
     UiNode* parent_ = nullptr;
+    std::string slot_ = "default";
+    NodeId nextSiblingId_;
 };
 
 class PasteComponentCommand : public ICommand {
@@ -109,11 +117,15 @@ public:
     std::string Description() const override;
 
     NodeId PastedNodeId() const;
+    std::string AffectedNodeId() const override { return PastedNodeId(); }
 
 protected:
+    void Attach();
+
     UiComponentTree* tree_;
     NodeId sourceId_;
     NodeId targetParentId_;
+    NodeId afterId_;
     UiNode* clone_ = nullptr;
 };
 

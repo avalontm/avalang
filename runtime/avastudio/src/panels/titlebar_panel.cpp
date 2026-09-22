@@ -9,9 +9,12 @@
 
 #include "branding/logo_texture.h"
 #include "palette.h"
+#include "panels/designer_actions.h"
+#include "panels/designer_history.h"
 #include "panels/editor_panel.h"
 #include "platform/win32_titlebar.h"
 #include "plugins/plugin_host.h"
+#include "shortcuts/shortcut_registry.h"
 #include "util/i18n.h"
 #include "util/settings.h"
 #include "util/ui_widgets.h"
@@ -209,6 +212,23 @@ TitleBarResult DrawTitleBar(EditorState& editor_state, StudioSettings& settings,
     ImGui::SetNextWindowPos(ImVec2(result.edit_menu_rect.min_x, result.edit_menu_rect.max_y + 2.0f));
     ImGui::SetNextWindowSizeConstraints(ImVec2(160.0f, 0.0f), ImVec2(FLT_MAX, FLT_MAX));
     if (ImGui::BeginPopup("##EditMenu")) {
+        if (const EditorTab* active = editor_state.Active(); IsDesignerHistoryAvailable(active)) {
+            const ShortcutRegistry& shortcuts = ShortcutRegistry::Instance();
+            if (ImGui::MenuItem(util::Tr("menu.edit.undo").c_str(), shortcuts.Label(ShortcutId::Undo).c_str(), false,
+                                CanDesignerUndo(active))) {
+                editor_state.undo_requested = true;
+            }
+            if (ImGui::MenuItem(util::Tr("menu.edit.redo").c_str(), shortcuts.Label(ShortcutId::Redo).c_str(), false,
+                                CanDesignerRedo(active))) {
+                editor_state.redo_requested = true;
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem(util::Tr("menu.edit.duplicate").c_str(), shortcuts.Label(ShortcutId::Duplicate).c_str(),
+                                false, CanDuplicateDesignerSelection(active))) {
+                editor_state.duplicate_requested = true;
+            }
+            ImGui::Separator();
+        }
         if (ImGui::MenuItem(util::Tr("menu.edit.quick_open").c_str(), "Ctrl+P")) {
             result.quick_open_requested = true;
         }

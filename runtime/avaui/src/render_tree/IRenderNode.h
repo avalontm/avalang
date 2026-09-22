@@ -67,7 +67,6 @@ public:
 
     virtual bool ShouldFill() const = 0;
     virtual bool ShouldStroke() const = 0;
-    virtual int StrokeWidth() const = 0;
 
     virtual std::string ClickHandler() const = 0;
     virtual std::string ClassName() const = 0;

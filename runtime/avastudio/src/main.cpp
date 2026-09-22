@@ -44,7 +44,9 @@
 #include "panels/properties_panel.h"
 #include "panels/state_panel.h"
 #include "designer/document_commands.h"
+#include "panels/designer_actions.h"
 #include "panels/designer_canvas.h"
+#include "panels/designer_history.h"
 #include "panels/document_tree_panel.h"
 #include "design/state_eval.h"
 #include "panels/project_properties_panel.h"
@@ -293,8 +295,6 @@ int main(int argc, char** argv) {
 
     editor_state.log_bridge = &log_bridge;
 
-    studio::EngineBridge::DemoTree demo_tree = engine.BuildDemoComponentTree();
-
     studio::PluginHostCallbacks plugin_callbacks;
     plugin_callbacks.get_project_root = [&]() -> std::string { return explorer_state.root_dir; };
     plugin_callbacks.get_active_file = [&](std::string& path, std::string& content) -> bool {
@@ -310,16 +310,8 @@ int main(int argc, char** argv) {
         if (!active || active->is_welcome || !active->is_avaui) return false;
         path = active->file_path;
             avaui_source = (active->view_mode == studio::TabViewMode::Design)
-                               ? [&] {
-                                     avalang::ui::parser::AvauiWriteOptions opts;
-                                     opts.code_behind = active->design.code_behind;
-                                     opts.imports = active->design.imports;
-                                     opts.initial_state.reserve(active->design.initial_state.size());
-                                     for (const auto& row : active->design.initial_state) {
-                                         opts.initial_state.push_back({row.key, row.value});
-                                     }
-                                     return avalang::ui::parser::WriteAvaui(active->design.Root(), opts);
-                                 }()
+                               ? avalang::ui::parser::WriteAvaui(
+                                     active->design.Root(), studio::design::BuildWriteOptions(active->design))
                                : active->GetText();
         return true;
     };
@@ -762,6 +754,27 @@ int main(int argc, char** argv) {
             }
         }
 
+        {
+            studio::DesignerHistoryAction history_action = studio::DesignerHistoryAction::kNone;
+            if (editor_state.undo_requested) {
+                history_action = studio::DesignerHistoryAction::kUndo;
+            } else if (editor_state.redo_requested) {
+                history_action = studio::DesignerHistoryAction::kRedo;
+            } else {
+                history_action = studio::PollDesignerHistoryShortcut();
+            }
+            editor_state.undo_requested = false;
+            editor_state.redo_requested = false;
+            const bool duplicate_action = editor_state.duplicate_requested || studio::PollDesignerDuplicateShortcut();
+            editor_state.duplicate_requested = false;
+            if (studio::EditorTab* active = editor_state.Active()) {
+                studio::ApplyDesignerHistory(*active, history_action);
+                if (duplicate_action) {
+                    studio::DuplicateDesignerSelection(*active);
+                }
+            }
+        }
+
         studio::DrawEditorPanel(editor_state);
         studio::UpdateProblemsFromDiagnostics(problems_state, "live", studio::CollectDiagnosticProblems(editor_state));
         if (const studio::EditorTab* active = editor_state.Active();
@@ -1190,7 +1203,17 @@ int main(int argc, char** argv) {
         editor_state.new_project_requested = false;
 
         if (bool& open = panel_open.try_emplace("Preview###preview", true).first->second; open) {
-            if (auto selected = studio::DrawPreviewPanel(demo_tree.root, &open)) {
+            avalang::ui::IComponent* preview_root = nullptr;
+            int preview_tab_id = -1;
+            if (editor_state.active_tab >= 0 &&
+                editor_state.active_tab < static_cast<int>(editor_state.tabs.size())) {
+                studio::EditorTab& active_tab = *editor_state.tabs[editor_state.active_tab];
+                if (active_tab.is_avaui) {
+                    preview_root = active_tab.design.Root();
+                    preview_tab_id = active_tab.id;
+                }
+            }
+            if (auto selected = studio::DrawPreviewPanel(preview_root, preview_tab_id, &open)) {
                 properties_state = *selected;
             }
             persist_if_closed("Preview###preview", open);
@@ -1199,48 +1222,62 @@ int main(int argc, char** argv) {
         if (bool& open = panel_open.try_emplace("Properties###properties", true).first->second; open) {
             if (auto edit = studio::DrawPropertiesPanel(properties_state, &open)) {
                 for (auto& tab_ptr : editor_state.tabs) {
-                studio::EditorTab& tab = *tab_ptr;
-                if (tab.id != edit->tab_id || !tab.is_avaui) continue;
-                if (avalang::ui::IComponent* node =
-                        studio::design::FindNodeById(tab.design.Root(), edit->node_id)) {
-                    studio::designer::CommandManager* commands =
-                        studio::GetDesignerCommandManager(tab.id);
-                    studio::designer::SelectionManager* selection =
-                        studio::GetDesignerSelectionManager(tab.id);
-                    switch (edit->kind) {
-                        case studio::PropertyEditKind::kValue:
-                        case studio::PropertyEditKind::kEvent:
-                            studio::designer::ExecuteSetProperty(commands, tab.design, selection, edit->node_id,
-                                                                  edit->key, edit->new_value);
-                            break;
-                        case studio::PropertyEditKind::kId:
-                            studio::designer::ExecuteSetProperty(commands, tab.design, selection, edit->node_id,
-                                                                  "id", edit->new_value);
-                            break;
-                        case studio::PropertyEditKind::kType:
-                            if (!edit->new_value.empty()) {
-                                studio::designer::ExecuteChangeComponentType(commands, tab.design, selection,
-                                                                              edit->node_id, edit->new_value);
-                            }
-                            break;
-                        case studio::PropertyEditKind::kAddProperty:
-                            if (!node->HasProperty(edit->key)) {
-                                studio::designer::ExecuteSetProperty(commands, tab.design, selection,
-                                                                      edit->node_id, edit->key, edit->new_value);
-                            }
-                            break;
-                        case studio::PropertyEditKind::kRemoveProperty:
-                        case studio::PropertyEditKind::kRemoveEvent:
-                            studio::designer::ExecuteRemoveProperty(commands, tab.design, selection,
-                                                                     edit->node_id, edit->key);
-                            break;
+                    studio::EditorTab& tab = *tab_ptr;
+                    if (tab.id != edit->tab_id || !tab.is_avaui) continue;
+
+                    studio::designer::CommandManager* commands = studio::GetDesignerCommandManager(tab.id);
+                    studio::designer::SelectionManager* selection = studio::GetDesignerSelectionManager(tab.id);
+
+                    std::vector<std::string> targets;
+                    targets.push_back(edit->node_id);
+                    targets.insert(targets.end(), edit->extra_node_ids.begin(), edit->extra_node_ids.end());
+
+                    const bool batched = commands != nullptr && targets.size() > 1;
+                    if (batched) {
+                        commands->BeginTransaction("Edit properties");
                     }
+
+                    for (const std::string& target_id : targets) {
+                        avalang::ui::IComponent* node = studio::design::FindNodeById(tab.design.Root(), target_id);
+                        if (!node) continue;
+                        switch (edit->kind) {
+                            case studio::PropertyEditKind::kValue:
+                            case studio::PropertyEditKind::kEvent:
+                                studio::designer::ExecuteSetProperty(commands, tab.design, selection, target_id,
+                                                                      edit->key, edit->new_value);
+                                break;
+                            case studio::PropertyEditKind::kId:
+                                studio::designer::ExecuteSetProperty(commands, tab.design, selection, target_id,
+                                                                      "id", edit->new_value);
+                                break;
+                            case studio::PropertyEditKind::kType:
+                                if (!edit->new_value.empty()) {
+                                    studio::designer::ExecuteChangeComponentType(commands, tab.design, selection,
+                                                                                  target_id, edit->new_value);
+                                }
+                                break;
+                            case studio::PropertyEditKind::kAddProperty:
+                                if (!node->HasProperty(edit->key)) {
+                                    studio::designer::ExecuteSetProperty(commands, tab.design, selection,
+                                                                          target_id, edit->key, edit->new_value);
+                                }
+                                break;
+                            case studio::PropertyEditKind::kRemoveProperty:
+                            case studio::PropertyEditKind::kRemoveEvent:
+                                studio::designer::ExecuteRemoveProperty(commands, tab.design, selection,
+                                                                         target_id, edit->key);
+                                break;
+                        }
+                    }
+
+                    if (batched) {
+                        commands->EndTransaction();
+                    }
+
                     tab.design.dirty = true;
                     tab.dirty = true;
+                    break;
                 }
-
-                break;
-            }
             }
             persist_if_closed("Properties###properties", open);
         }
@@ -1546,6 +1583,14 @@ int main(int argc, char** argv) {
                 [&] { editor_state.close_tab_requested = true; });
             add(category_file, "menu.file.exit", "Alt+F4", [&] { g_native_close_requested = true; });
 
+            if (studio::IsDesignerHistoryAvailable(editor_state.Active())) {
+                add(category_edit, "menu.edit.undo", shortcut_labels.Label(studio::ShortcutId::Undo),
+                    [&] { editor_state.undo_requested = true; });
+                add(category_edit, "menu.edit.redo", shortcut_labels.Label(studio::ShortcutId::Redo),
+                    [&] { editor_state.redo_requested = true; });
+                add(category_edit, "menu.edit.duplicate", shortcut_labels.Label(studio::ShortcutId::Duplicate),
+                    [&] { editor_state.duplicate_requested = true; });
+            }
             add(category_edit, "menu.edit.quick_open", shortcut_labels.Label(studio::ShortcutId::QuickOpen),
                 [&] { editor_state.quick_open_requested = true; });
             add(category_edit, "menu.edit.find_in_project", shortcut_labels.Label(studio::ShortcutId::FindInProject),

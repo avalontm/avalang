@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace studio::designer {
@@ -15,6 +16,9 @@ public:
     virtual void Redo() = 0;
 
     virtual std::string Description() const = 0;
+
+    virtual std::pair<std::string, std::string> IdentitySwap() const { return {}; }
+    virtual std::string AffectedNodeId() const { return {}; }
 };
 
 class CompositeCommand : public ICommand {
@@ -25,6 +29,8 @@ public:
     void Undo() override;
     void Redo() override;
     std::string Description() const override;
+    std::pair<std::string, std::string> IdentitySwap() const override;
+    std::string AffectedNodeId() const override;
 
 private:
     std::string description_;

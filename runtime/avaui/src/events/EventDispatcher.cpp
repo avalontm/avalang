@@ -79,6 +79,11 @@ void EventDispatcher::Dispatch(IEvent* event) {
     }
 }
 
+void EventDispatcher::DispatchChange(ComponentId target, PropertyValue value) {
+    auto change = std::make_unique<ChangeEvent>(target, std::move(value));
+    Dispatch(change.get());
+}
+
 void EventDispatcher::PollInput(IComponent* root) {
     if (!root || !platformMouse_ || !platformKeyboard_) return;
 

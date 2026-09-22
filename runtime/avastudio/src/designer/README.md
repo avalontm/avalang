@@ -148,7 +148,7 @@ pide y que no existía como contrato reutilizable:
 
 Nada de esto sustituye todavía a `designer_canvas.cpp`: es la base formal
 sobre la que Fase 4 (Tree) y la reconstrucción del canvas se apoyan.
-`DesignerSurface` no se instancia desde ninguna pantalla real todavía.
+`DesignerSurface` se instancia una vez por pestaña en `panels/designer_canvas.cpp` (`DesignerVmCacheEntry::surface`) y es la única dueña de layout, viewport, selección y modo del canvas.
 
 ## Tree (Fase 4)
 
@@ -827,3 +827,108 @@ cambia. Un `width`/`height` explícito siempre prevalece sobre el mínimo.
 
 `Dialog` no se dibuja en el canvas: se lista en la bandeja de diálogos
 (`DrawDialogTray`).
+
+## Node frame
+
+`node_frame.h`/`.cpp` es la única fuente de la geometría de decoración de un nodo en el canvas: `ComputeNodeFrame` calcula, en espacio de canvas, el rect crudo, el contenido (con margen por profundidad), el chrome del contenedor (con padding y clamp a los límites) y la caja de selección (`ComputeSelectionBox`, con variante compacta). `CollectNodeFrames` recorre el árbol con esa misma función, aplicando el preview de `ResizeTool` y omitiendo diálogos, y produce un `NodeFrameMap` sin depender de que el canvas dibuje los nodos. `panels/designer_canvas.cpp` usa `ComputeNodeFrame` para dibujar cada nodo y `CollectNodeFrames` para construir el overlay (`BuildOverlay` con resolver). Cubierto por `tests/unit/avastudio/NodeFrameTest.cpp`.
+
+## Interacción del canvas
+
+`panels/designer_canvas.cpp` recibe todo el input del canvas por una sola zona de hit (`HandleCanvasInput`), enviada después de dibujar los nodos para que los handles de resize, que se envían antes, tengan prioridad. El nodo bajo el cursor sale siempre de `DesignerSurface::PickCanvas` (`HitTest` sobre el layout adoptado del render), filtrado a los nodos dibujados. Con ese nodo se resuelven:
+
+* Clic: selecciona por `SelectionManager`; Ctrl+clic invoca el handler `click`; doble clic sobre un `button` genera su handler.
+* Arrastre: la zona de hit es la fuente del drag de mover nodos; el payload es el nodo presionado.
+* Menú contextual: extraer componente / eliminar sobre el nodo bajo el cursor.
+* Preview: el clic sube desde el nodo bajo el cursor por sus ancestros invocando cada handler `click`.
+* Drop: un `Dummy` del mismo tamaño es el destino del drag (ImGui no permite que la fuente sea su propio destino). `ResolveDrop` (`drop_resolver.h`) toma el nodo bajo el cursor, el layout y los `NodeFrame`, y devuelve zona, ancla de inserción, indicador y marcador en espacio de canvas; el canvas solo los dibuja y ejecuta `InsertTool`/`MoveTool` contra el `CommandManager`.
+
+`node_kind.h` concentra `LowerAscii`, `IsContainerType` e `IsDialogNode`, compartidos por `node_frame`, `drop_resolver` y el canvas.
+
+## Responsive real (roadmap punto 5)
+
+### 5.1 Viewport exacto del dispositivo
+
+`designer_canvas.cpp` ya usaba `DeviceProfiles()`, pero el ancho que llegaba
+a `BuildLiveRender` (y por lo tanto a los breakpoints de `styles.ava`) salía
+de `ImGui::GetContentRegionAvail()` del child del canvas, descontando el
+padding y el borde de la ventana: un perfil de 412 px evaluaba breakpoints
+como si midiera unos 390 px. Un `style Tipo@412` nunca se activaba en el
+perfil que lleva ese ancho.
+
+* `device_viewport.h`/`.cpp` — `ResolveDeviceViewport(profile, orientation,
+  available)` devuelve `DeviceViewport` (`deviceSize`, `contentRect`,
+  `insets`, `fixed`). Para perfiles fijos el tamaño es exactamente el del
+  perfil; para `Responsive` toma el espacio disponible.
+* `DeviceOrientation::Rotated` intercambia ancho/alto y rota los insets 90°
+  en sentido horario. `SupportsRotation` excluye `Desktop` y `Responsive`.
+* El canvas usa el `DeviceViewport` como única fuente del viewport en modo
+  dispositivo (child sin padding ni scrollbars, `origin` y `canvas_rect`
+  derivados del `contentRect`).
+* La barra superior se divide en dos filas: dispositivo (combo, rotar,
+  tamaño) y herramientas de vista. La altura reservada se mide con el cursor.
+* `tests/unit/avastudio/DeviceViewportTest.cpp` (target
+  `ava_studio_device_viewport_test`, bajo `AVA_BUILD_STUDIO_TESTS`).
+
+### 5.2 Safe area real
+
+La safe area dejó de ser solo un rectángulo punteado: el layout se calcula
+dentro de ella.
+
+* `ResolveDeviceViewport(..., respectSafeArea, ...)` devuelve un
+  `contentRect` reducido por los insets (ya rotados según la orientación).
+  Ese rectángulo es el viewport que recibe `BuildLiveRender`, así que ancho
+  y alto de layout y breakpoints coinciden con lo que ocupa la app dentro del
+  área segura.
+* El fondo de la página se pinta sobre el dispositivo completo (a sangre),
+  y el contenido parte del `contentRect`; el `origin` del canvas apunta a
+  esa esquina, por lo que selección, overlay, hit test y drop siguen
+  trabajando en coordenadas de layout sin cambios.
+* `SafeAreaBands(deviceSize, insets)` devuelve las franjas fuera del área
+  segura (barra de estado, notch, indicador de inicio); el canvas las
+  sombrea en modo Design junto con el marco punteado. Preview no las dibuja.
+* El checkbox "Área segura" (solo en perfiles con insets) alterna entre
+  layout dentro del área segura y layout sobre el dispositivo completo.
+* `HasSafeArea(insets)` evita dibujar guías en perfiles sin insets.
+
+### 5.3 Breakpoints activos y estilo resuelto
+
+* **Valores de tema pegados.** `RenderTheme::Apply` escribe en el árbol los
+  valores de tema y de `styles.ava` solo cuando la propiedad no existe. En modo
+  Design el árbol es el del documento, así que al pasar de un dispositivo ancho
+  a uno angosto los valores resueltos para el ancho anterior no se recalculaban
+  y el breakpoint no se desactivaba (reproducido en
+  `ResponsiveInspectorTest`). Esos valores también quedaban en el árbol al
+  guardar el `.avaui`.
+* `design/injected_properties.h`/`.cpp` — `SnapshotProperties` y
+  `DiffInjectedProperties` registran qué propiedades agregó el render;
+  `RevertInjectedProperties` las quita salvo las marcadas como authored.
+  `BuildLiveRender` devuelve la lista en `LiveRenderResult::injected`.
+* El canvas revierte lo inyectado antes de cada rebuild en modo Design, y
+  `RevertDesignerInjectedProperties` lo hace antes de `SaveAvauiFile`
+  (el canvas se marca sucio para reinyectar en el siguiente frame).
+* `LiveRenderResult` expone además `styles` (el `ProjectStyleSheet` usado) y
+  `viewportWidth`.
+* `designer/responsive_inspector.h`/`.cpp` — `ResolveResponsiveRows` usa
+  `ResolveResponsiveStyle` y anota qué breakpoint aportó cada valor;
+  `HighestActiveBreakpoint` da el breakpoint más alto activo.
+* Properties: sección "Estilo responsive (Npx)" de solo lectura con
+  propiedad, valor y breakpoint. La barra del canvas muestra el breakpoint activo.
+* `tests/unit/avastudio/ResponsiveInspectorTest.cpp` (target
+  `ava_studio_responsive_inspector_test`).
+
+### 5.4 Tamaño personalizado
+
+* El combo de dispositivos suma la entrada "Tamaño personalizado", que usa
+  `MakeCustomProfile` con ancho y alto editables en la misma fila (se aplican
+  con Enter).
+* `ClampCustomSize` acota cada dimensión entre `kMinCustomDimension` (120) y
+  `kMaxCustomDimension` (4000).
+* El perfil custom soporta rotación, no tiene insets y alimenta al mismo
+  `DeviceViewport` que los perfiles fijos, por lo que sus breakpoints se
+  evalúan con el ancho exacto.
+
+### Estado del punto 5
+
+`DeviceProfiles`, `ResolveResponsiveStyle` y `SafeArea` quedan conectados al
+canvas y a Properties. La sección "Responsive (Fase 10)" de este documento
+describe el estado previo a esta integración.

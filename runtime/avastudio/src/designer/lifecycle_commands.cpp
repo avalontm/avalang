@@ -1,6 +1,7 @@
 #include "designer/lifecycle_commands.h"
 
 #include <algorithm>
+#include <iterator>
 #include <unordered_set>
 
 #include "design/design_document.h"
@@ -298,12 +299,40 @@ NodeId ChangeComponentTypeCommand::ChangedNodeId() const {
     return newNode_ ? IdOf(newNode_) : NodeId();
 }
 
+std::pair<std::string, std::string> ChangeComponentTypeCommand::IdentitySwap() const {
+    if (!newNode_) {
+        return {};
+    }
+    return {nodeId_, IdOf(newNode_)};
+}
+
 DeleteComponentCommand::DeleteComponentCommand(UiComponentTree* tree, NodeId nodeId)
     : tree_(tree), nodeId_(std::move(nodeId)) {}
 
 DeleteComponentCommand::~DeleteComponentCommand() {
     if (tree_ && node_ && !node_->Parent()) {
         DestroySubtree(tree_, node_);
+    }
+}
+
+void DeleteComponentCommand::CaptureLocation() {
+    slot_ = "default";
+    nextSiblingId_.clear();
+    if (!parent_ || !node_) {
+        return;
+    }
+    for (const std::string& slotName : parent_->SlotNames()) {
+        const std::vector<UiNode*>& siblings = parent_->SlotChildren(slotName);
+        const auto it = std::find(siblings.begin(), siblings.end(), node_);
+        if (it == siblings.end()) {
+            continue;
+        }
+        slot_ = slotName;
+        const auto next = std::next(it);
+        if (next != siblings.end()) {
+            nextSiblingId_ = IdOf(*next);
+        }
+        return;
     }
 }
 
@@ -321,6 +350,7 @@ void DeleteComponentCommand::Execute() {
             return;
         }
         parent_ = node_->Parent();
+        CaptureLocation();
     }
     if (parent_) {
         parent_->RemoveChild(node_);
@@ -328,8 +358,12 @@ void DeleteComponentCommand::Execute() {
 }
 
 void DeleteComponentCommand::Undo() {
-    if (parent_ && node_) {
-        parent_->AddChild(node_);
+    if (!tree_ || !parent_ || !node_) {
+        return;
+    }
+    parent_->AddChild(node_, slot_);
+    if (!nextSiblingId_.empty()) {
+        studio::design::MoveNode(tree_->Root(), IdOf(node_), nextSiblingId_, studio::design::DropZone::kBefore);
     }
 }
 
@@ -352,8 +386,8 @@ PasteComponentCommand::~PasteComponentCommand() {
     }
 }
 
-void PasteComponentCommand::Execute() {
-    if (!tree_) {
+void PasteComponentCommand::Attach() {
+    if (!tree_ || !clone_) {
         return;
     }
     UiNode* root = tree_->Root();
@@ -361,23 +395,32 @@ void PasteComponentCommand::Execute() {
     if (!parent) {
         return;
     }
+    parent->AddChild(clone_);
+    if (!afterId_.empty()) {
+        studio::design::MoveNode(root, IdOf(clone_), afterId_, studio::design::DropZone::kAfter);
+    }
+}
+
+void PasteComponentCommand::Execute() {
+    if (!tree_) {
+        return;
+    }
     if (!clone_) {
+        UiNode* root = tree_->Root();
+        if (!studio::design::FindNodeById(root, targetParentId_)) {
+            return;
+        }
         UiNode* source = studio::design::FindNodeById(root, sourceId_);
         if (!source) {
             return;
         }
         clone_ = CloneSubtree(tree_, root, source);
     }
-    parent->AddChild(clone_);
+    Attach();
 }
 
 void PasteComponentCommand::Redo() {
-    if (!tree_ || !clone_) {
-        return;
-    }
-    if (UiNode* parent = studio::design::FindNodeById(tree_->Root(), targetParentId_)) {
-        parent->AddChild(clone_);
-    }
+    Attach();
 }
 
 void PasteComponentCommand::Undo() {
@@ -407,6 +450,7 @@ void DuplicateComponentCommand::Execute() {
     if (UiNode* source = studio::design::FindNodeById(tree_->Root(), sourceId_)) {
         if (UiNode* parent = source->Parent()) {
             targetParentId_ = IdOf(parent);
+            afterId_ = sourceId_;
         }
     }
     PasteComponentCommand::Execute();

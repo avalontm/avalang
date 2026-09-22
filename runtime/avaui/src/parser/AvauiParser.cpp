@@ -1,11 +1,17 @@
 #include "parser/AvauiParser.h"
 #include "parser/AvauiPropertyCoercion.h"
 #include "events/AutoBind.h"
+#include "registry/ComponentTypeRegistry.h"
+#include "resolver/KnownComponentProperties.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <regex>
+#include <set>
 #include <sstream>
+#include <unordered_set>
+#include <vector>
 
 namespace avalang {
 namespace ui {
@@ -151,6 +157,182 @@ bool IsIdentifier(const std::string& text) {
     return !std::isdigit(static_cast<unsigned char>(text[0]));
 }
 
+bool IsBindableProperty(const std::string& typeName, const std::string& propName) {
+    static const std::unordered_set<std::string> kAlwaysBindable = {
+        "checked", "selected", "value", "isOpen",
+    };
+    if (kAlwaysBindable.count(propName)) return true;
+    return propName == "text" && typeName == "TextBox";
+}
+
+struct ReferenceScope {
+    const std::set<std::string>* knownNames = nullptr;
+    std::vector<std::string> loopScope;
+
+    bool Knows(const std::string& name) const {
+        if (knownNames && knownNames->count(name)) return true;
+        return std::find(loopScope.begin(), loopScope.end(), name) != loopScope.end();
+    }
+};
+
+std::vector<std::string> ExtractCodeIdentifiers(const std::string& code) {
+    static const std::unordered_set<std::string> kKeywords = {
+        "true", "false", "null", "and", "or", "not",
+    };
+    std::vector<std::string> names;
+    size_t i = 0;
+    bool inDouble = false;
+    while (i < code.size()) {
+        char c = code[i];
+        if (inDouble) {
+            if (c == '\\' && i + 1 < code.size()) { i += 2; continue; }
+            if (c == '"') inDouble = false;
+            ++i;
+            continue;
+        }
+        if (c == '"') { inDouble = true; ++i; continue; }
+        if (!(std::isalpha(static_cast<unsigned char>(c)) || c == '_')) {
+            ++i;
+            continue;
+        }
+        size_t start = i;
+        while (i < code.size() &&
+               (std::isalnum(static_cast<unsigned char>(code[i])) || code[i] == '_')) {
+            ++i;
+        }
+        std::string word = code.substr(start, i - start);
+        if (!kKeywords.count(word)) names.push_back(word);
+    }
+    return names;
+}
+
+std::vector<std::string> ExtractReferencedIdentifiers(const PropertyValue& value) {
+    if (value.Type() != PropertyType::Expression) return {};
+    const std::string& source = value.AsExpressionSource();
+    if (!value.IsInterpolation()) {
+        return ExtractCodeIdentifiers(source);
+    }
+
+    std::vector<std::string> names;
+    size_t i = 0;
+    while (i < source.size()) {
+        char c = source[i];
+        if (c == '\\' && i + 1 < source.size()) {
+            i += 2;
+            continue;
+        }
+        if (c != '{') {
+            ++i;
+            continue;
+        }
+        size_t start = i + 1;
+        int depth = 1;
+        bool inDouble = false;
+        size_t j = start;
+        for (; j < source.size(); ++j) {
+            char cj = source[j];
+            if (inDouble) {
+                if (cj == '\\' && j + 1 < source.size()) { ++j; continue; }
+                if (cj == '"') inDouble = false;
+                continue;
+            }
+            if (cj == '"') { inDouble = true; continue; }
+            if (cj == '{') ++depth;
+            else if (cj == '}') {
+                --depth;
+                if (depth == 0) break;
+            }
+        }
+        std::vector<std::string> inner = ExtractCodeIdentifiers(source.substr(start, j - start));
+        names.insert(names.end(), inner.begin(), inner.end());
+        i = (j < source.size()) ? j + 1 : source.size();
+    }
+    return names;
+}
+
+void ValidateReferencedNames(const PropertyValue& value, const ReferenceScope& scope, int lineNo,
+                             int column) {
+    if (!scope.knownNames) return;
+    for (const std::string& name : ExtractReferencedIdentifiers(value)) {
+        if (scope.Knows(name)) continue;
+        throw ParseError("undeclared name '" + name + "' referenced inside '{ }' "
+                              "(expected a 'var', 'const', 'func' or 'params' entry "
+                              "declared at the top level, or an enclosing 'for' loop variable)",
+                          lineNo, column);
+    }
+}
+
+bool IsKnownProperty(const std::string& typeName, const std::string& propName) {
+    static const std::unordered_set<std::string> kUniversal = [] {
+        std::size_t count = 0;
+        const char* const* names = avalang::ui::KnownComponentPropertyNames(count);
+        std::unordered_set<std::string> set;
+        for (std::size_t i = 0; i < count; ++i) set.insert(names[i]);
+        return set;
+    }();
+    if (kUniversal.count(propName)) return true;
+
+    const avalang::ui::registry::ComponentTypeDescriptor* descriptor =
+        avalang::ui::registry::FindComponentType(typeName);
+    if (!descriptor) return true;
+    for (const auto& prop : descriptor->default_properties) {
+        if (prop.name == propName) return true;
+    }
+    return false;
+}
+
+void ValidateKnownProperty(const std::string& typeName, const std::string& propName, int lineNo,
+                          int column) {
+    if (IsKnownProperty(typeName, propName)) return;
+    throw ParseError("unknown property '" + propName + "' for element '" + typeName + "'",
+                      lineNo, column);
+}
+
+void ValidateBindableProperty(const std::string& typeName, const std::string& propName,
+                              const PropertyValue& value, int lineNo, int column) {
+    if (!IsBindableProperty(typeName, propName)) return;
+    if (value.Type() != PropertyType::Expression) return;
+    if (value.IsInterpolation()) {
+        throw ParseError("'" + propName + "' does not accept string interpolation "
+                              "(expected a binding '{identifier}' or a literal value)",
+                          lineNo, column);
+    }
+    if (!IsIdentifier(value.AsExpressionSource())) {
+        throw ParseError("'" + propName + " = {" + value.AsExpressionSource() +
+                              "}' is not a valid binding (expected a simple identifier, e.g. '" +
+                              propName + " = {someVar}')",
+                          lineNo, column);
+    }
+}
+
+bool CoerceEventProperty(const std::string& propName, const PropertyValue& value, int lineNo,
+                         int column, std::string* internalNameOut, PropertyValue* storedValueOut) {
+    if (!avalang::ui::IsNewEventPropertyName(propName)) return false;
+    if (value.Type() != PropertyType::Expression || value.IsInterpolation()) {
+        throw ParseError("'" + propName + "' expects a handler in '{ }' "
+                              "(a reference, a call, or a statement)",
+                          lineNo, column);
+    }
+    std::string source = Trim(value.AsExpressionSource());
+    if (source.empty()) {
+        throw ParseError("'" + propName + "' handler cannot be empty", lineNo, column);
+    }
+    *internalNameOut = avalang::ui::ResolveEventPropertyName(propName);
+    *storedValueOut = PropertyValue(source);
+    return true;
+}
+
+void AssignProperty(IComponent* comp, const std::string& propName, const PropertyValue& value,
+                    int lineNo, int column) {
+    std::string internalName;
+    PropertyValue storedValue;
+    if (CoerceEventProperty(propName, value, lineNo, column, &internalName, &storedValue)) {
+        comp->SetProperty(internalName, storedValue);
+        return;
+    }
+    SetPropertyWithAlias(comp, propName, value);
+}
+
 bool IsPropertyLine(const std::string& text) {
     size_t eq = text.find('=');
     if (eq == std::string::npos) return false;
@@ -159,14 +341,15 @@ bool IsPropertyLine(const std::string& text) {
 }
 
 IComponent* ParseComponent(const std::vector<Line>& lines, size_t& idx, ComponentTree* tree,
-                           std::vector<AnimationSpec>* animations);
+                           std::vector<AnimationSpec>* animations, const ReferenceScope& scope);
 
 bool IsTemplateHeader(const std::string& text) {
     return text == "template";
 }
 
 void ParseTemplateBlock(IComponent* comp, const Line& header, const std::vector<Line>& lines,
-                        size_t& idx, ComponentTree* tree, std::vector<AnimationSpec>* animations) {
+                        size_t& idx, ComponentTree* tree, std::vector<AnimationSpec>* animations,
+                        const ReferenceScope& scope) {
     while (idx < lines.size()) {
         const Line& line = lines[idx];
         if (line.indent <= header.indent) {
@@ -183,7 +366,7 @@ void ParseTemplateBlock(IComponent* comp, const Line& header, const std::vector<
                               "(properties belong to the container, above 'template')",
                               line.lineNo, line.indent + 1);
         }
-        IComponent* child = ParseComponent(lines, idx, tree, animations);
+        IComponent* child = ParseComponent(lines, idx, tree, animations, scope);
         comp->AddChild(child);
     }
     throw ParseError("unterminated 'template' block (missing 'end')", header.lineNo,
@@ -223,7 +406,7 @@ bool IsComponentCall(const std::string& text, std::string* nameOut, std::string*
 }
 
 void ParseComponentCallArgs(const std::string& argsText, IComponent* comp, int lineNo,
-                             int argsBaseColumn) {
+                             int argsBaseColumn, const ReferenceScope& scope) {
     std::string args = Trim(argsText);
     if (args.empty()) return;
 
@@ -258,7 +441,11 @@ void ParseComponentCallArgs(const std::string& argsText, IComponent* comp, int l
             throw ParseError("empty property name in component call arguments", lineNo,
                               partColumn + static_cast<int>(eq));
         }
-        SetPropertyWithAlias(comp, key, InferValue(value));
+        PropertyValue inferred = InferValue(value);
+        ValidateKnownProperty(comp->TypeName(), key, lineNo, partColumn);
+        ValidateReferencedNames(inferred, scope, lineNo, partColumn);
+        ValidateBindableProperty(comp->TypeName(), key, inferred, lineNo, partColumn);
+        AssignProperty(comp, key, inferred, lineNo, partColumn);
     }
 }
 
@@ -305,21 +492,67 @@ bool IsAnimateHeader(const std::string& text) {
     return text == "animate";
 }
 
-bool IsIfHeader(const std::string& text, std::string* condOut) {
-    static const std::string kPrefix = "if ";
-    static const std::string kSuffix = " then";
-    if (text.size() <= kPrefix.size() + kSuffix.size()) return false;
-    if (text.compare(0, kPrefix.size(), kPrefix) != 0) return false;
-    if (text.compare(text.size() - kSuffix.size(), kSuffix.size(), kSuffix) != 0) return false;
-    if (condOut) {
-        *condOut = Trim(text.substr(kPrefix.size(),
-                                     text.size() - kPrefix.size() - kSuffix.size()));
-        if (condOut->empty()) return false;
+// Fase 8 -- helper local (misma lógica que IsBalancedBraceExpression en
+// AvauiPropertyCoercion.cpp, pero esa es estática a ese .cpp): confirma que
+// `raw` es exactamente una expresión "{ ... }" balanceada (consciente de
+// comillas), sin nada antes ni después de las llaves.
+bool TryExtractBracedExpr(const std::string& raw, std::string* inner) {
+    if (raw.size() < 2 || raw.front() != '{' || raw.back() != '}') return false;
+    int depth = 0;
+    bool inDouble = false;
+    for (size_t i = 0; i < raw.size(); ++i) {
+        char c = raw[i];
+        if (inDouble) {
+            if (c == '\\' && i + 1 < raw.size()) { ++i; continue; }
+            if (c == '"') inDouble = false;
+            continue;
+        }
+        if (c == '"') { inDouble = true; continue; }
+        if (c == '{') {
+            ++depth;
+        } else if (c == '}') {
+            --depth;
+            if (depth == 0 && i != raw.size() - 1) return false;
+        }
     }
+    if (depth != 0) return false;
+    if (inner) *inner = Trim(raw.substr(1, raw.size() - 2));
     return true;
 }
 
-bool IsForHeader(const std::string& text, std::string* varOut, std::string* iterOut) {
+// Sintaxis nueva (Fase 8, Opción A): "if {expr}". Se sigue aceptando la
+// sintaxis vieja "if <cond> then" (usada por proyectos anteriores a la
+// Opción A, p. ej. samples/web/testproj). isBracedOut, si se pasa, indica
+// cuál de las dos formas produjo el match.
+bool IsIfHeader(const std::string& text, std::string* condOut, bool* isBracedOut = nullptr) {
+    static const std::string kPrefix = "if ";
+    if (text.size() <= kPrefix.size()) return false;
+    if (text.compare(0, kPrefix.size(), kPrefix) != 0) return false;
+    std::string rest = Trim(text.substr(kPrefix.size()));
+
+    std::string braced;
+    if (TryExtractBracedExpr(rest, &braced)) {
+        if (braced.empty()) return false;
+        if (condOut) *condOut = braced;
+        if (isBracedOut) *isBracedOut = true;
+        return true;
+    }
+
+    static const std::string kSuffix = " then";
+    if (rest.size() <= kSuffix.size()) return false;
+    if (rest.compare(rest.size() - kSuffix.size(), kSuffix.size(), kSuffix) != 0) return false;
+    std::string cond = Trim(rest.substr(0, rest.size() - kSuffix.size()));
+    if (cond.empty()) return false;
+    if (condOut) *condOut = cond;
+    if (isBracedOut) *isBracedOut = false;
+    return true;
+}
+
+// Sintaxis nueva (Fase 8, Opción A): "for x in {expr}". Se sigue aceptando
+// la sintaxis vieja "for x in expr" (sin llaves) por la misma razón que
+// arriba.
+bool IsForHeader(const std::string& text, std::string* varOut, std::string* iterOut,
+                  bool* isBracedOut = nullptr) {
     static const std::string kPrefix = "for ";
     if (text.size() <= kPrefix.size()) return false;
     if (text.compare(0, kPrefix.size(), kPrefix) != 0) return false;
@@ -334,19 +567,30 @@ bool IsForHeader(const std::string& text, std::string* varOut, std::string* iter
     }
     if (std::isdigit(static_cast<unsigned char>(var[0]))) return false;
     if (varOut) *varOut = var;
+
+    std::string braced;
+    if (TryExtractBracedExpr(iter, &braced)) {
+        if (braced.empty()) return false;
+        if (iterOut) *iterOut = braced;
+        if (isBracedOut) *isBracedOut = true;
+        return true;
+    }
+
     if (iterOut) *iterOut = iter;
+    if (isBracedOut) *isBracedOut = false;
     return true;
 }
 
 IComponent* ParseComponent(const std::vector<Line>& lines, size_t& idx, ComponentTree* tree,
-                           std::vector<AnimationSpec>* animations);
+                           std::vector<AnimationSpec>* animations, const ReferenceScope& scope);
 
 bool IsReservedDeclarationKeyword(const std::string& word) {
     static const std::unordered_map<std::string, bool> kReserved = {
         {"extends", true}, {"route", true}, {"import", true},
         {"properties", true}, {"metadata", true}, {"state", true},
-        {"params", true}, {"style", true}, {"code", true},
+        {"params", true}, {"param", true}, {"style", true}, {"code", true},
         {"methods", true}, {"view", true},
+        {"const", true}, {"func", true},
     };
     return kReserved.count(word) != 0;
 }
@@ -363,7 +607,8 @@ void RejectDeclarationInsideView(const Line& line) {
 }
 
 void ParseComponentBody(IComponent* comp, const Line& header, const std::vector<Line>& lines,
-                        size_t& idx, ComponentTree* tree, std::vector<AnimationSpec>* animations) {
+                        size_t& idx, ComponentTree* tree, std::vector<AnimationSpec>* animations,
+                        const ReferenceScope& scope) {
     while (idx < lines.size()) {
         const Line& line = lines[idx];
         if (line.indent <= header.indent) {
@@ -383,20 +628,24 @@ void ParseComponentBody(IComponent* comp, const Line& header, const std::vector<
         } else if (IsTemplateHeader(line.text)) {
             Line templateHeader = line;
             ++idx;
-            ParseTemplateBlock(comp, templateHeader, lines, idx, tree, animations);
+            ParseTemplateBlock(comp, templateHeader, lines, idx, tree, animations, scope);
         } else if (std::string peekName; IsComponentCall(line.text, &peekName, nullptr)) {
-            IComponent* child = ParseComponent(lines, idx, tree, animations);
+            IComponent* child = ParseComponent(lines, idx, tree, animations, scope);
             comp->AddChild(child);
         } else if (IsIfHeader(line.text, nullptr) || IsForHeader(line.text, nullptr, nullptr)) {
-            IComponent* child = ParseComponent(lines, idx, tree, animations);
+            IComponent* child = ParseComponent(lines, idx, tree, animations, scope);
             comp->AddChild(child);
         } else if (IsPropertyLine(line.text)) {
             auto kv = SplitProperty(line);
-            SetPropertyWithAlias(comp, kv.first, InferValue(kv.second));
+            PropertyValue inferred = InferValue(kv.second);
+            ValidateKnownProperty(comp->TypeName(), kv.first, line.lineNo, line.indent + 1);
+            ValidateReferencedNames(inferred, scope, line.lineNo, line.indent + 1);
+            ValidateBindableProperty(comp->TypeName(), kv.first, inferred, line.lineNo, line.indent + 1);
+            AssignProperty(comp, kv.first, inferred, line.lineNo, line.indent + 1);
             ++idx;
         } else {
             RejectDeclarationInsideView(line);
-            IComponent* child = ParseComponent(lines, idx, tree, animations);
+            IComponent* child = ParseComponent(lines, idx, tree, animations, scope);
             comp->AddChild(child);
         }
     }
@@ -405,25 +654,40 @@ void ParseComponentBody(IComponent* comp, const Line& header, const std::vector<
 }
 
 IComponent* ParseComponent(const std::vector<Line>& lines, size_t& idx, ComponentTree* tree,
-                           std::vector<AnimationSpec>* animations) {
+                           std::vector<AnimationSpec>* animations, const ReferenceScope& scope) {
     const Line& header = lines[idx];
 
     std::string condText;
-    if (IsIfHeader(header.text, &condText)) {
+    bool condBraced = false;
+    if (IsIfHeader(header.text, &condText, &condBraced)) {
         IComponent* comp = tree->CreateComponent("If");
         comp->SetProperty("condition", PropertyValue(condText));
+        if (condBraced) {
+            // Solo la forma nueva "if {expr}" valida referencias (5.3):
+            // la vieja "if cond then" convive con código de proyectos
+            // anteriores a la Opción A que no declara todo por 'var'/'const'.
+            ValidateReferencedNames(PropertyValue::MakeExpression(condText, false), scope,
+                                    header.lineNo, header.indent + 1);
+        }
         ++idx;
-        ParseComponentBody(comp, header, lines, idx, tree, animations);
+        ParseComponentBody(comp, header, lines, idx, tree, animations, scope);
         return comp;
     }
 
     std::string loopVar, iterExpr;
-    if (IsForHeader(header.text, &loopVar, &iterExpr)) {
+    bool iterBraced = false;
+    if (IsForHeader(header.text, &loopVar, &iterExpr, &iterBraced)) {
         IComponent* comp = tree->CreateComponent("For");
         comp->SetProperty("loopVar", PropertyValue(loopVar));
         comp->SetProperty("iterable", PropertyValue(iterExpr));
+        if (iterBraced) {
+            ValidateReferencedNames(PropertyValue::MakeExpression(iterExpr, false), scope,
+                                    header.lineNo, header.indent + 1);
+        }
         ++idx;
-        ParseComponentBody(comp, header, lines, idx, tree, animations);
+        ReferenceScope loopScope = scope;
+        loopScope.loopScope.push_back(loopVar);
+        ParseComponentBody(comp, header, lines, idx, tree, animations, loopScope);
         return comp;
     }
 
@@ -437,7 +701,7 @@ IComponent* ParseComponent(const std::vector<Line>& lines, size_t& idx, Componen
 
         size_t openParen = header.text.find('(');
         int argsBaseColumn = header.indent + static_cast<int>(openParen) + 2;
-        ParseComponentCallArgs(callArgs, comp, header.lineNo, argsBaseColumn);
+        ParseComponentCallArgs(callArgs, comp, header.lineNo, argsBaseColumn, scope);
         return comp;
     }
 
@@ -454,7 +718,12 @@ IComponent* ParseComponent(const std::vector<Line>& lines, size_t& idx, Componen
             std::string key = Trim(rest.substr(0, eq));
             std::string value = Trim(rest.substr(eq + 1));
             if (!key.empty() && !value.empty()) {
-                SetPropertyWithAlias(comp, key, InferValue(value));
+                PropertyValue inferred = InferValue(value);
+                ValidateKnownProperty(comp->TypeName(), key, header.lineNo, header.indent + 1);
+                ValidateReferencedNames(inferred, scope, header.lineNo, header.indent + 1);
+                ValidateBindableProperty(comp->TypeName(), key, inferred, header.lineNo,
+                                         header.indent + 1);
+                AssignProperty(comp, key, inferred, header.lineNo, header.indent + 1);
             }
         } else {
             comp->SetProperty("id", PropertyValue(rest));
@@ -462,13 +731,14 @@ IComponent* ParseComponent(const std::vector<Line>& lines, size_t& idx, Componen
     }
 
     ++idx;
-    ParseComponentBody(comp, header, lines, idx, tree, animations);
+    ParseComponentBody(comp, header, lines, idx, tree, animations, scope);
     return comp;
 }
 
 std::vector<IComponent*> ParseViewBody(const std::vector<Line>& lines, size_t& idx,
                                         int headerIndent, int headerLine, ComponentTree* tree,
-                                        std::vector<AnimationSpec>* animations) {
+                                        std::vector<AnimationSpec>* animations,
+                                        const ReferenceScope& scope) {
     std::vector<IComponent*> created;
     while (idx < lines.size()) {
         const Line& line = lines[idx];
@@ -488,7 +758,7 @@ std::vector<IComponent*> ParseViewBody(const std::vector<Line>& lines, size_t& i
                               line.lineNo, line.indent + 1);
         }
         RejectDeclarationInsideView(line);
-        created.push_back(ParseComponent(lines, idx, tree, animations));
+        created.push_back(ParseComponent(lines, idx, tree, animations, scope));
     }
     throw ParseError("unterminated 'view' block (missing 'end')", headerLine, headerIndent + 1);
 }
@@ -552,6 +822,155 @@ void ParseParamsBlock(const std::vector<Line>& lines, size_t& idx, int headerInd
                       headerIndent + 1);
 }
 
+void ParseTopLevelDecl(const Line& line, const std::string& keyword, bool isConst,
+                        std::set<std::string>* declared,
+                        std::unordered_map<std::string, std::string>* state,
+                        std::unordered_set<std::string>* constNames) {
+    std::string rest = Trim(line.text.substr(keyword.size()));
+    size_t eq = rest.find('=');
+    if (eq == std::string::npos) {
+        throw ParseError("expected '" + keyword + " name = expr'", line.lineNo, line.indent + 1);
+    }
+    std::string namePart = Trim(rest.substr(0, eq));
+    std::string valuePart = Trim(rest.substr(eq + 1));
+    size_t colon = namePart.find(':');
+    std::string name = colon == std::string::npos ? namePart : Trim(namePart.substr(0, colon));
+    if (!IsIdentifier(name)) {
+        throw ParseError("invalid " + keyword + " name: " + name, line.lineNo, line.indent + 1);
+    }
+    if (valuePart.empty()) {
+        throw ParseError("expected a value after '=' in '" + keyword + " " + name + "'",
+                          line.lineNo, line.indent + 1);
+    }
+    if (!declared->insert(name).second) {
+        throw ParseError("duplicate declaration: " + name, line.lineNo, line.indent + 1);
+    }
+    (*state)[name] = Unquote(valuePart);
+    if (isConst) constNames->insert(name);
+}
+
+void ParseTopLevelBareDecl(const Line& line, std::set<std::string>* declared,
+                           std::unordered_map<std::string, std::string>* state) {
+    size_t eq = line.text.find('=');
+    std::string namePart = Trim(line.text.substr(0, eq));
+    std::string valuePart = Trim(line.text.substr(eq + 1));
+    if (!IsIdentifier(namePart)) {
+        throw ParseError("invalid state variable name: " + namePart, line.lineNo, line.indent + 1);
+    }
+    if (valuePart.empty()) {
+        throw ParseError("expected a value after '=' in '" + namePart + "'", line.lineNo,
+                          line.indent + 1);
+    }
+    if (!declared->insert(namePart).second) {
+        throw ParseError("duplicate declaration: " + namePart, line.lineNo, line.indent + 1);
+    }
+    (*state)[namePart] = Unquote(valuePart);
+}
+
+// Fase 8 -- 'param' suelto a nivel de archivo (Opción B original para
+// entradas de componente), reemplazando para la sintaxis Opción A al
+// bloque envuelto 'params ... end' (ese sigue existiendo tal cual para
+// proyectos anteriores, ver ParseParamsBlock). Misma forma que
+// 'var'/'const': 'param nombre' o 'param nombre = valorPorDefecto'.
+ParamDeclaration ParseTopLevelParamDecl(const Line& line, std::set<std::string>* declared) {
+    static const std::string kKeyword = "param";
+    std::string rest = Trim(line.text.substr(kKeyword.size()));
+    size_t eq = rest.find('=');
+    std::string namePart = Trim(eq == std::string::npos ? rest : rest.substr(0, eq));
+    if (!IsIdentifier(namePart)) {
+        throw ParseError("invalid param name: " + namePart, line.lineNo, line.indent + 1);
+    }
+    if (!declared->insert(namePart).second) {
+        throw ParseError("duplicate declaration: " + namePart, line.lineNo, line.indent + 1);
+    }
+
+    ParamDeclaration decl;
+    decl.name = namePart;
+    if (eq == std::string::npos) {
+        decl.hasDefault = false;
+    } else {
+        std::string valuePart = Trim(rest.substr(eq + 1));
+        if (valuePart.empty()) {
+            throw ParseError("expected a value after '=' in 'param " + namePart + "'",
+                              line.lineNo, line.indent + 1);
+        }
+        decl.hasDefault = true;
+        decl.defaultValue = InferValue(valuePart);
+    }
+    return decl;
+}
+
+bool LineAssignsToConst(const std::string& text, const std::unordered_set<std::string>& constNames,
+                        std::string* nameOut) {
+    size_t i = 0;
+    while (i < text.size() &&
+           (std::isalnum(static_cast<unsigned char>(text[i])) || text[i] == '_')) {
+        ++i;
+    }
+    if (i == 0) return false;
+    std::string name = text.substr(0, i);
+    if (!constNames.count(name)) return false;
+
+    std::string rest = Trim(text.substr(i));
+    if (rest.rfind("++", 0) == 0 || rest.rfind("--", 0) == 0) {
+        *nameOut = name;
+        return true;
+    }
+    if (rest.rfind("+=", 0) == 0 || rest.rfind("-=", 0) == 0 || rest.rfind("*=", 0) == 0 ||
+        rest.rfind("/=", 0) == 0) {
+        *nameOut = name;
+        return true;
+    }
+    if (!rest.empty() && rest[0] == '=' && (rest.size() < 2 || rest[1] != '=')) {
+        *nameOut = name;
+        return true;
+    }
+    return false;
+}
+
+std::string ParseTopLevelFunc(const Line& header, const std::vector<Line>& lines, size_t& idx,
+                               std::set<std::string>* declared,
+                               const std::unordered_set<std::string>& constNames) {
+    size_t paren = header.text.find('(');
+    if (paren == std::string::npos) {
+        throw ParseError("expected 'func Name(...)'", header.lineNo, header.indent + 1);
+    }
+    std::string name = Trim(header.text.substr(4, paren - 4));
+    if (!IsIdentifier(name)) {
+        throw ParseError("invalid function name: " + name, header.lineNo, header.indent + 1);
+    }
+    if (!declared->insert(name).second) {
+        throw ParseError("duplicate declaration: " + name, header.lineNo, header.indent + 1);
+    }
+
+    int headerIndent = header.indent;
+    int headerLine = header.lineNo;
+    std::string body = header.rawText + "\n";
+    ++idx;
+    while (idx < lines.size()) {
+        const Line& line = lines[idx];
+        if (line.indent <= headerIndent) {
+            if (line.indent == headerIndent && line.text == "end") {
+                body += "end\n";
+                ++idx;
+                return body;
+            }
+            throw ParseError("unterminated 'func' block (expected 'end' at column " +
+                                  std::to_string(headerIndent) + ")",
+                              line.lineNo, line.indent + 1);
+        }
+        std::string constName;
+        if (LineAssignsToConst(line.text, constNames, &constName)) {
+            throw ParseError("cannot assign to '" + constName +
+                                  "' (declared with 'const' and cannot be reassigned)",
+                              line.lineNo, line.indent + 1);
+        }
+        body += std::string(line.indent, ' ') + line.rawText + "\n";
+        ++idx;
+    }
+    throw ParseError("unterminated 'func' block (missing 'end')", headerLine, headerIndent + 1);
+}
+
 std::string ParseRawBlock(const std::vector<Line>& lines, size_t& idx, int headerIndent,
                            int headerLine) {
     std::string raw;
@@ -570,6 +989,57 @@ std::string ParseRawBlock(const std::vector<Line>& lines, size_t& idx, int heade
         ++idx;
     }
     throw ParseError("unterminated block (missing 'end')", headerLine, headerIndent + 1);
+}
+
+struct TopLevelNames {
+    std::set<std::string> known;
+    std::unordered_set<std::string> constNames;
+};
+
+TopLevelNames CollectTopLevelNames(const std::vector<Line>& lines) {
+    TopLevelNames result;
+    for (size_t i = 0; i < lines.size(); ++i) {
+        const Line& line = lines[i];
+        if (line.indent != 0) continue;
+
+        std::istringstream headerStream(line.text);
+        std::string keyword;
+        headerStream >> keyword;
+        std::string rest = Trim(line.text.substr(keyword.size()));
+
+        if (keyword == "const") {
+            size_t eq = rest.find('=');
+            std::string namePart = eq == std::string::npos ? rest : Trim(rest.substr(0, eq));
+            size_t colon = namePart.find(':');
+            std::string name = Trim(colon == std::string::npos ? namePart
+                                                                 : namePart.substr(0, colon));
+            if (IsIdentifier(name)) {
+                result.known.insert(name);
+                result.constNames.insert(name);
+            }
+        } else if (!rest.empty() && rest[0] == '=' && IsIdentifier(keyword)) {
+            result.known.insert(keyword);
+        } else if (keyword == "func") {
+            size_t paren = rest.find('(');
+            std::string name = Trim(paren == std::string::npos ? rest : rest.substr(0, paren));
+            if (IsIdentifier(name)) result.known.insert(name);
+        } else if (keyword == "param") {
+            size_t eq = rest.find('=');
+            std::string name = Trim(eq == std::string::npos ? rest : rest.substr(0, eq));
+            if (IsIdentifier(name)) result.known.insert(name);
+        } else if (keyword == "params") {
+            size_t j = i + 1;
+            while (j < lines.size() && lines[j].indent > line.indent) {
+                const std::string& paramText = lines[j].text;
+                size_t eq = paramText.find('=');
+                std::string name =
+                    Trim(eq == std::string::npos ? paramText : paramText.substr(0, eq));
+                if (IsIdentifier(name)) result.known.insert(name);
+                ++j;
+            }
+        }
+    }
+    return result;
 }
 
 }
@@ -603,6 +1073,8 @@ ParsedAvaui ParseImpl(const std::string& source) {
     bool sawExtends = false;
     bool sawView = false;
     int viewLine = 0;
+    std::set<std::string> declaredNames;
+    TopLevelNames topNames = CollectTopLevelNames(lines);
 
     size_t idx = 0;
     while (idx < lines.size()) {
@@ -636,6 +1108,15 @@ ParsedAvaui ParseImpl(const std::string& source) {
         } else if (keyword == "state") {
             ++idx;
             ParseFlatBlock(lines, idx, 0, headerLine, &result.state);
+        } else if (keyword == "const") {
+            ParseTopLevelDecl(line, "const", true, &declaredNames, &result.state,
+                               &result.constNames);
+            ++idx;
+        } else if (keyword == "func") {
+            result.code += ParseTopLevelFunc(line, lines, idx, &declaredNames, topNames.constNames);
+        } else if (keyword == "param") {
+            result.params.push_back(ParseTopLevelParamDecl(line, &declaredNames));
+            ++idx;
         } else if (keyword == "params") {
             ++idx;
             ParseParamsBlock(lines, idx, 0, headerLine, &result.params);
@@ -656,7 +1137,8 @@ ParsedAvaui ParseImpl(const std::string& source) {
             viewLine = headerLine;
             ++idx;
             std::vector<IComponent*> topLevel =
-                ParseViewBody(lines, idx, 0, headerLine, result.tree.get(), &result.animations);
+                ParseViewBody(lines, idx, 0, headerLine, result.tree.get(), &result.animations,
+                             ReferenceScope{&topNames.known, {}});
 
             IComponent* root = result.tree->CreateComponent("Page");
             for (IComponent* child : topLevel) {
@@ -670,6 +1152,9 @@ ParsedAvaui ParseImpl(const std::string& source) {
                                   "' found outside 'view' (components must be declared "
                                   "inside the 'view' block)",
                               line.lineNo, line.indent + 1);
+        } else if (!rest.empty() && rest[0] == '=' && IsIdentifier(keyword)) {
+            ParseTopLevelBareDecl(line, &declaredNames, &result.state);
+            ++idx;
         } else {
             throw ParseError("unknown top-level block: " + keyword, line.lineNo,
                               line.indent + 1);

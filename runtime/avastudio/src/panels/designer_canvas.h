@@ -40,6 +40,8 @@ void ReleaseDesignerTabState(int tab_id);
 
 void ClearDesignerCommandHistory(int tab_id);
 
+void RevertDesignerInjectedProperties(int tab_id, design::DesignDocument& doc);
+
 void ClearDesignerSelection(int tab_id);
 
 AvaVM* GetDesignerStateVM(int tab_id);

@@ -431,7 +431,7 @@ bool RuntimeHost::HasPendingAsync() const {
     return ava_vm_has_pending_async(vm_) != 0;
 }
 
-std::string RuntimeHost::EvalPropertyExpr(const std::string& rawValue) {
+std::string RuntimeHost::EvalSingleExpression(const std::string& rawValue) {
     if (!vm_ || rawValue.empty()) return rawValue;
 
     const std::string source = "__avahost_eval__ = (" + rawValue + ")";
@@ -482,6 +482,78 @@ std::string RuntimeHost::EvalPropertyExpr(const std::string& rawValue) {
             ava_value_release(vm_, value);
             return rawValue;
     }
+}
+
+std::string RuntimeHost::EvalPropertyExpr(const std::string& rawValue) {
+    if (!vm_ || rawValue.empty()) return rawValue;
+
+    // A bare binding like `text = {clicks}` reaches here already stripped
+    // of its braces ("clicks" -- see AvauiPropertyCoercion::
+    // IsBalancedBraceExpression), so it's a single Avalang expression and
+    // EvalSingleExpression handles it directly, same as always.
+    //
+    // A `$"...{expr}..."` interpolation template is NOT pre-stripped (see
+    // BuildInterpolationTemplate): it arrives here as literal text with
+    // one or more `{expr}` segments still embedded verbatim, e.g.
+    // "clicks: {clicks}". Wrapping that whole string in "(...)" is not
+    // valid Avalang, so it used to just fail to compile and fall back to
+    // returning the raw template unchanged -- which is why interpolated
+    // text rendered as the literal "{clicks}" instead of its value.
+    // Detect that case and evaluate only the bracketed portions, splicing
+    // their results back into the surrounding literal text.
+    bool hasUnescapedBrace = false;
+    for (size_t i = 0; i < rawValue.size(); ++i) {
+        if (rawValue[i] == '\\' && i + 1 < rawValue.size()) { ++i; continue; }
+        if (rawValue[i] == '{') { hasUnescapedBrace = true; break; }
+    }
+    if (!hasUnescapedBrace) {
+        return EvalSingleExpression(rawValue);
+    }
+
+    std::string out;
+    out.reserve(rawValue.size());
+    size_t i = 0;
+    while (i < rawValue.size()) {
+        char c = rawValue[i];
+        if (c == '\\' && i + 1 < rawValue.size()) {
+            out += rawValue[i + 1];
+            i += 2;
+            continue;
+        }
+        if (c != '{') {
+            out += c;
+            ++i;
+            continue;
+        }
+
+        // Scan the balanced `{ ... }` span, same brace/quote-depth
+        // tracking AvauiParser::ExtractReferencedIdentifiers uses to walk
+        // interpolation templates, so nested braces and quoted strings
+        // inside the expression don't confuse the boundary.
+        size_t start = i + 1;
+        int depth = 1;
+        bool inDouble = false;
+        size_t j = start;
+        for (; j < rawValue.size(); ++j) {
+            char cj = rawValue[j];
+            if (inDouble) {
+                if (cj == '\\' && j + 1 < rawValue.size()) { ++j; continue; }
+                if (cj == '"') inDouble = false;
+                continue;
+            }
+            if (cj == '"') { inDouble = true; continue; }
+            if (cj == '{') ++depth;
+            else if (cj == '}') {
+                --depth;
+                if (depth == 0) break;
+            }
+        }
+
+        std::string exprSource = rawValue.substr(start, j - start);
+        out += EvalSingleExpression(exprSource);
+        i = (j < rawValue.size()) ? j + 1 : rawValue.size();
+    }
+    return out;
 }
 
 std::string RuntimeHost::EvalExprToLiteral(const std::string& expr, bool& ok) {

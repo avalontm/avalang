@@ -4,13 +4,16 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "Fwd.h"
+#include "design/injected_properties.h"
 #include "components/ComponentTree.h"
 #include "layout/LayoutTypes.h"
 #include "layout/ILayoutNode.h"
 #include "render_tree/IRenderTree.h"
 #include "scene/ISceneGraph.h"
+#include "theme/ProjectStyleOverrides.h"
 
 namespace studio::design {
 
@@ -24,6 +27,10 @@ struct LiveRenderResult {
     std::unique_ptr<avalang::ui::ComponentTree> layoutTree;
     avalang::ui::LayoutRect slotRect;
     bool hasSlot = false;
+
+    std::shared_ptr<const avalang::ui::theme::ProjectStyleSheet> styles;
+    int viewportWidth = 0;
+    std::vector<InjectedProperty> injected;
 
     bool ok = false;
     std::string error;

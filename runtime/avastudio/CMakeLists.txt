@@ -96,6 +96,7 @@ set(STUDIO_SOURCES
     src/theme.cpp
     src/fonts/embedded_font.cpp
     src/languages/avalang_language.cpp
+    src/languages/avaui_language.cpp
     src/languages/import_file_cache.cpp
     src/languages/block_scanner.cpp
     src/languages/fold_index.cpp
@@ -127,9 +128,13 @@ set(STUDIO_SOURCES
     src/design/component_resolver.cpp
     src/design/state_eval.cpp
     src/design/live_render_bridge.cpp
+    src/design/injected_properties.cpp
     src/design/imgui_renderer.cpp
     src/designer/command.cpp
     src/designer/layout_core.cpp
+    src/designer/node_frame.cpp
+    src/designer/node_kind.cpp
+    src/designer/drop_resolver.cpp
     src/designer/component_registry.cpp
     src/designer/selection_manager.cpp
     src/designer/viewport.cpp
@@ -152,6 +157,8 @@ set(STUDIO_SOURCES
     src/designer/code_sync.cpp
     src/designer/preview.cpp
     src/designer/responsive.cpp
+    src/designer/device_viewport.cpp
+    src/designer/responsive_inspector.cpp
     src/designer/theme_tokens.cpp
     src/designer/visual_states.cpp
     src/designer/animation_authoring.cpp
@@ -188,6 +195,8 @@ set(STUDIO_SOURCES
     src/panels/debug_panel.cpp
     src/panels/activity_bar_panel.cpp
     src/panels/designer_canvas.cpp
+    src/panels/designer_history.cpp
+    src/panels/designer_actions.cpp
     src/panels/document_tree_panel.cpp
     src/panels/pending_edits_panel.cpp
     src/platform/win32_titlebar.cpp
@@ -274,6 +283,7 @@ if(AVA_BUILD_STUDIO_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/unit/avastudio/GridFlexRegressionTest.cpp
         src/design/design_document.cpp
         src/design/live_render_bridge.cpp
+        src/design/injected_properties.cpp
     )
     target_include_directories(ava_studio_grid_flex_regression_test PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -360,4 +370,76 @@ if(AVA_BUILD_STUDIO_TESTS)
     )
     target_link_libraries(ava_studio_insert_relative_undo_test PRIVATE avalang avalang_ui)
     target_compile_features(ava_studio_insert_relative_undo_test PRIVATE cxx_std_20)
+
+    add_executable(ava_studio_designer_history_test
+        ${CMAKE_SOURCE_DIR}/tests/unit/avastudio/DesignerHistoryTest.cpp
+        src/design/design_document.cpp
+        src/design/component_catalog.cpp
+        src/util/csv.cpp
+        src/util/data_dir.cpp
+        src/designer/tools.cpp
+        src/designer/command.cpp
+        src/designer/document_commands.cpp
+        src/designer/move_commands.cpp
+        src/designer/lifecycle_commands.cpp
+        src/designer/selection_manager.cpp
+        src/designer/component_registry.cpp
+        src/designer/viewport.cpp
+        src/designer/component_extraction.cpp
+        src/designer/component_extraction_command.cpp
+        src/designer/property_commands.cpp
+        src/designer/property_editor.cpp
+        src/designer/property_catalog.cpp
+    )
+    target_include_directories(ava_studio_designer_history_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
+        ${CMAKE_SOURCE_DIR}/runtime/avaui/src
+    )
+    target_link_libraries(ava_studio_designer_history_test PRIVATE avalang avalang_ui)
+    target_compile_features(ava_studio_designer_history_test PRIVATE cxx_std_20)
+
+    add_executable(ava_studio_node_frame_test
+        ${CMAKE_SOURCE_DIR}/tests/unit/avastudio/NodeFrameTest.cpp
+        src/designer/node_frame.cpp
+        src/designer/node_kind.cpp
+        src/designer/layout_core.cpp
+        src/design/component_catalog.cpp
+        src/util/csv.cpp
+        src/util/data_dir.cpp
+    )
+    target_include_directories(ava_studio_node_frame_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/runtime/avalang/api/include
+        ${CMAKE_SOURCE_DIR}/runtime/avaui/src
+    )
+    target_link_libraries(ava_studio_node_frame_test PRIVATE avalang avalang_ui)
+    target_compile_features(ava_studio_node_frame_test PRIVATE cxx_std_20)
+
+    add_executable(ava_studio_device_viewport_test
+        ${CMAKE_SOURCE_DIR}/tests/unit/avastudio/DeviceViewportTest.cpp
+        src/designer/device_viewport.cpp
+        src/designer/responsive.cpp
+    )
+    target_include_directories(ava_studio_device_viewport_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/runtime/avalang
+        ${CMAKE_SOURCE_DIR}/runtime/avaui/src
+    )
+    target_link_libraries(ava_studio_device_viewport_test PRIVATE avalang_ui)
+    target_compile_features(ava_studio_device_viewport_test PRIVATE cxx_std_20)
+
+    add_executable(ava_studio_responsive_inspector_test
+        ${CMAKE_SOURCE_DIR}/tests/unit/avastudio/ResponsiveInspectorTest.cpp
+        src/design/injected_properties.cpp
+        src/designer/responsive_inspector.cpp
+        src/designer/responsive.cpp
+    )
+    target_include_directories(ava_studio_responsive_inspector_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/runtime/avalang
+        ${CMAKE_SOURCE_DIR}/runtime/avaui/src
+    )
+    target_link_libraries(ava_studio_responsive_inspector_test PRIVATE avalang_ui)
+    target_compile_features(ava_studio_responsive_inspector_test PRIVATE cxx_std_20)
 endif()

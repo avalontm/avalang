@@ -4,6 +4,9 @@
 
 #include <cctype>
 #include <sstream>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace avalang {
 namespace ui {
@@ -56,6 +59,100 @@ std::string ValueToDisplayString(const PropertyValue& pv) {
     }
 }
 
+std::string WriteInterpolationSource(const std::string& source) {
+    std::string out;
+    size_t i = 0;
+    while (i < source.size()) {
+        char c = source[i];
+        if (c == '{') {
+            int depth = 0;
+            bool inDouble = false;
+            size_t j = i;
+            for (; j < source.size(); ++j) {
+                char cj = source[j];
+                if (inDouble) {
+                    if (cj == '\\' && j + 1 < source.size()) { ++j; continue; }
+                    if (cj == '"') inDouble = false;
+                    continue;
+                }
+                if (cj == '"') { inDouble = true; continue; }
+                if (cj == '{') ++depth;
+                else if (cj == '}') {
+                    --depth;
+                    if (depth == 0) { ++j; break; }
+                }
+            }
+            out += source.substr(i, j - i);
+            i = j;
+            continue;
+        }
+        if (c == '\n') { out += "\\n"; ++i; continue; }
+        if (c == '"' || c == '\\') out.push_back('\\');
+        out.push_back(c);
+        ++i;
+    }
+    return out;
+}
+
+std::string WritePropertyForSource(const PropertyValue& pv) {
+    if (pv.Type() == PropertyType::Expression) {
+        if (pv.IsInterpolation()) {
+            return "$\"" + WriteInterpolationSource(pv.AsExpressionSource()) + "\"";
+        }
+        return "{" + pv.AsExpressionSource() + "}";
+    }
+    return WritePropertyValue(ValueToDisplayString(pv));
+}
+
+bool LooksLikeDeclarationExpression(const std::string& value) {
+    for (char c : value) {
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == ' ' || c == '.')) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string WriteDeclarationValue(const std::string& value) {
+    if (value == "true" || value == "false") return value;
+    double unused = 0.0;
+    if (LooksLikeNumber(value, &unused)) return value;
+    if (LooksLikeDeclarationExpression(value)) return value;
+    return WritePropertyValue(value);
+}
+
+struct RenamedProperty {
+    const char* alias;
+    const char* canonical;
+};
+
+const std::vector<RenamedProperty>& RenamedProperties() {
+    static const std::vector<RenamedProperty> renamed = {
+        {"isChecked", "checked"},
+        {"isSelected", "selected"},
+        {"spacing", "gap"},
+    };
+    return renamed;
+}
+
+std::string CanonicalPropertyName(const IComponent* node, const std::string& key) {
+    for (const auto& renamed : RenamedProperties()) {
+        if (key != renamed.alias) continue;
+        return node->GetProperty(renamed.canonical) ? "" : renamed.canonical;
+    }
+    return key;
+}
+
+const std::unordered_map<std::string, std::string>& CanonicalEventName() {
+    static const std::unordered_map<std::string, std::string> names = {
+        {"click", "onClick"},
+        {"change", "onChange"},
+        {"focus", "onFocus"},
+        {"blur", "onBlur"},
+    };
+    return names;
+}
+
 std::vector<const AnimationSpec*> AnimationsFor(const std::vector<AnimationSpec>& animations,
                                                  const IComponent* node) {
     std::vector<const AnimationSpec*> result;
@@ -99,6 +196,27 @@ bool IsCallForm(const IComponent* node) {
     return node->Children().empty();
 }
 
+bool WriteControlFlowHeader(const IComponent* node, int indent, std::ostringstream& out) {
+    const std::string pad(static_cast<size_t>(indent) * 4, ' ');
+    if (node->TypeName() == "If") {
+        const auto* cond = node->GetProperty("condition");
+        if (cond && cond->Type() == PropertyType::String) {
+            out << pad << "if {" << cond->AsString() << "}\n";
+            return true;
+        }
+    } else if (node->TypeName() == "For") {
+        const auto* loopVar = node->GetProperty("loopVar");
+        const auto* iterable = node->GetProperty("iterable");
+        if (loopVar && iterable && loopVar->Type() == PropertyType::String &&
+            iterable->Type() == PropertyType::String) {
+            out << pad << "for " << loopVar->AsString() << " in {" << iterable->AsString()
+                << "}\n";
+            return true;
+        }
+    }
+    return false;
+}
+
 void WriteNode(const IComponent* node, int indent, std::ostringstream& out,
                const std::vector<AnimationSpec>& animations) {
     const std::string pad(static_cast<size_t>(indent) * 4, ' ');
@@ -110,7 +228,10 @@ void WriteNode(const IComponent* node, int indent, std::ostringstream& out,
         return;
     }
 
-    out << pad << node->TypeName() << "\n";
+    bool wroteControlFlowHeader = WriteControlFlowHeader(node, indent, out);
+    if (!wroteControlFlowHeader) {
+        out << pad << node->TypeName() << "\n";
+    }
     const std::string inner_pad(static_cast<size_t>(indent + 1) * 4, ' ');
 
     bool wrote_anything = false;
@@ -121,27 +242,43 @@ void WriteNode(const IComponent* node, int indent, std::ostringstream& out,
         }
     }
 
-    bool has_events = false;
+    std::unordered_set<std::string> written;
     for (const auto& key : node->PropertyNames()) {
         if (key == "id" || key == "__layout") continue;
-        if (avalang::ui::IsEventPropertyName(key)) {
-            has_events = true;
+        if (avalang::ui::IsEventPropertyName(key)) continue;
+
+        if (wroteControlFlowHeader &&
+            (key == "condition" || key == "loopVar" || key == "iterable")) {
             continue;
         }
+
+        std::string outputKey = CanonicalPropertyName(node, key);
+        if (outputKey.empty()) continue;
+        if (!written.insert(outputKey).second) continue;
+
         if (const auto* pv = node->GetProperty(key)) {
-            out << inner_pad << key << " = " << WritePropertyValue(ValueToDisplayString(*pv)) << "\n";
+            out << inner_pad << outputKey << " = " << WritePropertyForSource(*pv) << "\n";
             wrote_anything = true;
         }
     }
 
+    bool has_events = false;
+    for (const auto& key : node->PropertyNames()) {
+        if (avalang::ui::IsEventPropertyName(key)) {
+            has_events = true;
+            break;
+        }
+    }
     if (has_events) {
+        const auto& canonicalEvents = CanonicalEventName();
         for (const auto& key : node->PropertyNames()) {
-            if (key == "id" || key == "__layout") continue;
             if (!avalang::ui::IsEventPropertyName(key)) continue;
-            if (const auto* pv = node->GetProperty(key)) {
-                out << inner_pad << key << " = " << ValueToDisplayString(*pv) << "\n";
-                wrote_anything = true;
-            }
+            const auto* pv = node->GetProperty(key);
+            if (!pv) continue;
+            auto it = canonicalEvents.find(key);
+            const std::string outputKey = it != canonicalEvents.end() ? it->second : key;
+            out << inner_pad << outputKey << " = {" << pv->AsString() << "}\n";
+            wrote_anything = true;
         }
     }
 
@@ -211,12 +348,16 @@ std::string WriteAvaui(const IComponent* root, const AvauiWriteOptions& options)
         out << "end\n\n";
     }
 
-    if (!options.initial_state.empty()) {
-        out << "state\n";
-        for (const auto& entry : options.initial_state) {
-            out << "    " << entry.key << " = " << WritePropertyValue(entry.value) << "\n";
-        }
-        out << "end\n\n";
+    for (const auto& entry : options.initial_state) {
+        if (entry.isConst) out << "const ";
+        out << entry.key << " = " << WriteDeclarationValue(entry.value) << "\n";
+    }
+    if (!options.initial_state.empty()) out << "\n";
+
+    if (!options.code_behind.empty()) {
+        out << options.code_behind;
+        if (options.code_behind.back() != '\n') out << "\n";
+        out << "\n";
     }
 
     out << "view\n";
@@ -224,12 +365,6 @@ std::string WriteAvaui(const IComponent* root, const AvauiWriteOptions& options)
         WriteNode(child, 1, out, options.animations);
     }
     out << "end\n";
-
-    if (!options.code_behind.empty()) {
-        out << "\ncode\n" << options.code_behind;
-        if (!options.code_behind.empty() && options.code_behind.back() != '\n') out << "\n";
-        out << "end\n";
-    }
 
     return out.str();
 }

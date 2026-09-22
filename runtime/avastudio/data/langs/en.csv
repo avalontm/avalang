@@ -94,6 +94,12 @@ canvas.render_error,"Render error: %s"
 canvas.render_error_hint,Could not rebuild the real layout -- check the tree/import.
 canvas.missing_layout_nodes,"%s node(s) with no layout -- not drawn this frame."
 canvas.reset_view,Reset view
+canvas.rotate_device,Rotate
+canvas.device_custom,Custom size
+canvas.safe_area,Safe area
+canvas.safe_area_tooltip,"Lay out the page inside the device safe area (status bar, notch, home indicator)."
+canvas.breakpoint_active,Breakpoint: >= %spx
+canvas.breakpoint_base,Breakpoint: base
 canvas.zoom_fit,Fit
 canvas.zoom_render_limitation,"Zoom changes the canvas model but does not yet scale rendering -- known limitation, not a bug."
 canvas.mode_design,Design
@@ -143,6 +149,7 @@ toolbox.container_tag,(container)
 toolbox.search_hint,Search components...
 toolbox.no_results,No components match your search.
 panel.properties.title,Properties
+preview.empty,Open a component file to see its live tree here.
 properties.column_key,Key
 properties.column_value,Value
 properties.new_key_hint,new key
@@ -152,8 +159,14 @@ properties.id_label,Id
 properties.type_display,"Type: %s"
 properties.id_display,"Id: %s"
 properties.readonly_note,Read-only (no editable source for this selection).
+properties.multi_selection_count,"%s components selected"
+properties.multi_selection_type,"Type: %s"
+properties.multi_selection_mixed_types,Select components of the same type to edit shared properties.
 properties.column_property,Property
 properties.section_events,Events
+properties.section_responsive,Responsive style (%spx)
+properties.column_breakpoint,Breakpoint
+properties.responsive_base,base
 properties.column_event,Event
 properties.column_handler,Handler
 properties.add_custom_entry,Add custom: %s
@@ -328,6 +341,9 @@ settings.format_on_type_label,Format document while typing
 menu.view.command_palette,Command Palette...
 command_palette.hint,Type a command...
 command_palette.no_results,No matching commands.
+menu.edit.undo,Undo
+menu.edit.redo,Redo
+menu.edit.duplicate,Duplicate
 menu.edit.quick_open,Quick Open...
 quick_open.hint,Go to file...
 quick_open.no_results,No matching files.

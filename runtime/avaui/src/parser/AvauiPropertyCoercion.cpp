@@ -15,7 +15,27 @@ namespace parser {
 
 std::string Unquote(const std::string& s) {
     if (s.size() >= 2 && s.front() == '"' && s.back() == '"') {
-        return s.substr(1, s.size() - 2);
+        std::string inner = s.substr(1, s.size() - 2);
+        std::string out;
+        out.reserve(inner.size());
+        for (size_t i = 0; i < inner.size(); ++i) {
+            char c = inner[i];
+            if (c == '\\' && i + 1 < inner.size()) {
+                char next = inner[i + 1];
+                if (next == '"' || next == '\\' || next == '{') {
+                    out.push_back(next);
+                    ++i;
+                    continue;
+                }
+                if (next == 'n') {
+                    out.push_back('\n');
+                    ++i;
+                    continue;
+                }
+            }
+            out.push_back(c);
+        }
+        return out;
     }
     return s;
 }
@@ -74,6 +94,92 @@ bool LooksLikeListLiteral(const std::string& s) {
     return s.size() >= 2 && s.front() == '[' && s.back() == ']';
 }
 
+bool IsBalancedBraceExpression(const std::string& raw, std::string* inner) {
+    if (raw.size() < 2 || raw.front() != '{' || raw.back() != '}') return false;
+    int depth = 0;
+    bool inDouble = false;
+    for (size_t i = 0; i < raw.size(); ++i) {
+        char c = raw[i];
+        if (inDouble) {
+            if (c == '\\' && i + 1 < raw.size()) { ++i; continue; }
+            if (c == '"') inDouble = false;
+            continue;
+        }
+        if (c == '"') { inDouble = true; continue; }
+        if (c == '{') {
+            ++depth;
+        } else if (c == '}') {
+            --depth;
+            if (depth == 0 && i != raw.size() - 1) return false;
+        }
+    }
+    if (depth != 0) return false;
+    if (inner) *inner = TrimWs(raw.substr(1, raw.size() - 2));
+    return true;
+}
+
+bool StringLiteralHasInterpolation(const std::string& quoted) {
+    if (quoted.size() < 2 || quoted.front() != '"' || quoted.back() != '"') return false;
+    std::string inner = quoted.substr(1, quoted.size() - 2);
+    for (size_t i = 0; i < inner.size(); ++i) {
+        char c = inner[i];
+        if (c == '\\' && i + 1 < inner.size()) { ++i; continue; }
+        if (c == '{') return true;
+    }
+    return false;
+}
+
+std::string BuildInterpolationTemplate(const std::string& inner) {
+    std::string out;
+    out.reserve(inner.size());
+    size_t i = 0;
+    while (i < inner.size()) {
+        char c = inner[i];
+        if (c == '\\' && i + 1 < inner.size()) {
+            char next = inner[i + 1];
+            if (next == '"' || next == '\\' || next == '{') {
+                out.push_back(next);
+                i += 2;
+                continue;
+            }
+            if (next == 'n') {
+                out.push_back('\n');
+                i += 2;
+                continue;
+            }
+            out.push_back(c);
+            ++i;
+            continue;
+        }
+        if (c == '{') {
+            size_t start = i;
+            int depth = 0;
+            bool inDouble = false;
+            size_t j = i;
+            for (; j < inner.size(); ++j) {
+                char cj = inner[j];
+                if (inDouble) {
+                    if (cj == '\\' && j + 1 < inner.size()) { ++j; continue; }
+                    if (cj == '"') inDouble = false;
+                    continue;
+                }
+                if (cj == '"') { inDouble = true; continue; }
+                if (cj == '{') ++depth;
+                else if (cj == '}') {
+                    --depth;
+                    if (depth == 0) { ++j; break; }
+                }
+            }
+            out += inner.substr(start, j - start);
+            i = j;
+            continue;
+        }
+        out.push_back(c);
+        ++i;
+    }
+    return out;
+}
+
 bool LooksLikeRecordLiteral(const std::string& s) {
     return s.size() >= 2 && s.front() == '{' && s.back() == '}';
 }
@@ -112,20 +218,39 @@ PropertyList ParseListLiteral(const std::string& raw) {
 }
 
 PropertyValue InferValueScalarOrList(const std::string& raw) {
-    if (raw.size() >= 2 && raw.front() == '"' && raw.back() == '"') {
-        return PropertyValue(Unquote(raw));
-    }
-    if (raw == "true") return PropertyValue(true);
-    if (raw == "false") return PropertyValue(false);
-    double num;
-    if (LooksLikeNumber(raw, &num)) return PropertyValue(num);
-
     std::string trimmed = TrimWs(raw);
+
+    std::string exprInner;
+    if (IsBalancedBraceExpression(trimmed, &exprInner)) {
+        return PropertyValue::MakeExpression(exprInner, false);
+    }
+
+    if (trimmed.size() >= 2 && trimmed.front() == '$') {
+        std::string quoted = TrimWs(trimmed.substr(1));
+        if (quoted.size() >= 2 && quoted.front() == '"' && quoted.back() == '"') {
+            std::string inner = quoted.substr(1, quoted.size() - 2);
+            return PropertyValue::MakeExpression(BuildInterpolationTemplate(inner), true);
+        }
+    }
+
+    if (trimmed.size() >= 2 && trimmed.front() == '"' && trimmed.back() == '"') {
+        if (StringLiteralHasInterpolation(trimmed)) {
+            std::string inner = trimmed.substr(1, trimmed.size() - 2);
+            return PropertyValue::MakeExpression(BuildInterpolationTemplate(inner), true);
+        }
+        return PropertyValue(Unquote(trimmed));
+    }
+
+    if (trimmed == "true") return PropertyValue(true);
+    if (trimmed == "false") return PropertyValue(false);
+    double num;
+    if (LooksLikeNumber(trimmed, &num)) return PropertyValue(num);
+
     if (LooksLikeListLiteral(trimmed)) {
         return PropertyValue(ParseListLiteral(trimmed));
     }
 
-    return PropertyValue(raw);
+    return PropertyValue(trimmed);
 }
 
 }
@@ -140,6 +265,8 @@ const std::unordered_map<std::string, std::string>& PropertyAliases() {
     static const std::unordered_map<std::string, std::string> kPropertyAliases = {
         {"gap", "spacing"},
         {"value", "text"},
+        {"checked", "isChecked"},
+        {"selected", "isSelected"},
     };
     return kPropertyAliases;
 }

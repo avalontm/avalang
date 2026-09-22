@@ -16,6 +16,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "languages/avalang_language.h"
+#include "languages/avaui_language.h"
 #include "languages/block_scanner.h"
 #include "languages/code_formatter.h"
 #include "languages/diagnostics_engine.h"
@@ -1719,6 +1720,7 @@ EditorTab& OpenFileInTab(EditorState& state, const std::string& path) {
         if (std::filesystem::path(path).extension().string() == ".avaui") {
             tab->is_avaui = true;
             tab->view_mode = TabViewMode::Design;
+            tab->editor.SetLanguage(languages::AvauiLang());
 
             std::string load_error;
             if (!design::LoadAvauiFile(path, tab->design, load_error)) {
@@ -1817,6 +1819,7 @@ void SaveTab(EditorState& state, EditorTab& tab) {
             return;
         }
 
+        RevertDesignerInjectedProperties(tab.id, tab.design);
         if (design::SaveAvauiFile(tab.design, tab.file_path)) {
             tab.design.dirty = false;
             tab.dirty = false;
@@ -1835,16 +1838,8 @@ void ToggleTabViewMode(EditorState& state, EditorTab& tab) {
 
     if (tab.view_mode == TabViewMode::Design) {
 
-        tab.SetText([&] {
-            avalang::ui::parser::AvauiWriteOptions opts;
-            opts.code_behind = tab.design.code_behind;
-            opts.imports = tab.design.imports;
-            opts.initial_state.reserve(tab.design.initial_state.size());
-            for (const auto& row : tab.design.initial_state) {
-                opts.initial_state.push_back({row.key, row.value});
-            }
-            return avalang::ui::parser::WriteAvaui(tab.design.Root(), opts);
-        }());
+        tab.SetText(avalang::ui::parser::WriteAvaui(
+            tab.design.Root(), studio::design::BuildWriteOptions(tab.design)));
         RebuildIndexAndTrie(state, tab);
         tab.avaui_load_error.clear();
         tab.view_mode = TabViewMode::Code;
@@ -2357,7 +2352,7 @@ void DrawEditorPanel(EditorState& state) {
                     if (tab.colored_interface_generation != languages::KnownInterfaceNamesGeneration() ||
                         tab.colored_variable_generation != languages::KnownVariableNamesGeneration() ||
                         tab.colored_class_generation != languages::KnownClassNamesGeneration()) {
-                        tab.editor.SetLanguage(languages::AvaLang());
+                        tab.editor.SetLanguage(tab.is_avaui ? languages::AvauiLang() : languages::AvaLang());
                         tab.colored_interface_generation = languages::KnownInterfaceNamesGeneration();
                         tab.colored_variable_generation = languages::KnownVariableNamesGeneration();
                         tab.colored_class_generation = languages::KnownClassNamesGeneration();

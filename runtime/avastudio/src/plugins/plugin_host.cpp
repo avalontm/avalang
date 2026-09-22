@@ -516,16 +516,8 @@ bool PluginHost::DesignAddComponentTrampoline(AvaStudioHost* host, const char* p
                      "y que 'type' sea un tipo de componente conocido");
     }
 
-    const std::string new_source = [&] {
-        avalang::ui::parser::AvauiWriteOptions opts;
-        opts.code_behind = doc.code_behind;
-        opts.imports = doc.imports;
-        opts.initial_state.reserve(doc.initial_state.size());
-        for (const auto& row : doc.initial_state) {
-            opts.initial_state.push_back({row.key, row.value});
-        }
-        return avalang::ui::parser::WriteAvaui(doc.Root(), opts);
-    }();
+    const std::string new_source =
+        avalang::ui::parser::WriteAvaui(doc.Root(), design::BuildWriteOptions(doc));
     std::string description = "Agente: agregar componente '" + std::string(type) + "'";
     if (id && id[0] != '\0') description += " (" + std::string(id) + ")";
 
@@ -565,16 +557,8 @@ bool PluginHost::DesignEditComponentTrampoline(AvaStudioHost* host, const char* 
         return fail("no se encontro ningun componente con id '" + std::string(node_id) + "' en el documento activo");
     }
 
-    const std::string new_source = [&] {
-        avalang::ui::parser::AvauiWriteOptions opts;
-        opts.code_behind = doc.code_behind;
-        opts.imports = doc.imports;
-        opts.initial_state.reserve(doc.initial_state.size());
-        for (const auto& row : doc.initial_state) {
-            opts.initial_state.push_back({row.key, row.value});
-        }
-        return avalang::ui::parser::WriteAvaui(doc.Root(), opts);
-    }();
+    const std::string new_source =
+        avalang::ui::parser::WriteAvaui(doc.Root(), design::BuildWriteOptions(doc));
     const std::string description = "Agente: editar componente '" + std::string(node_id) + "'";
 
     std::string queue_error;

@@ -142,6 +142,11 @@ public:
     virtual ComponentId RelatedTarget() const = 0;
 };
 
+class IChangeEvent : public virtual IEvent {
+public:
+    virtual const PropertyValue& Value() const = 0;
+};
+
 }
 }
 }

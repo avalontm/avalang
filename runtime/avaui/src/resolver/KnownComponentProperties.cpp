@@ -8,14 +8,14 @@ const char* const* KnownComponentPropertyNames(std::size_t& count) {
         "id", "text", "value", "placeholder", "class", "style",
         "backgroundColor", "borderColor", "textColor",
         "fontSize", "fontName",
-        "source", "alt", "label", "checked", "isChecked", "isSelected",
-        "selectedValue",
+        "source", "alt", "label", "checked",
+        "selected", "isOpen", "selectedValue",
         "group", "href", "data", "align", "justify", "padding",
         "margin", "gap", "width", "height", "radius", "borderRadius",
-        "borderWidth", "background", "fill", "spacing", "grow",
-        "direction", "as",
-        "click",
-        "onfocus", "onblur", "onkeydown", "onkeyup"
+        "borderWidth", "background", "fill", "grow",
+        "direction", "as", "visible", "wrap", "minWidth", "minHeight",
+        "maxWidth", "maxHeight", "dismissible", "opacity",
+        "onClick", "onChange", "onFocus", "onBlur"
     };
     count = sizeof(kNames) / sizeof(kNames[0]);
     return kNames;

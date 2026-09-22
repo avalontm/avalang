@@ -10,6 +10,7 @@
 #include "components/ComponentTree.h"
 #include "components/IComponent.h"
 #include "parser/AvauiParser.h"
+#include "parser/AvauiWriter.h"
 
 namespace studio::design {
 
@@ -23,6 +24,7 @@ struct DesignDocument {
 
     std::string code_behind;
     std::vector<PropertyRow> initial_state;
+    std::unordered_set<std::string> const_state_names;
     std::vector<std::string> imports;
     std::string extends;
 
@@ -56,6 +58,8 @@ bool ParseAvauiText(const std::string& text, DesignDocument& out_doc, std::strin
 bool LoadAvauiFile(const std::string& path, DesignDocument& out_doc, std::string& out_error,
                     avalang::ui::parser::ParseErrorInfo* out_info = nullptr);
 bool SaveAvauiFile(const DesignDocument& doc, const std::string& path);
+
+avalang::ui::parser::AvauiWriteOptions BuildWriteOptions(const DesignDocument& doc);
 
 avalang::ui::IComponent* FindNodeById(avalang::ui::IComponent* root, const std::string& nodeId);
 avalang::ui::IComponent* FindParentOf(avalang::ui::IComponent* root, avalang::ui::IComponent* target);

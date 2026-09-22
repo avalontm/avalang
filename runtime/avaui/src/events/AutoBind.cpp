@@ -151,5 +151,81 @@ void AutoBindEvents(IComponent* root, const std::string& codeText) {
     AutoBindRecursive(root, funcs);
 }
 
+const std::unordered_map<std::string, std::string>& NewEventPropertyNames() {
+    static const std::unordered_map<std::string, std::string> names = {
+        {"onClick", "click"},
+        {"onChange", "change"},
+        {"onFocus", "focus"},
+        {"onBlur", "blur"},
+    };
+    return names;
+}
+
+bool IsNewEventPropertyName(const std::string& name) {
+    return NewEventPropertyNames().count(name) > 0;
+}
+
+std::string ResolveEventPropertyName(const std::string& name) {
+    const auto& names = NewEventPropertyNames();
+    auto it = names.find(name);
+    return it != names.end() ? it->second : name;
+}
+
+namespace {
+
+std::string TrimCopy(const std::string& s) {
+    size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == std::string::npos) return "";
+    size_t b = s.find_last_not_of(" \t\r\n");
+    return s.substr(a, b - a + 1);
+}
+
+bool IsSimpleIdentifier(const std::string& s) {
+    if (s.empty()) return false;
+    if (std::isdigit(static_cast<unsigned char>(s[0]))) return false;
+    for (char c : s) {
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_')) return false;
+    }
+    return true;
+}
+
+bool TryParseCallSyntax(const std::string& text, std::string* nameOut, std::string* argsOut) {
+    if (text.empty() || text.back() != ')') return false;
+    size_t open = text.find('(');
+    if (open == std::string::npos) return false;
+
+    std::string name = TrimCopy(text.substr(0, open));
+    if (!IsSimpleIdentifier(name)) return false;
+
+    if (nameOut) *nameOut = name;
+    if (argsOut) *argsOut = text.substr(open + 1, text.size() - open - 2);
+    return true;
+}
+
+}
+
+EventHandlerInvocation ParseEventHandlerSource(const std::string& source) {
+    EventHandlerInvocation result;
+    std::string trimmed = TrimCopy(source);
+
+    if (IsSimpleIdentifier(trimmed)) {
+        result.kind = EventHandlerKind::Reference;
+        result.handlerName = trimmed;
+        return result;
+    }
+
+    std::string name, args;
+    if (TryParseCallSyntax(trimmed, &name, &args)) {
+        result.kind = EventHandlerKind::Call;
+        result.handlerName = name;
+        result.argsText = TrimCopy(args);
+        return result;
+    }
+
+    result.kind = EventHandlerKind::Statement;
+    result.statementText = trimmed;
+    return result;
+}
+
 }
 }

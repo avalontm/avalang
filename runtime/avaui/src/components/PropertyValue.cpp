@@ -21,6 +21,14 @@ PropertyValue::PropertyValue(PropertyList value)
     : type_(PropertyType::List),
       list_(std::make_shared<PropertyList>(std::move(value))) {}
 
+PropertyValue PropertyValue::MakeExpression(std::string source, bool isInterpolation) {
+    PropertyValue value;
+    value.type_ = PropertyType::Expression;
+    value.string_ = std::move(source);
+    value.isInterpolation_ = isInterpolation;
+    return value;
+}
+
 PropertyType PropertyValue::Type() const {
     return type_;
 }
@@ -40,6 +48,14 @@ const std::string& PropertyValue::AsString() const {
 const PropertyList& PropertyValue::AsList() const {
     static const PropertyList kEmpty;
     return list_ ? *list_ : kEmpty;
+}
+
+const std::string& PropertyValue::AsExpressionSource() const {
+    return string_;
+}
+
+bool PropertyValue::IsInterpolation() const {
+    return isInterpolation_;
 }
 
 }

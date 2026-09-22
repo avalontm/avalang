@@ -1,5 +1,6 @@
 #include "events/Event.h"
 #include <chrono>
+#include <utility>
 
 namespace avalang {
 namespace ui {
@@ -55,6 +56,10 @@ ImeEvent::ImeEvent(ComponentId target, std::string compositionText, int cursor, 
 
 FocusEvent::FocusEvent(EventType type, ComponentId target, ComponentId relatedTarget)
     : Event(type, target), relatedTarget_(relatedTarget) {
+}
+
+ChangeEvent::ChangeEvent(ComponentId target, PropertyValue value)
+    : Event(EventType::Change, target), value_(std::move(value)) {
 }
 
 }

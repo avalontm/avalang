@@ -25,7 +25,9 @@ enum class DesignerLayer {
 class DesignerSurface {
 public:
     NodeId Pick(UiComponentTree* tree, const LayoutPoint& screenPoint) const;
+    NodeId PickCanvas(UiComponentTree* tree, const LayoutPoint& canvasPoint) const;
     std::vector<OverlayItem> Overlay() const;
+    std::vector<OverlayItem> Overlay(const OverlayRectResolver& resolver) const;
 
     LayoutCore& Layout() { return layout_; }
     const LayoutCore& Layout() const { return layout_; }

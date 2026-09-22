@@ -20,18 +20,6 @@ std::unordered_map<std::string, std::string> PropertyMap(const UiNode* node) {
     return map;
 }
 
-avalang::ui::parser::AvauiWriteOptions WriteOptionsFor(const studio::design::DesignDocument& doc) {
-    avalang::ui::parser::AvauiWriteOptions options;
-    options.code_behind = doc.code_behind;
-    options.imports = doc.imports;
-    options.extends = doc.extends;
-    options.initial_state.reserve(doc.initial_state.size());
-    for (const auto& row : doc.initial_state) {
-        options.initial_state.push_back({row.key, row.value});
-    }
-    return options;
-}
-
 }
 
 DocumentState Transition(DocumentState current, DocumentEvent event) {
@@ -126,7 +114,8 @@ RoundTripResult VerifyRoundTrip(const std::string& sourceText, const std::string
     }
     result.parsedOriginal = true;
 
-    result.generatedText = avalang::ui::parser::WriteAvaui(original.Root(), WriteOptionsFor(original));
+    result.generatedText =
+        avalang::ui::parser::WriteAvaui(original.Root(), studio::design::BuildWriteOptions(original));
 
     studio::design::DesignDocument regenerated;
     if (!studio::design::ParseAvauiText(result.generatedText, regenerated, result.error, sourcePath)) {

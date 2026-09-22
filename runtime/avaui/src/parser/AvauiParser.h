@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "components/ComponentTree.h"
@@ -78,6 +79,7 @@ struct ParsedAvaui {
     std::unordered_map<std::string, std::string> style;
     std::vector<ParamDeclaration> params;
     std::string code;
+    std::unordered_set<std::string> constNames;
     std::vector<AnimationSpec> animations;
 };
 

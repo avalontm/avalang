@@ -7,6 +7,7 @@
 
 #include "designer/property_catalog.h"
 #include "designer/property_grid.h"
+#include "designer/responsive_inspector.h"
 
 namespace studio {
 
@@ -29,6 +30,12 @@ struct PropertiesState {
 
     int source_tab_id = -1;
     std::string selected_node_id;
+
+    std::vector<std::string> selected_node_ids;
+    bool mixed_types = false;
+
+    int responsive_viewport_width = 0;
+    std::vector<designer::ResponsiveStyleRow> responsive_rows;
 };
 
 enum class PropertyEditKind {
@@ -47,6 +54,8 @@ struct PropertyEdit {
     PropertyEditKind kind = PropertyEditKind::kValue;
     std::string key;
     std::string new_value;
+
+    std::vector<std::string> extra_node_ids;
 };
 
 std::optional<PropertyEdit> DrawPropertiesPanel(PropertiesState& state, bool* p_open = nullptr);

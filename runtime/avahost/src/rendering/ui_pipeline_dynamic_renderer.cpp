@@ -201,6 +201,17 @@ bool RenderTreeFragment(avalang::ui::ComponentTree* tree,
     }
 }
 
+// A property that binds to a state variable (`checked = {agreed}`,
+// `selected = {planBasic}`) parses as PropertyType::Expression, not
+// PropertyType::String -- same class of bug as the DecomposeText issue
+// fixed earlier in RenderTree.cpp. AsString() returns the raw source
+// (the variable name here) for both types, so both must be accepted
+// when we need to resolve the underlying state variable to mutate.
+bool IsStringyProp(const avalang::ui::PropertyValue* prop) {
+    return prop && (prop->Type() == avalang::ui::PropertyType::String ||
+                    prop->Type() == avalang::ui::PropertyType::Expression);
+}
+
  avalang::ui::IComponent* FindComponentById(avalang::ui::IComponent* root,
                                             avalang::ui::ComponentId id) {
     if (!root) return nullptr;
@@ -241,7 +252,7 @@ void DeselectRadioButtonGroupSiblings(VmStateBridge& stateBridge, avalang::ui::I
 
     for (avalang::ui::IComponent* sibling : siblings) {
         const auto* prop = sibling->GetProperty("isSelected");
-        if (!prop || prop->Type() != avalang::ui::PropertyType::String) continue;
+        if (!IsStringyProp(prop)) continue;
 
         if (avalang::ui::IState* state = stateBridge.Find(prop->AsString())) {
             state->Set(avalang::ui::PropertyValue(false));
@@ -279,7 +290,7 @@ void ApplyPendingControlValue(VmStateBridge& stateBridge, avalang::ui::IComponen
             : avalang::ui::PropertyValue(pendingValue);
 
     const auto* prop = comp->GetProperty(metadata->stateProperty);
-    if (!prop || prop->Type() != avalang::ui::PropertyType::String) return;
+    if (!IsStringyProp(prop)) return;
 
     bool isRadioSelect =
         (metadata->activation == avalang::ui::controls::ControlActivation::Select) && value.AsBool();

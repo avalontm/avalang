@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "designer/command.h"
@@ -19,6 +20,7 @@ public:
     void Undo() override;
     void Redo() override;
     std::string Description() const override;
+    std::pair<std::string, std::string> IdentitySwap() const override;
 
     bool Ok() const;
     NodeId CreatedNodeId() const;

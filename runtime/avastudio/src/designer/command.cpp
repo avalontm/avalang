@@ -29,6 +29,26 @@ std::string CompositeCommand::Description() const {
     return description_;
 }
 
+std::pair<std::string, std::string> CompositeCommand::IdentitySwap() const {
+    for (const auto& command : commands_) {
+        const std::pair<std::string, std::string> swap = command->IdentitySwap();
+        if (!swap.first.empty() || !swap.second.empty()) {
+            return swap;
+        }
+    }
+    return {};
+}
+
+std::string CompositeCommand::AffectedNodeId() const {
+    for (const auto& command : commands_) {
+        const std::string affected = command->AffectedNodeId();
+        if (!affected.empty()) {
+            return affected;
+        }
+    }
+    return {};
+}
+
 void CommandManager::Execute(std::unique_ptr<ICommand> command) {
     if (!command) {
         return;

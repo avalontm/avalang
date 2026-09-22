@@ -26,6 +26,7 @@ public:
     virtual void Unsubscribe(EventHandlerId id) = 0;
 
     virtual void Dispatch(IEvent* event) = 0;
+    virtual void DispatchChange(ComponentId target, PropertyValue value) = 0;
 
     virtual void PollInput(IComponent* root) = 0;
 

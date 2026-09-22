@@ -14,6 +14,17 @@ namespace layout {
 
 namespace {
 
+// See the matching helper (and comment) in render_tree/RenderTree.cpp:
+// a property is Eval-able text whether it's a plain literal
+// (PropertyType::String) or a binding / interpolation template
+// (PropertyType::Expression) -- both carry their raw source through
+// AsString(). Measuring intrinsic size from only the String branch meant
+// a Text/Button/Label with `{var}` or `$"...{var}..."` content measured
+// itself against the empty string instead of its real text.
+bool IsStringy(PropertyType t) {
+    return t == PropertyType::String || t == PropertyType::Expression;
+}
+
 double AlignOffset(double slotStart, double slotLength, double childLength, LayoutAlignment align) {
     switch (align) {
         case LayoutAlignment::Center:
@@ -29,7 +40,7 @@ double AlignOffset(double slotStart, double slotLength, double childLength, Layo
 
 bool IsHorizontalDirection(const IComponent* component) {
     if (const PropertyValue* value = component->GetProperty("direction")) {
-        if (value->Type() == PropertyType::String) {
+        if (IsStringy(value->Type())) {
             return value->AsString() == "horizontal";
         }
     }
@@ -47,7 +58,7 @@ bool IsSlot(const IComponent* component) {
 LayoutAlignment ReadGridChildAlignment(const IComponent* component, const std::string& alignProp,
                                         const std::string& sizeProp) {
     const PropertyValue* alignValue = component->GetProperty(alignProp);
-    if (alignValue && alignValue->Type() == PropertyType::String) {
+    if (alignValue && IsStringy(alignValue->Type())) {
         return ReadAlignment(component, alignProp);
     }
     double unusedSize;
@@ -164,14 +175,14 @@ IntrinsicSize LayoutEngineImpl::ComputeIntrinsicSize(IComponent* component) {
     if (typeName == "Button" || typeName == "Text" || typeName == "Label" || typeName == "Link") {
         std::string text;
         if (const PropertyValue* value = component->GetProperty("text")) {
-            if (value->Type() == PropertyType::String) {
+            if (IsStringy(value->Type())) {
                 text = EvalText(value->AsString());
             }
         }
         double fontSize = ReadNumber(component, "fontSize", kDefaultFontSizePx);
         std::string fontName;
         if (const PropertyValue* value = component->GetProperty("fontName")) {
-            if (value->Type() == PropertyType::String) {
+            if (IsStringy(value->Type())) {
                 fontName = value->AsString();
             }
         }
@@ -199,13 +210,13 @@ IntrinsicSize LayoutEngineImpl::ComputeIntrinsicSize(IComponent* component) {
     } else if (typeName == "TextBox" || typeName == "ComboBox") {
         std::string content;
         if (const PropertyValue* value = component->GetProperty("text")) {
-            if (value->Type() == PropertyType::String) {
+            if (IsStringy(value->Type())) {
                 content = EvalText(value->AsString());
             }
         }
         if (content.empty()) {
             if (const PropertyValue* placeholder = component->GetProperty("placeholder")) {
-                if (placeholder->Type() == PropertyType::String) {
+                if (IsStringy(placeholder->Type())) {
                     content = EvalText(placeholder->AsString());
                 }
             }
@@ -218,7 +229,7 @@ IntrinsicSize LayoutEngineImpl::ComputeIntrinsicSize(IComponent* component) {
     } else if (typeName == "CheckBox" || typeName == "RadioButton") {
         std::string label;
         if (const PropertyValue* value = component->GetProperty("label")) {
-            if (value->Type() == PropertyType::String) {
+            if (IsStringy(value->Type())) {
                 label = EvalText(value->AsString());
             }
         }

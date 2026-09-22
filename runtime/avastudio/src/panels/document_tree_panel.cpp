@@ -225,6 +225,10 @@ void DrawRow(design::DesignDocument& doc, int tab_id, const designer::DocumentTr
             if (ImGui::MenuItem(util::Tr("explorer.rename").c_str(), "F2")) {
                 OpenRename(tab_id, row.id, row.displayName);
             }
+            if (ImGui::MenuItem(util::Tr("menu.edit.duplicate").c_str(), "Ctrl+D", false, row.depth > 0)) {
+                const std::string created = designer::ExecuteDuplicateComponent(commands, doc, selection, row.id);
+                if (!created.empty() && selection) selection->Select(created);
+            }
             if (ImGui::MenuItem(util::Tr("explorer.delete").c_str(), "Del")) {
                 g_delete_request = {tab_id, row.id, true};
             }

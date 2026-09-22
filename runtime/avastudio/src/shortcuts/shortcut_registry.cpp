@@ -31,8 +31,10 @@ ShortcutRegistry::ShortcutRegistry() {
     Bind(ShortcutId::ZoomReset, {ImGuiKey_0, true, false, false, ShortcutScope::EditorFocused});
     Bind(ShortcutId::FormatDocument, {ImGuiKey_F, false, true, true, ShortcutScope::EditorFocused});
     Bind(ShortcutId::QuickFix, {ImGuiKey_Period, true, false, false, ShortcutScope::EditorFocused});
-    Bind(ShortcutId::Undo, {ImGuiKey_Z, true, false, false, ShortcutScope::EditorFocused});
-    Bind(ShortcutId::Redo, {ImGuiKey_Y, true, false, false, ShortcutScope::EditorFocused});
+    Bind(ShortcutId::Undo, {ImGuiKey_Z, true, false, false, ShortcutScope::Global});
+    Bind(ShortcutId::Redo, {ImGuiKey_Y, true, false, false, ShortcutScope::Global});
+    Bind(ShortcutId::RedoAlternate, {ImGuiKey_Z, true, true, false, ShortcutScope::Global});
+    Bind(ShortcutId::Duplicate, {ImGuiKey_D, true, false, false, ShortcutScope::Global});
     Bind(ShortcutId::ToggleBreakpoint, {ImGuiKey_F9, false, false, false, ShortcutScope::EditorFocused});
     Bind(ShortcutId::DebugStepOver, {ImGuiKey_F10, false, false, false, ShortcutScope::Global});
     Bind(ShortcutId::DebugStepInto, {ImGuiKey_F11, false, false, false, ShortcutScope::Global});

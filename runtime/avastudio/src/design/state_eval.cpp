@@ -57,7 +57,14 @@ AvaVM* BuildStateVM(const DesignDocument& doc) {
     return vm;
 }
 
-std::string EvalPropertyExpr(AvaVM* vm, const std::string& raw_value) {
+namespace {
+
+// Compiles and runs a single Avalang expression (no literal text mixed
+// in) and returns its display string, or `raw_value` unchanged if it
+// fails to compile/run. See EvalPropertyExpr below for why this is split
+// out: a `$"...{expr}..."` interpolation template can't be wrapped whole
+// in "(...)" -- only the bracketed portions are valid Avalang.
+std::string EvalSingleExpression(AvaVM* vm, const std::string& raw_value) {
     if (!vm || raw_value.empty()) return raw_value;
 
     const std::string source = "__avaui_eval__ = (" + raw_value + ")";
@@ -100,6 +107,72 @@ std::string EvalPropertyExpr(AvaVM* vm, const std::string& raw_value) {
             ava_value_release(vm, result);
             return raw_value;
     }
+}
+
+}
+
+std::string EvalPropertyExpr(AvaVM* vm, const std::string& raw_value) {
+    if (!vm || raw_value.empty()) return raw_value;
+
+    // Same fix as avahost's RuntimeHost::EvalPropertyExpr (runtime_host.cpp):
+    // a bare binding like `{clicks}` reaches here already stripped of its
+    // braces ("clicks"), so the whole-string-as-one-expression path below
+    // still handles it. A `$"...{expr}..."` interpolation template keeps
+    // its literal text and `{expr}` segments verbatim, e.g.
+    // "clicks: {clicks}" -- wrapping that whole thing in "(...)" isn't
+    // valid Avalang, so it used to just fail to compile and echo back the
+    // raw template, which is why the design canvas showed the literal
+    // "{clicks}" instead of the value. Detect that case and evaluate only
+    // the bracketed portions, splicing their results into the literal text.
+    bool has_unescaped_brace = false;
+    for (size_t i = 0; i < raw_value.size(); ++i) {
+        if (raw_value[i] == '\\' && i + 1 < raw_value.size()) { ++i; continue; }
+        if (raw_value[i] == '{') { has_unescaped_brace = true; break; }
+    }
+    if (!has_unescaped_brace) {
+        return EvalSingleExpression(vm, raw_value);
+    }
+
+    std::string out;
+    out.reserve(raw_value.size());
+    size_t i = 0;
+    while (i < raw_value.size()) {
+        char c = raw_value[i];
+        if (c == '\\' && i + 1 < raw_value.size()) {
+            out += raw_value[i + 1];
+            i += 2;
+            continue;
+        }
+        if (c != '{') {
+            out += c;
+            ++i;
+            continue;
+        }
+
+        size_t start = i + 1;
+        int depth = 1;
+        bool in_double = false;
+        size_t j = start;
+        for (; j < raw_value.size(); ++j) {
+            char cj = raw_value[j];
+            if (in_double) {
+                if (cj == '\\' && j + 1 < raw_value.size()) { ++j; continue; }
+                if (cj == '"') in_double = false;
+                continue;
+            }
+            if (cj == '"') { in_double = true; continue; }
+            if (cj == '{') ++depth;
+            else if (cj == '}') {
+                --depth;
+                if (depth == 0) break;
+            }
+        }
+
+        std::string expr_source = raw_value.substr(start, j - start);
+        out += EvalSingleExpression(vm, expr_source);
+        i = (j < raw_value.size()) ? j + 1 : raw_value.size();
+    }
+    return out;
 }
 
 std::string GetDisplayPropertyKey(const std::string& node_type) {

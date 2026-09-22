@@ -94,6 +94,12 @@ canvas.render_error,"Error de render: %s"
 canvas.render_error_hint,No se pudo reconstruir el layout real -- revisá el árbol/import.
 canvas.missing_layout_nodes,"%s nodo(s) sin layout -- no se dibujaron este frame."
 canvas.reset_view,Restablecer vista
+canvas.rotate_device,Rotar
+canvas.device_custom,Tamaño personalizado
+canvas.safe_area,Área segura
+canvas.safe_area_tooltip,"Acomoda la página dentro del área segura del dispositivo (barra de estado, notch, indicador de inicio)."
+canvas.breakpoint_active,Breakpoint: >= %spx
+canvas.breakpoint_base,Breakpoint: base
 canvas.zoom_fit,Ajustar
 canvas.zoom_render_limitation,"El zoom cambia el modelo del canvas pero todavía no escala el render -- es una limitación conocida, no un bug."
 canvas.mode_design,Diseño
@@ -143,6 +149,7 @@ toolbox.container_tag,(contenedor)
 toolbox.search_hint,Buscar componentes...
 toolbox.no_results,Ningún componente coincide con la búsqueda.
 panel.properties.title,Propiedades
+preview.empty,Abrí un archivo de componentes para ver su árbol en vivo acá.
 properties.column_key,Clave
 properties.column_value,Valor
 properties.new_key_hint,nueva clave
@@ -152,8 +159,14 @@ properties.id_label,Id
 properties.type_display,"Tipo: %s"
 properties.id_display,"Id: %s"
 properties.readonly_note,Solo lectura (no hay una fuente editable para esta selección).
+properties.multi_selection_count,"%s componentes seleccionados"
+properties.multi_selection_type,"Tipo: %s"
+properties.multi_selection_mixed_types,Seleccioná componentes del mismo tipo para editar propiedades compartidas.
 properties.column_property,Propiedad
 properties.section_events,Eventos
+properties.section_responsive,Estilo responsive (%spx)
+properties.column_breakpoint,Breakpoint
+properties.responsive_base,base
 properties.column_event,Evento
 properties.column_handler,Manejador
 properties.add_custom_entry,Agregar personalizada: %s
@@ -328,6 +341,9 @@ settings.format_on_type_label,Formatear documento mientras se escribe
 menu.view.command_palette,Paleta de Comandos...
 command_palette.hint,Escribí un comando...
 command_palette.no_results,No hay comandos que coincidan.
+menu.edit.undo,Deshacer
+menu.edit.redo,Rehacer
+menu.edit.duplicate,Duplicar
 menu.edit.quick_open,Abrir Rápido...
 quick_open.hint,Ir a un archivo...
 quick_open.no_results,No hay archivos que coincidan.

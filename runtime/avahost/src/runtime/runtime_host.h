@@ -95,6 +95,14 @@ private:
     static bool SplitNamespacedKey(const std::string& key, std::string& outNamespace, std::string& outField);
 
     ava_value_t GetOrCreateDictGlobal(const std::string& ns);
+
+    // Compiles and runs a single Avalang expression (no literal text mixed
+    // in) and returns its display string, or `rawValue` unchanged if it
+    // fails to compile/run. This is what EvalPropertyExpr used to do for
+    // every call; it is now also the per-segment worker that
+    // EvalPropertyExpr uses to expand `$"...{expr}..."` interpolation
+    // templates (see EvalPropertyExpr in runtime_host.cpp).
+    std::string EvalSingleExpression(const std::string& rawValue);
 };
 
 } // namespace avahost

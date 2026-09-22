@@ -54,6 +54,7 @@ public:
     void Unsubscribe(EventHandlerId id) override;
 
     void Dispatch(IEvent* event) override;
+    void DispatchChange(ComponentId target, PropertyValue value) override;
     void PollInput(IComponent* root) override;
 
     ComponentId FocusedComponent() const override { return focusedComponent_; }

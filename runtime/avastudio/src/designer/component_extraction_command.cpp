@@ -219,6 +219,13 @@ NodeId ExtractComponentCommand::CreatedNodeId() const {
     return replacement_ ? IdOf(replacement_) : NodeId();
 }
 
+std::pair<std::string, std::string> ExtractComponentCommand::IdentitySwap() const {
+    if (!replacement_) {
+        return {};
+    }
+    return {nodeId_, IdOf(replacement_)};
+}
+
 const std::string& ExtractComponentCommand::FailureReason() const {
     return failureReason_;
 }

@@ -222,7 +222,7 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
                                      ? common::ParseColor(renderNode->BorderColor())
                                      : Color{0, 0, 0, 0};
             float borderWidth = renderNode->ShouldStroke()
-                                     ? static_cast<float>(renderNode->StrokeWidth())
+                                     ? static_cast<float>(renderNode->BorderWidth())
                                      : 0.0f;
             auto toRgba = [](const Color& c) {
                 char buf[40];
@@ -259,7 +259,7 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
                                      ? common::ParseColor(renderNode->BorderColor())
                                      : Color{0, 0, 0, 0};
             float borderWidth = renderNode->ShouldStroke()
-                                     ? static_cast<float>(renderNode->StrokeWidth())
+                                     ? static_cast<float>(renderNode->BorderWidth())
                                      : 0.0f;
             auto toRgba = [](const Color& c) {
                 char buf[40];
@@ -296,7 +296,7 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
                                      ? common::ParseColor(renderNode->BorderColor())
                                      : Color{0, 0, 0, 0};
             float borderWidth = renderNode->ShouldStroke()
-                                     ? static_cast<float>(renderNode->StrokeWidth())
+                                     ? static_cast<float>(renderNode->BorderWidth())
                                      : 0.0f;
             float borderRadius = static_cast<float>(renderNode->BorderRadius());
 
@@ -359,7 +359,7 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
                                      ? common::ParseColor(renderNode->BorderColor())
                                      : Color{200, 200, 200, 255};
             float borderWidth = renderNode->ShouldStroke()
-                                     ? static_cast<float>(renderNode->StrokeWidth())
+                                     ? static_cast<float>(renderNode->BorderWidth())
                                      : 1.0f;
             Color textColor = common::ParseColor(renderNode->ForegroundColor());
             float borderRadius = static_cast<float>(renderNode->BorderRadius());
@@ -505,7 +505,7 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
                                ? common::ParseColor(renderNode->BorderColor())
                                : Color{0, 0, 0, 0};
             float borderWidth = renderNode->ShouldStroke()
-                                     ? static_cast<float>(renderNode->StrokeWidth())
+                                     ? static_cast<float>(renderNode->BorderWidth())
                                      : 0.0f;
             sink.DrawPath(x, y, renderNode->PathSegments(), fill, border, borderWidth,
                           renderNode->PathClosed(), handler, cssClass);
@@ -520,7 +520,7 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
                                ? common::ParseColor(renderNode->BorderColor())
                                : Color{0, 0, 0, 0};
             float borderWidth = renderNode->ShouldStroke()
-                                     ? static_cast<float>(renderNode->StrokeWidth())
+                                     ? static_cast<float>(renderNode->BorderWidth())
                                      : 0.0f;
             if (renderNode->Type() == render::RenderNodeType::Ellipse) {
                 const float rx = w / 2.0f;
@@ -559,7 +559,7 @@ void SceneCommandWalker::Walk(scene::ISceneGraph& scene, RenderCommandSink& sink
                                      ? common::ParseColor(renderNode->BorderColor())
                                      : Color{200, 200, 200, 255};
             float borderWidth = renderNode->ShouldStroke()
-                                     ? static_cast<float>(renderNode->StrokeWidth())
+                                     ? static_cast<float>(renderNode->BorderWidth())
                                      : 1.0f;
             Color textColor = common::ParseColor(
                 renderNode->ForegroundColor().empty() ? "#000000" : renderNode->ForegroundColor());

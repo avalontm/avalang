@@ -109,6 +109,9 @@ struct EditorState {
     bool run_project_requested = false;
     bool check_requested = false;
     bool find_in_project_requested = false;
+    bool undo_requested = false;
+    bool redo_requested = false;
+    bool duplicate_requested = false;
     bool save_requested = false;
     bool close_tab_requested = false;
     bool new_tab_requested = false;

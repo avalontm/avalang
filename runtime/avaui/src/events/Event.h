@@ -160,6 +160,18 @@ private:
     ComponentId relatedTarget_;
 };
 
+class AVA_UI_API ChangeEvent : public Event, public IChangeEvent {
+public:
+    ChangeEvent(ComponentId target, PropertyValue value);
+
+    const PropertyValue& Value() const override { return value_; }
+
+    IEvent* AsIEvent() { return static_cast<IEvent*>(this); }
+
+private:
+    PropertyValue value_;
+};
+
 }
 }
 }

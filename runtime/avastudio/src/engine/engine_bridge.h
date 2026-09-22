@@ -69,20 +69,6 @@ public:
 
     void SubmitConsoleInput(const std::string& text);
 
-    struct PreviewNode {
-        std::string type;
-        std::string id;
-        std::vector<std::pair<std::string, std::string>> properties;
-        std::vector<PreviewNode> children;
-    };
-
-    struct DemoTree {
-        PreviewNode root;
-        std::string json;
-    };
-
-    DemoTree BuildDemoComponentTree();
-
 private:
 
     static void PrintCallbackTrampoline(const char* utf8, size_t len, void* user_data);

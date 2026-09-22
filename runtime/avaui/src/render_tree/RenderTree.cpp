@@ -12,6 +12,22 @@ namespace avalang {
 namespace ui {
 namespace render {
 
+namespace {
+// A property reaches RenderTree either as PropertyType::String (a plain
+// literal, e.g. text = "hi") or as PropertyType::Expression (a binding
+// `{name}` or a `$"...{name}..."` interpolation template -- see
+// AvauiPropertyCoercion::InferValueScalarOrList). Both store their raw
+// source in the same underlying field, so PropertyValue::AsString() is
+// valid and meaningful for either type; every place below that used to
+// gate on PropertyType::String alone silently dropped every bound /
+// interpolated value (SetText, SetBackgroundColor, etc. never called),
+// which is what broke `$"Hola {NAME}"`-style text. IsStringy() is the
+// single place that decides which property types carry Eval-able text.
+bool IsStringy(PropertyType t) {
+    return t == PropertyType::String || t == PropertyType::Expression;
+}
+}
+
 RenderTree::RenderTree() = default;
 RenderTree::~RenderTree() = default;
 
@@ -21,7 +37,7 @@ bool RenderTree::EvalBool(IComponent* comp, const char* propName, bool defaultVa
     if (prop->Type() == PropertyType::Bool) {
         return prop->AsBool();
     }
-    if (prop->Type() == PropertyType::String) {
+    if (IsStringy(prop->Type())) {
         return Eval(prop->AsString()) == "true";
     }
     return defaultValue;
@@ -32,7 +48,7 @@ void RenderTree::CheckBindingWarning(IComponent* comp, std::shared_ptr<RenderNod
     if (!comp->GetProperty("change")) return;
 
     const auto* prop = comp->GetProperty(propName);
-    if (!prop || prop->Type() != PropertyType::String || prop->AsString().empty()) {
+    if (!prop || !IsStringy(prop->Type()) || prop->AsString().empty()) {
         parent->SetBindingWarning(std::string("No state binding: missing '") + propName +
                                    "' (use " + propName + " = myVariable, declared in state)");
         return;
@@ -52,7 +68,7 @@ double RenderTree::EvalNumber(IComponent* comp, const char* propName, double def
     if (prop->Type() == PropertyType::Number) {
         return prop->AsNumber();
     }
-    if (prop->Type() == PropertyType::String) {
+    if (IsStringy(prop->Type())) {
         std::string evaluated = Eval(prop->AsString());
         char* end = nullptr;
         double parsed = std::strtod(evaluated.c_str(), &end);
@@ -88,14 +104,14 @@ std::shared_ptr<IRenderNode> RenderTree::BuildComponent(IComponent* component,
     renderNode->SetRect(layoutNode->Rect());
 
     if (const auto* bgColor = component->GetProperty("backgroundColor")) {
-        if (bgColor->Type() == PropertyType::String) {
+        if (IsStringy(bgColor->Type())) {
             renderNode->SetBackgroundColor(Eval(bgColor->AsString()));
             renderNode->SetShouldFill(true);
         }
     }
 
     if (const auto* borderColor = component->GetProperty("borderColor")) {
-        if (borderColor->Type() == PropertyType::String) {
+        if (IsStringy(borderColor->Type())) {
             renderNode->SetBorderColor(Eval(borderColor->AsString()));
             renderNode->SetShouldStroke(true);
         }
@@ -113,23 +129,23 @@ std::shared_ptr<IRenderNode> RenderTree::BuildComponent(IComponent* component,
     }
 
     if (const auto* fgColor = component->GetProperty("textColor")) {
-        if (fgColor->Type() == PropertyType::String) {
+        if (IsStringy(fgColor->Type())) {
             renderNode->SetForegroundColor(Eval(fgColor->AsString()));
         }
     }
 
     if (const auto* click = component->GetProperty("click")) {
-        if (click->Type() == PropertyType::String) {
+        if (IsStringy(click->Type())) {
             renderNode->SetClickHandler(click->AsString());
         }
     } else if (const auto* change = component->GetProperty("change")) {
-        if (change->Type() == PropertyType::String) {
+        if (IsStringy(change->Type())) {
             renderNode->SetClickHandler(change->AsString());
         }
     }
 
     if (const auto* cssClass = component->GetProperty("class")) {
-        if (cssClass->Type() == PropertyType::String) {
+        if (IsStringy(cssClass->Type())) {
             renderNode->SetClassName(Eval(cssClass->AsString()));
         }
     }
@@ -199,25 +215,25 @@ void RenderTree::DecomposeButton(IComponent* comp, std::shared_ptr<RenderNode> p
         parent->SetForegroundColor("#000000");
     }
     if (const auto* fgColor = comp->GetProperty("textColor")) {
-        if (fgColor->Type() == PropertyType::String && !fgColor->AsString().empty()) {
+        if (IsStringy(fgColor->Type()) && !fgColor->AsString().empty()) {
             parent->SetForegroundColor(Eval(fgColor->AsString()));
         }
     }
     if (const auto* fontSize = comp->GetProperty("fontSize")) {
-        if (fontSize->Type() == PropertyType::Number || fontSize->Type() == PropertyType::String) {
+        if (fontSize->Type() == PropertyType::Number || IsStringy(fontSize->Type())) {
             parent->SetFontSize(static_cast<int>(EvalNumber(comp, "fontSize", parent->FontSize())));
         }
     } else {
         parent->SetFontSize(12);
     }
     if (const auto* fontName = comp->GetProperty("fontName")) {
-        if (fontName->Type() == PropertyType::String) {
+        if (IsStringy(fontName->Type())) {
             parent->SetFontName(Eval(fontName->AsString()));
         }
     }
 
     if (const auto* label = comp->GetProperty("text")) {
-        if (label->Type() == PropertyType::String) {
+        if (IsStringy(label->Type())) {
             parent->SetText(Eval(label->AsString()));
         }
     }
@@ -237,20 +253,20 @@ void RenderTree::DecomposeButton(IComponent* comp, std::shared_ptr<RenderNode> p
 void RenderTree::DecomposeText(IComponent* comp, std::shared_ptr<RenderNode> parent,
                                LayoutEngine* layout) {
     if (const auto* text = comp->GetProperty("text")) {
-        if (text->Type() == PropertyType::String) {
+        if (IsStringy(text->Type())) {
             parent->SetText(Eval(text->AsString()));
             parent->SetType(RenderNodeType::Text);
         }
     }
 
     if (const auto* fontSize = comp->GetProperty("fontSize")) {
-        if (fontSize->Type() == PropertyType::Number || fontSize->Type() == PropertyType::String) {
+        if (fontSize->Type() == PropertyType::Number || IsStringy(fontSize->Type())) {
             parent->SetFontSize(static_cast<int>(EvalNumber(comp, "fontSize", parent->FontSize())));
         }
     }
 
     if (const auto* fontName = comp->GetProperty("fontName")) {
-        if (fontName->Type() == PropertyType::String) {
+        if (IsStringy(fontName->Type())) {
             parent->SetFontName(Eval(fontName->AsString()));
         }
     }
@@ -267,25 +283,25 @@ void RenderTree::DecomposeLink(IComponent* comp, std::shared_ptr<RenderNode> par
     parent->SetType(RenderNodeType::Link);
 
     if (const auto* text = comp->GetProperty("text")) {
-        if (text->Type() == PropertyType::String) {
+        if (IsStringy(text->Type())) {
             parent->SetText(Eval(text->AsString()));
         }
     }
 
     if (const auto* fontSize = comp->GetProperty("fontSize")) {
-        if (fontSize->Type() == PropertyType::Number || fontSize->Type() == PropertyType::String) {
+        if (fontSize->Type() == PropertyType::Number || IsStringy(fontSize->Type())) {
             parent->SetFontSize(static_cast<int>(EvalNumber(comp, "fontSize", parent->FontSize())));
         }
     }
 
     if (const auto* fontName = comp->GetProperty("fontName")) {
-        if (fontName->Type() == PropertyType::String) {
+        if (IsStringy(fontName->Type())) {
             parent->SetFontName(Eval(fontName->AsString()));
         }
     }
 
     if (const auto* href = comp->GetProperty("href")) {
-        if (href->Type() == PropertyType::String) {
+        if (IsStringy(href->Type())) {
             parent->SetHref(Eval(href->AsString()));
         }
     }
@@ -294,7 +310,7 @@ void RenderTree::DecomposeLink(IComponent* comp, std::shared_ptr<RenderNode> par
 void RenderTree::DecomposeImage(IComponent* comp, std::shared_ptr<RenderNode> parent,
                                 LayoutEngine* layout) {
     if (const auto* src = comp->GetProperty("source")) {
-        if (src->Type() == PropertyType::String) {
+        if (IsStringy(src->Type())) {
             parent->SetImagePath(Eval(src->AsString()));
             parent->SetType(RenderNodeType::Image);
         }
@@ -307,7 +323,7 @@ void RenderTree::DecomposeTextBox(IComponent* comp, std::shared_ptr<RenderNode> 
 
     std::string text;
     if (const auto* value = comp->GetProperty("text")) {
-        if (value->Type() == PropertyType::String) {
+        if (IsStringy(value->Type())) {
             text = Eval(value->AsString());
         }
     }
@@ -315,7 +331,7 @@ void RenderTree::DecomposeTextBox(IComponent* comp, std::shared_ptr<RenderNode> 
 
     std::string placeholder;
     if (const auto* ph = comp->GetProperty("placeholder")) {
-        if (ph->Type() == PropertyType::String) {
+        if (IsStringy(ph->Type())) {
             placeholder = Eval(ph->AsString());
         }
     }
@@ -335,7 +351,7 @@ void RenderTree::DecomposeTextBox(IComponent* comp, std::shared_ptr<RenderNode> 
     parent->SetSelectionRange(std::min(caret, anchor), std::max(caret, anchor));
 
     if (const auto* composition = comp->GetProperty("imeComposition")) {
-        if (composition->Type() == PropertyType::String) {
+        if (IsStringy(composition->Type())) {
             parent->SetImeComposition(Eval(composition->AsString()));
         }
     }
@@ -370,7 +386,7 @@ void RenderTree::DecomposeCheckBox(IComponent* comp, std::shared_ptr<RenderNode>
     parent->SetShouldStroke(false);
 
     if (const auto* label = comp->GetProperty("label")) {
-        if (label->Type() == PropertyType::String && !label->AsString().empty()) {
+        if (IsStringy(label->Type()) && !label->AsString().empty()) {
             auto textNode = std::make_shared<RenderNode>(comp->Id(), RenderNodeType::Text);
             const std::string text = Eval(label->AsString());
             const double fontSize = 12.0;
@@ -415,7 +431,7 @@ void RenderTree::DecomposeRadioButton(IComponent* comp, std::shared_ptr<RenderNo
     parent->SetShouldStroke(false);
 
     if (const auto* label = comp->GetProperty("label")) {
-        if (label->Type() == PropertyType::String && !label->AsString().empty()) {
+        if (IsStringy(label->Type()) && !label->AsString().empty()) {
             auto textNode = std::make_shared<RenderNode>(comp->Id(), RenderNodeType::Text);
             const std::string text = Eval(label->AsString());
             const double fontSize = 12.0;
@@ -446,7 +462,7 @@ void RenderTree::DecomposeComboBox(IComponent* comp, std::shared_ptr<RenderNode>
 
     std::string selectedValue;
     if (const auto* value = comp->GetProperty("selectedValue")) {
-        if (value->Type() == PropertyType::String) {
+        if (IsStringy(value->Type())) {
             selectedValue = Eval(value->AsString());
         }
     }
@@ -455,8 +471,8 @@ void RenderTree::DecomposeComboBox(IComponent* comp, std::shared_ptr<RenderNode>
     for (IComponent* child : comp->Children()) {
         const auto* valueProp = child->GetProperty("value");
         const auto* labelProp = child->GetProperty("label");
-        std::string v = (valueProp && valueProp->Type() == PropertyType::String) ? valueProp->AsString() : "";
-        std::string l = (labelProp && labelProp->Type() == PropertyType::String) ? labelProp->AsString() : "";
+        std::string v = (valueProp && IsStringy(valueProp->Type())) ? valueProp->AsString() : "";
+        std::string l = (labelProp && IsStringy(labelProp->Type())) ? labelProp->AsString() : "";
 
         items.push_back(ComboBoxItem{v, l, v == selectedValue});
     }
@@ -468,7 +484,7 @@ void RenderTree::DecomposeComboBox(IComponent* comp, std::shared_ptr<RenderNode>
 void RenderTree::DecomposeIcon(IComponent* comp, std::shared_ptr<RenderNode> parent,
                                LayoutEngine* layout) {
     if (const auto* src = comp->GetProperty("source")) {
-        if (src->Type() == PropertyType::String) {
+        if (IsStringy(src->Type())) {
             parent->SetImagePath(Eval(src->AsString()));
         }
     }
@@ -482,7 +498,7 @@ void RenderTree::DecomposeDialog(IComponent* comp, std::shared_ptr<RenderNode> p
     bool isOpen = EvalBool(comp, "isOpen", false);
 
     if (const auto* title = comp->GetProperty("title")) {
-        if (title->Type() == PropertyType::String) {
+        if (IsStringy(title->Type())) {
             parent->SetText(Eval(title->AsString()));
         }
     }
@@ -516,7 +532,7 @@ void RenderTree::DecomposeScrollView(IComponent* comp, std::shared_ptr<RenderNod
     parent->SetType(RenderNodeType::ScrollView);
 
     if (const auto* direction = comp->GetProperty("direction")) {
-        if (direction->Type() == PropertyType::String && !direction->AsString().empty()) {
+        if (IsStringy(direction->Type()) && !direction->AsString().empty()) {
             parent->SetScrollDirection(Eval(direction->AsString()));
         }
     }
@@ -560,7 +576,7 @@ void RenderTree::DecomposeContainer(IComponent* comp, std::shared_ptr<RenderNode
     }
 
     if (const auto* bgColor = comp->GetProperty("backgroundColor")) {
-        if (bgColor->Type() == PropertyType::String) {
+        if (IsStringy(bgColor->Type())) {
             parent->SetBackgroundColor(Eval(bgColor->AsString()));
             parent->SetShouldFill(true);
         }
